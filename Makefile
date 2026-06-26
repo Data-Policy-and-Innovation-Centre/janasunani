@@ -15,9 +15,9 @@ help:
 	@echo ""
 	@echo "  make setup           First-time setup on a new machine"
 	@echo "  make pull            Get latest code, deps, and approved DVC data"
-	@echo "  make ingest DATA=f.csv Copy an original source file from Box"
-	@echo "  make publish-raw DATA=f.csv Copy a local raw file to Box"
-	@echo "  make push DATA=f.csv Version and share a locally-ingested file via DVC"
+	@echo "  make ingest          Copy all original source files from Box"
+	@echo "  make publish-raw     Copy all local raw files to Box"
+	@echo "  make push            Version and share all tracked data via DVC"
 	@echo "  make run             Run the analytics pipeline"
 	@echo "  make exhibits        Regenerate all figures and tables"
 	@echo "  make deliver         Copy exhibits to Box without deleting remote files"
@@ -42,28 +42,28 @@ pull: _check_git_clean
 	uv run dvc pull
 	@echo "Done."
 
-ingest: _require_data
-	@echo "Copying original $(DATA) from Box..."
-	rclone copyto $(INCOMING_REMOTE)$(DATA) $(RAW_LOCAL)$(DATA) --progress
-	@echo "Ingested $(DATA). The original Box file was not modified."
+ingest:
+	@echo "Copying all original source files from Box..."
+	rclone copy $(INCOMING_REMOTE) $(RAW_LOCAL) --progress
+	@echo "Ingested raw data. The original Box files were not modified."
 
-publish-raw: _require_data
-	@echo "Publishing latest $(DATA) to Box..."
-	rclone copyto $(RAW_LOCAL)$(DATA) $(INCOMING_REMOTE)$(DATA) --progress
-	@echo "Published $(DATA). Existing Box files with other names were not deleted."
+publish-raw:
+	@echo "Publishing all local raw files to Box..."
+	rclone copy $(RAW_LOCAL) $(INCOMING_REMOTE) --progress
+	@echo "Published raw data. Existing Box files with other names were not deleted."
 
-push: _require_data _check_git_clean
-	@echo "[1/3] Versioning $(DATA) and reproducing pipeline..."
-	uv run dvc add $(RAW_LOCAL)$(DATA)
+push: _check_git_clean
+	@echo "[1/3] Reproducing pipeline..."
 	uv run dvc repro
 	@echo "[2/3] Committing version pointers..."
-	git add $(RAW_LOCAL)$(DATA).dvc .gitignore
-	@test -f dvc.lock && git add dvc.lock || true
-	git commit -m "data: update $(DATA) $$(date +%Y-%m-%d)"
+	@for p in dvc.lock '*.dvc' '*.gitignore'; do \
+	  git add -A -- "$$p" 2>/dev/null || true; \
+	done
+	git commit -m "data: update $$(date +%Y-%m-%d)" || echo "No new version pointers to commit."
 	@echo "[3/3] Pushing to team remote..."
 	uv run dvc push
 	git push
-	@echo "Done. Team can now pull $(DATA)."
+	@echo "Done. Team can now pull the latest data."
 
 run:
 	uv run dvc repro
@@ -99,7 +99,3 @@ status:
 _check_git_clean:
 	@git diff --quiet && git diff --cached --quiet || \
 	  (echo "Uncommitted changes. Commit or stash first." && exit 1)
-
-_require_data:
-	@test -n "$(DATA)" || \
-	  (echo "Usage: make <ingest|push> DATA=yourfile.csv" && exit 1)
