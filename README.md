@@ -101,6 +101,62 @@ remote files:
 make deliver
 ```
 
+## Data migration
+
+Build the local complaint store `data/raw/grievance.db` (complaints + action
+history) from the raw Janasunani MySQL dump. The loader restores the dump into a
+MySQL server, then validates and copies the two ETL tables into the SQLite store
+through one shared insert routine.
+
+**Prerequisites**
+
+- The dump file at `data/raw/Dump20250730.sql` (the `sociomatics_ticket`
+  `mysqldump`).
+- A reachable MySQL server to restore the dump into, and the `mysql` client on
+  your `PATH`. The easy option is a throwaway MySQL 5.7 container:
+
+  ```bash
+  docker run -d --name mysql57 -e MYSQL_ROOT_PASSWORD=pass -p 3306:3306 mysql:5.7
+  ```
+
+- An admin MySQL URL **without** a database, exported for the DVC stage:
+
+  ```bash
+  export MYSQL_ADMIN_URL="mysql+pymysql://root:pass@127.0.0.1:3306/"
+  ```
+
+**Run it (DVC node)**
+
+The migration is the `migrate` stage in `dvc.yaml`. Reproduce it with:
+
+```bash
+dvc repro migrate        # or: make run
+```
+
+This produces `data/raw/grievance.db` (a DVC-tracked output). Re-running is safe
+and idempotent.
+
+**Run it directly (without DVC)**
+
+```bash
+uv run janasunani-migrate-dump \
+    --dump data/raw/Dump20250730.sql \
+    --mysql-url "$MYSQL_ADMIN_URL"
+```
+
+Use `--skip-restore` to migrate from an already-loaded MySQL database, and
+`--target-db-url` to write somewhere other than the default `grievance.db`.
+
+**Incremental sync from a live server**
+
+To sync new complaints from a running Janasunani MySQL instance (no dump),
+set `MYSQL_URL` to a full URL *including* the database and run:
+
+```bash
+MYSQL_URL="mysql+pymysql://user:pass@host:3306/sociomatics_ticket" \
+    uv run janasunani-migrate-mysql
+```
+
 ## Box Paths
 
 Collaborators may see the same shared Box folder under different path prefixes,

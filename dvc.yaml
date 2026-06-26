@@ -1,14 +1,23 @@
-# Define project-specific pipeline stages here once the processing workflow is
-# known. Keep commands and dependencies explicit so DVC can reproduce outputs.
-#
-# Example:
-# stages:
-#   <stage-name>:
-#     cmd: <command>
-#     deps:
-#       - <input-path>
-#       - <script-or-notebook-path>
-#     outs:
-#       - <output-path>
+# Project pipeline stages. Keep commands and dependencies explicit so DVC can
+# reproduce outputs. More stages (ingestion, document pipeline, training) are
+# added in later phases — see docs/ROADMAP.md.
 
-stages: {}
+stages:
+  migrate:
+    desc: >-
+      Load the complaint store (data/raw/grievance.db) from the raw MySQL dump.
+      Requires a reachable MySQL server: export MYSQL_ADMIN_URL as an admin URL
+      WITHOUT a database (e.g. mysql+pymysql://root:pass@127.0.0.1:3306/). A local
+      MySQL 5.7 container is the easy option — see the README.
+    cmd: >-
+      uv run janasunani-migrate-dump
+      --dump data/raw/Dump20250730.sql
+      --mysql-url "$MYSQL_ADMIN_URL"
+    deps:
+      - data/raw/Dump20250730.sql
+      - janasunani/migration/from_sql_dump.py
+      - janasunani/migration/from_mysql.py
+      - janasunani/db/models.py
+      - janasunani/ingestion/schemas.py
+    outs:
+      - data/raw/grievance.db
