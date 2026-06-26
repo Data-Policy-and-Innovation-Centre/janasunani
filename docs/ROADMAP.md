@@ -47,6 +47,26 @@ This plan is the source of truth and is **mirrored into the repo at `docs/ROADMA
 - **Part II**: frontend = **Next.js/React (polished)**; routing = **hybrid (rules + learned)**; demo input
   = **both typed text and document upload**; inference profile = **heavy/GPU (best quality)**.
 
+### Testing policy (applies to EVERY phase)
+
+Every feature ships with **robust automated tests (pytest), run and shown passing before the phase is
+called done.** This is not optional and not deferred to Phase 6 — Phase 6 only adds CI wiring and broader
+coverage. The rule exists because several migration bugs reached "done" on shortcut verification (sync
+engine + tiny samples): the async path's missing `greenlet` and an O(n²) action-history loop both only
+surfaced on the live run.
+
+Concretely:
+- **Exercise the real code path**, not a simplified stand-in. Async DB tests use `create_async_engine`
+  (aiosqlite) so the greenlet/async path actually runs.
+- **Integration-test the migration without MySQL/Docker:** build a SQLite "source" with the MySQL table
+  names (`t_janasunani_etl_pre_data`, `t_janasunani_etl_history_pre_data`) — `run_migration` reflects
+  tables by name, so it runs against any SQLAlchemy engine.
+- Cover happy-path counts, **idempotency** (re-run = no dups), malformed/edge inputs, the schema
+  source→ORM alias mapping (catches drift), and skip/dedup behavior.
+- Gate each phase on `uv run pytest` + `uv run ruff check .` (dev dep: `pytest-asyncio`).
+
+Each phase below has a **Tests** bullet listing the cases that guard it.
+
 ---
 
 # PART I — Foundation / Migration
