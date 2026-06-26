@@ -1,0 +1,27 @@
+[project]
+name = "janasunani"
+version = "0.1.0"
+description = "Odisha's new unified AI powered grievance redressal portal Janasunani 2.0 "
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "dpic",
+    "dvc[s3]>=3.67.1",
+    "loguru>=0.7.3",
+    "pandas>=3.0.3",
+    "pandera>=0.31.1",
+    "polars>=1.41.2",
+    "pyarrow>=24.0.0",
+]
+
+[tool.uv.sources]
+dpic = { git = "ssh://git@github.com/Data-Policy-and-Innovation-Centre/dpic-org.git", rev = "main" }
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.2.0",
+    "jupyter>=1.1.1",
+    "nbstripout>=0.9.1",
+    "pytest>=9.0.3",
+    "ruff>=0.15.15",
+]
