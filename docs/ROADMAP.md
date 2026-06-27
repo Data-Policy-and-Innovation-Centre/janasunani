@@ -59,10 +59,13 @@ This plan is the source of truth, **mirrored into the repo at `docs/ROADMAP.md`*
 - ✅ **Phase 2** — cold-start migration `dump → OLTP` (`from_sql_dump` restore + `from_mysql` streaming
   load). Ran the FULL dataset: **1,371,288 complaints + 6,565,323 action history** into `grievance.db`
   (~10 min). Real-data + integration tests passing.
-- 🔄 **Phase 2b (next, small)** — make the migration target **swappable**: `DB_URL`→`OLTP_DB_URL`, add
-  `asyncpg` + **Alembic** baseline so the same load runs against SQLite or Postgres.
-- ⬜ **Phase 3** — **OLTP → Parquet materialization** (the "downstream to Parquet") + DuckDB read helpers.
-- ⬜ **Phases 4–7** — document ingestion → S3, document pipeline, MLflow+DVC tracking, CI/docs.
+- ✅ **Phase 2b** — OLTP store **swappable**: `OLTP_DB_URL`, `asyncpg`, **Alembic** baseline
+  (upgrade/downgrade verified on SQLite + Postgres), dialect-portable conflict-inserts. DB relocated to
+  `data/oltp/janasunani.db`.
+- ✅ **Phase 3** — **OLTP → Parquet materialization** (`olap/materialize.py` via DuckDB) + `olap/lake.py`
+  read helpers + `materialize` DVC stage. Verified live: 1.37M + 6.57M rows → 481M + 475M Parquet in ~26s.
+- 🔄 **Phase 4 (next)** — document ingestion → S3 (status updates into OLTP).
+- ⬜ **Phases 5–7** — document pipeline, MLflow+DVC tracking, CI/docs.
 - ⬜ **Phases 8–12** (Part II) — inference, routing, serving (live → OLTP), frontend, deploy.
 
 ## Package structure
