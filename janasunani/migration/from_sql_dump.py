@@ -100,7 +100,7 @@ async def load_from_dump(
     source_url = make_url(admin_url).set(database=db_name)
     await run_migration(
         mysql_url=source_url.render_as_string(hide_password=False),
-        target_db_url=target_db_url or settings.DB_URL,
+        target_db_url=target_db_url or settings.OLTP_DB_URL,
     )
 
 
@@ -122,7 +122,7 @@ def main() -> None:
     parser.add_argument(
         "--target-db-url",
         default=None,
-        help="Target DB URL (default: settings.DB_URL, the local grievance.db).",
+        help="Target OLTP DB URL (default: settings.OLTP_DB_URL, the local SQLite store).",
     )
     parser.add_argument(
         "--skip-restore",

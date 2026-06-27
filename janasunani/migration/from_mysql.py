@@ -20,6 +20,8 @@ from typing import Dict, Optional
 
 from loguru import logger
 from sqlalchemy import Engine, MetaData, Table, create_engine, select
+from sqlalchemy import insert as core_insert
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
@@ -56,12 +58,25 @@ async def get_existing_ticket_no(db: AsyncSession) -> set[str]:
     return set(result.scalars().all())
 
 
-async def _insert_ignore(model, target_sess: AsyncSession, records: list[dict]) -> int:
+def _dialect_insert(model, dialect_name: str):
+    """Return ``(insert_construct, supports_on_conflict)`` for the target dialect,
+    so the migration stays engine-portable (SQLite ↔ Postgres ↔ other)."""
+    if dialect_name == "postgresql":
+        return pg_insert(model), True
+    if dialect_name == "sqlite":
+        return sqlite_insert(model), True
+    return core_insert(model), False  # generic: dedup via the per-row fallback
+
+
+async def _insert_ignore(
+    model, target_sess: AsyncSession, records: list[dict], dialect_name: str
+) -> int:
     """Bulk insert ``records`` (driver executemany) with on-conflict-do-nothing,
     falling back to per-row inserts only if the batch errors."""
     if not records:
         return 0
-    stmt = sqlite_insert(model).on_conflict_do_nothing()
+    ins, on_conflict = _dialect_insert(model, dialect_name)
+    stmt = ins.on_conflict_do_nothing() if on_conflict else ins
     try:
         await target_sess.execute(stmt, records)
         await target_sess.commit()
@@ -72,7 +87,10 @@ async def _insert_ignore(model, target_sess: AsyncSession, records: list[dict]) 
     inserted = 0
     for rec in records:
         try:
-            await target_sess.execute(sqlite_insert(model).values(rec).on_conflict_do_nothing())
+            ins1, oc1 = _dialect_insert(model, dialect_name)
+            one = ins1.values(rec)
+            one = one.on_conflict_do_nothing() if oc1 else one
+            await target_sess.execute(one)
             await target_sess.commit()
             inserted += 1
         except (IntegrityError, OperationalError):
@@ -91,7 +109,10 @@ def _stream(mysql_engine: Engine, table_name: str):
 
 
 async def migrate_complaints(
-    mysql_engine: Engine, target_sess: AsyncSession, chunk_size: int = CHUNK_SIZE
+    mysql_engine: Engine,
+    target_sess: AsyncSession,
+    dialect_name: str,
+    chunk_size: int = CHUNK_SIZE,
 ) -> Dict[str, str]:
     """Stream all complaints from MySQL, insert the new ones, and return a
     ``{tracking_id: ticket_no}`` map for the action-history pass."""
@@ -116,7 +137,7 @@ async def migrate_complaints(
                     continue
                 existing.add(rec["ticket_no"])
                 recs.append(rec)
-            inserted += await _insert_ignore(ComplaintModel, target_sess, recs)
+            inserted += await _insert_ignore(ComplaintModel, target_sess, recs, dialect_name)
             seen += len(rows)
             if seen % LOG_EVERY < chunk_size:
                 logger.info(f"complaints: read {seen:,}, inserted {inserted:,}")
@@ -136,6 +157,7 @@ async def migrate_action_history(
     mysql_engine: Engine,
     target_sess: AsyncSession,
     tracking_map: Dict[str, str],
+    dialect_name: str,
     chunk_size: int = CHUNK_SIZE,
 ) -> None:
     """Stream all action-history rows once, resolving each source ``trackingId``
@@ -164,7 +186,7 @@ async def migrate_action_history(
                 except Exception as e:  # noqa: BLE001
                     logger.error(f"Action-history validation error: {e}")
             matched += len(recs)
-            inserted += await _insert_ignore(ActionHistoryModel, target_sess, recs)
+            inserted += await _insert_ignore(ActionHistoryModel, target_sess, recs, dialect_name)
             seen += len(rows)
             if seen % LOG_EVERY < chunk_size:
                 logger.info(
@@ -186,7 +208,7 @@ async def run_migration(
     """Run the full complaint + action-history migration from ``mysql_url`` into
     ``target_db_url`` (both default to config)."""
     mysql_url = mysql_url or settings.MYSQL_URL
-    target_db_url = target_db_url or settings.DB_URL
+    target_db_url = target_db_url or settings.OLTP_DB_URL
     if not mysql_url:
         raise ValueError(
             "No MySQL URL given. Set MYSQL_URL in the environment/.env or pass mysql_url."
@@ -194,15 +216,18 @@ async def run_migration(
 
     logger.info(f"Starting migration from {mysql_url} -> {target_db_url}")
     mysql_engine, target_engine = setup_engines(mysql_url, target_db_url)
+    dialect_name = target_engine.dialect.name  # 'sqlite' | 'postgresql' | …
     try:
         await init_db(target_engine)
         TargetSession = sessionmaker(
             bind=target_engine, class_=AsyncSession, expire_on_commit=False
         )
         async with TargetSession() as target_sess:
-            tracking_map = await migrate_complaints(mysql_engine, target_sess, chunk_size)
+            tracking_map = await migrate_complaints(
+                mysql_engine, target_sess, dialect_name, chunk_size
+            )
             await migrate_action_history(
-                mysql_engine, target_sess, tracking_map, chunk_size
+                mysql_engine, target_sess, tracking_map, dialect_name, chunk_size
             )
         logger.success(f"Migration completed into {target_db_url}")
     finally:

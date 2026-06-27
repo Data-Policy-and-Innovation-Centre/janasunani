@@ -27,6 +27,7 @@ INTERIM_DATA_DIR = DATA_DIR / "interim"
 PROCESSED_DATA_DIR = DATA_DIR / "processed"
 EXTERNAL_DATA_DIR = DATA_DIR / "external"
 OUTPUT_DATA_DIR = DATA_DIR / "output"
+OLTP_DATA_DIR = DATA_DIR / "oltp"
 DOCUMENTS_DIR = RAW_DATA_DIR / "documents"
 
 OUTPUTS_DIR = ROOT_DIR / "outputs"
@@ -52,6 +53,7 @@ class Directories:
     PROCESSED_DATA = PROCESSED_DATA_DIR
     EXTERNAL = EXTERNAL_DATA_DIR
     OUTPUT = OUTPUT_DATA_DIR
+    OLTP = OLTP_DATA_DIR
     DOCUMENTS = DOCUMENTS_DIR
     LOGS = LOGS_DIR
     MODELS = MODELS_DIR
@@ -61,8 +63,10 @@ class Directories:
         for directory in [
             self.DATA,
             self.RAW_DATA,
+            self.INTERIM,
             self.PROCESSED_DATA,
             self.OUTPUT,
+            self.OLTP,
             self.DOCUMENTS,
             self.LOGS,
             self.MODELS,
@@ -87,9 +91,10 @@ class Settings(BaseSettings):
     JANASUNANI_API_USERNAME: Optional[str] = os.getenv("JANASUNANI_API_USERNAME")
     JANASUNANI_API_PASSWORD: Optional[str] = os.getenv("JANASUNANI_API_PASSWORD")
 
-    # Complaint store (async SQLAlchemy over SQLite by default)
-    DB_URL: str = os.getenv(
-        "DB_URL", f"sqlite+aiosqlite:///{RAW_DATA_DIR.as_posix()}/grievance.db"
+    # OLTP store (async SQLAlchemy; swappable engine via this URL).
+    # Default: local SQLite. Deploy: e.g. postgresql+asyncpg://user:pass@host/db
+    OLTP_DB_URL: str = os.getenv(
+        "OLTP_DB_URL", f"sqlite+aiosqlite:///{OLTP_DATA_DIR.as_posix()}/janasunani.db"
     )
     DB_PASSWORD: str = os.getenv("DB_PASSWORD", "None")
 

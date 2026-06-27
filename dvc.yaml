@@ -5,10 +5,10 @@
 stages:
   migrate:
     desc: >-
-      Load the complaint store (data/raw/grievance.db) from the raw MySQL dump.
-      Requires a reachable MySQL server: export MYSQL_ADMIN_URL as an admin URL
-      WITHOUT a database (e.g. mysql+pymysql://root:pass@127.0.0.1:3306/). A local
-      MySQL 5.7 container is the easy option — see the README.
+      Cold-start: load the OLTP store (data/oltp/janasunani.db) from the raw MySQL
+      dump. Requires a reachable MySQL server: export MYSQL_ADMIN_URL as an admin
+      URL WITHOUT a database (e.g. mysql+pymysql://root:pass@127.0.0.1:3306/). A
+      local MySQL 5.7/8.0 container is the easy option — see the README.
     cmd: >-
       uv run janasunani-migrate-dump
       --dump data/raw/Dump20250730.sql
@@ -20,4 +20,4 @@ stages:
       - janasunani/db/models.py
       - janasunani/ingestion/schemas.py
     outs:
-      - data/raw/grievance.db
+      - data/oltp/janasunani.db

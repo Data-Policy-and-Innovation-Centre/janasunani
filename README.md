@@ -103,10 +103,18 @@ make deliver
 
 ## Data migration
 
-Build the local complaint store `data/raw/grievance.db` (complaints + action
-history) from the raw Janasunani MySQL dump. The loader restores the dump into a
-MySQL server, then validates and copies the two ETL tables into the SQLite store
-through one shared insert routine.
+Build the **OLTP store** `data/oltp/janasunani.db` (complaints + action history)
+from the raw Janasunani MySQL dump. The loader restores the dump into a MySQL
+server, then validates and copies the two ETL tables into the OLTP store through
+one shared insert routine.
+
+The OLTP store is **swappable**: it is addressed by `OLTP_DB_URL` (default local
+SQLite; set `postgresql+asyncpg://…` to target Postgres). The schema is managed
+by **Alembic** and is engine-portable:
+
+```bash
+uv run alembic upgrade head     # create/upgrade the OLTP schema (SQLite or Postgres)
+```
 
 **Prerequisites**
 
@@ -133,8 +141,7 @@ The migration is the `migrate` stage in `dvc.yaml`. Reproduce it with:
 dvc repro migrate        # or: make run
 ```
 
-This produces `data/raw/grievance.db` (a DVC-tracked output). Re-running is safe
-and idempotent.
+This produces `data/oltp/janasunani.db`. Re-running is safe and idempotent.
 
 **Run it directly (without DVC)**
 
@@ -145,7 +152,7 @@ uv run janasunani-migrate-dump \
 ```
 
 Use `--skip-restore` to migrate from an already-loaded MySQL database, and
-`--target-db-url` to write somewhere other than the default `grievance.db`.
+`--target-db-url` to write to a different OLTP database (e.g. Postgres).
 
 **Incremental sync from a live server**
 

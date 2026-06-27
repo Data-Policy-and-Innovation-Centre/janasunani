@@ -6,7 +6,7 @@ from sqlalchemy.orm import sessionmaker
 from janasunani.config import settings
 from janasunani.db.models import Base
 
-engine = create_async_engine(settings.DB_URL)
+engine = create_async_engine(settings.OLTP_DB_URL)
 
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 

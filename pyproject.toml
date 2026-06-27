@@ -18,7 +18,10 @@ dependencies = [
     # [asyncio] pulls greenlet, required by the async engine (not auto-installed
     # on macOS arm64).
     "sqlalchemy[asyncio]>=2.0",
-    "aiosqlite>=0.21.0",
+    "alembic>=1.13",          # engine-portable schema migrations for the OLTP store
+    "aiosqlite>=0.21.0",      # async sqlite driver (local OLTP)
+    "asyncpg>=0.30",          # async postgres driver (deploy OLTP)
+    "psycopg2-binary>=2.9",   # sync postgres driver for alembic
     "pymysql>=1.1.1",
     "duckdb>=1.4.3",
     "boto3>=1.34",
