@@ -7,7 +7,9 @@ bug a sync-only check missed), the streaming reader, executemany inserts,
 on-conflict dedup, tracking-map resolution, and idempotency.
 """
 
+import hashlib
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -113,3 +115,60 @@ async def test_govt_ticket_and_datetime_persisted(urls):
         con.close()
     assert gt == 1  # 'Yes' -> True -> 1
     assert str(created).startswith("2021-01-01 10:00:00")
+
+
+def _sha256(path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _build_ambiguous_source(path) -> None:
+    """Source with an ambiguous trackingId (TRX -> A and B) and duplicate history
+    rows differing only by date — the cases that made the load non-deterministic."""
+    con = sqlite3.connect(path)
+    con.execute(
+        "CREATE TABLE t_janasunani_etl_pre_data "
+        "(ticketNumber TEXT, trackingId TEXT, grievanceSubject TEXT)"
+    )
+    con.executemany(
+        "INSERT INTO t_janasunani_etl_pre_data VALUES (?,?,?)",
+        [("B", "TRX", "b"), ("A", "TRX", "a"), ("C", "TRC", "c")],
+    )
+    con.execute(
+        "CREATE TABLE t_janasunani_etl_history_pre_data "
+        "(trackingId TEXT, action_taken_by TEXT, action_taken_date TEXT, "
+        "action_status TEXT, action_taken_remark TEXT, complaint_status_with_authority TEXT)"
+    )
+    con.executemany(
+        "INSERT INTO t_janasunani_etl_history_pre_data VALUES (?,?,?,?,?,?)",
+        [
+            ("TRX", "O", "2021-01-02 00:00:00", "S", "r", "p"),
+            ("TRX", "O", "2021-01-01 00:00:00", "S", "r", "p"),  # same key, earlier date
+            ("TRC", "O2", "2021-02-01 00:00:00", "S2", "r2", "p2"),
+        ],
+    )
+    con.commit()
+    con.close()
+
+
+async def test_migration_is_byte_deterministic(tmp_path):
+    """Two runs from the same source produce byte-identical OLTP DBs — so DVC sees
+    the materialize input as unchanged (no spurious re-runs)."""
+    src = tmp_path / "source.db"
+    _build_ambiguous_source(src)
+    t1, t2 = tmp_path / "o1.db", tmp_path / "o2.db"
+    await run_migration(f"sqlite:///{src}", f"sqlite+aiosqlite:///{t1}")
+    await run_migration(f"sqlite:///{src}", f"sqlite+aiosqlite:///{t2}")
+
+    assert _sha256(t1) == _sha256(t2), "OLTP DB is not byte-reproducible"
+
+    con = sqlite3.connect(t1)
+    try:
+        # ambiguous TRX resolved deterministically to min(ticket_no) = 'A'
+        ah = con.execute(
+            "SELECT ticket_no, action_taken_date FROM action_history WHERE ticket_no='A'"
+        ).fetchall()
+    finally:
+        con.close()
+    # the two TRX rows share a natural key -> deduped to one, keeping the earliest date
+    assert len(ah) == 1
+    assert str(ah[0][1]).startswith("2021-01-01")
