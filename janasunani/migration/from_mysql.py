@@ -98,16 +98,20 @@ async def _insert_ignore(
     return inserted
 
 
-def _stream(mysql_engine: Engine, table_name: str, order_by: list[str]):
-    """Open a server-side streaming cursor over ``table_name``, ordered by
-    ``order_by`` columns so insertion order (hence autoincrement ids and
-    dedup tie-breaks) is **deterministic** — the migration is fully reproducible.
-    Returns ``(connection, mapping_result)``; caller must close the connection."""
+def _stream(mysql_engine: Engine, table_name: str):
+    """Open a server-side streaming cursor over ``table_name`` (full scan).
+
+    No ORDER BY on purpose: ``SELECT *`` over a ``longtext`` column forces a
+    filesort that buffers the long text and exhausts MySQL's sort memory at this
+    scale. Reproducibility instead comes from (1) the deterministic ``min``
+    tracking map and (2) the source's stable clustered-scan order (a PK-less
+    InnoDB table scans in insertion order; SQLite in rowid order), so insertion
+    order — hence autoincrement ids and which duplicate is kept — is stable run
+    to run. Returns ``(connection, mapping_result)``; caller must close it."""
     meta = MetaData()
     table = Table(table_name, meta, autoload_with=mysql_engine)
-    stmt = select(table).order_by(*(table.c[col] for col in order_by))
     conn = mysql_engine.connect().execution_options(stream_results=True)
-    result = conn.execute(stmt).mappings()
+    result = conn.execute(select(table)).mappings()
     return conn, result
 
 
@@ -122,7 +126,7 @@ async def migrate_complaints(
     existing = await get_existing_ticket_no(target_sess)
     logger.info(f"Streaming complaints (target already has {len(existing)})")
 
-    conn, result = _stream(mysql_engine, COMPLAINT_TABLE, order_by=["ticketNumber"])
+    conn, result = _stream(mysql_engine, COMPLAINT_TABLE)
     seen = inserted = 0
     try:
         while True:
@@ -175,20 +179,7 @@ async def migrate_action_history(
         logger.info("No action_history to migrate (empty tracking_map).")
         return
 
-    # Order by the dedup natural key (+ trackingId, action_taken_date) so that,
-    # among rows sharing a key, the same one is kept on every run.
-    conn, result = _stream(
-        mysql_engine,
-        ACTION_HISTORY_TABLE,
-        order_by=[
-            "trackingId",
-            "action_taken_by",
-            "action_status",
-            "action_taken_remark",
-            "complaint_status_with_authority",
-            "action_taken_date",
-        ],
-    )
+    conn, result = _stream(mysql_engine, ACTION_HISTORY_TABLE)
     seen = matched = inserted = 0
     try:
         while True:

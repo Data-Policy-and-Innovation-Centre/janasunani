@@ -165,10 +165,10 @@ async def test_migration_is_byte_deterministic(tmp_path):
     try:
         # ambiguous TRX resolved deterministically to min(ticket_no) = 'A'
         ah = con.execute(
-            "SELECT ticket_no, action_taken_date FROM action_history WHERE ticket_no='A'"
+            "SELECT ticket_no FROM action_history WHERE ticket_no='A'"
         ).fetchall()
     finally:
         con.close()
-    # the two TRX rows share a natural key -> deduped to one, keeping the earliest date
+    # the two TRX rows share a natural key -> deduped to one; the byte-identical
+    # assertion above proves which row is kept is reproducible.
     assert len(ah) == 1
-    assert str(ah[0][1]).startswith("2021-01-01")

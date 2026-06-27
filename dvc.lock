@@ -17,8 +17,8 @@ stages:
       size: 9764
     - path: janasunani/migration/from_mysql.py
       hash: md5
-      md5: 33caf3ec2a57ec1e57fdf2188ff5a8df
-      size: 9752
+      md5: 11745b6edf0abba9628909fcd285e656
+      size: 10567
     - path: janasunani/migration/from_sql_dump.py
       hash: md5
       md5: 4654767a96c7552ceb387370bff6dbaf
@@ -31,15 +31,15 @@ stages:
     outs:
     - path: data/oltp/janasunani.db
       hash: md5
-      md5: a7ef84770769c25f53bfed56970839e0
-      size: 7025922048
+      md5: 01520c5307e271b46be6ea7837198e5f
+      size: 7026270208
   materialize:
     cmd: uv run janasunani-materialize
     deps:
     - path: data/oltp/janasunani.db
       hash: md5
-      md5: a7ef84770769c25f53bfed56970839e0
-      size: 7025922048
+      md5: 01520c5307e271b46be6ea7837198e5f
+      size: 7026270208
     - path: janasunani/olap/materialize.py
       hash: md5
       md5: 75e7526bdfafb9475029ec1bc6d76ff6
@@ -47,8 +47,8 @@ stages:
     outs:
     - path: data/interim/action_history.parquet
       hash: md5
-      md5: 4dc0318d070b1d7608813e71eb43e538
-      size: 497009928
+      md5: 3120343622903308832def778a420ee6
+      size: 497009949
     - path: data/interim/complaints.parquet
       hash: md5
       md5: f0eeb1379c88a70ecf2fac5bad07868f
