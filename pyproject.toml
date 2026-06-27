@@ -49,6 +49,7 @@ categorizer = []     # MuRIL grievance categorizer
 janasunani-migrate-mysql = "janasunani.migration.from_mysql:main"
 janasunani-migrate-dump = "janasunani.migration.from_sql_dump:main"
 janasunani-materialize = "janasunani.olap.materialize:main"
+janasunani-ingest-documents = "janasunani.ingestion.document_ingestion:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -64,9 +65,11 @@ dpic = { git = "ssh://git@github.com/Data-Policy-and-Innovation-Centre/dpic-org.
 dev = [
     "ipykernel>=7.2.0",
     "jupyter>=1.1.1",
+    "moto[s3]>=5.0",
     "nbstripout>=0.9.1",
     "pytest>=9.0.3",
     "pytest-asyncio>=0.24",
+    "respx>=0.21",
     "ruff>=0.15.15",
 ]
 
