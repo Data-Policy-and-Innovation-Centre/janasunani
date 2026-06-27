@@ -1,320 +1,236 @@
-# janasunani Roadmap — Part I: Migration · Part II: Automation Prototype
+# janasunani Roadmap — Part I: Foundation/Migration · Part II: Automation Prototype
 
 ## Context
 
 `janasunani` is becoming "Janasunani 2.0," the unified, AI-powered grievance redressal system for
-Odisha. The end goal is a **full automation prototype**: take a **raw grievance** (typed text or an
-uploaded scanned document), **extract** its text, **redact PII**, **classify** it (category / subcategory
-/ department), **summarize** it, and **route** it to the responsible office — quickly — with a polished
-**Next.js demo frontend** to show it end to end.
+Odisha. End goal: a **full automation prototype** — take a **raw grievance** (typed text or an uploaded
+scanned document), **extract** text, **redact PII**, **classify** (category / subcategory / department),
+**summarize**, and **route** it to the responsible office — quickly — with a polished **Next.js demo**.
 
-Getting there has two parts:
+- **Part I — Foundation** *(in progress)*: consolidate work from two other repos into one `janasunani/`
+  package and load the data: the cold-start SQL migration into the OLTP store, the downstream Parquet
+  materialization, document ingestion → S3, the document-processing/ML pipeline, and tracking.
+- **Part II — Automation Prototype & Demo**: a real-time single-grievance inference service, a hybrid
+  (rules + learned) routing engine, FastAPI serving that writes live grievances into the **same** OLTP DB,
+  and the Next.js UI.
 
-- **Part I — Foundation / Migration** *(in progress)*: consolidate existing work scattered across two
-  other repos into one `janasunani/` package on one stack (uv, DVC, SQLAlchemy, DuckDB, MLflow): the SQL
-  migration, the document ingestion → S3, and the document-processing/ML pipeline
-  (OCR / PII / page-type / summarize / categorize). This gives us data + models + a batch pipeline.
-- **Part II — Automation Prototype & Demo** *(future)*: wrap those pieces into a real-time,
-  single-grievance inference service, add a **hybrid (rules + learned) routing engine**, expose a FastAPI
-  API, and build a **Next.js/React** demo UI. Heavy/GPU model profile for best quality.
+This plan is the source of truth, **mirrored into the repo at `docs/ROADMAP.md`** (kept in sync).
 
-This plan is the source of truth and is **mirrored into the repo at `docs/ROADMAP.md`** (kept in sync).
+## Storage architecture — OLTP front, Parquet/OLAP downstream
 
-### Implementation status (progress tracker — keep in sync)
-- ✅ **Phase 0** — scaffolding & dependencies (package skeleton, uv deps, optional ML groups)
-- ✅ **Phase 1** — DB / ORM layer (`Complaint` expanded to the dump's full 56-col set; schemas = source→ORM
-  map; session, crud, merged config, `.env.example`)
-- ✅ **Phase 2** — SQL migration: `from_mysql.py` (config-driven) + `from_sql_dump.py` converge on one
-  validated insert routine; console scripts; package made installable (hatchling). *Real-data row mapping
-  verified; the full 3.2 GB live restore is deferred until a MySQL server (Docker/creds) is available.*
-- ⬜ **Phase 3** — document ingestion → S3 *(next)*
-- ⬜ **Phase 4** — document processing pipeline (refold `document_pipeline`, DVC-track model artifacts)
-- ⬜ **Phase 5** — MLflow + DVC dual tracking + `dvc.yaml` stages
-- ⬜ **Phase 6** — tests, CI, docs
-- ⬜ **Part II — Phase 7** — real-time inference core (warm `GrievanceProcessor`)
-- ⬜ **Part II — Phase 8** — hybrid routing engine (rules + learned)
-- ⬜ **Part II — Phase 9** — FastAPI serving API
-- ⬜ **Part II — Phase 10** — Next.js/React demo frontend
-- ⬜ **Part II — Phase 11** — demo integration & deploy (docker-compose + Terraform, S3, `make demo`)
+```
+  MySQL dump ──(migrate: from_sql_dump → from_mysql)──►  OLTP DB  ──(materialize: DuckDB/Polars)──►  Parquet lake
+                                                          (SQLAlchemy,                                 (data/interim,
+  live demo app (Part II, seeded w/ fake data) ─────────► swappable)                                   DVC-tracked)
+                                                              │                                              │
+                                                     point reads/writes                              analytics + ML
+                                                      (FastAPI/demo)                                (DuckDB / Polars)
+```
+
+- **OLTP = system of record** (the existing `db/` ORM layer — **kept**). Holds migrated history **and**
+  live grievances. **Swappable DBMS** via `OLTP_DB_URL`: SQLite locally (the `grievance.db` we already
+  built), PostgreSQL on AWS (container; RDS later) — just change the URL. SQLAlchemy (async) keeps it
+  dialect-portable; **Alembic** for schema migrations; the `db/crud.py` repository is the engine-agnostic
+  access layer.
+- **OLAP = derived Parquet, no ORM.** A downstream **materialization** step (DuckDB reads the OLTP DB via
+  its `sqlite`/`postgres` scanner → `COPY … TO` Parquet in `data/interim/`) feeds analytics, ML training,
+  dashboards, and the demo's history browse/search. Query with DuckDB SQL / Polars.
+- **Why this shape:** OLTP gives transactional row ops + one front door for history+live; Parquet gives
+  fast columnar scans for ML/analytics without hammering the transactional DB. Reuses everything built.
 
 ### Confirmed decisions
-- Source of the doc-processing/ML pipeline: the `grievance-pipeline` `document_pipeline` (NOT the ORTPS
-  analysis pipeline, which is out of scope).
-- SQL migration: **both** a raw-dump loader and a live-MySQL sync.
-- Layout: refold into the `janasunani/` package (drop the old FastAPI "backend" framing — a fresh serving
-  layer is reintroduced cleanly in Part II).
-- MLflow: local file-based tracking + registry; artifacts to the existing S3/DVC remote.
-- **Part II**: frontend = **Next.js/React (polished)**; routing = **hybrid (rules + learned)**; demo input
-  = **both typed text and document upload**; inference profile = **heavy/GPU (best quality)**.
+- Topology: **dump → OLTP → (downstream) → Parquet**; live app later feeds the **same** OLTP DB (fake data
+  for the demo). **Keep the existing `db/` ORM + `crud.py` + migration** — they are the OLTP layer.
+- OLTP is **swappable** (SQLAlchemy + `OLTP_DB_URL`, Alembic, asyncpg/aiosqlite). OLAP Parquet is derived,
+  no ORM.
+- SQL migration supports **both** a raw-dump cold start and a live-MySQL sync.
+- Doc-processing/ML pipeline source = the `grievance-pipeline` `document_pipeline` (NOT ORTPS).
+- MLflow: local file-based tracking + registry; artifacts to S3/DVC remote.
+- **Part II**: Next.js/React frontend; hybrid (rules + learned) routing; text **and** document input;
+  heavy/GPU inference.
+- **Testing policy**: every feature ships with real-code-path pytest tests, run before a phase is "done".
+- DVC-track the raw dump + derived Parquet; the OLTP DB is operational (not DVC-tracked) — back it up to S3.
 
-### Testing policy (applies to EVERY phase)
+### Implementation status
+- ✅ **Phase 0** — scaffolding & dependencies.
+- ✅ **Phase 1** — OLTP layer: `db/models.py` (`Complaint` = full 56-col dump set + `tracking_id` + 4
+  ingestion cols; `ActionHistory`; tracking tables), `db/session.py`, `db/crud.py`, `ingestion/schemas.py`
+  (source→field map), merged `config.py`. 19 tests passing.
+- ✅ **Phase 2** — cold-start migration `dump → OLTP` (`from_sql_dump` restore + `from_mysql` streaming
+  load). Ran the FULL dataset: **1,371,288 complaints + 6,565,323 action history** into `grievance.db`
+  (~10 min). Real-data + integration tests passing.
+- 🔄 **Phase 2b (next, small)** — make the migration target **swappable**: `DB_URL`→`OLTP_DB_URL`, add
+  `asyncpg` + **Alembic** baseline so the same load runs against SQLite or Postgres.
+- ⬜ **Phase 3** — **OLTP → Parquet materialization** (the "downstream to Parquet") + DuckDB read helpers.
+- ⬜ **Phases 4–7** — document ingestion → S3, document pipeline, MLflow+DVC tracking, CI/docs.
+- ⬜ **Phases 8–12** (Part II) — inference, routing, serving (live → OLTP), frontend, deploy.
 
-Every feature ships with **robust automated tests (pytest), run and shown passing before the phase is
-called done.** This is not optional and not deferred to Phase 6 — Phase 6 only adds CI wiring and broader
-coverage. The rule exists because several migration bugs reached "done" on shortcut verification (sync
-engine + tiny samples): the async path's missing `greenlet` and an O(n²) action-history loop both only
-surfaced on the live run.
-
-Concretely:
-- **Exercise the real code path**, not a simplified stand-in. Async DB tests use `create_async_engine`
-  (aiosqlite) so the greenlet/async path actually runs.
-- **Integration-test the migration without MySQL/Docker:** build a SQLite "source" with the MySQL table
-  names (`t_janasunani_etl_pre_data`, `t_janasunani_etl_history_pre_data`) — `run_migration` reflects
-  tables by name, so it runs against any SQLAlchemy engine.
-- Cover happy-path counts, **idempotency** (re-run = no dups), malformed/edge inputs, the schema
-  source→ORM alias mapping (catches drift), and skip/dedup behavior.
-- Gate each phase on `uv run pytest` + `uv run ruff check .` (dev dep: `pytest-asyncio`).
-
-Each phase below has a **Tests** bullet listing the cases that guard it.
-
----
-
-# PART I — Foundation / Migration
-
-## Sources (exact paths / branches)
-
-| Source | Repo (local path) | Branch | What we take |
-|---|---|---|---|
-| DB/ORM layer | `/Users/ymohanty/Documents/GitHub/grievance` | `dev` | `backend/app/db/{models,session,crud}.py`, `backend/app/ingestion/schemas.py`, `backend/app/config.py` |
-| Document ingestion → S3 | `.../grievance` | `dev` | `backend/app/ingestion/{document_ingestion,client,orchestrator}.py`, `backend/app/s3service.py` |
-| SQL migration | `.../grievance` | any (`documents`) | `backend/app/db/migration_from_mysql.py` (live MySQL→SQLite) — the *logic*, rebound to the `dev` ORM |
-| Document processing + ML pipeline | `/Users/ymohanty/Documents/GitHub/2025-autumn-dpic` (remote: `grievance-pipeline`) | `pipeline` | `src/document_pipeline/**`, `models/**` (format_classifier `.pkl`, pii_tagger code, summarizer) |
-
-Inspect source files non-destructively with `git -C <repo> show <branch>:<path>`.
-
-## Target package structure
+## Package structure
 
 ```
 janasunani/
-  config.py            # paths/logging + Settings (DB, AWS/S3, API, MYSQL_URL) + directories shim   [DONE]
-  db/                  # async SQLAlchemy over grievance.db (complaints/action_history)             [DONE]
-    models.py  session.py  crud.py
-  ingestion/           # API client, schemas (source→ORM map), document ingestion → S3
-    schemas.py [DONE]  client.py  document_ingestion.py  s3service.py  orchestrator.py
-  migration/           # SQL migration (both paths)
-    from_mysql.py      # ported migration_from_mysql.py (live MySQL → SQLite)
-    from_sql_dump.py   # NEW: load the raw mysqldump → DB
-  pipeline/            # refold of document_pipeline (OCR/PII/page-type/summarize/categorize)
-    cli.py  config.py  db.py  pipeline.py  stages/{...}/...
-  tracking/            # MLflow + DVC dual-tracking helpers
-    mlflow_utils.py
-models/                # ML artifacts (DVC-tracked)
-docs/ROADMAP.md        # this plan, mirrored into the repo
+  config.py              # paths/logging + Settings (OLTP_DB_URL, MYSQL_URL, AWS/S3, API)        [DONE]
+  db/                    # OLTP layer — SQLAlchemy (KEEP). Swappable via OLTP_DB_URL + Alembic.
+    models.py session.py crud.py  (alembic/)                                                      [DONE]
+  ingestion/
+    schemas.py           # Pydantic source→field map + API DTOs                                   [DONE]
+    __init__.py          # OFFICE/STATUS maps                                                      [DONE]
+    client.py document_ingestion.py s3service.py orchestrator.py   # legacy API + docs→S3 (Phase 4)
+  migration/             # cold-start dump + live MySQL sync -> OLTP
+    from_mysql.py from_sql_dump.py                                                                 [DONE]
+  olap/                  # downstream analytics — DuckDB + Parquet (NO ORM)
+    materialize.py       #   OLTP DB -> Parquet (DuckDB sqlite/postgres scanner -> COPY)
+    lake.py              #   read/query helpers over the Parquet lake (DuckDB/Polars)
+  pipeline/              # document processing (OCR/PII/page-type/summarize/categorize)
+  inference/ routing/ serving/ tracking/                          # Part II
+data/
+  raw/                   # Dump20250730.sql (raw input, DVC-trackable)
+  oltp/                  # OLTP DB file in dev (SQLite); Postgres volume in deploy   [relocate grievance.db here]
+  interim/               # OLAP Parquet (complaints.parquet, action_history.parquet) — DVC-tracked
+models/                  # ML artifacts (DVC-tracked)
+docs/ROADMAP.md          # this plan, mirrored
 ```
-
-Two SQLite DBs stay **separate**, joined on `ticket_no`/`ticket_number`:
-- `data/raw/grievance.db` — complaints + action history (async SQLAlchemy ORM).
-- `data/output/pipeline.sqlite` — `pages` / `documents` / `unreadable_pages` (raw `sqlite3`).
-
-Import rewrites: `app.*` → `janasunani.*`; `document_pipeline.*` → `janasunani.pipeline.*`.
 
 ## Authoritative schema = the SQL dump  *(reference)*
 
-The cold-start data source is a 3.2 GB `mysqldump` ([data/raw/Dump20250730.sql](data/raw/Dump20250730.sql))
-of MySQL DB `sociomatics_ticket` (5.7.44), with only **2 tables**:
-- `t_janasunani_etl_pre_data` — complaint table, **56 columns** → `Complaint` ORM.
-- `t_janasunani_etl_history_pre_data` — action history, **6 columns** → `ActionHistory` ORM.
+3.2 GB `mysqldump` ([data/raw/Dump20250730.sql](data/raw/Dump20250730.sql)) of `sociomatics_ticket`
+(5.7.44): `t_janasunani_etl_pre_data` (complaints, 56 cols) + `t_janasunani_etl_history_pre_data` (action
+history, 6 cols). Messy source names → clean snake_case via the **one source→field map** (Pydantic aliases
+in [ingestion/schemas.py](janasunani/ingestion/schemas.py)); `trackingId`↔`tracking_id` joins the tables.
+This is the OLTP `complaints`/`action_history` schema; the Parquet lake is a faithful columnar copy.
 
-The dump (not any grievance branch) defines the schema. Source names are a messy mix (camelCase,
-PascalCase, `int*`/`vch*` prefixes, real typos like `officeNAme`, `RecievedBy`, `intCompliantStatusId`);
-they map to clean snake_case ORM fields via **one source→ORM map** — the Pydantic `Field` aliases in
-`janasunani/ingestion/schemas.py`. The final `Complaint` = dump's 56 columns ∪ 4 ingestion-populated
-document columns (`local_document_path`, `document_downloaded`, …). Paired `(id, name)` source columns
-become both `*_id` and the name column (e.g. `intDistId`→`district_id`, `districtName`→`district`).
-`tracking_id` (from `trackingId`) is the join key between complaints and action history.
-
-*(Branch nuance: `migration_from_mysql.py` is ~identical across branches; its ORM/schema deps differ
-between `dev` and `documents`. We adopt `dev`'s ORM style/plumbing and expand it to the dump's full
-column set, so ingestion and migration share one schema in one DB.)*
-
-## Phase 2 — SQL migration (both paths)  ⬜ next
-- Port `migration_from_mysql.py` → `janasunani/migration/from_mysql.py`; `MYSQL_URL` config-driven (env)
-  not hard-coded; reuse the chunked async insert + Pydantic validation + on-conflict-do-nothing dedup.
-- NEW `janasunani/migration/from_sql_dump.py`: load the raw `mysqldump` (`sociomatics_ticket`, MySQL 5.7,
-  utf8mb4) by restoring it into a **local/throwaway MySQL 5.7**, then funnel through the *same*
-  `from_mysql` table-copy + validation path so dump (cold start) and live MySQL (incremental) **converge
-  on one validated insert routine**. (Pure-SQLite translation of a 1GB+ utf8mb4 dump is brittle — prefer
-  the real MySQL restore.)
-- Reuse the existing `janasunani/db/crud.py` bulk-load helpers and `ingestion/schemas.py` validators.
-- Verify: run the loader on a small sample `.sql`; assert `grievance.db` row counts; round-trip real dump
-  rows through `Complaint`/`ActionHistory` schemas (catches any column the old migration ignored).
-
-## Phase 3 — Document ingestion → S3  ⬜
-- Port `s3service.py`, `ingestion/client.py`, `document_ingestion.py`, `orchestrator.py`; rewrite imports.
-- Bucket via config (`AWS_S3_DOCUMENTS`); dev-vs-prod (local FS vs S3) on `settings.ENV`.
-- Console entry points in `[project.scripts]` (e.g. `janasunani-ingest-documents`).
-- Verify: `ENV=dev` ingestion writes to `LOCAL_STORAGE_PATH`; with `moto`, assert `upload_fileobj` and the
-  `Complaint` document-status columns update.
-
-## Phase 4 — Document processing pipeline  ⬜
-- Refold `src/document_pipeline/**` → `janasunani/pipeline/**`. Preserve the CLI, `PipelineConfig`,
-  `STAGE_ORDER` + **lazy per-stage imports** (the existing fix for the transformers-version conflict
-  between DeepSeek-OCR/categorizer and the rest), and the `pages`/`documents`/`unreadable_pages` schema.
-- Populate the `pipeline-core` / `ocr-deepseek` / `categorizer` optional dependency groups (heavy ML deps)
-  now. **Python 3.13 risk**: attempt 3.13; isolate any stage that breaks behind its group / separate env.
-- Move `models/` artifacts in and **DVC-track** them; document manually-placed weights (PII CRF, MuRIL).
-- Wire the categorizer's complaints-JSON to an export from `grievance.db`.
-- Verify: `init-db` + `run --stages format_classifier ocr_extraction --ocr-engine pytesseract` on the
-  2-file sample → `pages` rows with `extracted_text`.
-
-## Phase 5 — MLflow + DVC dual tracking  ⬜
-- `janasunani/tracking/mlflow_utils.py`: local backend store (`mlflow.db`/`./mlruns`), artifacts to the S3
-  remote. Helpers to start runs, log params/metrics, register models, and tag each registered version with
-  its **DVC path + content hash** (MLflow owns run/registry metadata; DVC owns the bytes).
-- `dvc.yaml` stages mirroring the pipeline (migrate → ingest → format → ocr → pii → page-type → summarize
-  → categorize) so `dvc repro` reproduces and CI `dvc dag`/`dvc repro` pass.
-
-## Phase 6 — Tests, CI, docs  ⬜
-- Port/adapt ingestion tests (`moto`) and pipeline smoke tests into `tests/`.
-- Update `README.md` / `AGENTS.md` (package map, env-group install matrix, run commands).
-- `uv run ruff check .`, `uv run pytest`, and the three GitHub workflows pass.
+## Testing policy (EVERY phase)
+Pytest on the **real code path**, run + green before "done". Async paths use a real async engine; OLTP
+repository tests run against **both SQLite and Postgres**; the materialization is tested by reading back the
+Parquet. Cover counts, idempotency, malformed inputs, the source→field mapping, skip/dedup. Gate on
+`uv run pytest` + `uv run ruff check .`.
 
 ---
 
-# PART II — Automation Prototype & Demo  ⬜ (future)
+# PART I — Foundation
 
-**Goal:** a live, single-grievance path — *raw input → extract → redact → classify → summarize → route →
-result* — behind a FastAPI service and a polished Next.js UI. Heavy/GPU models, loaded once and reused.
+## Phase 2b — Make OLTP swappable  🔄 next (small)
+- `config.py`: rename `DB_URL` → `OLTP_DB_URL` (default `sqlite+aiosqlite:///data/oltp/janasunani.db`;
+  deploy `postgresql+asyncpg://…`). Relocate the dev DB from `data/raw/grievance.db` → `data/oltp/`.
+- Add `asyncpg`; add **Alembic** (`db/alembic/`) with a baseline migration generated from the ORM, so
+  schema creation is engine-portable (replaces ad-hoc `create_all`).
+- Keep `from_mysql.run_migration(target_db_url=…)` (already parameterized) — it now targets any engine.
+- **Tests**: `db/crud.py` CRUD + the migration integration test run against **SQLite and Postgres** (test
+  container); Alembic upgrade/downgrade on both.
 
-### New package structure (added to Part I)
+## Phase 3 — OLTP → Parquet materialization (downstream)  ⬜
+- `olap/materialize.py`: connect DuckDB, `INSTALL/LOAD sqlite` (or `postgres`), `ATTACH` the OLTP DB,
+  `COPY (SELECT * FROM complaints) TO data/interim/complaints.parquet (FORMAT parquet)` and likewise for
+  `action_history`. Engine-agnostic (works off `OLTP_DB_URL`). Console script `janasunani-materialize`.
+- `olap/lake.py`: helpers to query the Parquet via DuckDB/Polars (the analytics + history-browse read path).
+- `dvc.yaml`: `migrate` (dump → OLTP) → `materialize` (OLTP → Parquet, DVC-tracked outs). Update README.
+- **Tests**: seed a tiny OLTP DB, materialize, read the Parquet back → row counts + a couple values match;
+  `lake.py` query helper returns expected rows.
+
+## Phase 4 — Document ingestion → S3  ⬜
+- Port `s3service.py`, `ingestion/client.py`, `document_ingestion.py`, `orchestrator.py`. Document-download
+  status updates write to **OLTP** (row updates via `crud.py` — natural fit now). Bucket via config; dev-vs-
+  prod on `settings.ENV`; console entry points.
+- **Tests**: `moto`-mocked S3 — `upload_fileobj` called; OLTP status columns updated; URL edge cases.
+
+## Phase 5 — Document processing pipeline  ⬜
+- Refold `src/document_pipeline/**` → `janasunani/pipeline/**`; keep CLI, `PipelineConfig`, `STAGE_ORDER` +
+  **lazy per-stage imports** (transformers-conflict fix). Populate `pipeline-core`/`ocr-deepseek`/
+  `categorizer` optional dep groups; DVC-track `models/`. Outputs (`pages`/`documents`) land in OLTP and/or
+  get materialized to Parquet. Categorizer reads complaints from OLTP.
+- **Tests**: per-stage unit tests on fixtures; format+pytesseract smoke run on the 2-file sample.
+
+## Phase 6 — MLflow + DVC dual tracking  ⬜
+- `tracking/mlflow_utils.py`: local backend, S3 artifacts; register models + tag each version with its DVC
+  path + content hash. `dvc.yaml` stages mirror the flow.
+- **Tests**: a logged run + registered version resolves to a real DVC artifact; `dvc dag` renders.
+
+## Phase 7 — CI + docs  ⬜
+- Wire `uv run pytest` + `uv run ruff` into the GitHub workflows; expand coverage; update `README`/`AGENTS`.
+
+---
+
+# PART II — Automation Prototype & Demo  ⬜
+
+**Goal:** live single-grievance path — *raw input → extract → redact → classify → summarize → route →
+persist to OLTP → view* — behind FastAPI + a Next.js UI. The live app writes into the **same** OLTP DB
+(seeded with fake data for the demo); analytics/history read the Parquet lake.
+
 ```
-janasunani/
-  inference/     # single-grievance, warm-model inference (wraps pipeline stages for one document/text)
-    service.py   #   load-once model handles; extract→redact→classify→summarize for one grievance
-  routing/       # hybrid (rules + learned) routing engine
-    rules.py     #   deterministic lookup from janasunani-mappings master tables
-    model.py     #   learned router trained on dump history; MLflow-registered
-    router.py    #   combine: rules backbone + learned scorer + confidence/fallback
-  serving/       # FastAPI app
-    api.py       #   POST /grievance (text or file) → full structured result; loads models from MLflow registry
-frontend/        # Next.js + React + Tailwind demo app
-deploy/          # docker-compose (api + frontend + mlflow + proxy), demo seed data, make demo
-  terraform/     #   minimal IaC: EC2 + IAM role + security group + S3 buckets
+janasunani/inference/service.py   # warm GrievanceProcessor (load models once; extract→redact→classify→summarize)
+janasunani/routing/{rules,model,router}.py   # hybrid: rule backbone + learned scorer + confidence/fallback
+janasunani/serving/api.py         # FastAPI: POST /grievance, GET /grievance/{id}, GET /history (lake)
+frontend/                         # Next.js + React + Tailwind
+deploy/                           # docker-compose (api, frontend, mlflow, oltp-postgres, proxy) + terraform/
 ```
 
-Infra is **Docker + S3, minimal managed services** — see "Cross-cutting — Infrastructure".
+## Phase 8 — Real-time inference core  ⬜
+- Each pipeline stage gets a single-item `process(text|image_bytes)->dict` beside its batch path. Warm
+  `GrievanceProcessor` loads models once from the MLflow registry; text skips OCR, documents run GPU OCR.
+- **Tests**: one sample text + one PDF → structured result; heavy model-load mocked.
 
-## Phase 7 — Real-time inference core  ⬜
-- Refactor each pipeline stage to expose a **single-item function** (`process(text|image_bytes) -> dict`)
-  alongside its existing batch DB path — reuse the same model code, no duplication. The lazy-import pattern
-  stays (heavy stage deps load only when that stage runs).
-- `janasunani/inference/service.py`: a warm `GrievanceProcessor` that loads models **once** (OCR, PII-CRF,
-  page-type ViT, BART summarizer, MuRIL categorizer) — pulled by version from the **MLflow registry**
-  (Phase 5) — and runs extract → redact → classify → summarize for one grievance. Text input skips OCR;
-  document input (PDF/JPG bytes) runs DeepSeek OCR on GPU first.
-- Verify: feed one sample text and one sample PDF; assert a structured result
-  (`extracted_text`, `redacted_text`, `category`, `subcategory`, `dept`, `summary`) within target latency.
+## Phase 9 — Routing engine (hybrid)  ⬜
+- `routing/rules.py`: deterministic mapping from the `janasunani-mappings` master tables (category/
+  subcategory + district → dept → office/designation + escalation). *(AGENTS.md gate: confirm read access.)*
+- `routing/model.py`: learned router trained on the OLAP history (features → handling office); MLflow-
+  registered. `routing/router.py`: combine + confidence/fallback.
+- **Tests**: rule lookups; learned-router top-k on held-out; combiner fallback.
 
-## Phase 8 — Routing engine (hybrid)  ⬜
-- **Rule backbone** (`routing/rules.py`): deterministic mapping using the `data/raw/janasunani-mappings/`
-  master tables (`m_admin_category`, `m_admin_subcategory`, `m_admin_offices`,
-  `m_office_designation_mapping`, `m_admin_hierarchy_value`, escalation tables `t_forward_escalation` /
-  `t_admin_escalation`) to resolve category/subcategory + district → department → office/designation, plus
-  the escalation path. *(Access to these reference tables to be confirmed before reading — AGENTS.md
-  restricts `data/`.)*
-- **Learned router** (`routing/model.py`): train on the **migrated dump history** — features
-  (category, subcategory, district, dept, mode, …) → label (the office / `pending_with` / `tagged_to` that
-  actually handled it). Log/register in MLflow; evaluate top-k accuracy against held-out history.
-- **Combine** (`routing/router.py`): rules give the candidate set + escalation; the learned model scores /
-  disambiguates and fills gaps; emit a routed office + confidence + fallback when confidence is low.
-- Verify: held-out routing accuracy reported in MLflow; a handful of sample grievances route to sensible
-  offices with an escalation path.
+## Phase 10 — Serving API + live wiring  ⬜
+- `serving/api.py`: `POST /grievance` (text or file) → inference + routing → **persist a new grievance into
+  OLTP** (via `crud.py`) → return result; `GET /grievance/{id}` + status update; `GET /history` browse/
+  search via `olap/lake.py`. Models warm from MLflow; `/health`; CORS. **Seed fake live grievances**.
+- **Tests**: API tests (TestClient) with mocked processor against a temp OLTP DB — submit→persist→fetch;
+  history endpoint returns lake rows.
 
-## Phase 9 — Serving API (FastAPI)  ⬜
-- `janasunani/serving/api.py`: `POST /grievance` accepting **multipart** (typed `text` or an uploaded
-  `file`) → returns the full pipeline result + routing decision as JSON. Async, GPU-backed, models warm at
-  startup from the MLflow registry. Add `/health` and basic timing metrics; CORS for the frontend.
-- Console entry point (e.g. `janasunani-serve`) + uvicorn config.
-- Verify: `curl` the endpoint with text and with a PDF → structured JSON; concurrent requests reuse warm
-  models (no reload per request).
+## Phase 11 — Demo frontend (Next.js)  ⬜
+- Submit (text + upload) → staged view (extracted/redacted text, category/subcategory/dept, summary,
+  routing + escalation + confidence) + a history browse/search view. Env-configurable API URL.
+- **Tests**: a couple of Playwright happy-path checks.
 
-## Phase 10 — Demo frontend (Next.js/React)  ⬜
-- `frontend/`: Next.js + React + Tailwind. A single-page flow: submit a grievance (text box **and** file
-  upload), then show — in a clean, staged UI — extracted text, redacted text, predicted
-  category/subcategory/department, the summary, and the **routing decision** (office + escalation path +
-  confidence). Loading/streaming states so the "quick" story lands.
-- Talks to the Phase 9 API; env-configurable API base URL.
-- Verify: end-to-end in the browser — paste text or upload a scanned complaint, see the full result.
-
-## Phase 11 — Demo integration & deployment  ⬜
-- `deploy/`: docker-compose bringing up the FastAPI service (GPU) + the Next.js app; seed a set of sample
-  grievances/documents; a one-command `make demo` (or script) that launches everything.
-- Latency pass: warm caches, batch where possible, surface per-stage timings.
-- Verify: fresh-machine bring-up → open the UI → submit a real sample grievance → extract→classify→
-  summarize→route renders, with models served from the MLflow registry.
+## Phase 12 — Demo integration & deployment  ⬜
+- `deploy/docker-compose.yml`: `api` (GPU) + `frontend` + `mlflow` + **`oltp` (Postgres)** + `proxy`; seed
+  data; `make demo`. Materialize Parquet on a schedule/one-off. Latency pass.
+- **Verify**: fresh bring-up → submit a grievance in the browser → pipeline + routing renders and persists
+  to OLTP; history view shows historical tickets.
 
 ---
 
 # Cross-cutting — Infrastructure (Docker + S3, minimal managed services)
 
-**Principle:** self-host on **Docker** with **S3** as the only stateful AWS service. Avoid managed app
-services (no SageMaker, ECS/EKS, RDS, Managed MLflow, Secrets Manager). S3 we already use everywhere, so
-it stays; everything else runs in containers we control.
+Self-host on **Docker**; **S3** is the only stateful AWS dependency. OLTP DB is **swappable** — Postgres
+container for the demo (no RDS needed), repointable to RDS via `OLTP_DB_URL`.
 
-### Compute
-- A **single GPU EC2 instance** (e.g. `g5.xlarge` / `g4dn`) runs Docker + `docker-compose`. One box hosts
-  the whole demo (API + frontend + MLflow + reverse proxy). Batch/pipeline jobs run as **one-off
-  containers** (`docker compose run`), not long-lived services. Scale out later only if needed.
-- AWS access via an **EC2 IAM instance role** (S3 read/write) — no static keys baked into images. This is
-  the one piece of AWS "wiring," and it's the standard keyless way to reach S3.
-
-### Storage — all on S3 (no RDS)
-- `s3://dpic-dvc-cache/janasunani` — **DVC remote**: versions data + model artifacts (already configured).
-- `s3://janasunani-documents-*` — raw complaint **documents** (already).
-- `s3://…/mlflow-artifacts` — **MLflow artifact store**.
-- SQLite DBs (`grievance.db`, `pipeline.sqlite`) live on the instance's EBS volume and are **DVC-tracked →
-  S3**. SQLite (a file) instead of RDS keeps us managed-service-free; revisit only if concurrency demands.
-
-### Services (one `docker-compose.yml` in `deploy/`)
-- `api` — FastAPI serving (GPU; `--gpus all`), models warm-loaded from the MLflow registry.
-- `frontend` — Next.js app.
-- `mlflow` — self-hosted MLflow **tracking server** container: backend store = SQLite file (or a small
-  `postgres` container only if concurrent writes need it), artifact store = S3. For local dev, the
-  file-based MLflow from Phase 5 is enough; the container is for the shared/demo box.
-- `proxy` — Caddy/Nginx container for TLS + routing `frontend` and `api` on one host.
-- Pipeline stages run as profile-gated one-off containers (`docker compose --profile pipeline run …`),
-  honoring the per-stage dependency groups so the heavy DeepSeek/categorizer image stays separate.
-
-### Images & CI/CD
-- Build images in **GitHub Actions** (existing CI), push to **GHCR** (GitHub Container Registry) to stay
-  off AWS-managed registries; the EC2 box pulls by tag. (ECR is a fine alternative if you'd rather keep it
-  in AWS.) Pin base images; one image per dependency group (core / ocr-deepseek / categorizer) to respect
-  the transformers conflict.
-- A GPU base image (CUDA + torch) for `api`/pipeline; a slim Node image for `frontend`.
-
-### IaC (keep it light)
-- Minimal **Terraform** under `deploy/terraform/` for just: the EC2 instance + IAM role/profile, security
-  group, and the S3 buckets/prefixes. Everything app-level is `docker-compose`. (The `grievance` repo's
-  `terraform/` dir is a starting reference.) Alternative: a documented setup script if Terraform is
-  overkill for a prototype.
-
-### Config / secrets
-- `.env` files per service (not committed; `.env.example` documents them) + IAM role for S3. No managed
-  secret store.
-
-This section is realized incrementally: Phase 5 stands up MLflow (file-based locally, container on the
-box); Phase 11 assembles the full `deploy/` compose + Terraform and the `make demo` bring-up.
+- **Compute**: one GPU EC2 box runs `docker-compose` (api + frontend + mlflow + oltp-postgres + proxy);
+  batch/pipeline + materialization run as one-off containers. S3 via an EC2 IAM instance role (no static keys).
+- **Storage**: DVC remote `s3://dpic-dvc-cache/janasunani` (raw dump + Parquet lake + model artifacts);
+  `s3://janasunani-documents-*` (documents); `s3://…/mlflow-artifacts`. OLTP DB → Postgres volume (SQLite
+  file in dev), snapshotted to S3. **Don't DVC-track the big OLTP DB** — track dump + derived Parquet.
+- **Images/CI**: GitHub Actions → GHCR; one image per dep group (core / ocr-deepseek / categorizer). GPU
+  base for api/pipeline; slim Node for frontend.
+- **IaC**: minimal Terraform (`deploy/terraform/`): EC2 + IAM role + security group + S3. App-level is compose.
+- **Config/secrets**: per-service `.env` (+ `.env.example`) + IAM role for S3. No managed secret store.
 
 ## Key reuse / do-not-reinvent notes
-- Preserve the `pipeline.py` lazy-import-per-stage pattern (the existing transformers-conflict fix) and
-  reuse the same stage model code for both batch and single-item inference (Phase 7).
-- `migration_from_mysql.py` chunked async insert + validation + dedup — the dump loader funnels into it.
-- `s3service.S3Service` (upload/list/exists/presign) — reuse for ingestion **and** MLflow artifacts.
-- Routing should consume the existing `janasunani-mappings` master tables and the migrated dump history
-  rather than inventing new reference data.
+- The existing `db/` ORM + `crud.py` + `from_mysql`/`from_sql_dump` ARE the OLTP layer — keep them; only
+  generalize the target URL and add Alembic for the swap.
+- DuckDB reads SQLite/Postgres directly (scanners) — the materialization needs no ORM and no hand-rolled export.
+- Preserve the `pipeline.py` lazy-import-per-stage pattern; reuse stage code for batch + single-item inference.
+- `s3service.S3Service` — reuse for ingestion **and** MLflow artifacts.
+- Routing consumes the `janasunani-mappings` tables + OLAP history.
 
 ## Open items to confirm during implementation (non-blocking)
-- Exact S3 bucket name (`janasunani-documents` vs `janasunani-documents-main`).
-- Whether to later unify the two SQLite DBs (separate for now).
-- Permission to read `data/raw/janasunani-mappings/*` for the routing rule layer (AGENTS.md gate).
+- Exact S3 bucket name (`janasunani-documents` vs `…-main`).
+- AGENTS.md read access to `data/raw/janasunani-mappings/*` for routing rules.
+- Whether live demo grievances reuse the `complaints` table (+ AI/routing columns) or a sibling table.
+- Whether to DVC-track an OLTP "seed" snapshot for reproducible demos (vs regenerate from dump).
 
-## End-to-end verification (whole system, once Part II lands)
-1. `uv sync` (with optional groups) resolves; `import janasunani` works. *(Part I ✅)*
-2. Migration: sample `.sql` dump → `grievance.db` populated.
-3. Ingestion (`ENV=dev`): documents fetched; status columns updated.
-4. Pipeline: `init-db` + format/OCR on the 2-file sample → `pages` rows with `extracted_text`.
-5. Tracking: an MLflow run + a registered model version tagged with its DVC hash; `dvc repro` succeeds.
-6. Inference/serving: `POST /grievance` (text and PDF) → structured result + routing, from warm
-   registry-loaded models.
-7. Frontend: browser demo runs the full raw-grievance → routed-result flow.
-8. `uv run ruff check .` and `uv run pytest` green.
+## End-to-end verification (whole system)
+1. `uv sync`; `uv run pytest` + `uv run ruff check .` green.
+2. Migration: dump → OLTP DB with expected counts; OLTP CRUD/migration tests pass on **SQLite + Postgres**.
+3. Materialize: OLTP → `data/interim/*.parquet`; DuckDB/Polars read back matches OLTP counts.
+4. Ingestion (`ENV=dev`): documents fetched; OLTP status columns updated.
+5. Pipeline: format + OCR on the 2-file sample → page rows with `extracted_text`.
+6. Tracking: MLflow run + registered model tagged with DVC hash; `dvc repro` (migrate → materialize → …).
+7. Serving: `POST /grievance` (text + PDF) → result + routing **persisted to OLTP**; `GET /history` reads Parquet.
+8. Frontend: browser demo runs raw-grievance → routed-result and shows history.
