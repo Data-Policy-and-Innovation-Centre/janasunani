@@ -116,39 +116,38 @@ by **Alembic** and is engine-portable:
 uv run alembic upgrade head     # create/upgrade the OLTP schema (SQLite or Postgres)
 ```
 
-**Prerequisites**
+**Prerequisites:** Docker + `uv`, and the dump at `data/raw/Dump20250730.sql`.
 
-- The dump file at `data/raw/Dump20250730.sql` (the `sociomatics_ticket`
-  `mysqldump`).
-- A reachable MySQL server to restore the dump into, and the `mysql` client on
-  your `PATH`. The easy option is a throwaway MySQL 5.7 container:
+**Run it (one command)**
 
-  ```bash
-  docker run -d --name mysql57 -e MYSQL_ROOT_PASSWORD=pass -p 3306:3306 mysql:5.7
-  ```
-
-- An admin MySQL URL **without** a database, exported for the DVC stage:
-
-  ```bash
-  export MYSQL_ADMIN_URL="mysql+pymysql://root:pass@127.0.0.1:3306/"
-  ```
-
-**Run it (DVC node)**
-
-The migration is the `migrate` stage in `dvc.yaml`. Reproduce it with:
+The cold-start migration is a self-contained script — it brings up an ephemeral
+MySQL, restores the dump (only if not already loaded), and loads the OLTP store:
 
 ```bash
-dvc repro migrate        # or: make run
+bash scripts/migrate.sh
 ```
 
-This produces `data/oltp/janasunani.db`. Re-running is safe and idempotent.
+It writes to `OLTP_DB_URL` (default local SQLite). Tunables via env: `MYSQL_PORT`,
+`KEEP_MYSQL` (1=leave the MySQL container up for fast re-runs), `DUMP`, etc.
 
-**Run it directly (without DVC)**
+**As a DVC node (frozen)**
+
+`migrate` is also a stage in `dvc.yaml`, but it is **frozen**: it seeds an
+*operational* store that later takes live writes, so routine `dvc repro` will not
+re-run or delete it. Run it explicitly when you really want to rebuild the seed:
 
 ```bash
-uv run janasunani-migrate-dump \
-    --dump data/raw/Dump20250730.sql \
-    --mysql-url "$MYSQL_ADMIN_URL"
+dvc repro -f migrate
+```
+
+`materialize` (below) is the normal reproducible stage; `dvc repro materialize`
+skips the frozen `migrate`.
+
+**Run it directly (existing MySQL, no Docker)**
+
+```bash
+uv run janasunani-migrate-dump --dump data/raw/Dump20250730.sql \
+    --mysql-url "mysql+pymysql://root:pass@127.0.0.1:3306/"
 ```
 
 Use `--skip-restore` to migrate from an already-loaded MySQL database, and

@@ -3,27 +3,26 @@
 # added in later phases — see docs/ROADMAP.md.
 
 stages:
+  # Cold-start seed: ephemeral MySQL -> restore dump -> load the OLTP store.
+  # FROZEN: this is a heavy, infra-dependent, one-time bootstrap of an OPERATIONAL
+  # store (it later takes live writes), so routine `dvc repro` must not auto-run or
+  # wipe it. Run it explicitly with `dvc repro -f migrate` (or `bash scripts/migrate.sh`).
   migrate:
-    desc: >-
-      Cold-start: load the OLTP store (data/oltp/janasunani.db) from the raw MySQL
-      dump. Requires a reachable MySQL server: export MYSQL_ADMIN_URL as an admin
-      URL WITHOUT a database (e.g. mysql+pymysql://root:pass@127.0.0.1:3306/). A
-      local MySQL 5.7/8.0 container is the easy option — see the README.
-    cmd: >-
-      uv run janasunani-migrate-dump
-      --dump data/raw/Dump20250730.sql
-      --mysql-url "$MYSQL_ADMIN_URL"
+    frozen: true
+    cmd: bash scripts/migrate.sh
     deps:
       - data/raw/Dump20250730.sql
+      - scripts/migrate.sh
       - janasunani/migration/from_sql_dump.py
       - janasunani/migration/from_mysql.py
       - janasunani/db/models.py
       - janasunani/ingestion/schemas.py
     outs:
-      # The OLTP DB is large + operational: hash-tracked for the pipeline but not
-      # cached/pushed (cache: false). The analytical Parquet (below) is DVC-cached.
+      # Large + operational: cache:false (hash-tracked, not pushed), persist:true
+      # (never deleted before a run).
       - data/oltp/janasunani.db:
           cache: false
+          persist: true
 
   materialize:
     desc: >-
