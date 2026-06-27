@@ -20,4 +20,20 @@ stages:
       - janasunani/db/models.py
       - janasunani/ingestion/schemas.py
     outs:
+      # The OLTP DB is large + operational: hash-tracked for the pipeline but not
+      # cached/pushed (cache: false). The analytical Parquet (below) is DVC-cached.
+      - data/oltp/janasunani.db:
+          cache: false
+
+  materialize:
+    desc: >-
+      Downstream: export the OLTP store to the Parquet lake (data/interim/) for
+      analytics, ML, and the demo's history browse. DuckDB reads the OLTP DB via
+      its sqlite/postgres scanner — engine-agnostic (uses OLTP_DB_URL).
+    cmd: uv run janasunani-materialize
+    deps:
       - data/oltp/janasunani.db
+      - janasunani/olap/materialize.py
+    outs:
+      - data/interim/complaints.parquet
+      - data/interim/action_history.parquet

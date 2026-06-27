@@ -164,6 +164,25 @@ MYSQL_URL="mysql+pymysql://user:pass@host:3306/sociomatics_ticket" \
     uv run janasunani-migrate-mysql
 ```
 
+## Analytical lake (Parquet)
+
+The OLTP store is materialized **downstream** to a columnar Parquet lake in
+`data/interim/` (DVC-tracked) for analytics, ML, and the demo's history browse.
+DuckDB reads the OLTP DB directly, so this is engine-agnostic (uses `OLTP_DB_URL`):
+
+```bash
+dvc repro materialize        # or: uv run janasunani-materialize
+```
+
+Query the lake with DuckDB SQL / Polars:
+
+```python
+from janasunani.olap import lake
+
+lake.query("SELECT category, count(*) AS n FROM complaints GROUP BY 1 ORDER BY n DESC")
+lake.read("complaints")      # whole table as a Polars DataFrame
+```
+
 ## Box Paths
 
 Collaborators may see the same shared Box folder under different path prefixes,

@@ -48,6 +48,7 @@ categorizer = []     # MuRIL grievance categorizer
 [project.scripts]
 janasunani-migrate-mysql = "janasunani.migration.from_mysql:main"
 janasunani-migrate-dump = "janasunani.migration.from_sql_dump:main"
+janasunani-materialize = "janasunani.olap.materialize:main"
 
 [build-system]
 requires = ["hatchling"]
