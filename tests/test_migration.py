@@ -104,6 +104,45 @@ async def test_migration_is_idempotent(urls):
     assert first[:2] == second[:2] == (3, 2)
 
 
+def _build_nullable_history_duplicate_source(path) -> None:
+    con = sqlite3.connect(path)
+    con.execute(
+        "CREATE TABLE t_janasunani_etl_pre_data "
+        "(ticketNumber TEXT, trackingId TEXT, grievanceSubject TEXT)"
+    )
+    con.execute(
+        "INSERT INTO t_janasunani_etl_pre_data VALUES (?,?,?)",
+        ("T1", "TR1", "nullable duplicate"),
+    )
+    con.execute(
+        "CREATE TABLE t_janasunani_etl_history_pre_data "
+        "(trackingId TEXT, action_taken_by TEXT, action_taken_date TEXT, "
+        "action_status TEXT, action_taken_remark TEXT, complaint_status_with_authority TEXT)"
+    )
+    con.executemany(
+        "INSERT INTO t_janasunani_etl_history_pre_data VALUES (?,?,?,?,?,?)",
+        [
+            ("TR1", "Officer A", "2021-01-02 10:00:00", "Forwarded", None, "pending"),
+            ("TR1", "Officer A", "2021-01-02 10:00:00", "Forwarded", None, "pending"),
+        ],
+    )
+    con.commit()
+    con.close()
+
+
+async def test_migration_dedupes_nullable_action_history_key(tmp_path):
+    source = tmp_path / "source.db"
+    target = tmp_path / "grievance.db"
+    _build_nullable_history_duplicate_source(source)
+
+    await run_migration(f"sqlite:///{source}", f"sqlite+aiosqlite:///{target}")
+    first = _counts(target)
+    await run_migration(f"sqlite:///{source}", f"sqlite+aiosqlite:///{target}")
+    second = _counts(target)
+
+    assert first[:2] == second[:2] == (1, 1)
+
+
 async def test_govt_ticket_and_datetime_persisted(urls):
     source_url, target_url, target = urls
     await run_migration(source_url, target_url)

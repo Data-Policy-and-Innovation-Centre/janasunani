@@ -115,8 +115,24 @@ def upgrade() -> None:
     sa.Column('action_taken_remark', sa.String(), nullable=True),
     sa.Column('complaint_status_with_authority', sa.String(), nullable=True),
     sa.ForeignKeyConstraint(['ticket_no'], ['complaints.ticket_no'], ),
-    sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('ticket_no', 'action_taken_by', 'action_status', 'action_taken_remark', 'complaint_status_with_authority', name='action_history_uniq')
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(
+        'action_history_uniq',
+        'action_history',
+        [
+            sa.text('(ticket_no IS NULL)'),
+            sa.text("coalesce(ticket_no, '')"),
+            sa.text('(action_taken_by IS NULL)'),
+            sa.text("coalesce(action_taken_by, '')"),
+            sa.text('(action_status IS NULL)'),
+            sa.text("coalesce(action_status, '')"),
+            sa.text('(action_taken_remark IS NULL)'),
+            sa.text("coalesce(action_taken_remark, '')"),
+            sa.text('(complaint_status_with_authority IS NULL)'),
+            sa.text("coalesce(complaint_status_with_authority, '')"),
+        ],
+        unique=True,
     )
     op.create_table('action_history_api_request_tracking',
     sa.Column('id', sa.Integer(), nullable=False),

@@ -23,9 +23,11 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     UniqueConstraint,
+    func,
 )
 from sqlalchemy.orm import declarative_base, relationship
 
@@ -165,13 +167,19 @@ class ActionHistory(Base):
     complaint_status_with_authority = Column(String, nullable=True)  # complaint_status_with_authority
 
     __table_args__ = (
-        UniqueConstraint(
-            "ticket_no",
-            "action_taken_by",
-            "action_status",
-            "action_taken_remark",
-            "complaint_status_with_authority",
-            name="action_history_uniq",
+        Index(
+            "action_history_uniq",
+            ticket_no.is_(None),
+            func.coalesce(ticket_no, ""),
+            action_taken_by.is_(None),
+            func.coalesce(action_taken_by, ""),
+            action_status.is_(None),
+            func.coalesce(action_status, ""),
+            action_taken_remark.is_(None),
+            func.coalesce(action_taken_remark, ""),
+            complaint_status_with_authority.is_(None),
+            func.coalesce(complaint_status_with_authority, ""),
+            unique=True,
         ),
     )
 
