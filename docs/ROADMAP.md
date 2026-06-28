@@ -64,8 +64,11 @@ This plan is the source of truth, **mirrored into the repo at `docs/ROADMAP.md`*
   `data/oltp/janasunani.db`.
 - ✅ **Phase 3** — **OLTP → Parquet materialization** (`olap/materialize.py` via DuckDB) + `olap/lake.py`
   read helpers + `materialize` DVC stage. Verified live: 1.37M + 6.57M rows → 481M + 475M Parquet in ~26s.
-- 🔄 **Phase 4 (next)** — document ingestion → S3 (status updates into OLTP).
-- ⬜ **Phases 5–7** — document pipeline, MLflow+DVC tracking, CI/docs.
+- ✅ **Phase 4** — document ingestion → S3: `s3service`, ingestion `client` (`with_retry` +
+  `JanasunaniAPIClient`), and `DocumentService` (download → S3/local, status into OLTP). Console script
+  `janasunani-ingest-documents`. 30 tests (moto + respx).
+- 🔄 **Phase 5 (next)** — document processing pipeline (refold `document_pipeline`, DVC-track models).
+- ⬜ **Phases 6–7** — MLflow+DVC tracking, CI/docs.
 - ⬜ **Phases 8–12** (Part II) — inference, routing, serving (live → OLTP), frontend, deploy.
 
 ## Package structure
