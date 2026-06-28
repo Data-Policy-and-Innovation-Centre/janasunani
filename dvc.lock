@@ -1,38 +1,5 @@
 schema: '2.0'
 stages:
-  migrate:
-    cmd: bash scripts/migrate.sh
-    deps:
-    - path: data/raw/Dump20250730.sql
-      hash: md5
-      md5: 5d1aced3adccecdf3f4cdfb072643928
-      size: 3474630354
-    - path: janasunani/db/models.py
-      hash: md5
-      md5: 76baafed47f3e0c17bd32ce415a2a44c
-      size: 10090
-    - path: janasunani/ingestion/schemas.py
-      hash: md5
-      md5: 8a756bd05acba74004d5b759a5905fbc
-      size: 9764
-    - path: janasunani/migration/from_mysql.py
-      hash: md5
-      md5: 11745b6edf0abba9628909fcd285e656
-      size: 10567
-    - path: janasunani/migration/from_sql_dump.py
-      hash: md5
-      md5: 4654767a96c7552ceb387370bff6dbaf
-      size: 4727
-    - path: scripts/migrate.sh
-      hash: md5
-      md5: c552aab2c1a4707bd6738b645519d944
-      size: 2775
-      isexec: true
-    outs:
-    - path: data/oltp/janasunani.db
-      hash: md5
-      md5: 243842461b1676c5d0ded4431053f0d0
-      size: 7071051776
   materialize:
     cmd: uv run janasunani-materialize
     deps:

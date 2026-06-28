@@ -130,18 +130,10 @@ bash scripts/migrate.sh
 It writes to `OLTP_DB_URL` (default local SQLite). Tunables via env: `MYSQL_PORT`,
 `KEEP_MYSQL` (1=leave the MySQL container up for fast re-runs), `DUMP`, etc.
 
-**As a DVC node (frozen)**
-
-`migrate` is also a stage in `dvc.yaml`, but it is **frozen**: it seeds an
-*operational* store that later takes live writes, so routine `dvc repro` will not
-re-run or delete it. Run it explicitly when you really want to rebuild the seed:
-
-```bash
-dvc repro -f migrate
-```
-
-`materialize` (below) is the normal reproducible stage; `dvc repro materialize`
-skips the frozen `migrate`.
+The migration is **not** a DVC stage: it seeds an *operational* store (the OLTP
+DB), whose effects DVC can't meaningfully track. DVC only tracks file artifacts —
+here, the Parquet lake produced by `materialize` (below). Run the migration as a
+job (the script above), not via `dvc repro`.
 
 **Run it directly (existing MySQL, no Docker)**
 

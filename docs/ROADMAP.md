@@ -129,7 +129,9 @@ Parquet. Cover counts, idempotency, malformed inputs, the source→field mapping
   `COPY (SELECT * FROM complaints) TO data/interim/complaints.parquet (FORMAT parquet)` and likewise for
   `action_history`. Engine-agnostic (works off `OLTP_DB_URL`). Console script `janasunani-materialize`.
 - `olap/lake.py`: helpers to query the Parquet via DuckDB/Polars (the analytics + history-browse read path).
-- `dvc.yaml`: `migrate` (dump → OLTP) → `materialize` (OLTP → Parquet, DVC-tracked outs). Update README.
+- `dvc.yaml`: a single `materialize` stage (OLTP DB → Parquet, DVC-tracked outs). The cold-start
+  migration is **not** a DVC stage — it seeds the external OLTP store (run via `scripts/migrate.sh`); DVC
+  only tracks file artifacts (the Parquet lake + models). Update README.
 - **Tests**: seed a tiny OLTP DB, materialize, read the Parquet back → row counts + a couple values match;
   `lake.py` query helper returns expected rows.
 
@@ -237,6 +239,6 @@ container for the demo (no RDS needed), repointable to RDS via `OLTP_DB_URL`.
 3. Materialize: OLTP → `data/interim/*.parquet`; DuckDB/Polars read back matches OLTP counts.
 4. Ingestion (`ENV=dev`): documents fetched; OLTP status columns updated.
 5. Pipeline: format + OCR on the 2-file sample → page rows with `extracted_text`.
-6. Tracking: MLflow run + registered model tagged with DVC hash; `dvc repro` (migrate → materialize → …).
+6. Tracking: MLflow run + registered model tagged with DVC hash; `dvc repro materialize` reproduces the lake.
 7. Serving: `POST /grievance` (text + PDF) → result + routing **persisted to OLTP**; `GET /history` reads Parquet.
 8. Frontend: browser demo runs raw-grievance → routed-result and shows history.

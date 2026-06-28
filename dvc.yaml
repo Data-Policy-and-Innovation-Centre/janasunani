@@ -1,34 +1,17 @@
-# Project pipeline stages. Keep commands and dependencies explicit so DVC can
-# reproduce outputs. More stages (ingestion, document pipeline, training) are
-# added in later phases — see docs/ROADMAP.md.
+# DVC tracks FILE artifacts (the Parquet lake, ML models) and the reproducible
+# transforms that produce them. It deliberately does NOT model operational steps
+# whose effects live in external systems DVC can't hash — the cold-start
+# migration (writes the OLTP DB), document ingestion (S3 + OLTP), and live writes.
+# Those are run as jobs/CLIs (e.g. `bash scripts/migrate.sh`,
+# `janasunani-ingest-documents`); their results reach the lake via `materialize`.
 
 stages:
-  # Cold-start seed: ephemeral MySQL -> restore dump -> load the OLTP store.
-  # FROZEN: this is a heavy, infra-dependent, one-time bootstrap of an OPERATIONAL
-  # store (it later takes live writes), so routine `dvc repro` must not auto-run or
-  # wipe it. Run it explicitly with `dvc repro -f migrate` (or `bash scripts/migrate.sh`).
-  migrate:
-    frozen: true
-    cmd: bash scripts/migrate.sh
-    deps:
-      - data/raw/Dump20250730.sql
-      - scripts/migrate.sh
-      - janasunani/migration/from_sql_dump.py
-      - janasunani/migration/from_mysql.py
-      - janasunani/db/models.py
-      - janasunani/ingestion/schemas.py
-    outs:
-      # Large + operational: cache:false (hash-tracked, not pushed), persist:true
-      # (never deleted before a run).
-      - data/oltp/janasunani.db:
-          cache: false
-          persist: true
-
   materialize:
     desc: >-
-      Downstream: export the OLTP store to the Parquet lake (data/interim/) for
-      analytics, ML, and the demo's history browse. DuckDB reads the OLTP DB via
-      its sqlite/postgres scanner — engine-agnostic (uses OLTP_DB_URL).
+      Export the OLTP store to the Parquet lake (data/interim/) for analytics, ML,
+      and the demo's history browse. DuckDB reads the OLTP DB via its
+      sqlite/postgres scanner — engine-agnostic (uses OLTP_DB_URL). The OLTP DB is
+      a plain input here, produced operationally by scripts/migrate.sh.
     cmd: uv run janasunani-materialize
     deps:
       - data/oltp/janasunani.db
