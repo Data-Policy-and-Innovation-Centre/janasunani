@@ -72,7 +72,7 @@ class DocumentService:
         )
         return len(glob.glob(pattern)) > 0
 
-    @with_retry()
+    @with_retry(raise_on_failure=True)
     async def download_document(
         self, complaint: ComplaintModel, document_type: str = "complaint"
     ) -> Optional[str]:
@@ -96,7 +96,9 @@ class DocumentService:
                 response.raise_for_status()
                 content = response.content
             if self.use_s3:
-                self.s3_service.upload_fileobj(io.BytesIO(content), filename)
+                uploaded = self.s3_service.upload_fileobj(io.BytesIO(content), filename)
+                if not uploaded:
+                    raise RuntimeError(f"Failed to upload document to S3 key {filename}")
                 stored = filename
             else:
                 stored = os.path.join(settings.LOCAL_STORAGE_PATH, filename)

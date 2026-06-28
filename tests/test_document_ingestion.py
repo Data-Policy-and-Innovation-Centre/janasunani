@@ -78,6 +78,35 @@ async def test_download_to_s3_updates_status(session, monkeypatch):
 
 
 @respx.mock
+async def test_failed_s3_upload_marks_document_failed(session, monkeypatch):
+    monkeypatch.setattr(settings, "ENV", "main")  # non-local -> S3 path
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+    respx.get(DOC_URL).mock(return_value=httpx.Response(200, content=b"%PDF s3"))
+
+    class FailingS3Service:
+        def list_objects(self, prefix="", max_keys=1000):
+            return []
+
+        def upload_fileobj(self, file_obj, s3_key, content_type=None):
+            return False
+
+    svc = DocumentService(db=session, s3_bucket=BUCKET)
+    svc.s3_service = FailingS3Service()
+    complaint = await crud.get_complaint_by_ticket(session, "T1")
+    results = await svc.batch_download_documents([complaint])
+
+    assert results["T1"] == "failed"
+    refreshed = await crud.get_complaint_by_ticket(session, "T1")
+    assert refreshed.document_downloaded is False
+    assert refreshed.local_document_path is None
+    assert "Failed to upload document to S3 key T1_complaint_" in (
+        refreshed.document_download_error or ""
+    )
+
+
+@respx.mock
 async def test_invalid_url_is_skipped(session, tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "ENV", "local")
     monkeypatch.setattr(settings, "LOCAL_STORAGE_PATH", str(tmp_path / "docs"))

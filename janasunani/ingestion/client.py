@@ -20,17 +20,23 @@ class JanasunaniAPIError(Exception):
         self.message = message
 
 
-def with_retry(max_retries: int = MAX_RETRIES, backoff: int = RETRY_BACKOFF):
+def with_retry(
+    max_retries: int = MAX_RETRIES,
+    backoff: int = RETRY_BACKOFF,
+    raise_on_failure: bool = False,
+):
     def decorator(func):
         @functools.wraps(func)
         async def wrapper(*args, **kwargs):
             label = kwargs.pop("label", func.__name__)
+            last_error = None
             for _ in range(max_retries):
                 try:
                     return await func(*args, **kwargs)
                 except ValueError:
                     raise
                 except httpx.HTTPStatusError as e:
+                    last_error = e
                     if e.response.status_code == 429:
                         retry_after = int(
                             e.response.headers.get("Retry-After", backoff)
@@ -41,9 +47,12 @@ def with_retry(max_retries: int = MAX_RETRIES, backoff: int = RETRY_BACKOFF):
                         logger.error(f"[{label}] HTTP error: {e}")
                         break
                 except Exception as e:
+                    last_error = e
                     logger.error(f"[{label}] Other error: {e}")
                     break
             logger.error(f"[{label}] Failed after {max_retries} retries.")
+            if raise_on_failure and last_error is not None:
+                raise last_error
             return None
 
         return wrapper
