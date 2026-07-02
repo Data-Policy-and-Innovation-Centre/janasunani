@@ -105,6 +105,37 @@ async def test_migration_into_postgres(tmp_path, clean_pg):
     assert (nc, nh, orphans) == (3, 2, 0)
 
 
+async def test_long_remark_dedup_postgres(tmp_path, clean_pg):
+    """Multi-KB remarks must insert and dedup on Postgres.
+
+    Regression: the raw functional index exceeded Postgres's ~2.7 KB btree
+    entry cap (ProgramLimitExceededError) on real Odia remarks; the dedup key
+    now indexes md5(remark) there (see dedup_remark in db/models.py)."""
+    long_remark = "ଅଭିଯୋଗ ବିବରଣୀ " * 400  # ~14 KB utf-8, far past the btree cap
+    source = tmp_path / "source.db"
+    _build_sqlite_source(source)
+    con = sqlite3.connect(source)
+    con.executemany(
+        "INSERT INTO t_janasunani_etl_history_pre_data VALUES (?,?,?,?,?,?)",
+        [
+            ("TR2", "Officer B", "2021-02-05 09:00:00", "Noted", long_remark, "open"),
+            ("TR2", "Officer B", "2021-02-05 09:00:00", "Noted", long_remark, "open"),  # dup
+        ],
+    )
+    con.commit()
+    con.close()
+
+    await run_migration(f"sqlite:///{source}", PG_URL)
+
+    engine = create_engine(_sync_pg_url())
+    with engine.connect() as conn:
+        n = conn.execute(
+            text("SELECT count(*) FROM action_history WHERE length(action_taken_remark) > 2704")
+        ).scalar_one()
+    engine.dispose()
+    assert n == 1  # inserted once, duplicate collapsed
+
+
 async def test_crud_roundtrip_postgres(clean_pg):
     engine = create_async_engine(PG_URL)
     async with engine.begin() as conn:
