@@ -4,6 +4,10 @@
 # migration (writes the OLTP DB), document ingestion (S3 + OLTP), and live writes.
 # Those are run as jobs/CLIs (e.g. `bash scripts/migrate.sh`,
 # `janasunani-ingest-documents`); their results reach the lake via `materialize`.
+#
+# NOTE: the `materialize` stage deps on the local SQLite OLTP file, so `dvc repro`
+# only applies to the SQLite dev setup. When OLTP is Postgres (cloud), run
+# `janasunani-materialize` directly, then `dvc commit` the Parquet outs.
 
 stages:
   materialize:

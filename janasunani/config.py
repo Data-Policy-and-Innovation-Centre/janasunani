@@ -96,7 +96,7 @@ class Settings(BaseSettings):
     OLTP_DB_URL: str = os.getenv(
         "OLTP_DB_URL", f"sqlite+aiosqlite:///{OLTP_DATA_DIR.as_posix()}/janasunani.db"
     )
-    DB_PASSWORD: str = os.getenv("DB_PASSWORD", "None")
+    DB_PASSWORD: Optional[str] = os.getenv("DB_PASSWORD")
 
     # MySQL source for migration (cold-start dump restore or live sync)
     MYSQL_URL: Optional[str] = os.getenv("MYSQL_URL")
@@ -104,9 +104,11 @@ class Settings(BaseSettings):
     # Local document storage (used when ENV == "dev"/"local")
     LOCAL_STORAGE_PATH: str = str(DOCUMENTS_DIR)
 
-    # AWS / S3
-    AWS_ACCESS_KEY_ID: str = os.getenv("AWS_ACCESS_KEY_ID", "None")
-    AWS_SECRET_ACCESS_KEY: str = os.getenv("AWS_SECRET_ACCESS_KEY", "None")
+    # AWS / S3 — credentials are optional: boto3 uses its default chain (env vars,
+    # ~/.aws, or an EC2 instance role on deploy), so leave these unset unless a
+    # static key is genuinely needed.
+    AWS_ACCESS_KEY_ID: Optional[str] = os.getenv("AWS_ACCESS_KEY_ID")
+    AWS_SECRET_ACCESS_KEY: Optional[str] = os.getenv("AWS_SECRET_ACCESS_KEY")
     AWS_REGION: str = os.getenv("AWS_REGION", "ap-south-1")
     AWS_S3_BUCKET_NAME: str = os.getenv("AWS_S3_BUCKET_NAME", "janasunani-data-main")
     AWS_S3_DOCUMENTS: str = os.getenv("AWS_S3_DOCUMENTS", "janasunani-documents-main")
