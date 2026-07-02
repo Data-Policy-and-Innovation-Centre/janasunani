@@ -49,3 +49,5 @@ stages:
     outs:
       - data/interim/complaints.parquet
       - data/interim/action_history.parquet
+      - data/interim/pages.parquet
+      - data/interim/documents.parquet
