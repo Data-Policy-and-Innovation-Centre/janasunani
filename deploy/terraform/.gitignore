@@ -1,0 +1,7 @@
+# Local state + secrets — never commit.
+.terraform/
+terraform.tfstate
+terraform.tfstate.*
+terraform.tfvars
+*.auto.tfvars
+crash.log
