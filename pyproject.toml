@@ -88,6 +88,7 @@ janasunani-migrate-dump = "janasunani.migration.from_sql_dump:main"
 janasunani-materialize = "janasunani.olap.materialize:main"
 janasunani-ingest-documents = "janasunani.ingestion.document_ingestion:main"
 janasunani-pipeline = "janasunani.pipeline.cli:main"
+janasunani-export-pipeline = "janasunani.pipeline.export:main"
 
 [build-system]
 requires = ["hatchling"]
