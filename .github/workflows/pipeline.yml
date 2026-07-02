@@ -38,16 +38,12 @@ jobs:
       - name: Run tests
         run: uv run pytest
 
-      - name: Validate DVC pipeline file
-        run: uv run dvc dag
-
-      - name: Run DVC pipeline when stages exist
-        shell: bash
+      # Validate the pipeline DEFINITION only — do not execute data stages in CI.
+      # The `migrate` stage needs the 3.2 GB raw dump (not in git / not DVC-tracked)
+      # plus Docker + MySQL, and `materialize` needs the operational OLTP DB
+      # (out is cache:false, so it can't be `dvc pull`ed). These produce data and
+      # run on the operational box / a scheduled job, never on a clean CI runner.
+      - name: Validate DVC pipeline definition
         run: |
-          set -euo pipefail
-
-          if [ -n "$(uv run dvc stage list)" ]; then
-            uv run dvc repro
-          else
-            echo "No DVC stages defined yet; skipping dvc repro."
-          fi
+          uv run dvc dag
+          uv run dvc dag --md >> "$GITHUB_STEP_SUMMARY" || true

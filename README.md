@@ -101,6 +101,79 @@ remote files:
 make deliver
 ```
 
+## Data migration
+
+Build the **OLTP store** `data/oltp/janasunani.db` (complaints + action history)
+from the raw Janasunani MySQL dump. The loader restores the dump into a MySQL
+server, then validates and copies the two ETL tables into the OLTP store through
+one shared insert routine.
+
+The OLTP store is **swappable**: it is addressed by `OLTP_DB_URL` (default local
+SQLite; set `postgresql+asyncpg://…` to target Postgres). The schema is managed
+by **Alembic** and is engine-portable:
+
+```bash
+uv run alembic upgrade head     # create/upgrade the OLTP schema (SQLite or Postgres)
+```
+
+**Prerequisites:** Docker + `uv`, and the dump at `data/raw/Dump20250730.sql`.
+
+**Run it (one command)**
+
+The cold-start migration is a self-contained script — it brings up an ephemeral
+MySQL, restores the dump (only if not already loaded), and loads the OLTP store:
+
+```bash
+bash scripts/migrate.sh
+```
+
+It writes to `OLTP_DB_URL` (default local SQLite). Tunables via env: `MYSQL_PORT`,
+`KEEP_MYSQL` (1=leave the MySQL container up for fast re-runs), `DUMP`, etc.
+
+The migration is **not** a DVC stage: it seeds an *operational* store (the OLTP
+DB), whose effects DVC can't meaningfully track. DVC only tracks file artifacts —
+here, the Parquet lake produced by `materialize` (below). Run the migration as a
+job (the script above), not via `dvc repro`.
+
+**Run it directly (existing MySQL, no Docker)**
+
+```bash
+uv run janasunani-migrate-dump --dump data/raw/Dump20250730.sql \
+    --mysql-url "mysql+pymysql://root:pass@127.0.0.1:3306/"
+```
+
+Use `--skip-restore` to migrate from an already-loaded MySQL database, and
+`--target-db-url` to write to a different OLTP database (e.g. Postgres).
+
+**Incremental sync from a live server**
+
+To sync new complaints from a running Janasunani MySQL instance (no dump),
+set `MYSQL_URL` to a full URL *including* the database and run:
+
+```bash
+MYSQL_URL="mysql+pymysql://user:pass@host:3306/sociomatics_ticket" \
+    uv run janasunani-migrate-mysql
+```
+
+## Analytical lake (Parquet)
+
+The OLTP store is materialized **downstream** to a columnar Parquet lake in
+`data/interim/` (DVC-tracked) for analytics, ML, and the demo's history browse.
+DuckDB reads the OLTP DB directly, so this is engine-agnostic (uses `OLTP_DB_URL`):
+
+```bash
+dvc repro materialize        # or: uv run janasunani-materialize
+```
+
+Query the lake with DuckDB SQL / Polars:
+
+```python
+from janasunani.olap import lake
+
+lake.query("SELECT category, count(*) AS n FROM complaints GROUP BY 1 ORDER BY n DESC")
+lake.read("complaints")      # whole table as a Polars DataFrame
+```
+
 ## Box Paths
 
 Collaborators may see the same shared Box folder under different path prefixes,
