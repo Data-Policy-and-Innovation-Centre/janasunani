@@ -350,8 +350,11 @@ container for the demo (no RDS needed), repointable to RDS via `OLTP_DB_URL`.
 - Routing consumes the `janasunani-mappings` tables + OLAP history.
 
 ## Open items to confirm during implementation (non-blocking)
-- ~~Exact S3 bucket name~~ → resolved: the `config.py` defaults are authoritative
-  (`janasunani-data-main` / `janasunani-documents-main`).
+- ~~Exact S3 bucket name~~ → resolved: `janasunani-documents-main` (exists; the one `s3service` uses).
+  `AWS_S3_BUCKET_NAME`/`janasunani-data-main` was vestigial — defined in config since the grievance
+  backend but read by no code, and the bucket never existed — dropped from `config.py`. Nightly
+  `pg_dump`s go to the existing `grievance-database-backups-main`; DVC artifacts (incl. the raw dump)
+  to `dpic-dvc-cache`.
 - AGENTS.md read access to `data/raw/janasunani-mappings/*` for routing rules.
 - Whether live demo grievances reuse the `complaints` table (+ AI/routing columns) or a sibling table.
 - Whether to DVC-track an OLTP "seed" snapshot for reproducible demos (vs regenerate from dump).
