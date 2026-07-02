@@ -20,3 +20,28 @@ stages:
       hash: md5
       md5: f0eeb1379c88a70ecf2fac5bad07868f
       size: 410159639
+  pipeline-sample:
+    cmd: uv run --extra pipeline-core janasunani-pipeline run --input 
+      data/raw/documents-sample --db data/processed/pipeline-sample.sqlite 
+      --models models --ocr-engine pytesseract --stages format_classifier 
+      ocr_extraction --workers 1
+    deps:
+    - path: data/raw/documents-sample
+      hash: md5
+      md5: d4a066e526da37ae5d8e8ecf1777af68.dir
+      size: 167765
+      nfiles: 2
+    - path: janasunani/pipeline
+      hash: md5
+      md5: 3e4dab517f7ad1c7968e558c42dd79eb.dir
+      size: 209686
+      nfiles: 45
+    - path: models/format_classifier/page_split_v3.0_doc_split.pkl
+      hash: md5
+      md5: a428d2b7b057c53e94890d1bc2ec69ce
+      size: 7227944
+    outs:
+    - path: data/processed/pipeline-sample.sqlite
+      hash: md5
+      md5: a680f655c02f15aebefecb978d911f0c
+      size: 77824
