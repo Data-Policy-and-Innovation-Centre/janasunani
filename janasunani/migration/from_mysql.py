@@ -24,6 +24,7 @@ from sqlalchemy import insert as core_insert
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -226,7 +227,10 @@ async def run_migration(
             "No MySQL URL given. Set MYSQL_URL in the environment/.env or pass mysql_url."
         )
 
-    logger.info(f"Starting migration from {mysql_url} -> {target_db_url}")
+    # Log URLs with credentials masked (they land in shipped log files).
+    safe_src = make_url(mysql_url).render_as_string(hide_password=True)
+    safe_dst = make_url(target_db_url).render_as_string(hide_password=True)
+    logger.info(f"Starting migration from {safe_src} -> {safe_dst}")
     mysql_engine, target_engine = setup_engines(mysql_url, target_db_url)
     dialect_name = target_engine.dialect.name  # 'sqlite' | 'postgresql' | …
     try:
@@ -241,7 +245,7 @@ async def run_migration(
             await migrate_action_history(
                 mysql_engine, target_sess, tracking_map, dialect_name, chunk_size
             )
-        logger.success(f"Migration completed into {target_db_url}")
+        logger.success(f"Migration completed into {safe_dst}")
     finally:
         mysql_engine.dispose()
         await target_engine.dispose()
