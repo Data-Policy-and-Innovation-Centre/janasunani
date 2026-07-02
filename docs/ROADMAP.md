@@ -16,6 +16,79 @@ scanned document), **extract** text, **redact PII**, **classify** (category / su
 
 This plan is the source of truth, **mirrored into the repo at `docs/ROADMAP.md`** (kept in sync).
 
+## Handoff snapshot — state as of 2026-07-02 (for a fresh reviewer)
+
+> This section exists so a reviewer with **no prior context** can understand where
+> the project actually stands, reproduce it, and give input on the plan below.
+
+**Branch:** `feat/migration-foundation` (clean). Foundation Phases 0–4 are built,
+tested, and committed; Phase 5 is next. **Nothing has run on AWS yet** — every
+result below was verified on a local dev machine (macOS, `uv` + Docker).
+
+**Source provenance — this repo consolidates code from two earlier projects**
+- **DB/ORM layer + document ingestion → S3 + config** — from `../grievance`,
+  branch **`dev`** (`backend/app/db/*`, `backend/app/ingestion/*`,
+  `backend/app/s3service.py`, `backend/app/config.py`). Refolded into
+  `janasunani/db/`, `janasunani/ingestion/`, `janasunani/config.py` (dropped the
+  FastAPI "backend" framing).
+- **SQL migration logic** — from `../grievance`,
+  `backend/app/db/migration_from_mysql.py` (live MySQL → local DB; NOT on `dev`,
+  but byte-identical across the `documents` / `alembic-migration` /
+  `migration-temp` / `feb12_presentation` branches). Now `janasunani/migration/`.
+- **Document-processing / ML pipeline** (OCR / PII redaction / page-type /
+  summarize / categorize) — the DSI (Data Science Institute) work, from the local
+  clone **`../2025-autumn-dpic`** (GitHub remote
+  `Data-Policy-and-Innovation-Centre/grievance-pipeline`), branch **`pipeline`**,
+  code at `src/document_pipeline/`. Lands in `janasunani/pipeline/` in **Phase 5**
+  (not yet migrated).
+- **Cold-start data** — the SQL dump `data/raw/Dump20250730.sql` (3.2 GB), a
+  `mysqldump` of MySQL DB `sociomatics_ticket` (only the two ETL tables). The dump
+  — not any branch — is the authoritative schema.
+- **Explicitly out of scope:** the ORTPS analysis pipeline on `grievance`'s
+  `refactor_cleaning` / `feb12_presentation` branches — a specific ORTPS
+  application we are not using. Don't confuse it with the in-scope
+  `document_pipeline`.
+
+**What's built and verified locally**
+- **Cold-start migration `dump → OLTP`** — ran the full 3.2 GB `mysqldump` end to
+  end → **1,371,288 complaints + 6,556,171 action-history rows** in the SQLite
+  OLTP DB at `data/oltp/janasunani.db`. Load is deterministic + idempotent
+  (byte-reproducible OLTP DB across runs).
+- **OLTP is engine-swappable** via `OLTP_DB_URL` (SQLite locally / Postgres on
+  AWS). Schema managed by **Alembic**; upgrade/downgrade verified on both engines.
+  Conflict-inserts are dialect-portable (`_dialect_insert`).
+- **Materialization `OLTP → Parquet`** (DuckDB scanner) — 1.37M + 6.56M rows →
+  ~481M + ~475M Parquet in ~26 s. This is the **one DVC-tracked transform**.
+- **Document ingestion → S3** — `s3service` + ingestion `client` (`with_retry`) +
+  `DocumentService` (download → S3/local, status written back to OLTP).
+- **32 pytest tests green on the real code path** (async engine, moto S3, respx
+  HTTP); `ruff` clean.
+
+**How to reproduce (local)**
+```bash
+uv sync
+bash scripts/migrate.sh          # ephemeral MySQL in Docker → restore dump → load OLTP
+dvc repro materialize            # or: uv run janasunani-materialize  (OLTP → Parquet)
+uv run pytest && uv run ruff check .   # gate
+```
+
+**Recent structural decisions (these post-date parts of the phase plan below)**
+- The cold-start migration is **not** a DVC stage. DVC tracks only file artifacts
+  (the Parquet lake + models); operational writes (OLTP DB, S3) run as jobs/CLIs.
+  `dvc.yaml` now has a **single `materialize` stage**.
+- `action_history` dedup uses a **functional unique index** that coalesces NULLs
+  (NULL-keyed duplicate rows now collapse). This rebuild is why the count is
+  **6,556,171** (down from a pre-dedup 6,565,323 seen in earlier notes).
+
+**Immediate real-world plan (the actual near-term focus, single maintainer)**
+1. **This week — cloud test.** Stand the migration + materialization stack up on
+   AWS (Postgres OLTP + S3) and iron out kinks. First time anything touches the
+   cloud; expect the SQLite→Postgres swap and Docker/networking to surface issues.
+2. **Next week — DSI ML pipeline to AWS.** Move the document-processing/ML
+   pipeline (Phase 5) onto AWS. Trickier: requires **GPU provisioning**.
+3. **By end of month — demo frontend.** A first Next.js prototype of the live
+   grievance path (Part II) to show stakeholders.
+
 ## Storage architecture — OLTP front, Parquet/OLAP downstream
 
 ```
@@ -57,13 +130,14 @@ This plan is the source of truth, **mirrored into the repo at `docs/ROADMAP.md`*
   ingestion cols; `ActionHistory`; tracking tables), `db/session.py`, `db/crud.py`, `ingestion/schemas.py`
   (source→field map), merged `config.py`. 19 tests passing.
 - ✅ **Phase 2** — cold-start migration `dump → OLTP` (`from_sql_dump` restore + `from_mysql` streaming
-  load). Ran the FULL dataset: **1,371,288 complaints + 6,565,323 action history** into `grievance.db`
-  (~10 min). Real-data + integration tests passing.
+  load). Ran the FULL dataset: **1,371,288 complaints + 6,556,171 action history** (after the functional
+  unique-index dedup; pre-dedup was 6,565,323) into `data/oltp/janasunani.db` (~10 min). Real-data +
+  integration tests passing.
 - ✅ **Phase 2b** — OLTP store **swappable**: `OLTP_DB_URL`, `asyncpg`, **Alembic** baseline
   (upgrade/downgrade verified on SQLite + Postgres), dialect-portable conflict-inserts. DB relocated to
   `data/oltp/janasunani.db`.
 - ✅ **Phase 3** — **OLTP → Parquet materialization** (`olap/materialize.py` via DuckDB) + `olap/lake.py`
-  read helpers + `materialize` DVC stage. Verified live: 1.37M + 6.57M rows → 481M + 475M Parquet in ~26s.
+  read helpers + `materialize` DVC stage. Verified live: 1.37M + 6.56M rows → 481M + 475M Parquet in ~26s.
 - ✅ **Phase 4** — document ingestion → S3: `s3service`, ingestion `client` (`with_retry` +
   `JanasunaniAPIClient`), and `DocumentService` (download → S3/local, status into OLTP). Console script
   `janasunani-ingest-documents`. 30 tests (moto + respx).
@@ -232,6 +306,29 @@ container for the demo (no RDS needed), repointable to RDS via `OLTP_DB_URL`.
 - AGENTS.md read access to `data/raw/janasunani-mappings/*` for routing rules.
 - Whether live demo grievances reuse the `complaints` table (+ AI/routing columns) or a sibling table.
 - Whether to DVC-track an OLTP "seed" snapshot for reproducible demos (vs regenerate from dump).
+
+## Where we want Fable's input
+
+This roadmap is being handed to a fresh reviewer for a sanity check **before the
+cloud push**. Concrete questions (a single maintainer, ~one-month horizon):
+
+1. **AWS deployment (this week).** Is the "one GPU EC2 box + `docker-compose` +
+   S3, Postgres **container** not RDS" shape right for a single-maintainer demo,
+   or does it set us up for pain? What tends to break first when the local
+   SQLite → cloud Postgres swap happens for real — `asyncpg` behavior, Alembic
+   on Postgres, or DuckDB's `postgres` scanner reading over a network?
+2. **GPU pipeline (next week).** Cheapest sane way to run heavy/GPU OCR +
+   inference **intermittently** — a persistent GPU instance, on-demand/spot, or a
+   batch queue? Anything in the lazy-per-stage-import pipeline design that will
+   bite on a fresh GPU box (CUDA/driver/transformers version pins)?
+3. **Frontend (end of month).** Fastest path to a credible Next.js demo for a
+   maintainer who is **not** a frontend dev — and how thin can the API stay
+   (`POST /grievance`, `GET /grievance/{id}`, `GET /history`)?
+4. **Sequencing / scope to cut.** Given one person and a month, what should be
+   deferred to still land a convincing stakeholder demo?
+5. **Anything mis-architected** in the OLTP-front / Parquet-downstream split, the
+   swappable-`OLTP_DB_URL` approach, or the "DVC tracks files only, operational
+   steps run as jobs" boundary — flag it before we commit it to the cloud.
 
 ## End-to-end verification (whole system)
 1. `uv sync`; `uv run pytest` + `uv run ruff check .` green.
