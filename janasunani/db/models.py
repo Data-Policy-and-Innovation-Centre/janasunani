@@ -211,6 +211,61 @@ class ActionHistory(Base):
     )
 
 
+class PipelinePage(Base):
+    """A processed document page, exported from the pipeline's artifact DB.
+
+    Faithful copy of the pipeline's ``pages`` table (see
+    ``janasunani/pipeline/db.py``); the exporter upserts by ``page_id``.
+    Index rule: keys and indexed columns are short identifiers ONLY — the
+    unbounded text columns (``extracted_text``, ``redacted_text``) must never
+    enter a btree key (Postgres caps entries at ~2.7 KB; see ``dedup_remark``).
+    Date columns stay TEXT: they arrive as ISO strings from the artifact DB
+    and are provenance metadata, not query dimensions.
+    """
+
+    __tablename__ = "pages"
+
+    page_id = Column(String, primary_key=True)
+    doc_id = Column(String, nullable=False, index=True)
+    page_number = Column(Integer, nullable=False)
+    full_path = Column(String, nullable=False)
+    page_path = Column(String, nullable=True)
+    scanned = Column(String, nullable=True)
+    handwritten = Column(String, nullable=True)
+    printed = Column(String, nullable=True)
+    image_quality = Column(String, nullable=True)
+    color_scale = Column(String, nullable=True)
+    language = Column(String, nullable=True)
+    model = Column(String, nullable=True)
+    date_classified = Column(String, nullable=True)
+    data_access_date = Column(String, nullable=True)
+    extracted_text = Column(String, nullable=True)
+    ocr_model = Column(String, nullable=True)
+    extracted_date = Column(String, nullable=True)
+    redacted_text = Column(String, nullable=True)
+    ticket_number = Column(String, nullable=True, index=True)
+    page_type = Column(String, nullable=True)
+    page_type_class = Column(Integer, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("doc_id", "page_number", name="pages_doc_page_uniq"),
+    )
+
+
+class PipelineDocument(Base):
+    """A processed document's rollup (summary, category), exported from the
+    pipeline's artifact DB ``documents`` table; upserted by ``doc_id``.
+    ``grievance``/``summary`` are unbounded text — never index them."""
+
+    __tablename__ = "documents"
+
+    doc_id = Column(String, primary_key=True)
+    ticket_number = Column(String, nullable=True, index=True)
+    grievance = Column(String, nullable=True)
+    summary = Column(String, nullable=True)
+    grievance_category = Column(String, nullable=True)
+
+
 class APIRequestTracking(Base):
     """Track which complaint API request combinations have been processed."""
 
