@@ -11,6 +11,22 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DPIC_GITHUB_SSH_KEY: ${{ secrets.DPIC_GITHUB_SSH_KEY }}
+    services:
+      # Throwaway Postgres so the Postgres-path tests (test_oltp_swap.py) run
+      # instead of skipping. Port/credentials match the tests' default
+      # TEST_OLTP_PG_URL (postgres:pass @ 127.0.0.1:5433/janasunani).
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: pass
+          POSTGRES_DB: janasunani
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -39,10 +55,10 @@ jobs:
         run: uv run pytest
 
       # Validate the pipeline DEFINITION only — do not execute data stages in CI.
-      # The `migrate` stage needs the 3.2 GB raw dump (not in git / not DVC-tracked)
-      # plus Docker + MySQL, and `materialize` needs the operational OLTP DB
-      # (out is cache:false, so it can't be `dvc pull`ed). These produce data and
-      # run on the operational box / a scheduled job, never on a clean CI runner.
+      # `materialize` needs the operational OLTP DB (SQLite dev file or the box's
+      # Postgres), and the cold-start migration needs the 3.2 GB DVC-tracked dump
+      # plus Docker + MySQL. These produce data and run on the operational box /
+      # a scheduled job, never on a clean CI runner.
       - name: Validate DVC pipeline definition
         run: |
           uv run dvc dag
