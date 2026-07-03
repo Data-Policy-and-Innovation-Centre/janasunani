@@ -1,0 +1,6 @@
+outs:
+- md5: 13f5019247e9a46d983990d90f7a8e06.dir
+  size: 343239148
+  nfiles: 4
+  hash: md5
+  path: vit_type_classifier

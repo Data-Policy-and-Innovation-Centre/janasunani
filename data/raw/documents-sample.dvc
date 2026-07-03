@@ -1,0 +1,6 @@
+outs:
+- md5: d4a066e526da37ae5d8e8ecf1777af68.dir
+  size: 167765
+  nfiles: 2
+  hash: md5
+  path: documents-sample

@@ -5,12 +5,12 @@ stages:
     deps:
     - path: data/oltp/janasunani.db
       hash: md5
-      md5: 243842461b1676c5d0ded4431053f0d0
-      size: 7071051776
+      md5: 1d0846c8e1228ce36027ce6261ad017c
+      size: 7071113216
     - path: janasunani/olap/materialize.py
       hash: md5
-      md5: 75e7526bdfafb9475029ec1bc6d76ff6
-      size: 3244
+      md5: ea29e1c583a082cf9bc669f98396f72b
+      size: 3356
     outs:
     - path: data/interim/action_history.parquet
       hash: md5
@@ -20,3 +20,36 @@ stages:
       hash: md5
       md5: f0eeb1379c88a70ecf2fac5bad07868f
       size: 410159639
+    - path: data/interim/documents.parquet
+      hash: md5
+      md5: b3176fd49cd16f444e5ccd5091aa23ca
+      size: 198
+    - path: data/interim/pages.parquet
+      hash: md5
+      md5: 816be322183d304d67c042f27ae55d9a
+      size: 10361
+  pipeline-sample:
+    cmd: uv run --extra pipeline-core janasunani-pipeline run --input 
+      data/raw/documents-sample --db data/processed/pipeline-sample.sqlite 
+      --models models --ocr-engine pytesseract --stages format_classifier 
+      ocr_extraction --workers 1
+    deps:
+    - path: data/raw/documents-sample
+      hash: md5
+      md5: d4a066e526da37ae5d8e8ecf1777af68.dir
+      size: 167765
+      nfiles: 2
+    - path: janasunani/pipeline
+      hash: md5
+      md5: 8781734c7d8e966490f286aa402b33ba.dir
+      size: 260522
+      nfiles: 52
+    - path: models/format_classifier/page_split_v3.0_doc_split.pkl
+      hash: md5
+      md5: a428d2b7b057c53e94890d1bc2ec69ce
+      size: 7227944
+    outs:
+    - path: data/processed/pipeline-sample.sqlite
+      hash: md5
+      md5: 5877a1c5309577a25dd64b382fa4735d
+      size: 77824

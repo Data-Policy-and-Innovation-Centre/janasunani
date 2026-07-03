@@ -41,6 +41,14 @@ result below was verified on a local dev machine (macOS, `uv` + Docker).
   `Data-Policy-and-Innovation-Centre/grievance-pipeline`), branch **`pipeline`**,
   code at `src/document_pipeline/`. Lands in `janasunani/pipeline/` in **Phase 5**
   (not yet migrated).
+  **⚠ DSI team disbanded (2026-07-03) and their Box access is gone.** Consequences:
+  the PII CRF weights + its 20k labeled training CSV are **unrecoverable** (Box-only);
+  everything else was salvaged — the page-type ViT and the MuRIL categorizer were
+  still public on HF (an orphaned org + a student's personal account) and are now
+  **mirrored into our DVC remote** (`models/page_type_classifier/`, `models/categorizer/`,
+  incl. the label encoder), alongside the format-classifier pickle. The PII training
+  loop survives in the DSI repo's git history (commit `db4885f`). Runtime must depend
+  only on our mirrors, never on their accounts.
 - **Cold-start data** — the SQL dump `data/raw/Dump20250730.sql` (3.2 GB), a
   `mysqldump` of MySQL DB `sociomatics_ticket` (only the two ETL tables). The dump
   — not any branch — is the authoritative schema.
@@ -99,22 +107,26 @@ Postgres via a dialect-compiled expression + Alembic revision). *Still pending:*
 ingestion smoke — blocked on the Janasunani API credentials.
 
 *Week 2 — Phase 5 pipeline + GPU, plus the pulled-forward plumbing.*
-1. **Unblock the two external dependencies first** (wait-time, not work-time): the
-   Janasunani API credentials (ingestion smoke) and read access to
-   `janasunani-mappings` (Phase 9's only data source — if this is a problem we must
-   know now, not in Week 3).
-2. **Minimal `deploy/docker-compose.yml` now**: declare the existing `oltp` Postgres
-   (today it exists only as an ad-hoc `docker run`); grow the file service-by-service
-   as they're born. Phase 12 becomes integration, not "first time compose exists".
-3. **Minimal CI now** (Phase 7 split): a GitHub Actions job running `pytest` + `ruff`
-   with a throwaway Postgres service, so fixes stop shipping on locally-run tests only.
-4. Refold `document_pipeline` → `janasunani/pipeline/` (decisions in Phase 5 below);
-   per-stage tests + 2-file pytesseract smoke locally (CPU — before the GPU box exists).
-5. GPU box: g6.xlarge from a Deep Learning AMI (skips driver pain) +
+1. ✅ External unblocks: `janasunani-mappings` confirmed + DVC-tracked. API credentials
+   parked (pulls unavailable). ~~PII weights from Box~~ → unrecoverable, re-planned
+   (see Phase 5); at-risk HF models mirrored into our DVC remote 2026-07-03.
+2. ✅ Minimal `deploy/docker-compose.yml`: `oltp` declared and adopted live on the box
+   (zero data movement; external volume). Grows service-by-service from here.
+3. ✅ Minimal CI (Phase 7 split): Postgres service container added — the Postgres-path
+   tests now run in CI instead of skipping.
+4. ✅ Refold `document_pipeline` → `janasunani/pipeline/`: done, incl. dep groups with
+   the uv-conflicts split, the OLTP exporter (pages/documents → OLTP → lake), the
+   `pipeline-sample` DVC stage over 2 real documents, and the pytesseract smoke
+   (Odia extraction verified after adding the `ori` traineddata).
+5. ⬜ **PII stage rebuild** (Presidio + Indian recognizers — see Phase 5): the one
+   genuinely lost artifact, ~2–3 days.
+6. ⬜ GPU box: g6.xlarge from a Deep Learning AMI (skips driver pain) +
    nvidia-container-toolkit; build the `ocr-deepseek` image; DeepSeek smoke on the
    2-file sample. Watch for `trust_remote_code` importing `flash_attn` unconditionally.
-6. **Sample backfill only** (~200 curated docs), not the full corpus → OLTP → lake.
-7. MLflow slim (Phase 6 folded in): local backend on the CPU box, artifacts to S3.
+7. ⬜ **Sample backfill only** (~200 curated docs; pick STANDARD storage class — parts
+   of the documents bucket are GLACIER-archived), not the full corpus → OLTP → lake.
+8. ⬜ MLflow slim (Phase 6 folded in): local backend on the CPU box, artifacts to S3 —
+   now cataloguing OUR mirrored/rebuilt models, not pointers to others' accounts.
 
 *Week 3 — API-contract-first (re-ordered: the frontend must not sit at the tail of a
 serial chain with zero float).*
@@ -265,9 +277,23 @@ Parquet. Cover counts, idempotency, malformed inputs, the source→field mapping
 - **Keep the pipeline's internal artifact DB** (`db.py`, `pages`/`documents` tables) — do NOT rewrite it
   onto the ORM. Add a small **exporter** that upserts final page/document outputs into OLTP (which then
   materializes to Parquet). Categorizer reads complaints from OLTP.
-- **PII tagger is the most fragile port**: it expects legacy artifacts at
-  `models/pii_tagger/outputs/pii_crf_model.pt` via a `sys.path` alias — DVC-track `models/pii_tagger/**`
-  preserving that layout.
+- **PII stage — rebuild, don't recover** *(re-planned 2026-07-03; the trained CRF + its labeled data
+  are gone with the DSI Box)*: replace the stage internals behind the unchanged
+  `extracted_text → redacted_text` interface with **Presidio + custom Indian-pattern recognizers**
+  (mobile numbers, Aadhaar-shaped IDs, addresses) + a public multilingual NER model for names.
+  More auditable than the old CRF, which was English-only anyway. ~2–3 days, absorbed into Weeks 2–3.
+  The legacy `models/pii_tagger/` code stays until the swap; never send citizen text to external
+  APIs for redaction.
+- **Model provenance rule**: every model the pipeline loads comes from **our DVC remote** (mirrored
+  ViT page-type, MuRIL categorizer + label encoder, format pickle) or a large public repo
+  (facebook/bart-large-cnn, deepseek-ai/DeepSeek-OCR) — no runtime dependency on DSI-controlled
+  accounts. Point stages at the local `models/` paths, not HF repo ids.
+- **Page-type matters**: the summarizer feeds ONLY pages of the target page-type class into the
+  summary (and the categorizer consumes that text) — it's the signal/noise gate (letters/forms in,
+  IDs/covers out), a hard upstream dependency of routing quality, not an optional stage.
+- **Categorizer upgrade path (post-demo)**: retrain MuRIL on our own OLTP (1.37M complaints with
+  ground-truth categories) — likely better than the student model trained on a slice; the mirrored
+  model carries the demo.
 - GPU note: only DeepSeek OCR hard-requires CUDA (fails fast); summarizer/categorizer/PII fall back to
   CPU. DeepSeek's `trust_remote_code` may import `flash_attn` unconditionally — pin or force eager attn.
 - **Index rule (Week-1 lesson, generalized):** the `pages`/`documents` tables carry unbounded text
@@ -391,9 +417,18 @@ container for the demo (no RDS needed), repointable to RDS via `OLTP_DB_URL`.
   backend but read by no code, and the bucket never existed — dropped from `config.py`. Nightly
   `pg_dump`s go to the existing `grievance-database-backups-main`; DVC artifacts (incl. the raw dump)
   to `dpic-dvc-cache`.
-- AGENTS.md read access to `data/raw/janasunani-mappings/*` for routing rules.
+- ~~AGENTS.md read access to `data/raw/janasunani-mappings/*`~~ → resolved: confirmed readable and
+  DVC-tracked to the remote (2026-07-02).
+- ~~PII weights recovery~~ → closed 2026-07-03: DSI team disbanded, Box gone; stage will be rebuilt on
+  Presidio (see Phase 5). Training loop preserved at DSI-repo commit `db4885f` for reference.
 - Whether live demo grievances reuse the `complaints` table (+ AI/routing columns) or a sibling table.
 - Whether to DVC-track an OLTP "seed" snapshot for reproducible demos (vs regenerate from dump).
+- **Backfill hardening (before any FULL-corpus run; fine at the ~200-doc demo scale)** — from the Codex
+  review of PR #4: the summarizer/categorizer/PII stages materialize their whole pending workload in
+  memory before batching (fetchall/pandas/prebuilt work lists); page through SQL in bounded chunks.
+  The PII `max_len` zip-truncation (drops text past the first token window) dies with the legacy
+  module in the Presidio rebuild. The pii_tagger hard-fail on missing artifacts is intentional
+  (privacy gate — silently skipping redaction would be worse) and is also resolved by the rebuild.
 - **History freshness** *(decided)*: live grievances land in OLTP but only appear in `GET /history`
   (which reads the lake) after re-materialization. `GET /grievance/{id}` reads OLTP live; `/history` is
   historical — re-materialize nightly/one-off. Revisit a union view only if stakeholders ask.

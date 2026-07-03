@@ -10,6 +10,32 @@
 # `janasunani-materialize` directly, then `dvc commit` the Parquet outs.
 
 stages:
+  # Reproducible CPU-only pipeline run over the DVC-tracked document sample:
+  # file deps in, one SQLite artifact out — this DOES fit the DVC model. The
+  # full-corpus backfill does NOT (operational S3 input, resumable GPU job,
+  # per-stage env conflicts) and runs as a job; its outputs reach the lake
+  # via the OLTP exporter + materialize.
+  pipeline-sample:
+    desc: >-
+      Core document-pipeline stages (format classifier + pytesseract OCR) over
+      data/raw/documents-sample -> a versioned pipeline SQLite artifact.
+      Needs the pipeline-core extra and the tesseract binary (+ tesseract-lang
+      for Odia).
+    cmd: >-
+      uv run --extra pipeline-core janasunani-pipeline run
+      --input data/raw/documents-sample
+      --db data/processed/pipeline-sample.sqlite
+      --models models
+      --ocr-engine pytesseract
+      --stages format_classifier ocr_extraction
+      --workers 1
+    deps:
+      - data/raw/documents-sample
+      - models/format_classifier/page_split_v3.0_doc_split.pkl
+      - janasunani/pipeline
+    outs:
+      - data/processed/pipeline-sample.sqlite
+
   materialize:
     desc: >-
       Export the OLTP store to the Parquet lake (data/interim/) for analytics, ML,
@@ -23,3 +49,5 @@ stages:
     outs:
       - data/interim/complaints.parquet
       - data/interim/action_history.parquet
+      - data/interim/pages.parquet
+      - data/interim/documents.parquet

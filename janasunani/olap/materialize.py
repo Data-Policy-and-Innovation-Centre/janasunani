@@ -16,8 +16,9 @@ from loguru import logger
 
 from janasunani.config import directories, settings
 
-# Tables exported from the OLTP store to the lake.
-LAKE_TABLES = ("complaints", "action_history")
+# Tables exported from the OLTP store to the lake. pages/documents are the
+# document pipeline's outputs (empty until the exporter has run).
+LAKE_TABLES = ("complaints", "action_history", "pages", "documents")
 
 
 def _attach_oltp(
