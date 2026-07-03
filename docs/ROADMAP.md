@@ -118,8 +118,8 @@ ingestion smoke — blocked on the Janasunani API credentials.
    the uv-conflicts split, the OLTP exporter (pages/documents → OLTP → lake), the
    `pipeline-sample` DVC stage over 2 real documents, and the pytesseract smoke
    (Odia extraction verified after adding the `ori` traineddata).
-5. ⬜ **PII stage rebuild** (Presidio + Indian recognizers — see Phase 5): the one
-   genuinely lost artifact, ~2–3 days.
+5. ✅ **PII stage rebuilt** on Presidio (see Phase 5) — the default full-stage run
+   works again; the pipeline-sample DVC stage now includes redaction.
 6. ⬜ GPU box: g6.xlarge from a Deep Learning AMI (skips driver pain) +
    nvidia-container-toolkit; build the `ocr-deepseek` image; DeepSeek smoke on the
    2-file sample. Watch for `trust_remote_code` importing `flash_attn` unconditionally.
@@ -277,13 +277,12 @@ Parquet. Cover counts, idempotency, malformed inputs, the source→field mapping
 - **Keep the pipeline's internal artifact DB** (`db.py`, `pages`/`documents` tables) — do NOT rewrite it
   onto the ORM. Add a small **exporter** that upserts final page/document outputs into OLTP (which then
   materializes to Parquet). Categorizer reads complaints from OLTP.
-- **PII stage — rebuild, don't recover** *(re-planned 2026-07-03; the trained CRF + its labeled data
-  are gone with the DSI Box)*: replace the stage internals behind the unchanged
-  `extracted_text → redacted_text` interface with **Presidio + custom Indian-pattern recognizers**
-  (mobile numbers, Aadhaar-shaped IDs, addresses) + a public multilingual NER model for names.
-  More auditable than the old CRF, which was English-only anyway. ~2–3 days, absorbed into Weeks 2–3.
-  The legacy `models/pii_tagger/` code stays until the swap; never send citizen text to external
-  APIs for redaction.
+- **PII stage — REBUILT on Presidio ✅ (2026-07-03)**: same `extracted_text → redacted_text`
+  interface, internals now Presidio analyzer/anonymizer + custom Indian recognizers (mobile,
+  Aadhaar, PAN) + spaCy NER for names; typed tokens ([NAME]/[PHONE]/[AADHAAR]/[PAN]/[EMAIL]).
+  Improvements over the lost CRF: no 512-token truncation window, mixed "English, Odia" pages
+  covered (equality filter skipped them), SQL-paged batches, explainable hits. Legacy
+  `models/pii_tagger/` deleted. Rule unchanged: never send citizen text to external APIs.
 - **Model provenance rule**: every model the pipeline loads comes from **our DVC remote** (mirrored
   ViT page-type, MuRIL categorizer + label encoder, format pickle) or a large public repo
   (facebook/bart-large-cnn, deepseek-ai/DeepSeek-OCR) — no runtime dependency on DSI-controlled
