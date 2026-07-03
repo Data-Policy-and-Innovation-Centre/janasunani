@@ -48,6 +48,12 @@ variable "dvc_cache_bucket" {
   default     = "dpic-dvc-cache"
 }
 
+variable "dvc_cache_prefix" {
+  description = "This repo's prefix inside the shared DVC cache bucket (.dvc/config remote url path). IAM object access is scoped to it."
+  type        = string
+  default     = "janasunani"
+}
+
 variable "backups_bucket" {
   description = "Existing S3 bucket for nightly pg_dump snapshots."
   type        = string
