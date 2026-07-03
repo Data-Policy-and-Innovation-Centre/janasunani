@@ -1,0 +1,6 @@
+outs:
+- md5: 8924294cd47417e40b8ad1cc0b5382b4.dir
+  size: 956698867
+  nfiles: 8
+  hash: md5
+  path: categorizer
