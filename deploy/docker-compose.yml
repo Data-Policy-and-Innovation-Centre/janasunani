@@ -1,0 +1,38 @@
+# Janasunani demo stack — runtime composition on the CPU box.
+#
+# Grows service-by-service as Part II lands (mlflow -> api -> frontend ->
+# proxy); Phase 12 is integration, not a big-bang compose. Config comes from
+# deploy/.env (gitignored; see .env.example).
+#
+# `oltp` adopts the ALREADY-RUNNING production volume by name — the container
+# name and volume match what scripts (backup cron) and the Week-1 setup use.
+# NEVER `docker compose down -v`: the OLTP volume holds the migrated data.
+
+name: janasunani
+
+services:
+  oltp:
+    image: postgres:17
+    container_name: janasunani-oltp
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+      POSTGRES_DB: janasunani
+    ports:
+      # Localhost only — nothing on the public interface; app services reach it
+      # via the compose network, host-side tools via 127.0.0.1:5432.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - oltp-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d janasunani"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  oltp-data:
+    # Pre-existing named volume from the Week-1 bring-up; compose must attach
+    # to it, not create its own.
+    external: true
+    name: janasunani-oltp
