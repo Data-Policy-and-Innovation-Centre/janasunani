@@ -96,7 +96,11 @@ def _ocr_one_lang(image: np.ndarray, config: str, lang: str) -> tuple[str, float
         config=config,
         timeout=TESSERACT_TIMEOUT_SECONDS,
     )
-    confs = [int(c) for c in data["conf"] if c != "-1"]
+    # conf values arrive as ints OR strings, integral OR float ("96.3")
+    # depending on tesseract/pytesseract version; -1 marks non-text blocks.
+    # int() on a float string raises, which the caller treats as OCR failure
+    # -> silently blank pages, so parse as float.
+    confs = [float(c) for c in data["conf"] if float(c) >= 0]
     avg_conf = sum(confs) / len(confs) if confs else 0.0
     text = pytesseract.image_to_string(
         image,

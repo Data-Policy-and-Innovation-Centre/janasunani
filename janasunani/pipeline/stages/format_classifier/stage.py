@@ -84,6 +84,16 @@ MODEL_NAME = "format_classifier_v3"
 # Public entry point — called by pipeline.py
 # ---------------------------------------------------------------------------
 
+def _doc_id_from_relpath(rel_path: str) -> str:
+    """Document id = the relative path minus its extension, '/'-separated.
+
+    Keeps directory segments so nested documents with identical stems get
+    distinct ids (page_id is derived from doc_id, so this also keeps page
+    ids collision-free). Flat files reduce to the bare stem, unchanged from
+    the historical scheme."""
+    return str(Path(rel_path).with_suffix("")).replace(os.sep, "/")
+
+
 def run_format_classifier(config: PipelineConfig) -> None:
     """Run the format classifier stage.
 
@@ -155,7 +165,12 @@ def _process_file(args: tuple[str, str, str]) -> dict[str, Any]:
     except ValueError:
         rel_path = str(file_path)
 
-    doc_id = file_path.stem
+    # doc_id must be unique per RELATIVE PATH, not per basename: the corpus
+    # nests documents (OR107/E/2021/00324_...pdf) and two files in different
+    # subdirs can share a stem — a stem-only id silently merges/drops the
+    # later one via the (doc_id, page_number) unique key. Flat files keep the
+    # same id as before (stem).
+    doc_id = _doc_id_from_relpath(rel_path)
     ext = file_path.suffix.lower()
 
     if ext in PDF_EXTENSIONS:
@@ -242,6 +257,14 @@ def _process_pdf(
                 preds = _worker_classifier.predict(img_cv)
                 if preds is None:
                     stats["errors"] += 1
+                    # Persist the failure like image/whole-PDF failures do —
+                    # otherwise the page vanishes from the audit and is
+                    # retried forever.
+                    stats["unreadable"].append({
+                        "doc_id": doc_id, "page_number": page_num,
+                        "full_path": rel_path,
+                        "reason": "classifier returned no prediction",
+                    })
                     consecutive_failures += 1
                     continue
                 stats["pages"].append(

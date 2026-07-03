@@ -43,6 +43,36 @@ def test_unknown_stage_fails_fast_before_any_import(tmp_path):
         run_pipeline(config)
 
 
+def test_doc_id_unique_across_nested_dirs_and_stable_for_flat_files():
+    # Same stem in different subdirs must NOT collide (nested corpus:
+    # OR107/E/2021/...); flat files keep the historical stem-only id.
+    from janasunani.pipeline.stages.format_classifier.stage import _doc_id_from_relpath
+
+    a = _doc_id_from_relpath("AN063/E/2021/00001_complaint_x.pdf")
+    b = _doc_id_from_relpath("OR107/E/2021/00001_complaint_x.pdf")
+    assert a != b
+    assert a == "AN063/E/2021/00001_complaint_x"
+    assert _doc_id_from_relpath("CMO2021_complaint_y.jpeg") == "CMO2021_complaint_y"
+
+
+def test_page_type_model_resolves_to_dvc_mirror(tmp_path):
+    # Provenance rule: the mirrored local copy wins; HF repo only as fallback;
+    # explicit config overrides everything.
+    from janasunani.pipeline.stages.page_type_classifier import _resolve_model_id
+
+    local = tmp_path / "page_type_classifier" / "vit_type_classifier"
+    cfg = PipelineConfig(input_dir=tmp_path, db_path=tmp_path / "p.db", models_dir=tmp_path)
+    assert _resolve_model_id(cfg) == "DPIC-Pipeline/vit_type_classifier"  # no mirror
+    local.mkdir(parents=True)
+    (local / "config.json").write_text("{}")
+    assert _resolve_model_id(cfg) == str(local)  # mirror present
+    cfg2 = PipelineConfig(
+        input_dir=tmp_path, db_path=tmp_path / "p.db", models_dir=tmp_path,
+        page_type_model_id="explicit/override",
+    )
+    assert _resolve_model_id(cfg2) == "explicit/override"
+
+
 def test_cli_parses_stage_subset_and_engine():
     args = build_parser().parse_args(
         ["run", "--stages", "ocr_extraction", "--ocr-engine", "pytesseract"]
