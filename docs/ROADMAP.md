@@ -48,7 +48,14 @@ result below was verified on a local dev machine (macOS, `uv` + Docker).
   **mirrored into our DVC remote** (`models/page_type_classifier/`, `models/categorizer/`,
   incl. the label encoder), alongside the format-classifier pickle. The PII training
   loop survives in the DSI repo's git history (commit `db4885f`). Runtime must depend
-  only on our mirrors, never on their accounts.
+  only on our mirrors, never on their accounts. Their final technical report (PDF, user-held)
+  preserves the only measured baselines: format classifier 75.71% avg acc; DeepSeek OCR 77.89%
+  pass-rate on quality heuristics (watch its repetition-collapse failure mode); page-type ViT
+  test acc 0.67 (plain ViT beat ViT+BERT/Longformer; 1.5K labeled pages); MuRIL categorizer
+  0.7104 acc — fine-tuned on only 6,598 grievances, strengthening the retrain-on-our-1.37M
+  upgrade; PII coverage 80.56% overlap / 50% exact. Summarizer usefulness by page type
+  (qualitative 0–3): Text-Only 1.9, Letter 1.3, Forms 0.85, Bills/IDs ~0 — the measured basis
+  for page-type gating.
 - **Cold-start data** — the SQL dump `data/raw/Dump20250730.sql` (3.2 GB), a
   `mysqldump` of MySQL DB `sociomatics_ticket` (only the two ETL tables). The dump
   — not any branch — is the authoritative schema.
@@ -283,6 +290,14 @@ Parquet. Cover counts, idempotency, malformed inputs, the source→field mapping
   Improvements over the lost CRF: no 512-token truncation window, mixed "English, Odia" pages
   covered (equality filter skipped them), SQL-paged batches, explainable hits. Legacy
   `models/pii_tagger/` deleted. Rule unchanged: never send citizen text to external APIs.
+  **Baseline to beat (DSI technical report, their only surviving eval):** legacy coverage was
+  **80.56% any-overlap / 50.0% exact-span** on 106 held-out sentences; I-PII recall 0.575 (it
+  truncated multi-token spans), sentence-level eval (page-level 512-token loss never measured),
+  untyped spans, trained on ~21.9K tokens. Structured ids (phone/Aadhaar/PAN/email) are now
+  deterministic; the open question is names — spaCy `en_core_web_sm` vs their in-domain
+  fine-tune. **TODO (pre-backfill): label ~100–200 real pages and measure Presidio coverage
+  against the 80.56% baseline; if PERSON recall lags, upgrade the NER (trf model or
+  Indian-names recognizer).**
 - **Model provenance rule**: every model the pipeline loads comes from **our DVC remote** (mirrored
   ViT page-type, MuRIL categorizer + label encoder, format pickle) or a large public repo
   (facebook/bart-large-cnn, deepseek-ai/DeepSeek-OCR) — no runtime dependency on DSI-controlled
