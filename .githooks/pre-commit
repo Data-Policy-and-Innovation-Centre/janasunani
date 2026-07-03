@@ -1,0 +1,18 @@
+#!/usr/bin/env sh
+set -eu
+
+# Block local-only state and secret files before they enter Git history.
+# Keep this in sync with .github/workflows/data-check.yml.
+bad_files="$(
+  git diff --cached --name-only --diff-filter=ACMR |
+    grep -E '(^|/)(terraform\.tfstate(\..*)?|terraform\.tfvars|.*\.auto\.tfvars|\.env|.*\.pem|id_rsa|id_ed25519)$' |
+    grep -Ev '(^|/)\.env\.example$|(^|/)terraform\.tfvars\.example$' || true
+)"
+
+if [ -n "$bad_files" ]; then
+  echo "Refusing to commit local state/secret files:" >&2
+  echo "$bad_files" >&2
+  echo "" >&2
+  echo "Keep Terraform state, tfvars, env files, and private keys local." >&2
+  exit 1
+fi

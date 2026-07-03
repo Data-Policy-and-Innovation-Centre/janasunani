@@ -14,6 +14,7 @@ export PATH    := $(USER_BIN):$(PATH)
 help:
 	@echo ""
 	@echo "  make setup           First-time setup on a new machine"
+	@echo "  make install-hooks   Enable repository Git hooks"
 	@echo "  make pull            Get latest code, deps, and approved DVC data"
 	@echo "  make ingest          Copy all original source files from Box"
 	@echo "  make publish-raw     Copy all local raw files to Box"
@@ -28,6 +29,12 @@ help:
 setup:
 	perl -pi -e 's/\r$$//' scripts/setup.sh
 	BOX_REMOTE="$(BOX_REMOTE)" bash scripts/setup.sh
+	$(MAKE) install-hooks
+
+install-hooks:
+	git config core.hooksPath .githooks
+	chmod +x .githooks/pre-commit
+	@echo "Git hooks enabled from .githooks/"
 
 pull: _check_git_clean
 	@echo "[1/3] Pulling latest code..."
