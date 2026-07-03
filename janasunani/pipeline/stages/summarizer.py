@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 from janasunani.pipeline.config import PipelineConfig
 from janasunani.pipeline.db import connect
+from loguru import logger
 
 
 MODEL_NAME = "facebook/bart-large-cnn"
@@ -27,12 +28,12 @@ def run_summarizer(config: PipelineConfig) -> None:
     rows = _fetch_documents_to_summarize(config, DEFAULT_BATCH_SIZE)
 
     if not rows:
-        print("summarizer: nothing to do")
+        logger.info("summarizer: nothing to do")
         return
 
     tokenizer, model, torch, device = _load_model()
     total_completed = 0
-    print(
+    logger.info(
         "summarizer: "
         f"model={MODEL_NAME} device={device} "
         f"target_page_type_class={TARGET_PAGE_TYPE_CLASS} "
@@ -53,13 +54,13 @@ def run_summarizer(config: PipelineConfig) -> None:
                 )
                 connection.commit()
                 total_completed += 1
-                print(
+                logger.info(
                     f"[{total_completed}] summarized {row.doc_id} "
                     f"pages={row.page_count} types={row.page_types}"
                 )
         rows = _fetch_documents_to_summarize(config, DEFAULT_BATCH_SIZE)
 
-    print(f"summarizer done: summarized={total_completed}")
+    logger.success(f"summarizer done: summarized={total_completed}")
 
 
 def _ensure_document_rows(config: PipelineConfig) -> None:

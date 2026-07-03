@@ -16,7 +16,6 @@ worker-sharding pattern (worker_id / num_workers).
 from __future__ import annotations
 
 import sqlite3
-import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +25,7 @@ from ...config import PipelineConfig
 from ...db import connect
 from .executors import pick_executor, shard_work_items
 from .page_renderer import render_page
+from loguru import logger
 
 DB_BATCH_SIZE = 50
 DB_LOCK_RETRIES = 5
@@ -55,7 +55,7 @@ def run_ocr_extraction(config: PipelineConfig) -> None:
     )
 
     if not work_items:
-        print("ocr_extraction: nothing to do (no pages with NULL extracted_text)")
+        logger.info("ocr_extraction: nothing to do (no pages with NULL extracted_text)")
         return
 
     # Worker sharding: each invocation processes its slice of the total work
@@ -66,20 +66,19 @@ def run_ocr_extraction(config: PipelineConfig) -> None:
     )
 
     if not work_items:
-        print(
+        logger.info(
             f"ocr_extraction: worker {config.worker_id}/{config.num_workers} "
             "has no items in its shard"
         )
         return
 
     n = len(work_items)
-    print(
+    logger.info(
         f"ocr_extraction: backend={backend} "
         f"worker={config.worker_id + 1}/{config.num_workers} "
         f"items={n}"
         + (f" (filter_language={config.filter_language})" if config.filter_language else "")
     )
-    sys.stdout.flush()
 
     _run(backend=backend, work_items=work_items, db_path=config.db_path, n_workers=config.n_workers)
 
@@ -238,7 +237,7 @@ def _write_results_with_retry(
         except sqlite3.OperationalError as e:
             if "locked" in str(e).lower() and attempt < DB_LOCK_RETRIES - 1:
                 wait = 2 ** attempt
-                print(f"db locked, retrying in {wait}s...", file=sys.stderr)
+                logger.error(f"db locked, retrying in {wait}s...")
                 time.sleep(wait)
             else:
                 raise
@@ -326,13 +325,12 @@ def _run(
             if i % 5 == 0 or i == n:
                 elapsed = time.time() - t_start
                 rate = i / elapsed if elapsed > 0 else 0
-                print(
+                logger.info(
                     f"[{i}/{n}] ok={total_success} fail={total_failure} "
                     f"({rate:.2f} pages/s)"
                 )
-                sys.stdout.flush()
     except KeyboardInterrupt:
-        print("\ninterrupted — flushing buffers...", file=sys.stderr)
+        logger.error("interrupted — flushing buffers...")
     finally:
         if success_buf:
             _write_results_with_retry(db_conn, success_buf, today_iso, backend)
@@ -342,7 +340,7 @@ def _run(
         db_conn.close()
 
     elapsed = time.time() - t_start
-    print(
+    logger.success(
         f"ocr_extraction done in {elapsed:.1f}s: "
         f"ok={total_success} fail={total_failure}"
     )

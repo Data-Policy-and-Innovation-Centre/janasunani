@@ -19,7 +19,6 @@ via langdetect); non-English rows are left with NULL category.
 from __future__ import annotations
 
 import sqlite3
-import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -28,6 +27,7 @@ from ...config import PipelineConfig
 from ...db import connect
 from .ingest_grievances import ingest_grievances
 from .model import GrievanceCategorizer
+from loguru import logger
 
 DB_BATCH_SIZE = 50
 
@@ -49,12 +49,11 @@ def run_categorizer(config: PipelineConfig) -> None:
     # Step 2: build features + classify.
     work = _load_pending_documents(config.db_path)
     if not work:
-        print("categorizer: nothing to do (no documents with grievance and "
+        logger.info("categorizer: nothing to do (no documents with grievance and "
               "NULL grievance_category)")
         return
 
-    print(f"categorizer: {len(work)} document(s) to categorize")
-    sys.stdout.flush()
+    logger.info(f"categorizer: {len(work)} document(s) to categorize")
 
     # Model provenance rule: prefer the DVC-mirrored copy under models/ —
     # runtime must not depend on the (orphaned) student HF account.
@@ -197,16 +196,15 @@ def _run(db_path: Path, model_dir: Path, work: list[dict[str, Any]]) -> None:
             if i % 10 == 0 or i == n:
                 elapsed = time.time() - t_start
                 rate = i / elapsed if elapsed > 0 else 0
-                print(f"[{i}/{n}] categorized={total_ok} "
+                logger.info(f"[{i}/{n}] categorized={total_ok} "
                       f"skipped_non_english={total_skipped_lang} "
                       f"({rate:.2f} docs/s)")
-                sys.stdout.flush()
     except KeyboardInterrupt:
-        print("\ninterrupted — flushing...", file=sys.stderr)
+        logger.error("interrupted — flushing...")
     finally:
         flush()
         conn.close()
 
     elapsed = time.time() - t_start
-    print(f"categorizer done in {elapsed:.1f}s: "
+    logger.success(f"categorizer done in {elapsed:.1f}s: "
           f"categorized={total_ok} skipped_non_english={total_skipped_lang}")

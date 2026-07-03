@@ -6,7 +6,6 @@ Hugging Face and writes predicted labels into `pages.page_type`.
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +13,7 @@ from PIL import Image
 
 from janasunani.pipeline.config import PipelineConfig
 from janasunani.pipeline.db import connect
+from loguru import logger
 
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp"}
@@ -61,14 +61,13 @@ def run_page_type_classifier(config: PipelineConfig) -> None:
 
     rows = _load_pending_pages(config.db_path)
     if not rows:
-        print("page type classifier: no pages need classification")
+        logger.info("page type classifier: no pages need classification")
         return
 
     model_id = _resolve_model_id(config)
     classifier = _PageTypeClassifier(model_id)
 
-    print(f"page type classifier: {len(rows)} page(s), model={model_id}")
-    sys.stdout.flush()
+    logger.info(f"page type classifier: {len(rows)} page(s), model={model_id}")
 
     totals = {"classified": 0, "skipped": 0, "errors": 0}
     updates: list[tuple[str, int | None, str]] = []
@@ -88,25 +87,23 @@ def run_page_type_classifier(config: PipelineConfig) -> None:
                 totals["classified"] += 1
             except Exception as exc:
                 totals["errors"] += 1
-                print(
+                logger.error(
                     "page type classifier error "
                     f"{row['doc_id']} page {row['page_number']}: {exc}",
-                    file=sys.stderr,
                 )
 
             if len(updates) >= DB_BATCH_SIZE:
                 _flush_updates(connection, updates)
 
             if index % 50 == 0 or index == len(rows):
-                print(
+                logger.info(
                     f"[{index}/{len(rows)}] classified={totals['classified']} "
                     f"skipped={totals['skipped']} errors={totals['errors']}"
                 )
-                sys.stdout.flush()
 
         _flush_updates(connection, updates)
 
-    print(
+    logger.success(
         "page type classifier done: "
         f"classified={totals['classified']} skipped={totals['skipped']} "
         f"errors={totals['errors']}"
@@ -218,10 +215,9 @@ def _load_page_image(row: dict[str, Any], input_dir: Path) -> Image.Image | None
 
     source_path = _resolve_input_path(row.get("full_path"), input_dir)
     if source_path is None or not source_path.exists():
-        print(
+        logger.error(
             f"page type classifier skip {row['doc_id']} page {row['page_number']}: "
             "source file not found",
-            file=sys.stderr,
         )
         return None
 
@@ -231,10 +227,9 @@ def _load_page_image(row: dict[str, Any], input_dir: Path) -> Image.Image | None
     if suffix in PDF_EXTENSIONS:
         return _render_pdf_page(source_path, int(row["page_number"]))
 
-    print(
+    logger.error(
         f"page type classifier skip {row['doc_id']} page {row['page_number']}: "
         f"unsupported file extension {suffix}",
-        file=sys.stderr,
     )
     return None
 

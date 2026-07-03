@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -10,9 +9,8 @@ import torch
 
 from janasunani.pipeline.config import PipelineConfig
 from janasunani.pipeline.db import connect
+from loguru import logger
 
-
-logger = logging.getLogger(__name__)
 
 BATCH_SIZE = 32
 MAX_LEN = 512
@@ -37,11 +35,10 @@ def run_pii_tagger(config: PipelineConfig) -> None:
 
     pages_df = _load_pending_pages(config.db_path)
     if pages_df.empty:
-        print("pii_tagger: nothing to do")
+        logger.info("pii_tagger: nothing to do")
         return
 
-    print(f"pii_tagger: redacting {len(pages_df)} English page(s)")
-    sys.stdout.flush()
+    logger.info(f"pii_tagger: redacting {len(pages_df)} English page(s)")
 
     from PII_tagger.src.inference.model_loader import load_pii_model
     from PII_tagger.src.redaction.batch_redactor import redact_dataframe_column_fast
@@ -65,7 +62,7 @@ def run_pii_tagger(config: PipelineConfig) -> None:
     )
 
     _write_redactions(config.db_path, redacted_df)
-    print(f"pii_tagger done: redacted={len(redacted_df)}")
+    logger.success(f"pii_tagger done: redacted={len(redacted_df)}")
 
 
 def _find_model_output_dir(model_dir: Path) -> Path:

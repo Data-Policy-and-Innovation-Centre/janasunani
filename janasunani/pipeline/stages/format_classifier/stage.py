@@ -15,7 +15,6 @@ from __future__ import annotations
 import hashlib
 import os
 import sqlite3
-import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -36,6 +35,7 @@ from .features import (
     suppress_stderr,
 )
 from .model import FormatClassifier
+from loguru import logger
 
 # Avoid pdf2image's pixel-bomb DoS protection blocking large but legitimate
 # scans. We trust our own input.
@@ -383,7 +383,7 @@ def _load_existing_pages(db_path: Path) -> set[tuple[str, int]]:
             existing.add((row[0], row[1]))
         conn.close()
     except Exception as e:
-        print(f"warning: could not load existing pages: {e}", file=sys.stderr)
+        logger.warning(f"could not load existing pages: {e}")
     return existing
 
 
@@ -413,7 +413,7 @@ def _run(
         paths = _collect_paths_from_dir(input_dir)
 
     if not paths:
-        print("no input files found", file=sys.stderr)
+        logger.error("no input files found")
         return {"inserted": 0, "skipped": 0, "errors": 0, "db_errors": 0}
 
     path_root = input_dir if input_dir is not None else Path("/")
@@ -421,8 +421,7 @@ def _run(
     today = datetime.now().strftime("%Y-%m-%d")
     work_items = [(str(p), str(path_root), today) for p in paths]
 
-    print(f"format classifier: {len(paths)} file(s), {len(existing)} pages already done")
-    sys.stdout.flush()
+    logger.success(f"format classifier: {len(paths)} file(s), {len(existing)} pages already done")
 
     owns_executor = executor is None
     if executor is None:
@@ -463,7 +462,7 @@ def _run(
                 db_conn.commit()
             except Exception as e:
                 totals["db_errors"] += len(page_buf)
-                print(f"db batch error (pages): {e}", file=sys.stderr)
+                logger.error(f"db batch error (pages): {e}")
             page_buf.clear()
         if unreadable_buf:
             try:
@@ -479,7 +478,7 @@ def _run(
                 )
                 db_conn.commit()
             except Exception as e:
-                print(f"db batch error (unreadable): {e}", file=sys.stderr)
+                logger.error(f"db batch error (unreadable): {e}")
             unreadable_buf.clear()
 
     t_start = time.time()
@@ -499,14 +498,13 @@ def _run(
 
             elapsed = time.time() - t_start
             rate = i / elapsed if elapsed > 0 else 0
-            print(
+            logger.info(
                 f"[{i}/{len(paths)}] inserted={totals['inserted']} "
                 f"skipped={totals['skipped']} errors={totals['errors']} "
                 f"({rate:.1f} files/s)"
             )
-            sys.stdout.flush()
     except KeyboardInterrupt:
-        print("\ninterrupted — flushing buffers...", file=sys.stderr)
+        logger.error("interrupted — flushing buffers...")
     finally:
         flush()
         if owns_executor:
@@ -514,14 +512,14 @@ def _run(
         db_conn.close()
 
     elapsed = time.time() - t_start
-    print(
+    logger.success(
         f"format classifier done in {elapsed:.1f}s: "
         f"inserted={totals['inserted']} skipped={totals['skipped']} "
         f"errors={totals['errors']} db_errors={totals['db_errors']}"
     )
     if recent_errors:
-        print(f"first {min(len(recent_errors), 5)} error(s):", file=sys.stderr)
+        logger.error(f"first {min(len(recent_errors), 5)} error(s):")
         for err in recent_errors[:5]:
-            print(f"  - {err}", file=sys.stderr)
+            logger.error(f"  - {err}")
 
     return totals

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import pickle  # noqa: S403 — label encoder is a trusted local artifact
 from pathlib import Path
+from loguru import logger
 
 # Max token length the model was trained with (MAX_LEN in the training script).
 MAX_LEN = 256
@@ -36,9 +37,8 @@ class GrievanceCategorizer:
         self._torch = torch
 
         if not torch.cuda.is_available():
-            print(
-                "warning: no CUDA GPU detected; "
-                "categorizer will run on CPU (much slower)."
+            logger.warning(
+                "no CUDA GPU detected; categorizer will run on CPU (much slower)."
             )
             self._device = "cpu"
         else:

@@ -7,7 +7,6 @@ model expects at inference time.
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +14,7 @@ import cv2
 import numpy as np
 import pytesseract
 from PIL import Image
+from loguru import logger
 
 # Color/grayscale threshold from the original code
 COLOR_THRESHOLD = 10
@@ -229,7 +229,7 @@ def perform_ocr(img_pil: Image.Image) -> dict[str, Any]:
             word_counts[lang] = sum(1 for c in confs if c > CONFIDENCE_THRESHOLD)
             lang_scores[lang] = np.mean(confs) if confs else 0
         except Exception as e:
-            print(f"warning: ocr {lang} failed or timed out: {e}", file=sys.stderr)
+            logger.warning(f"ocr {lang} failed or timed out: {e}")
 
     if word_counts["eng"] > 0 or word_counts["ori"] > 0:
         eng_score = lang_scores["eng"] * (word_counts["eng"] + 1)

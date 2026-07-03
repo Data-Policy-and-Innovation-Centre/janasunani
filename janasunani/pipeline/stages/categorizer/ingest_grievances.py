@@ -19,11 +19,11 @@ producing empty categories.
 from __future__ import annotations
 
 import sqlite3
-import sys
 from pathlib import Path
 from typing import Any
 
 from ...db import connect
+from loguru import logger
 
 
 def _load_grievances_from_json(json_path: Path) -> dict[str, str]:
@@ -54,8 +54,7 @@ def _load_grievances_from_json(json_path: Path) -> dict[str, str]:
         grievances[str(ticket)] = "" if pd.isna(grievance) else str(grievance)
 
     if skipped:
-        print(f"  ingestion: skipped {skipped} JSON records with no ticket_no",
-              file=sys.stderr)
+        logger.error(f"  ingestion: skipped {skipped} JSON records with no ticket_no")
     return grievances
 
 def _distinct_docs_from_pages(db_path: Path) -> list[dict[str, Any]]:
@@ -95,7 +94,7 @@ def ingest_grievances(db_path: Path, complaints_json: Path) -> dict[str, int]:
     grievances = _load_grievances_from_json(complaints_json)
     docs = _distinct_docs_from_pages(db_path)
 
-    print(f"grievance ingestion: {len(grievances)} grievances in JSON, "
+    logger.info(f"grievance ingestion: {len(grievances)} grievances in JSON, "
           f"{len(docs)} distinct documents in pages")
 
     matched = 0
@@ -139,21 +138,23 @@ def ingest_grievances(db_path: Path, complaints_json: Path) -> dict[str, int]:
         conn.close()
 
     # ---- join-health report ----
-    print(f"\n{'='*60}")
-    print("grievance ingestion — join health")
-    print(f"  documents written:        {len(rows_to_write)}")
-    print(f"  matched to a grievance:   {matched}")
-    print(f"  no ticket_number on page: {no_ticket}")
-    print(f"  ticket present but NOT in JSON: {len(unmatched_docs)}")
+    logger.info(f"{'='*60}")
+    logger.info("grievance ingestion — join health")
+    logger.info(f"  documents written:        {len(rows_to_write)}")
+    logger.info(f"  matched to a grievance:   {matched}")
+    logger.info(f"  no ticket_number on page: {no_ticket}")
+    logger.info(f"  ticket present but NOT in JSON: {len(unmatched_docs)}")
     if unmatched_docs:
         sample = unmatched_docs[:10]
-        print("  sample unmatched tickets (parsed from path, absent in JSON):")
+        logger.info("  sample unmatched tickets (parsed from path, absent in JSON):")
         for t in sample:
-            print(f"    {t!r}")
-        print("  ^ if these look like real tickets that SHOULD be in the JSON,")
-        print("    the path structure or --input root may be wrong (tickets")
-        print("    mis-parsed), or this JSON is only a sample of all grievances.")
-    print(f"{'='*60}")
+            logger.info(f"    {t!r}")
+        logger.info(
+            "  ^ if these look like real tickets that SHOULD be in the JSON, "
+            "the path structure or --input root may be wrong (tickets "
+            "mis-parsed), or this JSON is only a sample of all grievances."
+        )
+    logger.info(f"{'='*60}")
 
     return {
         "documents_written": len(rows_to_write),

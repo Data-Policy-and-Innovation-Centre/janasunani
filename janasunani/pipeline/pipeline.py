@@ -1,5 +1,6 @@
 from janasunani.pipeline.config import PipelineConfig
 from janasunani.pipeline.db import initialize_database
+from loguru import logger
 
 # The canonical order stages run in. Used when config.stages is None
 # (i.e. "run everything").
@@ -56,4 +57,4 @@ def run_pipeline(config: PipelineConfig) -> None:
             from janasunani.pipeline.stages.categorizer import run_categorizer
             run_categorizer(config)
 
-    print(f"Pipeline complete: {config.db_path}")
+    logger.success(f"Pipeline complete: {config.db_path}")
