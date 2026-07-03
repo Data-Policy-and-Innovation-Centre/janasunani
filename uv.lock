@@ -1970,6 +1970,7 @@ dependencies = [
 [package.optional-dependencies]
 categorizer = [
     { name = "huggingface-hub" },
+    { name = "langdetect" },
     { name = "pandas" },
     { name = "scikit-learn", version = "1.8.0", source = { registry = "https://pypi.org/simple" } },
     { name = "torch" },
@@ -2031,6 +2032,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "huggingface-hub", marker = "extra == 'categorizer'" },
     { name = "huggingface-hub", marker = "extra == 'pipeline-core'" },
+    { name = "langdetect", marker = "extra == 'categorizer'" },
     { name = "langdetect", marker = "extra == 'pipeline-core'" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "mlflow", specifier = ">=2.18" },

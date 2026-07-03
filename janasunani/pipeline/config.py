@@ -8,7 +8,10 @@ class PipelineConfig:
     db_path: Path
     models_dir: Path
     ocr_engine: str = "pytesseract"
-    page_type_model_id: str = "DPIC-Pipeline/vit_type_classifier"
+    # None -> resolved by the page-type stage: the DVC-mirrored copy under
+    # models_dir/page_type_classifier/vit_type_classifier when present,
+    # falling back to the (orphaned-org) HF repo. Set explicitly to override.
+    page_type_model_id: str | None = None
     file_list: Path | None = None
     n_workers: int | None = None
     # --- OCR stage additions ---

@@ -43,6 +43,17 @@ PAGE_TYPE_CLASS_BY_LABEL = {
 }
 
 
+def _resolve_model_id(config: PipelineConfig) -> str:
+    """Model provenance rule: the DVC-mirrored copy under models/ wins;
+    the orphaned-org HF repo is only a fallback. Explicit config overrides."""
+    if config.page_type_model_id:
+        return config.page_type_model_id
+    local = config.models_dir / "page_type_classifier" / "vit_type_classifier"
+    if (local / "config.json").exists():
+        return str(local)
+    return "DPIC-Pipeline/vit_type_classifier"
+
+
 def run_page_type_classifier(config: PipelineConfig) -> None:
     """Add page type predictions into `pages.page_type` and `pages.page_type_class`."""
     _ensure_page_type_class_column(config.db_path)
@@ -53,11 +64,10 @@ def run_page_type_classifier(config: PipelineConfig) -> None:
         print("page type classifier: no pages need classification")
         return
 
-    classifier = _PageTypeClassifier(config.page_type_model_id)
+    model_id = _resolve_model_id(config)
+    classifier = _PageTypeClassifier(model_id)
 
-    print(
-        f"page type classifier: {len(rows)} page(s), model={config.page_type_model_id}"
-    )
+    print(f"page type classifier: {len(rows)} page(s), model={model_id}")
     sys.stdout.flush()
 
     totals = {"classified": 0, "skipped": 0, "errors": 0}

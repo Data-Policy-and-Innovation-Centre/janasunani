@@ -76,6 +76,7 @@ ocr-deepseek = [
 # MuRIL grievance categorizer
 categorizer = [
     "huggingface-hub",
+    "langdetect",
     "pandas",
     "scikit-learn>=1.8,<1.9",  # match the era of the pickled estimators (page_split pkl, label encoder)
     "torch",

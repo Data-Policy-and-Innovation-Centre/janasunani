@@ -56,9 +56,14 @@ def run_categorizer(config: PipelineConfig) -> None:
     print(f"categorizer: {len(work)} document(s) to categorize")
     sys.stdout.flush()
 
+    # Model provenance rule: prefer the DVC-mirrored copy under models/ —
+    # runtime must not depend on the (orphaned) student HF account.
+    local_dir = config.models_dir / "categorizer"
+    model_dir = str(local_dir) if (local_dir / "config.json").exists() else "jeseniapar/categorizer"
+
     _run(
         db_path=config.db_path,
-        model_dir="jeseniapar/categorizer",
+        model_dir=model_dir,
         work=work,
     )
 

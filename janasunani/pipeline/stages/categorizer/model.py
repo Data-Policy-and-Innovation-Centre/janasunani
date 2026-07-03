@@ -16,6 +16,7 @@ require those heavy packages.
 from __future__ import annotations
 
 import pickle  # noqa: S403 — label encoder is a trusted local artifact
+from pathlib import Path
 
 # Max token length the model was trained with (MAX_LEN in the training script).
 MAX_LEN = 256
@@ -43,11 +44,16 @@ class GrievanceCategorizer:
         else:
             self._device = "cuda"
 
-        # Download the label encoder from HF repo
-        encoder_path = hf_hub_download(
-            repo_id=model_dir,
-            filename="label_encoder_ROS_wDOCS_english.pkl",
-        )
+        # Label encoder: local dir (the DVC mirror) first; HF download only
+        # when model_dir is a repo id.
+        local = Path(model_dir) / "label_encoder_ROS_wDOCS_english.pkl"
+        if local.exists():
+            encoder_path = local
+        else:
+            encoder_path = hf_hub_download(
+                repo_id=model_dir,
+                filename="label_encoder_ROS_wDOCS_english.pkl",
+            )
 
         with open(encoder_path, "rb") as f:
             self._label_encoder = pickle.load(f)

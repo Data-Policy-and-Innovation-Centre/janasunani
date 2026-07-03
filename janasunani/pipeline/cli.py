@@ -40,8 +40,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument(
         "--page-type-model",
-        default="DPIC-Pipeline/vit_type_classifier",
-        help="Hugging Face model repo or local path for the page type classifier.",
+        default=None,
+        help=(
+            "HF model repo or local path for the page type classifier. "
+            "Default: the DVC-mirrored copy under <models>/page_type_classifier/"
+            "vit_type_classifier when present, else the upstream HF repo."
+        ),
     )
     # --- OCR stage additions ---
     run.add_argument(
