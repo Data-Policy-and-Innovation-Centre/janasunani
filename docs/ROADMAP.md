@@ -423,6 +423,12 @@ container for the demo (no RDS needed), repointable to RDS via `OLTP_DB_URL`.
   Presidio (see Phase 5). Training loop preserved at DSI-repo commit `db4885f` for reference.
 - Whether live demo grievances reuse the `complaints` table (+ AI/routing columns) or a sibling table.
 - Whether to DVC-track an OLTP "seed" snapshot for reproducible demos (vs regenerate from dump).
+- **Backfill hardening (before any FULL-corpus run; fine at the ~200-doc demo scale)** — from the Codex
+  review of PR #4: the summarizer/categorizer/PII stages materialize their whole pending workload in
+  memory before batching (fetchall/pandas/prebuilt work lists); page through SQL in bounded chunks.
+  The PII `max_len` zip-truncation (drops text past the first token window) dies with the legacy
+  module in the Presidio rebuild. The pii_tagger hard-fail on missing artifacts is intentional
+  (privacy gate — silently skipping redaction would be worse) and is also resolved by the rebuild.
 - **History freshness** *(decided)*: live grievances land in OLTP but only appear in `GET /history`
   (which reads the lake) after re-materialization. `GET /grievance/{id}` reads OLTP live; `/history` is
   historical — re-materialize nightly/one-off. Revisit a union view only if stakeholders ask.

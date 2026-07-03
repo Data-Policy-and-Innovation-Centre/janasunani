@@ -41,9 +41,9 @@ stages:
       nfiles: 2
     - path: janasunani/pipeline
       hash: md5
-      md5: 928651ab6007c2e5b6f6d185be130c67.dir
-      size: 220799
-      nfiles: 47
+      md5: 51478ea44616b6441a776ee3ff8f3cf3.dir
+      size: 238248
+      nfiles: 48
     - path: models/format_classifier/page_split_v3.0_doc_split.pkl
       hash: md5
       md5: a428d2b7b057c53e94890d1bc2ec69ce
@@ -51,5 +51,5 @@ stages:
     outs:
     - path: data/processed/pipeline-sample.sqlite
       hash: md5
-      md5: 9601a57570d0fc0a115dfa6d024d79ca
+      md5: da8ba905528d52de8b383c6849be1d62
       size: 77824

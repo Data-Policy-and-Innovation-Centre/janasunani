@@ -50,9 +50,16 @@ def _dialect_upsert(model, dialect_name: str, rows: list[dict], key: str):
     return stmt.on_conflict_do_update(index_elements=[key], set_=update_cols)
 
 
-def _read_rows(con: sqlite3.Connection, table: str, columns: list[str]) -> list[dict]:
+def _iter_batches(con: sqlite3.Connection, table: str, columns: list[str]):
+    """Stream rows in BATCH_SIZE chunks — pages carry multi-KB text blobs, so
+    materializing a full backfill's table would exhaust memory before the
+    first upsert."""
     cur = con.execute(f"SELECT {', '.join(columns)} FROM {table}")  # noqa: S608
-    return [dict(zip(columns, row, strict=True)) for row in cur.fetchall()]
+    while True:
+        rows = cur.fetchmany(BATCH_SIZE)
+        if not rows:
+            return
+        yield [dict(zip(columns, row, strict=True)) for row in rows]
 
 
 async def _export(pipeline_db: Path, engine: AsyncEngine) -> dict[str, int]:
@@ -63,12 +70,12 @@ async def _export(pipeline_db: Path, engine: AsyncEngine) -> dict[str, int]:
             dialect_name = engine.dialect.name
             for model, table, key in _EXPORTS:
                 columns = [c.name for c in model.__table__.columns]
-                rows = _read_rows(con, table, columns)
-                for i in range(0, len(rows), BATCH_SIZE):
-                    batch = rows[i : i + BATCH_SIZE]
+                total = 0
+                for batch in _iter_batches(con, table, columns):
                     await conn.execute(_dialect_upsert(model, dialect_name, batch, key))
-                counts[table] = len(rows)
-                logger.info(f"exported {table}: {len(rows):,} rows upserted")
+                    total += len(batch)
+                counts[table] = total
+                logger.info(f"exported {table}: {total:,} rows upserted")
     finally:
         con.close()
     return counts
