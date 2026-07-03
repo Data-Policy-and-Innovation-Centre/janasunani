@@ -123,14 +123,17 @@ def ingest_grievances(db_path: Path, complaints_json: Path) -> dict[str, int]:
         )
 
     # UPSERT: insert new documents rows, or fill ticket/grievance on existing
-    # ones without clobbering summary / grievance_category.
+    # ones without clobbering summary / grievance_category. COALESCE keeps a
+    # previously ingested grievance when THIS json (e.g. a sample) lacks the
+    # ticket — otherwise a partial re-ingest nulls it and the categorizer
+    # silently skips the document.
     try:
         conn.executemany(
             """INSERT INTO documents (doc_id, ticket_number, grievance)
                VALUES (:doc_id, :ticket_number, :grievance)
                ON CONFLICT(doc_id) DO UPDATE SET
                    ticket_number = excluded.ticket_number,
-                   grievance = excluded.grievance""",
+                   grievance = COALESCE(excluded.grievance, documents.grievance)""",
             rows_to_write,
         )
         conn.commit()

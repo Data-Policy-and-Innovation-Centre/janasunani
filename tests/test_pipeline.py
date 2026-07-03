@@ -73,6 +73,36 @@ def test_page_type_model_resolves_to_dvc_mirror(tmp_path):
     assert _resolve_model_id(cfg2) == "explicit/override"
 
 
+def test_partial_json_reingest_preserves_existing_grievances(tmp_path):
+    """A sample JSON missing a ticket must not NULL a previously ingested
+    grievance (which would silently un-categorize the document)."""
+    import json
+
+    pytest.importorskip("pandas")
+    from janasunani.pipeline.stages.categorizer.ingest_grievances import ingest_grievances
+
+    db = tmp_path / "pipeline.sqlite"
+    initialize_database(db)
+    with sqlite3.connect(db) as con:
+        con.execute(
+            "INSERT INTO pages (doc_id, page_number, full_path, page_id, ticket_number)"
+            " VALUES ('D1', 1, 'D1.pdf', 'p1', 'T1')"
+        )
+        con.commit()
+
+    full = tmp_path / "full.json"
+    full.write_text(json.dumps({"ticket_no": {"0": "T1"}, "grievance": {"0": "need water"}}))
+    ingest_grievances(db_path=db, complaints_json=full)
+
+    sample = tmp_path / "sample.json"  # T1 absent
+    sample.write_text(json.dumps({"ticket_no": {"0": "T2"}, "grievance": {"0": "other"}}))
+    ingest_grievances(db_path=db, complaints_json=sample)
+
+    with sqlite3.connect(db) as con:
+        got = con.execute("SELECT grievance FROM documents WHERE doc_id='D1'").fetchone()
+    assert got == ("need water",)  # preserved, not clobbered to NULL
+
+
 def test_cli_parses_stage_subset_and_engine():
     args = build_parser().parse_args(
         ["run", "--stages", "ocr_extraction", "--ocr-engine", "pytesseract"]

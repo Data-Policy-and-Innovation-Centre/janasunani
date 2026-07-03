@@ -262,8 +262,16 @@ def _process_pdf(
                 )
                 stats["inserted"] += 1
                 consecutive_failures = 0
-            except Exception:
+            except Exception as exc:
                 stats["errors"] += 1
+                # Same audit rule as classification failures: without a row
+                # the page vanishes from unreadable_pages and is retried on
+                # every resume.
+                stats["unreadable"].append({
+                    "doc_id": doc_id, "page_number": page_num,
+                    "full_path": rel_path,
+                    "reason": f"page render/convert failed: {type(exc).__name__}",
+                })
                 consecutive_failures += 1
     finally:
         restore_stderr(saved_stderr)

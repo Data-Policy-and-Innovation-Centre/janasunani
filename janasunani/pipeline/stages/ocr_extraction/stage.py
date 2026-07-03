@@ -100,10 +100,18 @@ def _load_pending_pages(
     if not db_path.exists():
         return []
 
+    # Known-bad pages (already in unreadable_pages for this stage) are
+    # excluded — otherwise every resume re-grinds the same failures forever.
     sql = """
         SELECT page_id, doc_id, page_number, full_path, language
         FROM pages
         WHERE extracted_text IS NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM unreadable_pages u
+              WHERE u.doc_id = pages.doc_id
+                AND u.page_number = pages.page_number
+                AND u.stage = 'ocr_extraction'
+          )
     """
     params: list[Any] = []
     if filter_language is not None:
