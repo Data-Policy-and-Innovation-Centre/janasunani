@@ -79,6 +79,21 @@ def test_datetime_coercion_handles_strings_and_garbage():
     assert c.last_updated_on is None  # unparseable -> None, not an error
 
 
+def test_nul_bytes_stripped_from_all_string_fields():
+    # PostgreSQL text can't hold 0x00; MySQL/SQLite pass it through, and real
+    # dump rows carry it (broke the first cloud migration at ~600k rows).
+    c = ComplaintSchema(
+        **_raw_complaint(grievanceSubject="need\x00 help", petitionerName="\x00A B")
+    )
+    assert c.grievance == "need help"
+    assert c.petitioner_name == "A B"
+
+    out = validate_action_history(
+        [{"trackingId": "TR1", "action_taken_remark": "ok\x00"}], ticket_no="T1"
+    )
+    assert out[0]["action_taken_remark"] == "ok"
+
+
 def test_office_validator_is_lenient():
     # Unknown office (outside the 7-value API map) must pass through, not raise.
     c = ComplaintSchema(**_raw_complaint(officeNAme="Tahasildar, Some Block"))

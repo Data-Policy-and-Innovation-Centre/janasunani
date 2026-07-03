@@ -22,6 +22,15 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from . import OFFICE
 
 
+def _strip_nul(v):
+    """Drop NUL bytes from strings. PostgreSQL text columns cannot contain
+    ``0x00`` (asyncpg raises ``CharacterNotInRepertoireError``); MySQL and
+    SQLite pass it through silently, so real dump rows do carry them."""
+    if isinstance(v, str) and "\x00" in v:
+        return v.replace("\x00", "")
+    return v
+
+
 def _coerce_datetime(v):
     """Best-effort parse of a datetime from the source (already a ``datetime``
     via DB reflection, or an ISO / Janasunani-formatted string). Returns ``None``
@@ -54,6 +63,8 @@ class Complaint(BaseModel):
     ``t_janasunani_etl_pre_data`` mapped to snake_case ORM fields."""
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    _sanitize_strings = field_validator("*", mode="before")(_strip_nul)
 
     # Identity / linkage
     ticket_no: str = Field(..., alias="ticketNumber")
@@ -172,6 +183,8 @@ class ActionHistory(BaseModel):
     tracking map) and set before/at validation."""
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    _sanitize_strings = field_validator("*", mode="before")(_strip_nul)
 
     ticket_no: Optional[str] = Field(default=None, alias="ticketNumber")
     tracking_id: Optional[str] = Field(default=None, alias="trackingId")

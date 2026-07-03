@@ -24,6 +24,7 @@ from sqlalchemy import insert as core_insert
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -33,6 +34,7 @@ from janasunani.db.models import Base
 from janasunani.db.models import Complaint as ComplaintModel
 from janasunani.ingestion.schemas import ActionHistory as ActionHistorySchema
 from janasunani.ingestion.schemas import Complaint as ComplaintSchema
+from janasunani.ingestion.schemas import _strip_nul
 
 COMPLAINT_TABLE = "t_janasunani_etl_pre_data"
 ACTION_HISTORY_TABLE = "t_janasunani_etl_history_pre_data"
@@ -188,7 +190,10 @@ async def migrate_action_history(
                 break
             recs = []
             for r in rows:
-                ticket_no = tracking_map.get(r["trackingId"])
+                # Sanitize the raw key BEFORE the lookup: the map keys come from
+                # complaints already NUL-stripped by the schema layer, so a raw
+                # NUL-carrying trackingId would silently miss its complaint.
+                ticket_no = tracking_map.get(_strip_nul(r["trackingId"]))
                 if ticket_no is None:
                     continue
                 d = dict(r)
@@ -226,7 +231,10 @@ async def run_migration(
             "No MySQL URL given. Set MYSQL_URL in the environment/.env or pass mysql_url."
         )
 
-    logger.info(f"Starting migration from {mysql_url} -> {target_db_url}")
+    # Log URLs with credentials masked (they land in shipped log files).
+    safe_src = make_url(mysql_url).render_as_string(hide_password=True)
+    safe_dst = make_url(target_db_url).render_as_string(hide_password=True)
+    logger.info(f"Starting migration from {safe_src} -> {safe_dst}")
     mysql_engine, target_engine = setup_engines(mysql_url, target_db_url)
     dialect_name = target_engine.dialect.name  # 'sqlite' | 'postgresql' | …
     try:
@@ -241,7 +249,7 @@ async def run_migration(
             await migrate_action_history(
                 mysql_engine, target_sess, tracking_map, dialect_name, chunk_size
             )
-        logger.success(f"Migration completed into {target_db_url}")
+        logger.success(f"Migration completed into {safe_dst}")
     finally:
         mysql_engine.dispose()
         await target_engine.dispose()

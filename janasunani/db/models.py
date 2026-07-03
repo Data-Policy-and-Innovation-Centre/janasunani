@@ -29,9 +29,36 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.sql.functions import GenericFunction
 
 Base = declarative_base()
+
+
+class dedup_remark(GenericFunction):  # noqa: N801 - compiles to SQL, named like SQL
+    """The remark's contribution to the ``action_history_uniq`` dedup key.
+
+    SQLite indexes the coalesced text directly. PostgreSQL indexes its md5
+    digest instead: real remarks run to multiple KB and Postgres btree entries
+    cap at ~2.7 KB (raw text broke the first cloud migration with
+    ``ProgramLimitExceededError``). Same dedup semantics either way — the
+    paired ``IS NULL`` flag keeps NULL distinct from ``''``.
+    """
+
+    inherit_cache = True
+
+
+@compiles(dedup_remark)
+def _dedup_remark_sqlite(element, compiler, **kw):
+    (col,) = list(element.clauses)
+    return f"coalesce({compiler.process(col, **kw)}, '')"
+
+
+@compiles(dedup_remark, "postgresql")
+def _dedup_remark_postgres(element, compiler, **kw):
+    (col,) = list(element.clauses)
+    return f"md5(coalesce({compiler.process(col, **kw)}, ''))"
 
 
 class District(Base):
@@ -176,7 +203,7 @@ class ActionHistory(Base):
             action_status.is_(None),
             func.coalesce(action_status, ""),
             action_taken_remark.is_(None),
-            func.coalesce(action_taken_remark, ""),
+            func.dedup_remark(action_taken_remark),
             complaint_status_with_authority.is_(None),
             func.coalesce(complaint_status_with_authority, ""),
             unique=True,

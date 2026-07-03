@@ -84,35 +84,50 @@ uv run pytest && uv run ruff check .   # gate
   (NULL-keyed duplicate rows now collapse). This rebuild is why the count is
   **6,556,171** (down from a pre-dedup 6,565,323 seen in earlier notes).
 
-**Immediate real-world plan (reviewed 2026-07-02; single maintainer, week-by-week)**
+**Immediate real-world plan (single maintainer, week-by-week; re-sequenced 2026-07-02
+after the Week-1 cloud run — see "Reviewer input" below for the original rationale)**
 
-*Week 1 — cloud foundation (CPU only; no GPU needed — only DeepSeek OCR requires CUDA).*
-1. Pre-flight fixes: `config.py` AWS settings → `Optional[str] = None`; document the
-   Postgres materialize workaround (see DVC note below). `pytest` + `ruff` green.
-2. Terraform (`deploy/terraform/`): t3.large-class CPU box + ~150 GB gp3 EBS, IAM
-   instance role (documents/data buckets + `dpic-dvc-cache`), SG (22 from own IP, 80/443).
-3. Bootstrap the box (Docker, uv, clone); `aws s3 cp` the 3.2 GB dump up.
-4. Postgres container (volume on EBS) → `alembic upgrade head` → run
-   `scripts/migrate.sh` **on the box** (never across the internet) → verify
-   **1,371,288 / 6,556,171**. The full-scale load over asyncpg is the least-tested
-   path — watch batch sizes + total time.
-5. Materialize on-box → verify Parquet counts → `dvc commit` + push.
-6. Ingestion smoke against real S3 (small batch); nightly `pg_dump` → S3 cron.
+*Week 1 — cloud foundation. ✅ DONE 2026-07-02.* Terraform CPU box (t3.xlarge for the
+migration, downsized to t3.large after) + IAM instance role; dump via `dvc pull`; full
+migration → cloud Postgres with **exact counts 1,371,288 / 6,556,171**; materialize via
+the DuckDB postgres scanner (same counts, ~24 s on-box); nightly `pg_dump` → S3 cron
+(first 623 MB backup verified); pytest gate green on the box. Three cloud-only kinks
+found + fixed with regression tests: the MySQL first-boot auth race in `migrate.sh`,
+NUL bytes in dump text (Postgres rejects; now stripped in the schema layer), and the
+dedup index exceeding Postgres's ~2.7 KB btree entry cap (remark now md5-digested on
+Postgres via a dialect-compiled expression + Alembic revision). *Still pending:*
+ingestion smoke — blocked on the Janasunani API credentials.
 
-*Week 2 — Phase 5 pipeline + GPU.*
-7. Refold `document_pipeline` → `janasunani/pipeline/` (decisions in Phase 5 below);
-   per-stage tests + 2-file pytesseract smoke locally.
-8. GPU box: g6.xlarge from a Deep Learning AMI (skips driver pain) +
+*Week 2 — Phase 5 pipeline + GPU, plus the pulled-forward plumbing.*
+1. **Unblock the two external dependencies first** (wait-time, not work-time): the
+   Janasunani API credentials (ingestion smoke) and read access to
+   `janasunani-mappings` (Phase 9's only data source — if this is a problem we must
+   know now, not in Week 3).
+2. **Minimal `deploy/docker-compose.yml` now**: declare the existing `oltp` Postgres
+   (today it exists only as an ad-hoc `docker run`); grow the file service-by-service
+   as they're born. Phase 12 becomes integration, not "first time compose exists".
+3. **Minimal CI now** (Phase 7 split): a GitHub Actions job running `pytest` + `ruff`
+   with a throwaway Postgres service, so fixes stop shipping on locally-run tests only.
+4. Refold `document_pipeline` → `janasunani/pipeline/` (decisions in Phase 5 below);
+   per-stage tests + 2-file pytesseract smoke locally (CPU — before the GPU box exists).
+5. GPU box: g6.xlarge from a Deep Learning AMI (skips driver pain) +
    nvidia-container-toolkit; build the `ocr-deepseek` image; DeepSeek smoke on the
    2-file sample. Watch for `trust_remote_code` importing `flash_attn` unconditionally.
-9. **Sample backfill only** (~200 curated docs), not the full corpus → OLTP → lake.
-10. MLflow slim (Phase 6 folded in): local backend on the CPU box, artifacts to S3.
+6. **Sample backfill only** (~200 curated docs), not the full corpus → OLTP → lake.
+7. MLflow slim (Phase 6 folded in): local backend on the CPU box, artifacts to S3.
 
-*Week 3 — inference, routing, serving (Phases 8–10).* Rules router **before** the
-learned router so the demo never blocks on training.
+*Week 3 — API-contract-first (re-ordered: the frontend must not sit at the tail of a
+serial chain with zero float).*
+1. **Phase 10 skeleton first** (~a day): the three endpoints + `/health` with a
+   **mocked processor** returning the real response shapes.
+2. **Phase 11 scaffold immediately after**, built against the mocked contract — the
+   demo's visible deliverable gets Weeks 3–4 of iteration instead of a cramped tail.
+3. Phases 8 + 9 fill in behind the stable contract: single-item inference, then the
+   rules router (learned router only after the E2E path works).
+4. Phase 10 wire-up = swap the mock for the real processor + persist to OLTP.
 
-*Week 4 — frontend + deploy + demo (Phases 11–12).* Demo runbook: start GPU box →
-health check → demo → stop GPU box.
+*Week 4 — integrate + demo (Phase 12).* Full compose on the CPU box; demo runbook:
+start GPU box → health check → demo → stop GPU box; latency pass; stakeholder dry run.
 
 ## Storage architecture — OLTP front, Parquet/OLAP downstream
 
@@ -167,8 +182,10 @@ health check → demo → stop GPU box.
   `JanasunaniAPIClient`), and `DocumentService` (download → S3/local, status into OLTP). Console script
   `janasunani-ingest-documents`. 30 tests (moto + respx).
 - 🔄 **Phase 5 (next)** — document processing pipeline (refold `document_pipeline`, DVC-track models).
-- ⬜ **Phases 6–7** — MLflow+DVC tracking, CI/docs.
+- ⬜ **Phases 6–7** — MLflow+DVC tracking, CI/docs. *(MLflow slim + minimal CI pulled forward to
+  Week 2; docs stay late.)*
 - ⬜ **Phases 8–12** (Part II) — inference, routing, serving (live → OLTP), frontend, deploy.
+  *(Built API-contract-first — see the Part II build-order note.)*
 
 ## Package structure
 
@@ -253,6 +270,10 @@ Parquet. Cover counts, idempotency, malformed inputs, the source→field mapping
   preserving that layout.
 - GPU note: only DeepSeek OCR hard-requires CUDA (fails fast); summarizer/categorizer/PII fall back to
   CPU. DeepSeek's `trust_remote_code` may import `flash_attn` unconditionally — pin or force eager attn.
+- **Index rule (Week-1 lesson, generalized):** the `pages`/`documents` tables carry unbounded text
+  (`extracted_text`, summaries). On Postgres, btree entries cap at ~2.7 KB — **never put an unbounded
+  text column in a btree key or unique index**; hash it (see `dedup_remark` in `db/models.py`) or key on
+  ids. Applies to the OLTP exporter's Alembic revisions.
 - **Tests**: per-stage unit tests on fixtures; format+pytesseract smoke run on the 2-file sample.
 
 ## Phase 6 — MLflow + DVC dual tracking  ⬜
@@ -260,8 +281,11 @@ Parquet. Cover counts, idempotency, malformed inputs, the source→field mapping
   path + content hash. `dvc.yaml` stages mirror the flow.
 - **Tests**: a logged run + registered version resolves to a real DVC artifact; `dvc dag` renders.
 
-## Phase 7 — CI + docs  ⬜
-- Wire `uv run pytest` + `uv run ruff` into the GitHub workflows; expand coverage; update `README`/`AGENTS`.
+## Phase 7 — CI + docs  ⬜ *(split 2026-07-02)*
+- **CI — pulled forward to Week 2**: a GitHub Actions job running `uv run pytest` + `uv run ruff` with a
+  throwaway Postgres service container (so the Postgres-path tests run, not skip). Cheap, and fixes stop
+  shipping gated only by locally-run tests.
+- **Docs — stays late**: expand coverage; update `README`/`AGENTS`.
 
 ---
 
@@ -270,6 +294,12 @@ Parquet. Cover counts, idempotency, malformed inputs, the source→field mapping
 **Goal:** live single-grievance path — *raw input → extract → redact → classify → summarize → route →
 persist to OLTP → view* — behind FastAPI + a Next.js UI. The live app writes into the **same** OLTP DB
 (seeded with fake data for the demo); analytics/history read the Parquet lake.
+
+**Build order (re-sequenced 2026-07-02): API-contract-first, not 8→9→10→11.** The phases below are
+numbered by component, but they are *built* around the API contract so the frontend — the demo's visible
+deliverable — never sits at the tail of a serial chain: Phase 10 **skeleton** (endpoints + mocked
+processor, ~a day) → Phase 11 scaffold against it → Phases 8 + 9 fill in behind the contract → Phase 10
+wire-up (swap mock for real).
 
 ```
 janasunani/inference/service.py   # warm GrievanceProcessor (load models once; extract→redact→classify→summarize)
@@ -295,25 +325,31 @@ deploy/                           # docker-compose (api, frontend, mlflow, oltp-
   the learned router lands only after the E2E demo path works, so the demo never blocks on training.
 - **Tests**: rule lookups; learned-router top-k on held-out; combiner fallback.
 
-## Phase 10 — Serving API + live wiring  ⬜
-- `serving/api.py`: `POST /grievance` (text or file) → inference + routing → **persist a new grievance into
-  OLTP** (via `crud.py`) → return result; `GET /grievance/{id}` + status update; `GET /history` browse/
-  search via `olap/lake.py`. Models warm from MLflow; `/health`; CORS. **Seed fake live grievances**.
+## Phase 10 — Serving API + live wiring  ⬜ *(two steps: skeleton early, wire-up late)*
+- **Skeleton (start of Week 3, before Phases 8–9):** all endpoints + `/health` + CORS with a **mocked
+  processor** returning the real response shapes — the stable contract Phases 8/9/11 build against.
+- **Wire-up (after 8–9):** `POST /grievance` (text or file) → inference + routing → **persist a new
+  grievance into OLTP** (via `crud.py`) → return result; `GET /grievance/{id}` + status update;
+  `GET /history` browse/search via `olap/lake.py`. Models warm from MLflow. **Seed fake live grievances**.
 - **Tests**: API tests (TestClient) with mocked processor against a temp OLTP DB — submit→persist→fetch;
   history endpoint returns lake rows.
 
-## Phase 11 — Demo frontend (Next.js)  ⬜
-- Submit (text + upload) → staged view (extracted/redacted text, category/subcategory/dept, summary,
-  routing + escalation + confidence) + a history browse/search view. Env-configurable API URL
-  (`NEXT_PUBLIC_API_URL`); client-side fetch only — no auth, no SSR data plumbing.
+## Phase 11 — Demo frontend (Next.js)  ⬜ *(starts against the Phase 10 mock, not after Phase 10)*
+- Scaffolded right after the Phase 10 skeleton and built against the mocked contract, so it gets
+  Weeks 3–4 of iteration instead of a cramped tail. Submit (text + upload) → staged view
+  (extracted/redacted text, category/subcategory/dept, summary, routing + escalation + confidence) +
+  a history browse/search view. Env-configurable API URL (`NEXT_PUBLIC_API_URL`); client-side fetch
+  only — no auth, no SSR data plumbing.
 - **Tests**: manual verification against the demo checklist (Playwright deferred post-demo; the
   pytest policy for the Python side is unchanged).
 
-## Phase 12 — Demo integration & deployment  ⬜
-- `deploy/docker-compose.yml` on the **CPU box**: `api` + `frontend` + `mlflow` + **`oltp` (Postgres)** +
-  `proxy`; seed data; `make demo`. The GPU box runs the OCR container separately during demo windows
-  (runbook: start GPU box → health check → demo → stop). Materialize Parquet on a schedule/one-off.
-  Latency pass.
+## Phase 12 — Demo integration & deployment  ⬜ *(integration only — compose grows incrementally)*
+- `deploy/docker-compose.yml` starts in **Week 2** with just `oltp` (replacing the ad-hoc `docker run`)
+  and gains each service as it's born (`mlflow` → `api` → `frontend` → `proxy`), so this phase is
+  integration + runbook + latency — not the first time the runtime composition exists in the repo.
+- On the **CPU box**: full stack + seed data; `make demo`. The GPU box runs the OCR container separately
+  during demo windows (runbook: start GPU box → health check → demo → stop). Materialize Parquet on a
+  schedule/one-off. Latency pass.
 - **Verify**: fresh bring-up → submit a grievance in the browser → pipeline + routing renders and persists
   to OLTP; history view shows historical tickets.
 
@@ -350,8 +386,11 @@ container for the demo (no RDS needed), repointable to RDS via `OLTP_DB_URL`.
 - Routing consumes the `janasunani-mappings` tables + OLAP history.
 
 ## Open items to confirm during implementation (non-blocking)
-- ~~Exact S3 bucket name~~ → resolved: the `config.py` defaults are authoritative
-  (`janasunani-data-main` / `janasunani-documents-main`).
+- ~~Exact S3 bucket name~~ → resolved: `janasunani-documents-main` (exists; the one `s3service` uses).
+  `AWS_S3_BUCKET_NAME`/`janasunani-data-main` was vestigial — defined in config since the grievance
+  backend but read by no code, and the bucket never existed — dropped from `config.py`. Nightly
+  `pg_dump`s go to the existing `grievance-database-backups-main`; DVC artifacts (incl. the raw dump)
+  to `dpic-dvc-cache`.
 - AGENTS.md read access to `data/raw/janasunani-mappings/*` for routing rules.
 - Whether live demo grievances reuse the `complaints` table (+ AI/routing columns) or a sibling table.
 - Whether to DVC-track an OLTP "seed" snapshot for reproducible demos (vs regenerate from dump).

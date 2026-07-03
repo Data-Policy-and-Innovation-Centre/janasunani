@@ -95,6 +95,45 @@ async def test_migration_counts_skip_dedup_and_join(urls):
     assert orphans == 0
 
 
+async def test_nul_tracking_id_still_joins_history(tmp_path):
+    """A NUL-carrying trackingId on both sides must still join.
+
+    Complaints are NUL-stripped by the schema layer, so the tracking map's
+    keys are clean — the history pass must sanitize the RAW key before its
+    lookup or the row is silently skipped (Codex review catch on PR #2)."""
+    source = tmp_path / "source.db"
+    con = sqlite3.connect(source)
+    con.execute(
+        "CREATE TABLE t_janasunani_etl_pre_data ("
+        "ticketNumber TEXT, trackingId TEXT, grievanceSubject TEXT)"
+    )
+    con.execute(
+        "INSERT INTO t_janasunani_etl_pre_data VALUES (?, ?, ?)",
+        ("T9", "TR\x009", "nul in tracking id"),
+    )
+    con.execute(
+        "CREATE TABLE t_janasunani_etl_history_pre_data ("
+        "trackingId TEXT, action_taken_by TEXT, action_taken_date TEXT, action_status TEXT, "
+        "action_taken_remark TEXT, complaint_status_with_authority TEXT)"
+    )
+    con.execute(
+        "INSERT INTO t_janasunani_etl_history_pre_data VALUES (?, ?, ?, ?, ?, ?)",
+        ("TR\x009", "Officer N", "2021-05-01 10:00:00", "Noted", "r", "open"),
+    )
+    con.commit()
+    con.close()
+
+    target = tmp_path / "grievance.db"
+    await run_migration(f"sqlite:///{source}", f"sqlite+aiosqlite:///{target}")
+
+    out = sqlite3.connect(target)
+    row = out.execute(
+        "SELECT tracking_id, ticket_no FROM action_history"
+    ).fetchone()
+    out.close()
+    assert row == ("TR9", "T9")  # joined, and stored sanitized
+
+
 async def test_migration_is_idempotent(urls):
     source_url, target_url, target = urls
     await run_migration(source_url, target_url)

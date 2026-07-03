@@ -1,0 +1,5 @@
+outs:
+- md5: 5d1aced3adccecdf3f4cdfb072643928
+  size: 3474630354
+  hash: md5
+  path: Dump20250730.sql

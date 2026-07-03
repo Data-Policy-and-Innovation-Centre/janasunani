@@ -40,10 +40,14 @@ if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
     mysql:8.0 --default-authentication-plugin=mysql_native_password --sql-mode="" >/dev/null
 fi
 
-# 2) Wait for readiness.
-log "waiting for MySQL to accept connections"
+# 2) Wait for readiness. An authenticated query, NOT `mysqladmin ping`: on a
+# true first boot the entrypoint runs a temporary init server that answers
+# ping before the real server (with the root password) is up, so ping lets us
+# proceed straight into "Access denied" (bit us on EC2, where first boot is
+# slow; locally a reused container hides it).
+log "waiting for MySQL to accept authenticated connections"
 for _ in $(seq 1 90); do
-  if docker exec "$CONTAINER" mysqladmin ping -uroot -p"$PASSWORD" --silent >/dev/null 2>&1; then
+  if docker exec "$CONTAINER" mysql -uroot -p"$PASSWORD" -N -e "SELECT 1" >/dev/null 2>&1; then
     break
   fi
   sleep 2
