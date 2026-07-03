@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from PIL import Image
+if TYPE_CHECKING:
+    from PIL import Image
 
 from janasunani.pipeline.config import PipelineConfig
 from janasunani.pipeline.db import connect
@@ -244,6 +245,8 @@ def _resolve_input_path(value: str | None, input_dir: Path) -> Path | None:
 
 
 def _open_image(path: Path) -> Image.Image:
+    from PIL import Image
+
     with Image.open(path) as image:
         return image.convert("RGB")
 

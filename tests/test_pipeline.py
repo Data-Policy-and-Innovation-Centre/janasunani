@@ -46,13 +46,13 @@ def test_unknown_stage_fails_fast_before_any_import(tmp_path):
 def test_doc_id_unique_across_nested_dirs_and_stable_for_flat_files():
     # Same stem in different subdirs must NOT collide (nested corpus:
     # OR107/E/2021/...); flat files keep the historical stem-only id.
-    from janasunani.pipeline.stages.format_classifier.stage import _doc_id_from_relpath
+    from janasunani.pipeline.ticket import doc_id_from_relpath
 
-    a = _doc_id_from_relpath("AN063/E/2021/00001_complaint_x.pdf")
-    b = _doc_id_from_relpath("OR107/E/2021/00001_complaint_x.pdf")
+    a = doc_id_from_relpath("AN063/E/2021/00001_complaint_x.pdf")
+    b = doc_id_from_relpath("OR107/E/2021/00001_complaint_x.pdf")
     assert a != b
     assert a == "AN063/E/2021/00001_complaint_x"
-    assert _doc_id_from_relpath("CMO2021_complaint_y.jpeg") == "CMO2021_complaint_y"
+    assert doc_id_from_relpath("CMO2021_complaint_y.jpeg") == "CMO2021_complaint_y"
 
 
 def test_page_type_model_resolves_to_dvc_mirror(tmp_path):

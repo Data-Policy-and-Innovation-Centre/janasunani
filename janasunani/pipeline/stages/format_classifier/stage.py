@@ -27,7 +27,7 @@ from PIL import Image
 
 from ...config import PipelineConfig
 from ...db import connect
-from ...ticket import ticket_from_relpath
+from ...ticket import doc_id_from_relpath, ticket_from_relpath
 from .executors import Executor, auto_executor
 from .features import (
     configure_tesseract,
@@ -83,16 +83,6 @@ MODEL_NAME = "format_classifier_v3"
 # ---------------------------------------------------------------------------
 # Public entry point — called by pipeline.py
 # ---------------------------------------------------------------------------
-
-def _doc_id_from_relpath(rel_path: str) -> str:
-    """Document id = the relative path minus its extension, '/'-separated.
-
-    Keeps directory segments so nested documents with identical stems get
-    distinct ids (page_id is derived from doc_id, so this also keeps page
-    ids collision-free). Flat files reduce to the bare stem, unchanged from
-    the historical scheme."""
-    return str(Path(rel_path).with_suffix("")).replace(os.sep, "/")
-
 
 def run_format_classifier(config: PipelineConfig) -> None:
     """Run the format classifier stage.
@@ -170,7 +160,7 @@ def _process_file(args: tuple[str, str, str]) -> dict[str, Any]:
     # subdirs can share a stem — a stem-only id silently merges/drops the
     # later one via the (doc_id, page_number) unique key. Flat files keep the
     # same id as before (stem).
-    doc_id = _doc_id_from_relpath(rel_path)
+    doc_id = doc_id_from_relpath(rel_path)
     ext = file_path.suffix.lower()
 
     if ext in PDF_EXTENSIONS:

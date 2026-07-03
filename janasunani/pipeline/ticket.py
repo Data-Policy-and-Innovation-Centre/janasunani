@@ -73,3 +73,17 @@ def ticket_from_relpath(full_path: str) -> str | None:
     if dir_parts:
         return "/".join([*dir_parts, ticket_last])
     return ticket_last
+
+
+def doc_id_from_relpath(rel_path: str) -> str:
+    """Document id = the relative path minus its extension, '/'-separated.
+
+    Keeps directory segments so nested documents with identical stems get
+    distinct ids (page_id is derived from doc_id, so this also keeps page
+    ids collision-free). Flat files reduce to the bare stem, unchanged from
+    the historical scheme. Lives here (not in the format stage) so light
+    consumers can import it without the stage's cv2/numpy stack.
+    """
+    import os
+
+    return str(PurePosixPath(rel_path.replace(os.sep, "/")).with_suffix(""))
