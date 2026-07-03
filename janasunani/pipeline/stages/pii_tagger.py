@@ -1,140 +1,186 @@
+"""PII redaction stage — Presidio-based.
+
+Replaces the lost DSI Transformer-CRF (weights + training data were Box-only
+and unrecoverable after the team disbanded; see docs/ROADMAP.md). The stage
+contract is unchanged:
+
+    pages.extracted_text -> pages.redacted_text
+
+Detection is Presidio's analyzer with pattern recognizers tuned for Indian
+grievances — mobile numbers, Aadhaar, PAN, email — plus spaCy NER for person
+names in English text. Improvements over the legacy model:
+
+  - no token window: whole pages are analyzed, so nothing past the first
+    512 tokens silently escapes redaction;
+  - mixed-language pages ("English, Odia") are included — number/id patterns
+    are script-agnostic (the legacy stage skipped them entirely);
+  - explainable hits (each redaction is a named recognizer, not a model
+    logit) — appropriate for government data;
+  - work is paged through SQL in bounded batches (no whole-corpus DataFrame).
+
+Everything runs in-process: citizen text is never sent to an external
+service. Detected spans are replaced with typed tokens ([NAME], [PHONE],
+[AADHAAR], [PAN], [EMAIL]) so downstream summarize/categorize keep sentence
+structure.
+"""
+
 from __future__ import annotations
 
-import sys
-from datetime import datetime
 from pathlib import Path
 
-import pandas as pd
-import torch
+from loguru import logger
 
 from janasunani.pipeline.config import PipelineConfig
 from janasunani.pipeline.db import connect
-from loguru import logger
+
+# Pages fetched + written per loop iteration (bounded memory).
+DB_BATCH_SIZE = 200
+
+# entity -> replacement token
+ENTITY_TOKENS = {
+    "PERSON": "[NAME]",
+    "PHONE_NUMBER": "[PHONE]",
+    "IN_MOBILE": "[PHONE]",
+    "IN_AADHAAR": "[AADHAAR]",
+    "IN_PAN": "[PAN]",
+    "EMAIL_ADDRESS": "[EMAIL]",
+}
+
+_engines: tuple | None = None
 
 
-BATCH_SIZE = 32
-MAX_LEN = 512
+def _get_engines():
+    """Build (analyzer, anonymizer) once per process. Heavy imports live here
+    so importing this module stays light (lazy-import philosophy)."""
+    global _engines
+    if _engines is not None:
+        return _engines
+
+    from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
+    from presidio_analyzer.nlp_engine import NlpEngineProvider
+    from presidio_anonymizer import AnonymizerEngine
+
+    provider = NlpEngineProvider(
+        nlp_configuration={
+            "nlp_engine_name": "spacy",
+            "models": [{"lang_code": "en", "model_name": "en_core_web_sm"}],
+        }
+    )
+    analyzer = AnalyzerEngine(
+        nlp_engine=provider.create_engine(), supported_languages=["en"]
+    )
+
+    # Indian mobile: optional +91/0 prefix, then 10 digits starting 6-9,
+    # allowing the common "98765 43210" split. Digit look-arounds keep it
+    # from firing inside longer numbers (e.g. Aadhaar).
+    analyzer.registry.add_recognizer(
+        PatternRecognizer(
+            supported_entity="IN_MOBILE",
+            name="in_mobile_recognizer",
+            patterns=[
+                Pattern(
+                    "in_mobile",
+                    r"(?<!\d)(?:\+91[\s-]?|0)?[6-9]\d{4}[\s-]?\d{5}(?!\d)",
+                    0.6,
+                )
+            ],
+            context=["mobile", "phone", "contact", "call", "whatsapp"],
+        )
+    )
+    # Aadhaar: 12 digits (first digit 2-9), usually spaced 4-4-4. Privacy-first:
+    # redact on shape alone; context words only boost confidence.
+    analyzer.registry.add_recognizer(
+        PatternRecognizer(
+            supported_entity="IN_AADHAAR",
+            name="in_aadhaar_recognizer",
+            patterns=[
+                Pattern(
+                    "in_aadhaar",
+                    r"(?<!\d)[2-9]\d{3}[\s-]?\d{4}[\s-]?\d{4}(?!\d)",
+                    0.5,
+                )
+            ],
+            context=["aadhaar", "aadhar", "uid", "uidai"],
+        )
+    )
+    # PAN: AAAAA9999A.
+    analyzer.registry.add_recognizer(
+        PatternRecognizer(
+            supported_entity="IN_PAN",
+            name="in_pan_recognizer",
+            patterns=[Pattern("in_pan", r"\b[A-Z]{5}\d{4}[A-Z]\b", 0.6)],
+            context=["pan", "income tax", "permanent account"],
+        )
+    )
+
+    _engines = (analyzer, AnonymizerEngine())
+    return _engines
+
+
+def redact_text(text: str) -> str:
+    """Redact PII in ``text``, replacing each hit with its typed token."""
+    from presidio_anonymizer.entities import OperatorConfig
+
+    analyzer, anonymizer = _get_engines()
+    results = analyzer.analyze(
+        text=text, language="en", entities=list(ENTITY_TOKENS)
+    )
+    if not results:
+        return text
+    operators = {
+        entity: OperatorConfig("replace", {"new_value": token})
+        for entity, token in ENTITY_TOKENS.items()
+    }
+    return anonymizer.anonymize(
+        text=text, analyzer_results=results, operators=operators
+    ).text
 
 
 def run_pii_tagger(config: PipelineConfig) -> None:
-    """Add PII-redacted text into `pages.redacted_text`.
+    """Fill ``pages.redacted_text`` from ``pages.extracted_text``."""
+    total = 0
+    while True:
+        batch = _load_pending_batch(config.db_path, DB_BATCH_SIZE)
+        if not batch:
+            break
+        updates = [(redact_text(text), page_id) for page_id, text in batch]
+        _write_redactions(config.db_path, updates)
+        total += len(updates)
+        logger.info(f"pii_tagger: redacted {total} page(s) so far")
 
-    This stage uses the legacy PII tagger code in `models/pii_tagger`, but
-    reads and writes the current pipeline SQLite schema:
-
-      pages.extracted_text -> pages.redacted_text
-
-    The model artifacts are expected in `models/pii_tagger/outputs`:
-      - pii_crf_model.pt
-      - tag2id.json
-      - tokenizer/
-    """
-    output_dir = _find_model_output_dir(config.models_dir / "pii_tagger")
-    _ensure_model_artifacts(output_dir)
-    _ensure_legacy_import_alias(config.models_dir / "pii_tagger")
-
-    pages_df = _load_pending_pages(config.db_path)
-    if pages_df.empty:
+    if total == 0:
         logger.info("pii_tagger: nothing to do")
-        return
-
-    logger.info(f"pii_tagger: redacting {len(pages_df)} English page(s)")
-
-    from PII_tagger.src.inference.model_loader import load_pii_model
-    from PII_tagger.src.redaction.batch_redactor import redact_dataframe_column_fast
-
-    model, tokenizer, tag2id = load_pii_model(
-        output_dir=str(output_dir),
-        model_name="xlm-roberta-base",
-    )
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = model.to(device)
-
-    redacted_df = redact_dataframe_column_fast(
-        extracted_text_df=pages_df,
-        text_col="extracted_text",
-        model=model,
-        tokenizer=tokenizer,
-        tag2id=tag2id,
-        batch_size=BATCH_SIZE,
-        max_len=MAX_LEN,
-        new_col="redacted_text",
-    )
-
-    _write_redactions(config.db_path, redacted_df)
-    logger.success(f"pii_tagger done: redacted={len(redacted_df)}")
+    else:
+        logger.success(f"pii_tagger done: redacted={total}")
 
 
-def _find_model_output_dir(model_dir: Path) -> Path:
-    candidates = [model_dir / "outputs", model_dir]
-    for candidate in candidates:
-        if (candidate / "pii_crf_model.pt").exists():
-            return candidate
-    return model_dir / "outputs"
+def _load_pending_batch(db_path: Path, limit: int) -> list[tuple[str, str]]:
+    """Next batch of pages with English content and no redaction yet.
 
-
-def _ensure_model_artifacts(output_dir: Path) -> None:
-    missing = [
-        path
-        for path in (
-            output_dir / "pii_crf_model.pt",
-            output_dir / "tag2id.json",
-            output_dir / "tokenizer",
-        )
-        if not path.exists()
-    ]
-    if missing:
-        missing_list = "\n  - ".join(str(path) for path in missing)
-        raise FileNotFoundError(
-            "PII tagger model artifacts are missing. Expected:\n"
-            f"  - {missing_list}"
-        )
-
-
-def _ensure_legacy_import_alias(model_dir: Path) -> None:
-    """Expose `models/pii_tagger` as import name `PII_tagger`.
-
-    The legacy PII code imports `PII_tagger.src...`, while the repository
-    stores it under `models/pii_tagger`. This alias keeps the legacy code
-    untouched.
+    LIKE '%English%' (not equality) so mixed "English, Odia" pages are
+    covered — number/id patterns apply regardless of script.
     """
-    package_parent = model_dir.parent
-    if str(package_parent) not in sys.path:
-        sys.path.insert(0, str(package_parent))
-    import pii_tagger
-
-    sys.modules.setdefault("PII_tagger", pii_tagger)
-
-
-def _load_pending_pages(db_path: Path) -> pd.DataFrame:
     with connect(db_path) as connection:
-        return pd.read_sql_query(
+        rows = connection.execute(
             """
-            SELECT page_id, doc_id, page_number, extracted_text
+            SELECT page_id, extracted_text
             FROM pages
-            WHERE language = 'English'
+            WHERE language LIKE '%English%'
               AND extracted_text IS NOT NULL
               AND extracted_text != ''
               AND (redacted_text IS NULL OR redacted_text = '')
             ORDER BY doc_id, page_number
+            LIMIT ?
             """,
-            connection,
-        )
+            (limit,),
+        ).fetchall()
+    return [(r["page_id"], r["extracted_text"]) for r in rows]
 
 
-def _write_redactions(db_path: Path, redacted_df: pd.DataFrame) -> None:
-    now = datetime.now().isoformat()
-    rows = [
-        (row["redacted_text"], now, row["page_id"])
-        for _, row in redacted_df.iterrows()
-    ]
+def _write_redactions(db_path: Path, updates: list[tuple[str, str]]) -> None:
     with connect(db_path) as connection:
         connection.executemany(
-            """
-            UPDATE pages
-            SET redacted_text = ?
-            WHERE page_id = ?
-            """,
-            [(redacted_text, page_id) for redacted_text, _now, page_id in rows],
+            "UPDATE pages SET redacted_text = ? WHERE page_id = ?",
+            updates,
         )
         connection.commit()
