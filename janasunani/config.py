@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from loguru import logger
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from tqdm import tqdm
 
@@ -113,6 +114,15 @@ class Settings(BaseSettings):
     AWS_S3_DOCUMENTS: str = os.getenv("AWS_S3_DOCUMENTS", "janasunani-documents-main")
 
     model_config = SettingsConfigDict(env_file=ROOT_DIR / ".env", extra="ignore")
+
+    @field_validator("DEBUG", mode="before")
+    @classmethod
+    def parse_debug(cls, value: object) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        return str(value).lower() in ("true", "1", "yes", "debug")
 
 
 settings = Settings()

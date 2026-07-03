@@ -127,12 +127,15 @@ ingestion smoke — blocked on the Janasunani API credentials.
    (Odia extraction verified after adding the `ori` traineddata).
 5. ✅ **PII stage rebuilt** on Presidio (see Phase 5) — the default full-stage run
    works again; the pipeline-sample DVC stage now includes redaction.
-6. ⬜ GPU box: g6.xlarge from a Deep Learning AMI (skips driver pain) +
-   nvidia-container-toolkit; build the `ocr-deepseek` image; DeepSeek smoke on the
-   2-file sample. Watch for `trust_remote_code` importing `flash_attn` unconditionally.
-7. ⬜ **Sample backfill only** (~200 curated docs; pick STANDARD storage class — parts
+6. ⬜ GPU box: disabled-by-default Terraform g6.xlarge from a Deep Learning AMI
+   (skips driver pain) + nvidia-container-toolkit; build the `ocr-deepseek` env;
+   DeepSeek smoke on the 2-file sample. Watch for `trust_remote_code` importing
+   `flash_attn` unconditionally.
+7. ⬜ **PII eval before sample backfill**: label ~100-200 real pages and beat the
+   legacy 80.56% any-overlap baseline before exporting real-page outputs.
+8. ⬜ **Sample backfill only** (~200 curated docs; pick STANDARD storage class — parts
    of the documents bucket are GLACIER-archived), not the full corpus → OLTP → lake.
-8. ⬜ MLflow slim (Phase 6 folded in): local backend on the CPU box, artifacts to S3 —
+9. ⬜ MLflow slim (Phase 6 folded in): local backend on the CPU box, artifacts to S3 —
    now cataloguing OUR mirrored/rebuilt models, not pointers to others' accounts.
 
 *Week 3 — API-contract-first (re-ordered: the frontend must not sit at the tail of a
@@ -435,7 +438,11 @@ container for the demo (no RDS needed), repointable to RDS via `OLTP_DB_URL`.
   DVC-tracked to the remote (2026-07-02).
 - ~~PII weights recovery~~ → closed 2026-07-03: DSI team disbanded, Box gone; stage will be rebuilt on
   Presidio (see Phase 5). Training loop preserved at DSI-repo commit `db4885f` for reference.
-- Whether live demo grievances reuse the `complaints` table (+ AI/routing columns) or a sibling table.
+- ~~Whether live demo grievances reuse the `complaints` table (+ AI/routing columns)
+  or a sibling table~~ → decided 2026-07-03: use a sibling `live_grievances`
+  OLTP table for Week 3 API/demo submissions. Keep the historical `complaints`
+  schema faithful to the dump; `GET /grievance/{id}` reads live OLTP, and
+  `/history` remains Parquet-backed historical data.
 - Whether to DVC-track an OLTP "seed" snapshot for reproducible demos (vs regenerate from dump).
 - **Backfill hardening (before any FULL-corpus run; fine at the ~200-doc demo scale)** — from the Codex
   review of PR #4: the summarizer/categorizer/PII stages materialize their whole pending workload in

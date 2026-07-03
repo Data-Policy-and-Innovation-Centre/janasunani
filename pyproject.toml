@@ -94,6 +94,7 @@ janasunani-materialize = "janasunani.olap.materialize:main"
 janasunani-ingest-documents = "janasunani.ingestion.document_ingestion:main"
 janasunani-pipeline = "janasunani.pipeline.cli:main"
 janasunani-export-pipeline = "janasunani.pipeline.export:main"
+janasunani-evaluate-pii = "janasunani.pipeline.pii_eval:main"
 
 [build-system]
 requires = ["hatchling"]

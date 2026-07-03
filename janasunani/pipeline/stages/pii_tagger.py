@@ -26,6 +26,7 @@ structure.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from loguru import logger
@@ -45,6 +46,28 @@ ENTITY_TOKENS = {
     "IN_PAN": "[PAN]",
     "EMAIL_ADDRESS": "[EMAIL]",
 }
+
+ENTITY_ALIASES = {
+    "PERSON": "NAME",
+    "NAME": "NAME",
+    "PHONE_NUMBER": "PHONE",
+    "IN_MOBILE": "PHONE",
+    "PHONE": "PHONE",
+    "IN_AADHAAR": "AADHAAR",
+    "AADHAAR": "AADHAAR",
+    "IN_PAN": "PAN",
+    "PAN": "PAN",
+    "EMAIL_ADDRESS": "EMAIL",
+    "EMAIL": "EMAIL",
+}
+
+
+@dataclass(frozen=True)
+class PIISpan:
+    entity: str
+    start: int
+    end: int
+    score: float = 0.0
 
 _engines: tuple | None = None
 
@@ -122,9 +145,7 @@ def redact_text(text: str) -> str:
     from presidio_anonymizer.entities import OperatorConfig
 
     analyzer, anonymizer = _get_engines()
-    results = analyzer.analyze(
-        text=text, language="en", entities=list(ENTITY_TOKENS)
-    )
+    results = analyzer.analyze(text=text, language="en", entities=list(ENTITY_TOKENS))
     if not results:
         return text
     operators = {
@@ -134,6 +155,36 @@ def redact_text(text: str) -> str:
     return anonymizer.anonymize(
         text=text, analyzer_results=results, operators=operators
     ).text
+
+
+def normalize_entity(entity: str) -> str:
+    """Normalize Presidio/gold labels into eval categories."""
+    return ENTITY_ALIASES.get(entity.upper(), entity.upper())
+
+
+def detect_pii_spans(text: str) -> list[PIISpan]:
+    """Return detected PII spans with normalized entity labels.
+
+    This is used by the offline PII evaluator. It shares the same Presidio
+    analyzer as ``redact_text`` so the eval measures the exact production
+    recognizers, not a parallel implementation.
+    """
+    analyzer, _ = _get_engines()
+    results = analyzer.analyze(text=text, language="en", entities=list(ENTITY_TOKENS))
+    spans: dict[tuple[str, int, int], PIISpan] = {}
+    for result in results:
+        entity = normalize_entity(result.entity_type)
+        key = (entity, result.start, result.end)
+        score = float(getattr(result, "score", 0.0) or 0.0)
+        current = spans.get(key)
+        if current is None or score > current.score:
+            spans[key] = PIISpan(
+                entity=entity,
+                start=result.start,
+                end=result.end,
+                score=score,
+            )
+    return sorted(spans.values(), key=lambda span: (span.start, span.end, span.entity))
 
 
 def run_pii_tagger(config: PipelineConfig) -> None:
