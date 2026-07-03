@@ -15,10 +15,14 @@ terraform plan
 terraform apply
 ```
 
-Then, following `docs/ROADMAP.md` (Week 1):
+Then, following `docs/ROADMAP.md` (Week 1). The repo **and** its `dpic` dependency
+(pyproject.toml) are private, and the box holds no GitHub credential by design —
+connect with **SSH agent forwarding** (`-A`) so the clone and `uv sync` authenticate
+through your local key:
 
 ```bash
-ssh ubuntu@$(terraform output -raw public_ip)
+ssh-add --apple-use-keychain ~/.ssh/id_ed25519   # the local agent often starts empty
+ssh -A ubuntu@$(terraform output -raw public_ip)
 # on the box (bootstrap installs docker, aws cli, uv — check /var/log/cloud-init-output.log):
 git clone git@github.com:Data-Policy-and-Innovation-Centre/janasunani.git && cd janasunani
 uv sync

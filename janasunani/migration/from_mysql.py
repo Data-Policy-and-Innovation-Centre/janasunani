@@ -34,6 +34,7 @@ from janasunani.db.models import Base
 from janasunani.db.models import Complaint as ComplaintModel
 from janasunani.ingestion.schemas import ActionHistory as ActionHistorySchema
 from janasunani.ingestion.schemas import Complaint as ComplaintSchema
+from janasunani.ingestion.schemas import _strip_nul
 
 COMPLAINT_TABLE = "t_janasunani_etl_pre_data"
 ACTION_HISTORY_TABLE = "t_janasunani_etl_history_pre_data"
@@ -189,7 +190,10 @@ async def migrate_action_history(
                 break
             recs = []
             for r in rows:
-                ticket_no = tracking_map.get(r["trackingId"])
+                # Sanitize the raw key BEFORE the lookup: the map keys come from
+                # complaints already NUL-stripped by the schema layer, so a raw
+                # NUL-carrying trackingId would silently miss its complaint.
+                ticket_no = tracking_map.get(_strip_nul(r["trackingId"]))
                 if ticket_no is None:
                     continue
                 d = dict(r)

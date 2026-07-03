@@ -30,18 +30,39 @@ resource "aws_iam_role_policy" "s3_access" {
         Action = ["s3:ListBucket", "s3:GetBucketLocation"]
         Resource = [
           "arn:aws:s3:::${var.documents_bucket}",
-          "arn:aws:s3:::${var.dvc_cache_bucket}",
           "arn:aws:s3:::${var.backups_bucket}",
         ]
       },
       {
-        Sid    = "ReadWriteDocumentsAndDvc"
+        # The DVC cache bucket is shared across DPIC projects — this role only
+        # sees the repo's own prefix (matches the remote in .dvc/config).
+        Sid      = "ListDvcCacheRepoPrefixOnly"
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = ["arn:aws:s3:::${var.dvc_cache_bucket}"]
+        Condition = {
+          StringLike = { "s3:prefix" = ["${var.dvc_cache_prefix}/*", var.dvc_cache_prefix] }
+        }
+      },
+      {
+        Sid      = "GetDvcCacheBucketLocation"
+        Effect   = "Allow"
+        Action   = ["s3:GetBucketLocation"]
+        Resource = ["arn:aws:s3:::${var.dvc_cache_bucket}"]
+      },
+      {
+        Sid    = "ReadWriteDocuments"
         Effect = "Allow"
         Action = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
         Resource = [
           "arn:aws:s3:::${var.documents_bucket}/*",
-          "arn:aws:s3:::${var.dvc_cache_bucket}/*",
         ]
+      },
+      {
+        Sid      = "ReadWriteDvcCacheRepoPrefixOnly"
+        Effect   = "Allow"
+        Action   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+        Resource = ["arn:aws:s3:::${var.dvc_cache_bucket}/${var.dvc_cache_prefix}/*"]
       },
       {
         Sid      = "WriteBackups"
