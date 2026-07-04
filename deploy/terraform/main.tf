@@ -4,7 +4,7 @@
 # one EC2 instance running docker-compose (api + frontend + mlflow +
 # oltp-postgres + proxy) plus the migration/materialization one-offs. S3 access
 # via an IAM instance role — no static keys on the box. The on-demand GPU box
-# (week 2) will be added as a separate, count-toggled instance.
+# is the separate, count-toggled instance in gpu.tf.
 #
 # State is local (terraform.tfstate, gitignored) — fine for a single
 # maintainer; move to an S3 backend if a second operator ever appears.

@@ -189,8 +189,23 @@ def _process_page(item: dict[str, Any]) -> dict[str, Any]:
 
     try:
         if _worker_backend == "deepseek":
+            from ...ocr_quality import (
+                is_repetition_collapsed,
+                repeated_trigram_share,
+                top_trigram_share,
+            )
             from .deepseek_backend import extract_text as ds_extract
             text = ds_extract(image, tokenizer=_worker_ds_tokenizer, model=_worker_ds_model)
+            # DeepSeek's signature failure mode (per the DSI report): the
+            # generation loops and one phrase fills the page. Store nothing —
+            # record the page in unreadable_pages so resumes skip it.
+            if is_repetition_collapsed(text):
+                result["error"] = (
+                    f"repetition collapse: repeated-trigram share "
+                    f"{repeated_trigram_share(text):.2f} > 0.5 "
+                    f"(top-trigram share {top_trigram_share(text):.2f})"
+                )
+                return result
         else:
             from .pytesseract_backend import (
                 extract_text as pt_extract,

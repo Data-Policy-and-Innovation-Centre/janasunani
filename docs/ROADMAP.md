@@ -127,10 +127,15 @@ ingestion smoke — blocked on the Janasunani API credentials.
    (Odia extraction verified after adding the `ori` traineddata).
 5. ✅ **PII stage rebuilt** on Presidio (see Phase 5) — the default full-stage run
    works again; the pipeline-sample DVC stage now includes redaction.
-6. ⬜ GPU box: disabled-by-default Terraform g6.xlarge from a Deep Learning AMI
-   (skips driver pain) + nvidia-container-toolkit; build the `ocr-deepseek` env;
-   DeepSeek smoke on the 2-file sample. Watch for `trust_remote_code` importing
-   `flash_attn` unconditionally.
+6. 🔶 GPU box: infra + tooling done on `feat/gpu-box` — count-toggled g6.xlarge in
+   `deploy/terraform/gpu.tf` from the Deep Learning **Base** AMI (driver + docker +
+   nvidia-container-toolkit preinstalled; `terraform plan` verified 2-add/0-change),
+   `scripts/gpu_smoke.sh` (format via `pipeline-core` env, OCR via `ocr-deepseek` env,
+   same SQLite), and the DSI repetition-collapse guard wired into the DeepSeek path
+   (generalized to the repeated-trigram share > 0.5 ⇒ page recorded unreadable —
+   DSI's raw top-trigram rule only catches single-word loops). *Pending:* first real
+   apply + on-box smoke run. Watch for `trust_remote_code` importing `flash_attn`
+   unconditionally — attn is forced eager, but the import itself may still fire.
 7. ⬜ **PII eval before sample backfill**: label ~100-200 real pages and beat the
    legacy 80.56% any-overlap baseline before exporting real-page outputs.
 8. ⬜ **Sample backfill only** (~200 curated docs; pick STANDARD storage class — parts
