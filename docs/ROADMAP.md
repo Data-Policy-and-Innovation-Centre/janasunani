@@ -120,9 +120,14 @@ ingestion smoke — blocked on the Janasunani API credentials.
    (Odia extraction verified after adding the `ori` traineddata).
 5. ⬜ **PII stage rebuild** (Presidio + Indian recognizers — see Phase 5): the one
    genuinely lost artifact, ~2–3 days.
-6. ⬜ GPU box: g6.xlarge from a Deep Learning AMI (skips driver pain) +
-   nvidia-container-toolkit; build the `ocr-deepseek` image; DeepSeek smoke on the
-   2-file sample. Watch for `trust_remote_code` importing `flash_attn` unconditionally.
+6. 🔶 GPU box: infra + tooling done on `feat/gpu-box` — count-toggled g6.xlarge in
+   `deploy/terraform/gpu.tf` from the Deep Learning **Base** AMI (driver + docker +
+   nvidia-container-toolkit preinstalled; `terraform plan` verified 2-add/0-change),
+   `scripts/gpu_smoke.sh` (format via `pipeline-core` env, OCR via `ocr-deepseek` env,
+   same SQLite), and the DSI repetition-collapse guard (top-trigram share > 0.5 ⇒
+   page recorded unreadable) wired into the DeepSeek path. *Pending:* first real
+   apply + on-box smoke run. Watch for `trust_remote_code` importing `flash_attn`
+   unconditionally — attn is forced eager, but the import itself may still fire.
 7. ⬜ **Sample backfill only** (~200 curated docs; pick STANDARD storage class — parts
    of the documents bucket are GLACIER-archived), not the full corpus → OLTP → lake.
 8. ⬜ MLflow slim (Phase 6 folded in): local backend on the CPU box, artifacts to S3 —
