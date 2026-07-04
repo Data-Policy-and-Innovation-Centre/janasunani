@@ -30,6 +30,33 @@ variable "root_volume_gb" {
   default     = 150
 }
 
+variable "gpu_box_count" {
+  description = <<-EOT
+    0 or 1. The GPU box exists only while a batch OCR run or demo window needs
+    it: set to 1 + apply to create, back to 0 + apply to destroy. Default off
+    so a plain `terraform apply` never starts GPU billing (~$1/hr).
+  EOT
+  type        = number
+  default     = 0
+
+  validation {
+    condition     = var.gpu_box_count == 0 || var.gpu_box_count == 1
+    error_message = "gpu_box_count must be 0 or 1 — the pipeline shards across boxes via --worker-id, but one L4 is enough for the sample backfill."
+  }
+}
+
+variable "gpu_instance_type" {
+  description = "GPU box size. g6.xlarge = 4 vCPU / 16 GB / L4 24 GB — fits DeepSeek-OCR (~7 GB bf16) comfortably."
+  type        = string
+  default     = "g6.xlarge"
+}
+
+variable "gpu_root_volume_gb" {
+  description = "GPU box root EBS (gp3). DLAMI snapshot is 75 GB; extra covers model weights, uv envs, HF cache, document sample."
+  type        = number
+  default     = 100
+}
+
 variable "ssh_public_key_path" {
   description = "Local path to the SSH public key installed on the box."
   type        = string
