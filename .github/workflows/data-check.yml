@@ -31,6 +31,25 @@ jobs:
             exit 1
           fi
 
+      - name: Reject local state and secret files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          bad_files="$(
+            git ls-files |
+              grep -E '(^|/)(terraform\.tfstate(\..*)?|terraform\.tfvars|.*\.auto\.tfvars|\.env|.*\.pem|id_rsa|id_ed25519)$' |
+              grep -Ev '(^|/)\.env\.example$|(^|/)terraform\.tfvars\.example$' || true
+          )"
+
+          if [ -n "$bad_files" ]; then
+            echo "The following local state/secret files are tracked directly by Git:"
+            echo "$bad_files"
+            echo ""
+            echo "Keep Terraform state, tfvars, env files, and private keys local."
+            exit 1
+          fi
+
       - name: Check DVC files are present
         shell: bash
         run: |

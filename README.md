@@ -26,6 +26,16 @@ If your rclone Box remote should use a non-default name, run:
 make setup BOX_REMOTE=<remote-name>
 ```
 
+To enable only the repository Git hooks in an existing checkout, run:
+
+```bash
+make install-hooks
+```
+
+The pre-commit hook blocks local-only state and secret files such as Terraform
+state, tfvars, `.env`, PEM files, and private SSH keys before they enter Git
+history.
+
 ### Local Box Paths
 
 You can create an optional local `.env` file in the repo root to configure
