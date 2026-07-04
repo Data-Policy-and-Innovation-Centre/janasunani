@@ -32,7 +32,7 @@ stages:
     cmd: uv run --extra pipeline-core janasunani-pipeline run --input 
       data/raw/documents-sample --db data/processed/pipeline-sample.sqlite 
       --models models --ocr-engine pytesseract --stages format_classifier 
-      ocr_extraction --workers 1
+      ocr_extraction pii_tagger --workers 1
     deps:
     - path: data/raw/documents-sample
       hash: md5
@@ -41,9 +41,9 @@ stages:
       nfiles: 2
     - path: janasunani/pipeline
       hash: md5
-      md5: 8781734c7d8e966490f286aa402b33ba.dir
-      size: 260522
-      nfiles: 52
+      md5: c38402d3960e02f5f55d47017c21d163.dir
+      size: 269751
+      nfiles: 53
     - path: models/format_classifier/page_split_v3.0_doc_split.pkl
       hash: md5
       md5: a428d2b7b057c53e94890d1bc2ec69ce
@@ -51,5 +51,5 @@ stages:
     outs:
     - path: data/processed/pipeline-sample.sqlite
       hash: md5
-      md5: 5877a1c5309577a25dd64b382fa4735d
-      size: 77824
+      md5: fc1a77bab6c59c8a975bd756ff4e5d3a
+      size: 81920

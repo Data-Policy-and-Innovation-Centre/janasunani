@@ -48,7 +48,14 @@ result below was verified on a local dev machine (macOS, `uv` + Docker).
   **mirrored into our DVC remote** (`models/page_type_classifier/`, `models/categorizer/`,
   incl. the label encoder), alongside the format-classifier pickle. The PII training
   loop survives in the DSI repo's git history (commit `db4885f`). Runtime must depend
-  only on our mirrors, never on their accounts.
+  only on our mirrors, never on their accounts. Their final technical report (PDF, user-held)
+  preserves the only measured baselines: format classifier 75.71% avg acc; DeepSeek OCR 77.89%
+  pass-rate on quality heuristics (watch its repetition-collapse failure mode); page-type ViT
+  test acc 0.67 (plain ViT beat ViT+BERT/Longformer; 1.5K labeled pages); MuRIL categorizer
+  0.7104 acc — fine-tuned on only 6,598 grievances, strengthening the retrain-on-our-1.37M
+  upgrade; PII coverage 80.56% overlap / 50% exact. Summarizer usefulness by page type
+  (qualitative 0–3): Text-Only 1.9, Letter 1.3, Forms 0.85, Bills/IDs ~0 — the measured basis
+  for page-type gating.
 - **Cold-start data** — the SQL dump `data/raw/Dump20250730.sql` (3.2 GB), a
   `mysqldump` of MySQL DB `sociomatics_ticket` (only the two ETL tables). The dump
   — not any branch — is the authoritative schema.
@@ -118,14 +125,17 @@ ingestion smoke — blocked on the Janasunani API credentials.
    the uv-conflicts split, the OLTP exporter (pages/documents → OLTP → lake), the
    `pipeline-sample` DVC stage over 2 real documents, and the pytesseract smoke
    (Odia extraction verified after adding the `ori` traineddata).
-5. ⬜ **PII stage rebuild** (Presidio + Indian recognizers — see Phase 5): the one
-   genuinely lost artifact, ~2–3 days.
-6. ⬜ GPU box: g6.xlarge from a Deep Learning AMI (skips driver pain) +
-   nvidia-container-toolkit; build the `ocr-deepseek` image; DeepSeek smoke on the
-   2-file sample. Watch for `trust_remote_code` importing `flash_attn` unconditionally.
-7. ⬜ **Sample backfill only** (~200 curated docs; pick STANDARD storage class — parts
+5. ✅ **PII stage rebuilt** on Presidio (see Phase 5) — the default full-stage run
+   works again; the pipeline-sample DVC stage now includes redaction.
+6. ⬜ GPU box: disabled-by-default Terraform g6.xlarge from a Deep Learning AMI
+   (skips driver pain) + nvidia-container-toolkit; build the `ocr-deepseek` env;
+   DeepSeek smoke on the 2-file sample. Watch for `trust_remote_code` importing
+   `flash_attn` unconditionally.
+7. ⬜ **PII eval before sample backfill**: label ~100-200 real pages and beat the
+   legacy 80.56% any-overlap baseline before exporting real-page outputs.
+8. ⬜ **Sample backfill only** (~200 curated docs; pick STANDARD storage class — parts
    of the documents bucket are GLACIER-archived), not the full corpus → OLTP → lake.
-8. ⬜ MLflow slim (Phase 6 folded in): local backend on the CPU box, artifacts to S3 —
+9. ⬜ MLflow slim (Phase 6 folded in): local backend on the CPU box, artifacts to S3 —
    now cataloguing OUR mirrored/rebuilt models, not pointers to others' accounts.
 
 *Week 3 — API-contract-first (re-ordered: the frontend must not sit at the tail of a
@@ -277,13 +287,20 @@ Parquet. Cover counts, idempotency, malformed inputs, the source→field mapping
 - **Keep the pipeline's internal artifact DB** (`db.py`, `pages`/`documents` tables) — do NOT rewrite it
   onto the ORM. Add a small **exporter** that upserts final page/document outputs into OLTP (which then
   materializes to Parquet). Categorizer reads complaints from OLTP.
-- **PII stage — rebuild, don't recover** *(re-planned 2026-07-03; the trained CRF + its labeled data
-  are gone with the DSI Box)*: replace the stage internals behind the unchanged
-  `extracted_text → redacted_text` interface with **Presidio + custom Indian-pattern recognizers**
-  (mobile numbers, Aadhaar-shaped IDs, addresses) + a public multilingual NER model for names.
-  More auditable than the old CRF, which was English-only anyway. ~2–3 days, absorbed into Weeks 2–3.
-  The legacy `models/pii_tagger/` code stays until the swap; never send citizen text to external
-  APIs for redaction.
+- **PII stage — REBUILT on Presidio ✅ (2026-07-03)**: same `extracted_text → redacted_text`
+  interface, internals now Presidio analyzer/anonymizer + custom Indian recognizers (mobile,
+  Aadhaar, PAN) + spaCy NER for names; typed tokens ([NAME]/[PHONE]/[AADHAAR]/[PAN]/[EMAIL]).
+  Improvements over the lost CRF: no 512-token truncation window, mixed "English, Odia" pages
+  covered (equality filter skipped them), SQL-paged batches, explainable hits. Legacy
+  `models/pii_tagger/` deleted. Rule unchanged: never send citizen text to external APIs.
+  **Baseline to beat (DSI technical report, their only surviving eval):** legacy coverage was
+  **80.56% any-overlap / 50.0% exact-span** on 106 held-out sentences; I-PII recall 0.575 (it
+  truncated multi-token spans), sentence-level eval (page-level 512-token loss never measured),
+  untyped spans, trained on ~21.9K tokens. Structured ids (phone/Aadhaar/PAN/email) are now
+  deterministic; the open question is names — spaCy `en_core_web_sm` vs their in-domain
+  fine-tune. **TODO (pre-backfill): label ~100–200 real pages and measure Presidio coverage
+  against the 80.56% baseline; if PERSON recall lags, upgrade the NER (trf model or
+  Indian-names recognizer).**
 - **Model provenance rule**: every model the pipeline loads comes from **our DVC remote** (mirrored
   ViT page-type, MuRIL categorizer + label encoder, format pickle) or a large public repo
   (facebook/bart-large-cnn, deepseek-ai/DeepSeek-OCR) — no runtime dependency on DSI-controlled
@@ -421,7 +438,11 @@ container for the demo (no RDS needed), repointable to RDS via `OLTP_DB_URL`.
   DVC-tracked to the remote (2026-07-02).
 - ~~PII weights recovery~~ → closed 2026-07-03: DSI team disbanded, Box gone; stage will be rebuilt on
   Presidio (see Phase 5). Training loop preserved at DSI-repo commit `db4885f` for reference.
-- Whether live demo grievances reuse the `complaints` table (+ AI/routing columns) or a sibling table.
+- ~~Whether live demo grievances reuse the `complaints` table (+ AI/routing columns)
+  or a sibling table~~ → decided 2026-07-03: use a sibling `live_grievances`
+  OLTP table for Week 3 API/demo submissions. Keep the historical `complaints`
+  schema faithful to the dump; `GET /grievance/{id}` reads live OLTP, and
+  `/history` remains Parquet-backed historical data.
 - Whether to DVC-track an OLTP "seed" snapshot for reproducible demos (vs regenerate from dump).
 - **Backfill hardening (before any FULL-corpus run; fine at the ~200-doc demo scale)** — from the Codex
   review of PR #4: the summarizer/categorizer/PII stages materialize their whole pending workload in
