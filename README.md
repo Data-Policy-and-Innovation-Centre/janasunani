@@ -2,6 +2,21 @@
 
 Odisha's new unified AI powered grievance redressal portal Janasunani 2.0 
 
+## Documentation
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — system overview: data flow,
+  storage layers, environments, infrastructure, invariants. **Start here.**
+- [docs/ROADMAP.md](docs/ROADMAP.md) — the plan and current status (source of
+  truth for sequencing).
+- Per-package detail: [db](janasunani/db/README.md) ·
+  [migration](janasunani/migration/README.md) ·
+  [ingestion](janasunani/ingestion/README.md) ·
+  [olap](janasunani/olap/README.md) ·
+  [pipeline](janasunani/pipeline/README.md) ·
+  [deploy](deploy/README.md) ·
+  [terraform](deploy/terraform/README.md) ·
+  [tests](tests/README.md)
+
 ## Setup
 
 Run:
