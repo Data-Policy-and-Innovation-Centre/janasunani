@@ -58,8 +58,13 @@ for doc_id, page_number, reason in failures:
     print(f"  FAILED {doc_id} p{page_number}: {reason}")
 
 ok = [r for r in rows if r[1] == "deepseek" and (r[2] or 0) > 0]
-if not ok or failures:
-    print(f"SMOKE FAILED: {len(ok)} page(s) extracted, {len(failures)} failure(s)")
+# Every discovered page must extract — a page left NULL/empty without even an
+# unreadable_pages row is a silent failure, not a pass.
+if not rows or len(ok) < len(rows) or failures:
+    print(
+        f"SMOKE FAILED: {len(ok)}/{len(rows)} page(s) extracted, "
+        f"{len(failures)} failure(s)"
+    )
     sys.exit(1)
-print(f"SMOKE OK: {len(ok)} page(s) extracted via deepseek")
+print(f"SMOKE OK: {len(ok)}/{len(rows)} page(s) extracted via deepseek")
 PY
