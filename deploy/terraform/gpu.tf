@@ -26,6 +26,15 @@ data "aws_ami" "dlami_gpu" {
   }
 }
 
+# g6 instances are not offered in every AZ (ap-south-1c lacks them), so the
+# GPU box pins its subnet to an AZ that has them instead of taking the
+# default-subnet list's first entry like the CPU box does.
+data "aws_subnet" "gpu" {
+  vpc_id            = data.aws_vpc.default.id
+  availability_zone = var.gpu_availability_zone
+  default_for_az    = true
+}
+
 resource "aws_security_group" "gpu_box" {
   name        = "janasunani-gpu-box"
   description = "Janasunani GPU box: SSH from the maintainer only, no inbound services"
@@ -62,7 +71,7 @@ resource "aws_instance" "gpu_box" {
 
   ami                    = data.aws_ami.dlami_gpu.id
   instance_type          = var.gpu_instance_type
-  subnet_id              = data.aws_subnets.default.ids[0]
+  subnet_id              = data.aws_subnet.gpu.id
   vpc_security_group_ids = [aws_security_group.gpu_box.id]
   key_name               = aws_key_pair.maintainer.key_name
   iam_instance_profile   = aws_iam_instance_profile.gpu_box.name
