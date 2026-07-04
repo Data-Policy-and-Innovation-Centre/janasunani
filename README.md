@@ -1,6 +1,121 @@
 # janasunani
 
-Odisha's new unified AI powered grievance redressal portal Janasunani 2.0 
+**Janasunani 2.0** — Odisha's unified, AI-powered grievance redressal system.
+A raw grievance (typed text or a scanned document) is **extracted** (OCR),
+**redacted** (PII, in-process — citizen text never leaves the box),
+**classified** (category/department), **summarized**, and **routed** to the
+responsible office, ending in a Next.js demo UI.
+
+The repo is one Python package (`janasunani/`) built in two parts:
+
+- **Part I — Foundation** *(built)*: the historical data load (1.37M complaints,
+  6.56M action-history rows) into a swappable OLTP store, Parquet
+  materialization for analytics, document ingestion → S3, the six-stage
+  document-processing pipeline, and the AWS infrastructure (an always-on CPU
+  box + an on-demand GPU box).
+- **Part II — Automation prototype** *(in progress)*: single-grievance
+  inference, hybrid routing, FastAPI serving, and the Next.js demo.
+
+New here? Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) first;
+[docs/ROADMAP.md](docs/ROADMAP.md) is the plan and current status.
+
+## Running the components (today)
+
+### Setup
+
+```bash
+make setup    # installs uv, rclone, AWS CLI v2 into ~/.local/bin (never sudo)
+uv sync       # base environment; heavy ML stacks are opt-in extras (see below)
+```
+
+The repo and its private `dpic` dependency need GitHub SSH access. Full setup
+notes (WSL, hooks, Box remotes) are under [Contributor reference](#contributor-reference).
+
+### 1 · Cold-start migration (dump → OLTP store)
+
+Builds the OLTP store from the raw MySQL dump (`data/raw/Dump20250730.sql`,
+3.2 GB — `uv run dvc pull data/raw/Dump20250730.sql.dvc`). One command: brings
+up an ephemeral MySQL, restores the dump, validates and loads both tables
+through one shared insert routine:
+
+```bash
+uv run alembic upgrade head   # create/upgrade the OLTP schema
+bash scripts/migrate.sh       # tunables: MYSQL_PORT, KEEP_MYSQL=1, DUMP, ...
+```
+
+Writes to `OLTP_DB_URL` — default local SQLite at `data/oltp/janasunani.db`;
+set `postgresql+asyncpg://…` to target Postgres (what the CPU box runs). The
+load is idempotent and deterministic; a full run yields **1,371,288 complaints
+/ 6,556,171 action-history rows**. Variants (existing MySQL, live sync):
+[janasunani/migration/README.md](janasunani/migration/README.md).
+
+### 2 · Materialize the Parquet lake (OLTP → analytics)
+
+```bash
+dvc repro materialize         # local SQLite OLTP
+uv run janasunani-materialize # any engine (required path when OLTP is Postgres),
+                              # then `dvc commit` the Parquet outs
+```
+
+Query it:
+
+```python
+from janasunani.olap import lake
+lake.query("SELECT category, count(*) AS n FROM complaints GROUP BY 1 ORDER BY n DESC")
+lake.read("complaints")       # whole table as a Polars DataFrame
+```
+
+### 3 · Document pipeline (scanned docs → text/redaction/summary/category)
+
+Heavy deps live in three mutually-conflicting extras (`pipeline-core`,
+`ocr-deepseek`, `categorizer`) — run stage subsets per env:
+
+```bash
+uv run --extra pipeline-core janasunani-pipeline run \
+  --input data/raw/documents-sample \
+  --db data/processed/pipeline.sqlite \
+  --models models \
+  --ocr-engine pytesseract          # deepseek needs CUDA (the GPU box)
+
+dvc repro pipeline-sample           # the 2-doc end-to-end regression stage
+bash scripts/gpu_smoke.sh           # on the GPU box: DeepSeek OCR smoke
+```
+
+Needs the `tesseract` binary (+ `tesseract-lang` for Odia). Stage details,
+flags, and the artifact-DB design:
+[janasunani/pipeline/README.md](janasunani/pipeline/README.md).
+
+### 4 · Export pipeline outputs and evaluate PII
+
+```bash
+uv run janasunani-export-pipeline --db data/processed/pipeline.sqlite  # → OLTP (idempotent upserts)
+uv run --extra pipeline-core janasunani-evaluate-pii --gold <gold.jsonl> # gate: coverage ≥ 0.8056
+```
+
+### 5 · Document ingestion (complaint files → S3)
+
+```bash
+uv run janasunani-ingest-documents
+```
+
+Downloads each complaint's document to S3 (or local disk in dev) and records
+status back into OLTP. *Currently parked: live Janasunani API credentials are
+unavailable.*
+
+### Tests (the gate for every change)
+
+```bash
+uv run --extra pipeline-core pytest && uv run ruff check .
+```
+
+**Never against the production Postgres container** — see
+[tests/README.md](tests/README.md).
+
+### Cloud
+
+Terraform creates both EC2 boxes ([deploy/terraform/README.md](deploy/terraform/README.md));
+docker-compose runs the stack on the CPU box ([deploy/README.md](deploy/README.md)).
+The GPU box is a `gpu_box_count = 0/1` toggle (~$1/hr while up).
 
 ## Documentation
 
@@ -17,13 +132,9 @@ Odisha's new unified AI powered grievance redressal portal Janasunani 2.0
   [terraform](deploy/terraform/README.md) ·
   [tests](tests/README.md)
 
-## Setup
+## Contributor reference
 
-Run:
-
-```bash
-make setup
-```
+### Setup notes
 
 Do not run `make setup` with `sudo`, including on WSL. Setup installs missing
 user-level tools such as `uv`, `rclone`, and Linux/WSL AWS CLI v2 into
@@ -51,7 +162,7 @@ The pre-commit hook blocks local-only state and secret files such as Terraform
 state, tfvars, `.env`, PEM files, and private SSH keys before they enter Git
 history.
 
-### Local Box Paths
+### Box paths and data ops
 
 You can create an optional local `.env` file in the repo root to configure
 machine-specific Box/rclone paths:
@@ -65,172 +176,26 @@ BOX_PROJECT_ROOT=2. Projects/21. Governance/
 settings, not credentials or data files. Use Make-style assignments, do not use
 shell `export` lines, and do not wrap values with spaces in shell quotes.
 
-Most users only need to set `BOX_REMOTE` and `BOX_PROJECT_ROOT`. The Makefile
-derives the full remotes from those values:
+Most users only need to set `BOX_REMOTE` and `BOX_PROJECT_ROOT`; the Makefile
+derives the full remotes from those values. Collaborators may see the same
+shared Box folder under different path prefixes — print the resolved paths with
+`make box-paths`, and override per command
+(`make deliver BOX_PROJECT_ROOT="DPIC/janasunani"`) or persistently in `.env`.
+If a derived path doesn't match your Box layout, override the full endpoint
+(`INCOMING_REMOTE` / `EXHIBITS_REMOTE`) in `.env`.
 
-```make
-INCOMING_REMOTE=$(BOX_REMOTE):'$(BOX_PROJECT_ROOT)/Data/Raw/'
-EXHIBITS_REMOTE=$(BOX_REMOTE):'$(BOX_PROJECT_ROOT)/Analysis/Exhibits/'
-```
-
-After editing `.env`, verify the resolved paths:
-
-```bash
-make box-paths
-```
-
-Command-line Make variables still override `.env`:
+Common data operations:
 
 ```bash
-make ingest DATA=survey_dump.csv BOX_PROJECT_ROOT="/All Files/AI for Panchayats"
+make ingest DATA=survey_dump.csv    # import a stakeholder original from Box incoming
+make push DATA=survey_dump.csv      # record an approved version through DVC
+make publish-raw DATA=api_dump.csv  # publish a local raw file to Box incoming
+make pull                           # restore approved project data from DVC
+make run                            # run the dvc.yaml stages
+make deliver                        # publish figures/tables/reports to Box
 ```
 
-If the derived paths do not match your Box layout, override the full remotes in
-`.env`:
-
-```make
-INCOMING_REMOTE=box:'/Shared/AI for Panchayats/Data/Raw/'
-EXHIBITS_REMOTE=box:'/Shared/AI for Panchayats/Analysis/Exhibits/'
-```
-
-Import a stakeholder-provided original from the Box incoming folder, then
-record an approved version through DVC:
-
-```bash
-make ingest DATA=survey_dump.csv
-make push DATA=survey_dump.csv
-```
-
-Publish a local raw file, such as an API pull, to the Box incoming folder:
-
-```bash
-make publish-raw DATA=api_dump.csv
-```
-
-Restore approved project data from DVC:
-
-```bash
-make pull
-```
-
-Define project-specific processing stages in `dvc.yaml`, then run:
-
-```bash
-make run
-```
-
-Publish generated figures, tables, and reports to Box without deleting existing
-remote files:
-
-```bash
-make deliver
-```
-
-## Data migration
-
-Build the **OLTP store** `data/oltp/janasunani.db` (complaints + action history)
-from the raw Janasunani MySQL dump. The loader restores the dump into a MySQL
-server, then validates and copies the two ETL tables into the OLTP store through
-one shared insert routine.
-
-The OLTP store is **swappable**: it is addressed by `OLTP_DB_URL` (default local
-SQLite; set `postgresql+asyncpg://…` to target Postgres). The schema is managed
-by **Alembic** and is engine-portable:
-
-```bash
-uv run alembic upgrade head     # create/upgrade the OLTP schema (SQLite or Postgres)
-```
-
-**Prerequisites:** Docker + `uv`, and the dump at `data/raw/Dump20250730.sql`.
-
-**Run it (one command)**
-
-The cold-start migration is a self-contained script — it brings up an ephemeral
-MySQL, restores the dump (only if not already loaded), and loads the OLTP store:
-
-```bash
-bash scripts/migrate.sh
-```
-
-It writes to `OLTP_DB_URL` (default local SQLite). Tunables via env: `MYSQL_PORT`,
-`KEEP_MYSQL` (1=leave the MySQL container up for fast re-runs), `DUMP`, etc.
-
-The migration is **not** a DVC stage: it seeds an *operational* store (the OLTP
-DB), whose effects DVC can't meaningfully track. DVC only tracks file artifacts —
-here, the Parquet lake produced by `materialize` (below). Run the migration as a
-job (the script above), not via `dvc repro`.
-
-**Run it directly (existing MySQL, no Docker)**
-
-```bash
-uv run janasunani-migrate-dump --dump data/raw/Dump20250730.sql \
-    --mysql-url "mysql+pymysql://root:pass@127.0.0.1:3306/"
-```
-
-Use `--skip-restore` to migrate from an already-loaded MySQL database, and
-`--target-db-url` to write to a different OLTP database (e.g. Postgres).
-
-**Incremental sync from a live server**
-
-To sync new complaints from a running Janasunani MySQL instance (no dump),
-set `MYSQL_URL` to a full URL *including* the database and run:
-
-```bash
-MYSQL_URL="mysql+pymysql://user:pass@host:3306/sociomatics_ticket" \
-    uv run janasunani-migrate-mysql
-```
-
-## Analytical lake (Parquet)
-
-The OLTP store is materialized **downstream** to a columnar Parquet lake in
-`data/interim/` (DVC-tracked) for analytics, ML, and the demo's history browse.
-DuckDB reads the OLTP DB directly, so this is engine-agnostic (uses `OLTP_DB_URL`):
-
-```bash
-dvc repro materialize        # or: uv run janasunani-materialize
-```
-
-Query the lake with DuckDB SQL / Polars:
-
-```python
-from janasunani.olap import lake
-
-lake.query("SELECT category, count(*) AS n FROM complaints GROUP BY 1 ORDER BY n DESC")
-lake.read("complaints")      # whole table as a Polars DataFrame
-```
-
-## Box Paths
-
-Collaborators may see the same shared Box folder under different path prefixes,
-depending on which folder was shared with them and how their local rclone Box
-remote resolves that share. The Makefile keeps the generated defaults, but all
-Box endpoints can be overridden without editing the Makefile.
-
-Print the resolved paths before ingesting or delivering files:
-
-```bash
-make box-paths
-```
-
-Override the shared project root for a single command:
-
-```bash
-make deliver BOX_PROJECT_ROOT="DPIC/janasunani"
-```
-
-To keep the override for future runs, add it to `.env`:
-
-```make
-BOX_PROJECT_ROOT=DPIC/janasunani
-```
-
-If only one endpoint differs, override the full endpoint instead:
-
-```bash
-make deliver EXHIBITS_REMOTE="box:'DPIC/janasunani/Analysis/Client Exhibits/'"
-```
-
-## Contributing
+### Contributing
 
 Keep pull requests small enough for a reviewer to understand in one sitting.
 Separate unrelated changes into separate PRs, especially when data, analysis
@@ -246,21 +211,15 @@ uv run pytest
 Use Ruff for Python linting. Prefer small, explicit functions and project-local
 helpers over one-off notebook-only logic when code will be reused.
 
-If you work with notebooks, install the output-stripping hook once:
-
-```bash
-uv run nbstripout --install
-```
-
-Commit notebooks only after outputs have been stripped. Do not commit large
-rendered notebook outputs, temporary exports, or local execution artifacts.
+If you work with notebooks, install the output-stripping hook once
+(`uv run nbstripout --install`) and commit notebooks only after outputs have
+been stripped. Do not commit large rendered notebook outputs, temporary
+exports, or local execution artifacts.
 
 Data files under `data/` are proprietary by default. Do not commit raw,
 interim, processed, or output data directly to Git. Use DVC for approved data
 versions and `make deliver` for stakeholder-facing Box delivery.
 
 Use the [pull request template](.github/PULL_REQUEST_TEMPLATE.md) when opening
-a PR.
-
-CI expects repository secret `DPIC_GITHUB_SSH_KEY` when private `dpic`
+a PR. CI expects repository secret `DPIC_GITHUB_SSH_KEY` when private `dpic`
 dependency resolution is required.
