@@ -69,6 +69,22 @@ class PIISpan:
     end: int
     score: float = 0.0
 
+
+# Devanagari (U+0966) and Odia (U+0B66) decimal digits -> ASCII. Presidio's
+# regexes are Unicode-aware for \d but the anchoring classes ([6-9], [2-9])
+# are ASCII-only, so a mobile/Aadhaar number written in Odia numerals would
+# escape entirely. One codepoint maps to one ASCII char, so the translation
+# is length-preserving: spans found on the normalized copy apply unchanged
+# to the original text.
+_INDIC_DIGITS_TO_ASCII = str.maketrans(
+    {base + i: str(i) for base in (0x0966, 0x0B66) for i in range(10)}
+)
+
+
+def _ascii_digits(text: str) -> str:
+    return text.translate(_INDIC_DIGITS_TO_ASCII)
+
+
 _engines: tuple | None = None
 
 
@@ -145,7 +161,11 @@ def redact_text(text: str) -> str:
     from presidio_anonymizer.entities import OperatorConfig
 
     analyzer, anonymizer = _get_engines()
-    results = analyzer.analyze(text=text, language="en", entities=list(ENTITY_TOKENS))
+    # Analyze the digit-normalized copy (Indic numerals -> ASCII, same length),
+    # anonymize the original: offsets carry over 1:1.
+    results = analyzer.analyze(
+        text=_ascii_digits(text), language="en", entities=list(ENTITY_TOKENS)
+    )
     if not results:
         return text
     operators = {
@@ -170,7 +190,9 @@ def detect_pii_spans(text: str) -> list[PIISpan]:
     recognizers, not a parallel implementation.
     """
     analyzer, _ = _get_engines()
-    results = analyzer.analyze(text=text, language="en", entities=list(ENTITY_TOKENS))
+    results = analyzer.analyze(
+        text=_ascii_digits(text), language="en", entities=list(ENTITY_TOKENS)
+    )
     spans: dict[tuple[str, int, int], PIISpan] = {}
     for result in results:
         entity = normalize_entity(result.entity_type)

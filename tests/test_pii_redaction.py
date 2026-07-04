@@ -33,6 +33,20 @@ def test_indian_pii_patterns_redacted():
     assert "3 weeks" in red
 
 
+def test_odia_digit_numbers_redacted():
+    """Numbers written in Odia numerals must not escape: Presidio's \\d is
+    Unicode-aware but the [6-9]/[2-9] anchors are ASCII-only, so detection
+    runs on a digit-normalized copy (offsets carry over 1:1)."""
+    # ୯୮୭୬୫୪୩୨୧୦ = 9876543210
+    text = "ମୋ ନମ୍ବର ୯୮୭୬୫୪୩୨୧୦ please call. The year ୨୦୨୪ saw no repairs."
+    red = redact_text(text)
+    assert "୯୮୭୬୫୪୩୨୧୦" not in red and "[PHONE]" in red
+    # redaction replaces spans in the ORIGINAL text: surrounding Odia script
+    # and the non-PII Odia year are untouched, not transliterated
+    assert "ମୋ ନମ୍ବର" in red
+    assert "୨୦୨୪" in red
+
+
 def test_no_token_window_truncation():
     """The legacy CRF silently dropped text past 512 tokens. The whole page
     must survive, with PII at the far end still redacted."""

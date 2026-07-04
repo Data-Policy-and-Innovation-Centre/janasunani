@@ -63,15 +63,21 @@ class EntityMetrics:
 class EvaluationReport:
     by_entity: dict[str, EntityMetrics]
     overall: EntityMetrics
+    coverage: EntityMetrics
     baseline_overlap_recall: float
 
     @property
     def passed_baseline(self) -> bool:
-        return self.overall.overlap_recall >= self.baseline_overlap_recall
+        # The legacy model was untyped (one generic PII label), so its 80.56%
+        # baseline is a *coverage* number: a gold span counts as hit when any
+        # predicted span of any type touches it. Typed metrics (overall /
+        # by_entity) are diagnostics, not the gate.
+        return self.coverage.overlap_recall >= self.baseline_overlap_recall
 
     def to_dict(self) -> dict[str, object]:
         return {
             "overall": self.overall.to_dict(),
+            "coverage": self.coverage.to_dict(),
             "by_entity": {
                 entity: metrics.to_dict()
                 for entity, metrics in sorted(self.by_entity.items())
@@ -103,6 +109,7 @@ def load_gold_jsonl(path: Path) -> list[GoldExample]:
                 for span in raw_entities
             )
             examples.append(GoldExample(id=example_id, text=text, entities=spans))
+    _require_unique_ids(examples)
     return examples
 
 
@@ -112,6 +119,7 @@ def score_examples(
     baseline_overlap_recall: float = LEGACY_OVERLAP_BASELINE,
 ) -> EvaluationReport:
     examples = list(examples)
+    _require_unique_ids(examples)
     predictions = {example.id: tuple(predict(example.text)) for example in examples}
     return score_predictions(
         examples=examples,
@@ -129,6 +137,8 @@ def score_predictions(
     prediction_counts: Counter[str] = Counter()
     overlap_hits: Counter[str] = Counter()
     exact_hits: Counter[str] = Counter()
+    coverage_overlap_hits = 0
+    coverage_exact_hits = 0
 
     for example in examples:
         predicted = tuple(_normalize_span(span) for span in predictions.get(example.id, ()))
@@ -145,6 +155,12 @@ def score_predictions(
                 exact_hits[gold.entity] += 1
             if any(_overlaps(gold, candidate) for candidate in candidates):
                 overlap_hits[gold.entity] += 1
+            # Untyped coverage (the legacy-comparable number): the span is
+            # redacted regardless of which recognizer labeled it.
+            if any(_exact_match(gold, candidate) for candidate in predicted):
+                coverage_exact_hits += 1
+            if any(_overlaps(gold, candidate) for candidate in predicted):
+                coverage_overlap_hits += 1
 
     entities = sorted(set(gold_counts) | set(prediction_counts))
     by_entity = {
@@ -162,9 +178,16 @@ def score_predictions(
         overlap_hits=sum(overlap_hits.values()),
         exact_hits=sum(exact_hits.values()),
     )
+    coverage = EntityMetrics(
+        gold=overall.gold,
+        predicted=overall.predicted,
+        overlap_hits=coverage_overlap_hits,
+        exact_hits=coverage_exact_hits,
+    )
     return EvaluationReport(
         by_entity=by_entity,
         overall=overall,
+        coverage=coverage,
         baseline_overlap_recall=baseline_overlap_recall,
     )
 
@@ -176,9 +199,11 @@ def format_report(report: EvaluationReport) -> str:
     for entity, metrics in sorted(report.by_entity.items()):
         lines.append(_format_metrics(entity, metrics))
     lines.append(_format_metrics("OVERALL", report.overall))
+    lines.append(_format_metrics("COVERAGE", report.coverage))
     lines.append(
         "baseline_overlap_recall="
         f"{report.baseline_overlap_recall:.4f} "
+        f"coverage_overlap_recall={report.coverage.overlap_recall:.4f} "
         f"passed={str(report.passed_baseline).lower()}"
     )
     return "\n".join(lines)
@@ -242,6 +267,22 @@ def _parse_gold_span(
             f"for text length {len(text)}"
         )
     return PIISpan(entity=normalize_entity(str(label)), start=start, end=end)
+
+
+def _require_unique_ids(examples: Iterable[GoldExample]) -> None:
+    duplicates = [
+        example_id
+        for example_id, count in Counter(e.id for e in examples).items()
+        if count > 1
+    ]
+    if duplicates:
+        raise ValueError(
+            "duplicate gold example id(s): "
+            + ", ".join(sorted(duplicates))
+            + " — ids key the prediction lookup, so duplicates would score "
+            "the wrong page. Make each labeled page's id unique "
+            "(e.g. ticket + page number)."
+        )
 
 
 def _normalize_span(span: PIISpan) -> PIISpan:

@@ -91,6 +91,42 @@ def test_score_predictions_counts_overlap_and_exact_by_entity():
     assert "OVERALL 3 2 2 1 0.6667 0.3333" in format_report(report)
 
 
+def test_load_gold_jsonl_rejects_duplicate_ids(tmp_path):
+    gold = tmp_path / "gold.jsonl"
+    row = {
+        "id": "p1",
+        "text": "Ramesh",
+        "entities": [{"start": 0, "end": 6, "entity": "NAME"}],
+    }
+    gold.write_text(json.dumps(row) + "\n" + json.dumps(row) + "\n")
+
+    with pytest.raises(ValueError, match="duplicate gold example id"):
+        load_gold_jsonl(gold)
+
+
+def test_coverage_counts_untyped_hits_and_gates():
+    """The legacy 80.56% baseline is untyped: a span redacted under the wrong
+    label is still redacted. Coverage must count it; typed metrics must not."""
+    examples = [
+        GoldExample(
+            id="p1",
+            text="Ramesh called 9876543210",
+            entities=(PIISpan(entity="PHONE", start=14, end=24),),
+        ),
+    ]
+    # Detected the span, but labeled it AADHAAR instead of PHONE.
+    predictions = {"p1": (PIISpan(entity="IN_AADHAAR", start=14, end=24),)}
+
+    report = score_predictions(examples, predictions, baseline_overlap_recall=1.0)
+
+    assert report.by_entity["PHONE"].overlap_recall == 0.0  # typed: miss
+    assert report.overall.overlap_hits == 0
+    assert report.coverage.overlap_recall == 1.0  # untyped: redacted
+    assert report.coverage.exact_recall == 1.0
+    assert report.passed_baseline  # the gate reads coverage, not typed
+    assert "COVERAGE 1 1 1 1 1.0000 1.0000" in format_report(report)
+
+
 def test_cli_gate_exits_nonzero_when_below_baseline(tmp_path, capsys, monkeypatch):
     gold = tmp_path / "gold.jsonl"
     gold.write_text(
