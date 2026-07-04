@@ -17,7 +17,8 @@ stages:
   # via the OLTP exporter + materialize.
   pipeline-sample:
     desc: >-
-      Core document-pipeline stages (format classifier + pytesseract OCR) over
+      Core document-pipeline stages (format classifier + pytesseract OCR +
+      Presidio PII redaction) over
       data/raw/documents-sample -> a versioned pipeline SQLite artifact.
       Needs the pipeline-core extra and the tesseract binary (+ tesseract-lang
       for Odia).
@@ -27,7 +28,7 @@ stages:
       --db data/processed/pipeline-sample.sqlite
       --models models
       --ocr-engine pytesseract
-      --stages format_classifier ocr_extraction
+      --stages format_classifier ocr_extraction pii_tagger
       --workers 1
     deps:
       - data/raw/documents-sample
