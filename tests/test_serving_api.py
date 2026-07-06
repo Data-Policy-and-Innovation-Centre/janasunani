@@ -133,6 +133,33 @@ def test_cors_header_present(client):
     assert resp.headers.get("access-control-allow-origin") == "*"
 
 
+async def test_concurrent_uploads_get_distinct_ticket_numbers():
+    # Regression (Codex on PR #12): the ticket number used to be
+    # len(results)+1, computed before `await file.read()` — overlapping
+    # uploads could mint the same user-visible ticket_no.
+    import asyncio
+
+    import httpx
+
+    app = create_app()
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://test"
+    ) as client:
+        responses = await asyncio.gather(
+            *(
+                client.post(
+                    "/grievance",
+                    files={"file": (f"c{i}.pdf", b"%PDF fake", "application/pdf")},
+                )
+                for i in range(8)
+            )
+        )
+    tickets = [r.json()["ticket_no"] for r in responses]
+    assert all(r.status_code == 201 for r in responses)
+    assert len(set(tickets)) == len(tickets)
+
+
 def test_same_text_gets_deterministic_classification(client):
     a = client.post("/grievance", data={"text": _TEXT}).json()
     b = client.post("/grievance", data={"text": _TEXT}).json()

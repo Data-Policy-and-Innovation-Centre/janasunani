@@ -20,6 +20,8 @@ the skeleton; pin to the frontend origin at deploy).
 
 from __future__ import annotations
 
+import functools
+import itertools
 import os
 import uuid
 from typing import Optional
@@ -27,6 +29,7 @@ from typing import Optional
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
+from starlette.concurrency import run_in_threadpool
 
 from janasunani.serving.history import HistoryProvider, MockHistory
 from janasunani.serving.processor import GrievanceProcessor, MockGrievanceProcessor
@@ -55,6 +58,9 @@ def create_app(
 
     # Skeleton-only store for GET /grievance/{id}; replaced by OLTP at wire-up.
     results: dict[str, GrievanceResult] = {}
+    # next() has no await point, so concurrent submissions can't mint the same
+    # number (len(results)+1 could: requests overlap at `await file.read()`).
+    ticket_seq = itertools.count(1)
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:
@@ -75,14 +81,20 @@ def create_app(
             raise HTTPException(status_code=422, detail="'text' is empty.")
 
         grievance_id = uuid.uuid4().hex[:12]
-        ticket_no = f"JS{len(results) + 1:07d}"
-        result = processor.process(
-            grievance_id=grievance_id,
-            ticket_no=ticket_no,
-            text=text,
-            document_name=file.filename if file else None,
-            document_bytes=await file.read() if file else None,
-            district=district,
+        ticket_no = f"JS{next(ticket_seq):07d}"
+        # The processor protocol is sync (real inference is CPU/GPU-bound
+        # work); run it off the event loop so a slow OCR/model call doesn't
+        # block /health and other requests on this worker at wire-up.
+        result = await run_in_threadpool(
+            functools.partial(
+                processor.process,
+                grievance_id=grievance_id,
+                ticket_no=ticket_no,
+                text=text,
+                document_name=file.filename if file else None,
+                document_bytes=await file.read() if file else None,
+                district=district,
+            )
         )
         results[grievance_id] = result
         logger.info(
