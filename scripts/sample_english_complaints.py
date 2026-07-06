@@ -201,21 +201,41 @@ class DocumentGates:
     def assess(self, doc_path: Path) -> DocVerdict:
         import time
 
+        from pdf2image.exceptions import PDFPageCountError, PDFSyntaxError
+
         t0 = time.time()
         languages: list[str] = []
         page_types: list[str] = []
-        for page_number, image in enumerate(
-            _page_images(doc_path, _MAX_PAGES_CHECKED), start=1
-        ):
-            t_page = time.time()
-            language = classify_page_language(image)
-            page_type = self._page_type.predict(image)
-            logger.debug(
-                f"{doc_path.name} p{page_number}: language={language!r} "
-                f"page_type={page_type!r} ({time.time() - t_page:.1f}s)"
+        try:
+            for page_number, image in enumerate(
+                _page_images(doc_path, _MAX_PAGES_CHECKED), start=1
+            ):
+                t_page = time.time()
+                language = classify_page_language(image)
+                page_type = self._page_type.predict(image)
+                logger.debug(
+                    f"{doc_path.name} p{page_number}: language={language!r} "
+                    f"page_type={page_type!r} ({time.time() - t_page:.1f}s)"
+                )
+                languages.append(language)
+                page_types.append(page_type)
+        except (OSError, ValueError, PDFPageCountError, PDFSyntaxError) as exc:
+            # The bucket contains corrupt uploads (bad bytes behind a
+            # .jpeg/.pdf name): PIL raises UnidentifiedImageError/OSError,
+            # pdf2image raises PDFPageCountError/PDFSyntaxError (plain
+            # Exception subclasses). An unreadable file is a reject, not a
+            # crash — a --n 50 run died at 19/50 on exactly this before the
+            # guard existed.
+            logger.warning(
+                f"{doc_path.name}: unreadable document "
+                f"({type(exc).__name__}: {exc}) — rejecting"
             )
-            languages.append(language)
-            page_types.append(page_type)
+            return DocVerdict(
+                False,
+                f"unreadable document ({type(exc).__name__})",
+                tuple(languages),
+                tuple(page_types),
+            )
         verdict = assess_document(languages, page_types)
         logger.debug(
             f"{doc_path.name}: verdict={'ok' if verdict.ok else verdict.reason!r} "
