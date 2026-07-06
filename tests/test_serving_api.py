@@ -8,7 +8,11 @@ Phase 8/9 wire-up swaps the processor/history implementations behind
 
 import pytest
 
+# fastapi alone isn't enough: it arrives transitively (mlflow) in envs without
+# the serving extra, but the Form/File routes need python-multipart — and
+# api.py builds the app at import time, so collection itself would crash.
 pytest.importorskip("fastapi")
+pytest.importorskip("python_multipart")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
