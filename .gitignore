@@ -192,12 +192,14 @@ data/raw/*
 data/clean/*
 data/interim/*
 data/processed/*
+data/external/*
 data/oltp/*
 data/output/*
 !data/raw/*.dvc
 !data/clean/*.dvc
 !data/interim/*.dvc
 !data/processed/*.dvc
+!data/external/*.dvc
 !data/oltp/.gitkeep
 outputs/*
 !outputs/figures/

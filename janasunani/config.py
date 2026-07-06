@@ -68,6 +68,7 @@ class Directories:
             self.PROCESSED_DATA,
             self.OUTPUT,
             self.OLTP,
+            self.EXTERNAL,
             self.DOCUMENTS,
             self.LOGS,
             self.MODELS,
