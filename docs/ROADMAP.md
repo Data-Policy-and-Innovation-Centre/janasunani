@@ -127,15 +127,19 @@ ingestion smoke — blocked on the Janasunani API credentials.
    (Odia extraction verified after adding the `ori` traineddata).
 5. ✅ **PII stage rebuilt** on Presidio (see Phase 5) — the default full-stage run
    works again; the pipeline-sample DVC stage now includes redaction.
-6. 🔶 GPU box: infra + tooling done on `feat/gpu-box` — count-toggled g6.xlarge in
-   `deploy/terraform/gpu.tf` from the Deep Learning **Base** AMI (driver + docker +
-   nvidia-container-toolkit preinstalled; `terraform plan` verified 2-add/0-change),
-   `scripts/gpu_smoke.sh` (format via `pipeline-core` env, OCR via `ocr-deepseek` env,
-   same SQLite), and the DSI repetition-collapse guard wired into the DeepSeek path
-   (generalized to the repeated-trigram share > 0.5 ⇒ page recorded unreadable —
-   DSI's raw top-trigram rule only catches single-word loops). *Pending:* first real
-   apply + on-box smoke run. Watch for `trust_remote_code` importing `flash_attn`
-   unconditionally — attn is forced eager, but the import itself may still fire.
+6. ✅ GPU box, built and shaken down (first real run 2026-07-04): count-toggled
+   g6.xlarge in `deploy/terraform/gpu.tf` (Deep Learning **Base** AMI; AZ pinned to
+   ap-south-1a — g6 not offered in 1c), `scripts/gpu_smoke.sh` (format via
+   `pipeline-core` env, DeepSeek OCR via `ocr-deepseek` env, same SQLite), and the
+   repetition-collapse guard (repeated-trigram share > 0.5 — generalizes DSI's
+   top-trigram rule, which only catches single-word loops). On-box smoke: model
+   loads on the L4, 3/5 sample pages extract; the guard fired on a looping Odia
+   handwritten page and was **verified a true positive** (repeated share 0.55 where
+   DSI's metric read 0.04). The predicted `trust_remote_code` surprise was
+   **torchvision**, not flash_attn — now in the `ocr-deepseek` extra. Learned:
+   DeepSeek is English-only in practice (Odia comes out script-confused) — the
+   backfill routes DeepSeek at `--filter-language English`, pytesseract+`ori` at
+   Odia, matching DSI. Box destroyed after the run (create/destroy per use).
 7. ⬜ **PII eval before sample backfill**: label ~100-200 real pages and beat the
    legacy 80.56% any-overlap baseline before exporting real-page outputs.
 8. ⬜ **Sample backfill only** (~200 curated docs; pick STANDARD storage class — parts

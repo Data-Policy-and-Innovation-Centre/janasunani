@@ -11,6 +11,10 @@
 # ocr_model='deepseek' and no repetition collapse.
 set -euo pipefail
 
+# uv installs to ~/.local/bin, which non-login shells (nohup, ssh <cmd>)
+# don't put on PATH.
+export PATH="$HOME/.local/bin:$PATH"
+
 DB=data/processed/gpu-smoke.sqlite
 
 echo "== GPU check =="

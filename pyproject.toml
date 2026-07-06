@@ -75,6 +75,9 @@ ocr-deepseek = [
     "pillow",
     "torch",
     "tokenizers==0.20.3",
+    # DeepSeek-OCR's trust_remote_code model code imports torchvision
+    # unconditionally (found by the first GPU smoke run).
+    "torchvision",
     "transformers==4.46.3",
 ]
 # MuRIL grievance categorizer

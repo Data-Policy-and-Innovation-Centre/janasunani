@@ -51,6 +51,12 @@ variable "gpu_instance_type" {
   default     = "g6.xlarge"
 }
 
+variable "gpu_availability_zone" {
+  description = "AZ for the GPU box. g6 is offered in ap-south-1a/1b but NOT 1c (verified 2026-07-04)."
+  type        = string
+  default     = "ap-south-1a"
+}
+
 variable "gpu_root_volume_gb" {
   description = "GPU box root EBS (gp3). DLAMI snapshot is 75 GB; extra covers model weights, uv envs, HF cache, document sample."
   type        = number
