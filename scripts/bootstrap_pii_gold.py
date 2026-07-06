@@ -24,8 +24,12 @@ Run (pipeline-core env: tesseract binary + presidio + spaCy model needed):
         [--bundle data/output/english_complaints_sample.zip] \
         [--out data/output/pii_gold_draft.jsonl] [--max-pages-per-doc N]
 
-Gold files hold real citizen text — they live under data/output/
-(gitignored) and must NEVER be committed.
+Gold files hold real citizen text and must NEVER be committed to git. The
+draft lives under data/output/ (gitignored, regenerable). The CORRECTED gold
+is irreplaceable human work: promote it to data/external/pii_gold.jsonl and
+DVC-track it — only the .dvc pointer enters git; the bytes go to the private
+S3 remote (same posture as the raw dump). See scripts/README.md,
+"Gold-file lifecycle".
 """
 
 from __future__ import annotations
@@ -162,6 +166,14 @@ def bootstrap(bundle: Path, out_path: Path, max_pages_per_doc: int | None) -> in
         "This draft scores ~100% against the analyzer BY CONSTRUCTION. "
         "Label pass required: ADD missed PII, DELETE false hits, FIX "
         "boundaries — then run janasunani-evaluate-pii --gold <corrected file>."
+    )
+    logger.info(
+        "When the label pass is done, promote the corrected file to the "
+        "DVC-tracked gold set (survives this machine; content stays out of "
+        "git):\n"
+        "  mkdir -p data/external && mv <corrected> data/external/pii_gold.jsonl\n"
+        "  dvc add data/external/pii_gold.jsonl && dvc push\n"
+        "  git add data/external/pii_gold.jsonl.dvc  # commit the pointer"
     )
     return written
 
