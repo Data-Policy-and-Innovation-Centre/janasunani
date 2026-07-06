@@ -95,13 +95,15 @@ uv run --extra pipeline-core janasunani-evaluate-pii --gold <gold.jsonl> # gate:
 ### 5 · Sample English complaints + documents (evaluation bundles)
 
 ```bash
-uv run --with langdetect python scripts/sample_english_complaints.py   # --n/--seed/--out
+uv run --extra pipeline-core python scripts/sample_english_complaints.py   # --n/--seed/--out
 ```
 
-Picks N complaints whose grievance subject is English (not Odia, not romanized
-Odia), downloads their S3 documents (STANDARD storage class only), and writes
-one zip: the documents + a `complaints.parquet` of their metadata. Selection
-logic and gates: [scripts/README.md](scripts/README.md).
+Picks N complaints that are English on both sides — the grievance subject (not
+Odia, not romanized Odia) *and* the scanned document (judged by the pipeline's
+format classifier + page-type ViT; documents that are pure PII like an Aadhaar
+are dropped) — downloads the S3 documents (STANDARD storage class only), and
+writes one zip: the documents + a `complaints.parquet` of their metadata and
+gate evidence. Selection logic: [scripts/README.md](scripts/README.md).
 
 ### 6 · Document ingestion (complaint files → S3)
 

@@ -5,6 +5,7 @@ importlib. langdetect lives in the pipeline extras — skip where absent (CI).
 """
 
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,8 @@ pytest.importorskip("langdetect")
 _SCRIPT = Path(__file__).parents[1] / "scripts" / "sample_english_complaints.py"
 spec = importlib.util.spec_from_file_location("sample_english_complaints", _SCRIPT)
 mod = importlib.util.module_from_spec(spec)
+# dataclass creation resolves the defining module through sys.modules
+sys.modules[spec.name] = mod
 spec.loader.exec_module(mod)
 
 
@@ -47,3 +50,35 @@ def test_romanized_odia_rejected():
 
 def test_short_subject_rejected():
     assert not mod.is_english("water problem")
+
+
+# --- document gates (pure verdict logic; per-page predictions injected) ---
+
+
+def test_english_letter_document_accepted():
+    verdict = mod.assess_document(
+        ["English", "English", "English, Odia"], ["Letter", "Text Only", "Letter"]
+    )
+    assert verdict.ok
+    assert verdict.english_share == pytest.approx(2 / 3)
+
+
+def test_mostly_odia_document_rejected():
+    verdict = mod.assess_document(
+        ["Odia", "English, Odia", "English"], ["Letter", "Letter", "Letter"]
+    )
+    assert not verdict.ok
+    assert "not largely English" in verdict.reason
+
+
+def test_pii_only_document_rejected():
+    # An Aadhaar/voter-ID scan: English pages but only noise-class page types.
+    verdict = mod.assess_document(["English"], ["Identification"])
+    assert not verdict.ok
+    assert "no substantive page" in verdict.reason
+
+
+def test_unreadable_document_rejected():
+    verdict = mod.assess_document([], [])
+    assert not verdict.ok
+    assert verdict.english_share == 0.0
