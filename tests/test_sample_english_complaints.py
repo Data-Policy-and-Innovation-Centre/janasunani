@@ -90,3 +90,31 @@ def test_unreadable_document_rejected():
     verdict = mod.assess_document([], [])
     assert not verdict.ok
     assert verdict.english_share == 0.0
+
+
+def test_corrupt_file_rejects_instead_of_crashing(tmp_path):
+    # The bucket holds corrupt uploads (bad bytes behind a .jpeg name); a
+    # --n 50 run crashed on one before assess() caught the decode error.
+    # __new__ skips the ViT load — the file fails to open before any model
+    # or OCR code is reached, which is exactly what the guard covers.
+    pytest.importorskip("PIL")
+    gates = object.__new__(mod.DocumentGates)
+    corrupt = tmp_path / "DEPT2025_complaint.jpeg"
+    corrupt.write_bytes(b"<html>Error: upload failed</html>")
+
+    verdict = gates.assess(corrupt)
+
+    assert not verdict.ok
+    assert "unreadable document" in verdict.reason
+
+
+def test_corrupt_pdf_rejects_instead_of_crashing(tmp_path):
+    pytest.importorskip("pdf2image")
+    gates = object.__new__(mod.DocumentGates)
+    corrupt = tmp_path / "DEPT2025_complaint.pdf"
+    corrupt.write_bytes(b"not a pdf")
+
+    verdict = gates.assess(corrupt)
+
+    assert not verdict.ok
+    assert "unreadable document" in verdict.reason
