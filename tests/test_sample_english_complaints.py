@@ -52,23 +52,31 @@ def test_short_subject_rejected():
     assert not mod.is_english("water problem")
 
 
-# --- document gates (pure verdict logic; per-page predictions injected) ---
+# --- document gates (pure verdict logic; per-page judgements injected) ---
 
 
-def test_english_letter_document_accepted():
+def test_english_letter_with_sparse_stamp_page_accepted():
     verdict = mod.assess_document(
-        ["English", "English", "English, Odia"], ["Letter", "Text Only", "Letter"]
+        ["English", "English", "Sparse"], ["Letter", "Text Only", "Misc/Not Sure"]
     )
     assert verdict.ok
     assert verdict.english_share == pytest.approx(2 / 3)
 
 
-def test_mostly_odia_document_rejected():
+def test_any_odia_dominant_page_rejects():
+    # The strict rule: one Odia page poisons the document even if the rest
+    # is English (this is what the earlier share-based rule got wrong).
     verdict = mod.assess_document(
-        ["Odia", "English, Odia", "English"], ["Letter", "Letter", "Letter"]
+        ["English", "English", "Odia"], ["Letter", "Letter", "Letter"]
     )
     assert not verdict.ok
-    assert "not largely English" in verdict.reason
+    assert "Odia-dominant" in verdict.reason
+
+
+def test_all_sparse_document_rejected():
+    verdict = mod.assess_document(["Sparse", "Sparse"], ["Letter", "Letter"])
+    assert not verdict.ok
+    assert "no confidently-English page" in verdict.reason
 
 
 def test_pii_only_document_rejected():

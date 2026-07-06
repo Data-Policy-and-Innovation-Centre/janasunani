@@ -59,13 +59,17 @@ english_complaints_sample.zip
      bucket under `{ticket_no}_complaint_` with storage class **STANDARD** —
      parts of the bucket are GLACIER-archived and can't be downloaded
      directly, so those tickets are skipped rather than failed on.
-   - **Document gates** (the pipeline's own models, on the first 5 pages):
-     the format classifier's language prediction must be exactly `English`
-     on **a majority of pages** ("largely English"), and the page-type ViT
-     must find **≥ 1 signal-class page** (Letter / Form/Application /
-     Text Only). A document whose pages are all Identification / Bills /
-     Misc — i.e. pure PII like an Aadhaar — has no signal page and is
-     dropped, with the reason logged.
+   - **Document gates** (the pipeline's own components, on the first 5
+     pages). Language: per-page **tesseract dominance** — eng vs ori
+     confidence-weighted word counts via the pipeline's `perform_ocr` (the
+     raw signal, deliberately not the ~76%-accuracy format-classifier label,
+     which let Odia pages through). **Any Odia-dominant page rejects the
+     document**; pages with too little confident text either way count as
+     `Sparse` and are tolerated, but ≥ 1 confidently-English page is
+     required. Substance: the page-type ViT must find **≥ 1 signal-class
+     page** (Letter / Form/Application / Text Only). A document whose pages
+     are all Identification / Bills / Misc — i.e. pure PII like an Aadhaar —
+     has no signal page and is dropped, with the reason logged.
 3. Write the zip: the qualifying documents + the metadata parquet, which
    carries the per-document gate evidence for auditability.
 

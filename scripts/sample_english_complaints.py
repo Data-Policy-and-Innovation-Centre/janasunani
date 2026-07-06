@@ -4,12 +4,14 @@ Selects complaints from the Parquet lake where BOTH sides are English:
 
 - the **grievance subject** is written in English — not Odia script and not
   romanized Odia;
-- the **document** is largely English and substantive — judged by the
-  pipeline's own models: the format classifier's language prediction (majority
-  of pages exactly "English") and the page-type ViT (at least one
-  signal-class page: Letter / Form/Application / Text Only). Documents that
-  are nothing but PII — an Aadhaar or voter ID, a bill — have only
-  noise-class pages and are dropped.
+- the **document** is English and substantive — judged per page by the
+  pipeline's own components: tesseract language dominance (eng vs ori
+  confidence, via ``perform_ocr``) and the page-type ViT. ANY Odia-dominant
+  page rejects the document; sparse pages (stamps, signatures) are tolerated
+  but ≥1 confidently-English page and ≥1 signal-class page (Letter /
+  Form/Application / Text Only) are required. Documents that are nothing but
+  PII — an Aadhaar or voter ID, a bill — have only noise-class pages and are
+  dropped.
 
 Only complaints with ≥1 STANDARD-storage-class document in S3 qualify (parts
 of the bucket are GLACIER-archived). The output zip contains:
@@ -39,11 +41,10 @@ from __future__ import annotations
 import os
 import sys
 
-# macOS: xgboost (format classifier) and torch (page-type ViT) each load their
-# own OpenMP runtime; interleaving them makes the first ViT conv2d after an
-# xgboost predict spin forever (same family as the segfault noted in
-# tests/conftest.py). One OMP thread sidesteps it — must be set before either
-# library loads libomp.
+# macOS: mixing OpenMP-linked libraries (xgboost, torch) in one process makes
+# kernels hang or segfault (see tests/conftest.py). This script now only loads
+# torch, but the guard stays as insurance against reintroducing the mix — it
+# must be set before any such library loads libomp.
 if sys.platform == "darwin":
     os.environ.setdefault("OMP_NUM_THREADS", "1")
 
@@ -76,7 +77,10 @@ _MIN_SUBJECT_CHARS = 30
 # Document gates: cap per-document work (letters are 1-3 pages; a 40-page
 # annexure doesn't need every page judged to know its character).
 _MAX_PAGES_CHECKED = 5
-_MIN_ENGLISH_PAGE_SHARE = 0.5
+# A page needs this many confident tesseract words (in either language) to be
+# judged at all; below it the page is "Sparse" (stamps, signatures, photos)
+# and is ignored rather than counted for or against.
+_MIN_CONFIDENT_WORDS = 10
 
 _ODIA_RANGE = re.compile(r"[଀-୿]")
 _WORD = re.compile(r"[a-z']+")
@@ -123,8 +127,15 @@ class DocVerdict:
 
 
 def assess_document(languages: list[str], page_types: list[str]) -> DocVerdict:
-    """Pure verdict logic over per-page predictions (kept import-light so the
-    tests can exercise it without models)."""
+    """Pure verdict logic over per-page judgements (kept import-light so the
+    tests can exercise it without models).
+
+    ``languages`` values are "English" / "Odia" / "Sparse" (too little
+    confident text to judge). The rule is strict on purpose — an earlier,
+    share-based version shipped bundles with Odia-dominant pages inside:
+    ANY Odia-dominant page rejects the document; sparse pages are tolerated
+    but at least one confidently-English page is required.
+    """
     from janasunani.pipeline.stages.page_type_classifier import (
         PAGE_TYPE_CLASS_BY_LABEL,
     )
@@ -133,11 +144,13 @@ def assess_document(languages: list[str], page_types: list[str]) -> DocVerdict:
     types = tuple(page_types)
     if not langs:
         return DocVerdict(False, "no readable pages", langs, types)
-    english_share = sum(1 for lang in langs if lang == "English") / len(langs)
-    if english_share < _MIN_ENGLISH_PAGE_SHARE:
+    n_odia = sum(1 for lang in langs if lang == "Odia")
+    if n_odia:
         return DocVerdict(
-            False, f"not largely English (share {english_share:.2f})", langs, types
+            False, f"{n_odia} Odia-dominant page(s) of {len(langs)}", langs, types
         )
+    if "English" not in langs:
+        return DocVerdict(False, "no confidently-English page", langs, types)
     if not any(PAGE_TYPE_CLASS_BY_LABEL.get(t) == 1 for t in types):
         return DocVerdict(
             False, f"no substantive page — only {sorted(set(types))}", langs, types
@@ -145,26 +158,34 @@ def assess_document(languages: list[str], page_types: list[str]) -> DocVerdict:
     return DocVerdict(True, "ok", langs, types)
 
 
-class DocumentGates:
-    """Judge a downloaded document with the pipeline's own models.
+def classify_page_language(image) -> str:
+    """"English" / "Odia" / "Sparse" for one page, from the pipeline's raw
+    tesseract signal (``perform_ocr``: eng + ori passes, confidence-weighted).
 
-    Loads the format classifier (language) and the page-type ViT once; the
-    XGBoost pickle loads before torch, matching the pipeline's stage order
-    (relevant on macOS — see tests/conftest.py's OMP note).
+    Deliberately NOT the format classifier's language label — that model
+    (~76% accuracy) let Odia-dominant pages through as "English"; the direct
+    confidence comparison is the harder signal for script dominance.
     """
+    from janasunani.pipeline.stages.format_classifier.features import perform_ocr
+
+    ocr = perform_ocr(image)
+    if max(ocr["word_count_eng"], ocr["word_count_ori"]) < _MIN_CONFIDENT_WORDS:
+        return "Sparse"
+    return "Odia" if ocr["predominant_lang"] == "ori" else "English"
+
+
+class DocumentGates:
+    """Judge a downloaded document with the pipeline's own components:
+    tesseract language dominance per page + the page-type ViT."""
 
     def __init__(self, models_dir: Path = MODELS_DIR) -> None:
         import time
 
-        from janasunani.pipeline.stages.format_classifier.model import FormatClassifier
         from janasunani.pipeline.stages.page_type_classifier import (
             _PageTypeClassifier,
         )
 
-        format_path = models_dir / "format_classifier" / "page_split_v3.0_doc_split.pkl"
         t0 = time.time()
-        self._format = FormatClassifier(format_path)
-        t1 = time.time()
         vit_local = models_dir / "page_type_classifier" / "vit_type_classifier"
         model_id = (
             str(vit_local)
@@ -173,14 +194,12 @@ class DocumentGates:
         )
         self._page_type = _PageTypeClassifier(model_id)
         logger.info(
-            f"document gates ready: format classifier {format_path.name} "
-            f"({t1 - t0:.1f}s), page-type ViT {model_id} ({time.time() - t1:.1f}s)"
+            f"document gates ready: page-type ViT {model_id} "
+            f"({time.time() - t0:.1f}s); language via tesseract eng+ori"
         )
 
     def assess(self, doc_path: Path) -> DocVerdict:
         import time
-
-        import numpy as np
 
         t0 = time.time()
         languages: list[str] = []
@@ -188,16 +207,8 @@ class DocumentGates:
         for page_number, image in enumerate(
             _page_images(doc_path, _MAX_PAGES_CHECKED), start=1
         ):
-            bgr = np.array(image.convert("RGB"))[:, :, ::-1]
             t_page = time.time()
-            prediction = self._format.predict(bgr)
-            if prediction is None or not prediction.get("language"):
-                logger.debug(
-                    f"{doc_path.name} p{page_number}: format classifier "
-                    "returned nothing — page skipped"
-                )
-                continue
-            language = prediction["language"]
+            language = classify_page_language(image)
             page_type = self._page_type.predict(image)
             logger.debug(
                 f"{doc_path.name} p{page_number}: language={language!r} "
