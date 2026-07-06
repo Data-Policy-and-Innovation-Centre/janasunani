@@ -66,7 +66,7 @@ migration change): **1,371,288 complaints / 6,556,171 action-history rows**.
 | [`janasunani/pipeline/`](../janasunani/pipeline/README.md) | The six-stage document pipeline (DSI refold), its artifact DB, the OLTP exporter, OCR quality guards, PII evaluator. |
 | [`janasunani/tracking/`](../janasunani/tracking/__init__.py) | MLflow + DVC dual tracking (slim; being built). |
 | [`deploy/`](../deploy/README.md) | docker-compose for the CPU box; [Terraform](../deploy/terraform/README.md) for both EC2 boxes. |
-| [`scripts/`](../scripts) | Operational one-offs: `migrate.sh` (cold-start), `gpu_smoke.sh` (DeepSeek smoke), `setup.sh`. |
+| [`scripts/`](../scripts/README.md) | Operational one-offs: `migrate.sh` (cold-start), `gpu_smoke.sh` (DeepSeek smoke), `sample_english_complaints.py` (evaluation bundles), `setup.sh`. |
 | [`tests/`](../tests/README.md) | Real-code-path pytest suite. Read the README before running tests anywhere near production. |
 
 ## Environments and the dependency split

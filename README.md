@@ -92,7 +92,20 @@ uv run janasunani-export-pipeline --db data/processed/pipeline.sqlite  # → OLT
 uv run --extra pipeline-core janasunani-evaluate-pii --gold <gold.jsonl> # gate: coverage ≥ 0.8056
 ```
 
-### 5 · Document ingestion (complaint files → S3)
+### 5 · Sample English complaints + documents (evaluation bundles)
+
+```bash
+uv run --extra pipeline-core python scripts/sample_english_complaints.py   # --n/--seed/--out
+```
+
+Picks N complaints that are English on both sides — the grievance subject (not
+Odia, not romanized Odia) *and* the scanned document (judged by the pipeline's
+format classifier + page-type ViT; documents that are pure PII like an Aadhaar
+are dropped) — downloads the S3 documents (STANDARD storage class only), and
+writes one zip: the documents + a `complaints.parquet` of their metadata and
+gate evidence. Selection logic: [scripts/README.md](scripts/README.md).
+
+### 6 · Document ingestion (complaint files → S3)
 
 ```bash
 uv run janasunani-ingest-documents
@@ -130,6 +143,7 @@ The GPU box is a `gpu_box_count = 0/1` toggle (~$1/hr while up).
   [pipeline](janasunani/pipeline/README.md) ·
   [deploy](deploy/README.md) ·
   [terraform](deploy/terraform/README.md) ·
+  [scripts](scripts/README.md) ·
   [tests](tests/README.md)
 
 ## Contributor reference
