@@ -72,3 +72,16 @@ english_complaints_sample.zip
 Exits non-zero if fewer than N complaints qualify, telling you how many
 candidates were checked. Both the subject gate and the document verdict logic
 have tests (`tests/test_sample_english_complaints.py`).
+
+### Debugging a run
+
+Every decision is logged: model load times, a progress heartbeat every 100
+candidates (checked/picked/reject counters), per-ticket S3 keys, per-page
+`language`/`page_type` verdicts with timings (DEBUG), drop reasons per
+document, and an end-of-run breakdown (subject rejects / no-STANDARD-doc
+skips / documents dropped by gates). Per-candidate subject rejections are
+high-volume, so they sit at TRACE:
+
+```bash
+LOGURU_LEVEL=TRACE uv run --extra pipeline-core python scripts/sample_english_complaints.py
+```

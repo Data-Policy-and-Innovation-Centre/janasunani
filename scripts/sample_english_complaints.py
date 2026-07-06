@@ -28,6 +28,10 @@ pipeline-core env:
 
     uv run --extra pipeline-core python scripts/sample_english_complaints.py \
         [--n 10] [--seed 7] [--out data/output/english_complaints_sample.zip]
+
+Logging: decisions/progress at INFO; per-page model verdicts and timings at
+DEBUG (shown by loguru's default sink); per-candidate subject rejections are
+high-volume and sit at TRACE — run with LOGURU_LEVEL=TRACE to see them.
 """
 
 from __future__ import annotations
@@ -150,14 +154,17 @@ class DocumentGates:
     """
 
     def __init__(self, models_dir: Path = MODELS_DIR) -> None:
+        import time
+
         from janasunani.pipeline.stages.format_classifier.model import FormatClassifier
         from janasunani.pipeline.stages.page_type_classifier import (
             _PageTypeClassifier,
         )
 
-        self._format = FormatClassifier(
-            models_dir / "format_classifier" / "page_split_v3.0_doc_split.pkl"
-        )
+        format_path = models_dir / "format_classifier" / "page_split_v3.0_doc_split.pkl"
+        t0 = time.time()
+        self._format = FormatClassifier(format_path)
+        t1 = time.time()
         vit_local = models_dir / "page_type_classifier" / "vit_type_classifier"
         model_id = (
             str(vit_local)
@@ -165,20 +172,46 @@ class DocumentGates:
             else "DPIC-Pipeline/vit_type_classifier"
         )
         self._page_type = _PageTypeClassifier(model_id)
+        logger.info(
+            f"document gates ready: format classifier {format_path.name} "
+            f"({t1 - t0:.1f}s), page-type ViT {model_id} ({time.time() - t1:.1f}s)"
+        )
 
     def assess(self, doc_path: Path) -> DocVerdict:
+        import time
+
         import numpy as np
 
+        t0 = time.time()
         languages: list[str] = []
         page_types: list[str] = []
-        for image in _page_images(doc_path, _MAX_PAGES_CHECKED):
+        for page_number, image in enumerate(
+            _page_images(doc_path, _MAX_PAGES_CHECKED), start=1
+        ):
             bgr = np.array(image.convert("RGB"))[:, :, ::-1]
+            t_page = time.time()
             prediction = self._format.predict(bgr)
             if prediction is None or not prediction.get("language"):
+                logger.debug(
+                    f"{doc_path.name} p{page_number}: format classifier "
+                    "returned nothing — page skipped"
+                )
                 continue
-            languages.append(prediction["language"])
-            page_types.append(self._page_type.predict(image))
-        return assess_document(languages, page_types)
+            language = prediction["language"]
+            page_type = self._page_type.predict(image)
+            logger.debug(
+                f"{doc_path.name} p{page_number}: language={language!r} "
+                f"page_type={page_type!r} ({time.time() - t_page:.1f}s)"
+            )
+            languages.append(language)
+            page_types.append(page_type)
+        verdict = assess_document(languages, page_types)
+        logger.debug(
+            f"{doc_path.name}: verdict={'ok' if verdict.ok else verdict.reason!r} "
+            f"english_share={verdict.english_share:.2f} "
+            f"pages_judged={len(languages)} ({time.time() - t0:.1f}s)"
+        )
+        return verdict
 
 
 def _page_images(doc_path: Path, max_pages: int):
@@ -227,7 +260,10 @@ def sample_complaints(
         & (pl.col("grievance").str.len_chars() >= _MIN_SUBJECT_CHARS)
         & pl.col("document_url").is_not_null()
     )
-    logger.info(f"{complaints.height} complaints with a subject and a document URL")
+    logger.info(
+        f"{complaints.height} complaints with a subject and a document URL "
+        f"(lake: {lake_path}, seed={seed}, target n={n})"
+    )
 
     order = list(range(complaints.height))
     random.Random(seed).shuffle(order)
@@ -238,16 +274,29 @@ def sample_complaints(
     evidence: list[dict[str, object]] = []
     picked_paths: dict[str, list[Path]] = {}
     checked = 0
+    subject_rejects = 0
+    no_standard_doc = 0
+    docs_dropped = 0
     for idx in order:
         row = complaints.row(idx, named=True)
         ticket = row["ticket_no"]
         checked += 1
+        if checked % 100 == 0:
+            logger.info(
+                f"progress: checked={checked} picked={len(picked_rows)}/{n} "
+                f"(subject rejects={subject_rejects}, docs dropped={docs_dropped})"
+            )
         if not is_english(row["grievance"]):
+            # High-volume: visible with LOGURU_LEVEL=TRACE.
+            logger.trace(f"{ticket}: subject failed the English gate")
+            subject_rejects += 1
             continue
         keys = _standard_class_documents(s3, ticket)
         if not keys:
             logger.info(f"{ticket}: no STANDARD-class document, skipping")
+            no_standard_doc += 1
             continue
+        logger.debug(f"{ticket}: {len(keys)} STANDARD-class document(s): {keys}")
 
         kept: list[Path] = []
         verdicts: list[DocVerdict] = []
@@ -257,7 +306,7 @@ def sample_complaints(
             if not s3.download_file(key, str(local)):
                 logger.warning(f"{ticket}: download failed for {key}, skipping key")
                 continue
-            
+
             logger.info(f"Assessing documents for language and PII for {ticket}")
             verdict = gates.assess(local)
             if verdict.ok:
@@ -265,6 +314,7 @@ def sample_complaints(
                 verdicts.append(verdict)
             else:
                 logger.info(f"{ticket}: dropped {key} — {verdict.reason}")
+                docs_dropped += 1
                 local.unlink()
         if not kept:
             continue
@@ -283,16 +333,26 @@ def sample_complaints(
                 "doc_english_share": min(v.english_share for v in verdicts),
             }
         )
-        logger.info(f"picked {ticket} ({len(kept)} document(s))")
+        logger.info(
+            f"picked {ticket} ({len(kept)} document(s), "
+            f"english_share={min(v.english_share for v in verdicts):.2f}, "
+            f"page_types={sorted({t for v in verdicts for t in v.page_types})})"
+        )
         if len(picked_rows) == n:
             break
 
     if len(picked_rows) < n:
         raise SystemExit(
             f"only found {len(picked_rows)}/{n} qualifying complaints "
-            f"after checking {checked} candidates"
+            f"after checking {checked} candidates "
+            f"(subject rejects={subject_rejects}, docs dropped={docs_dropped})"
         )
-    logger.info(f"selected {n} complaints after checking {checked} candidates")
+    logger.info(
+        f"selected {n} complaints after checking {checked} candidates: "
+        f"subject rejects={subject_rejects}, "
+        f"no-STANDARD-doc skips={no_standard_doc}, "
+        f"documents dropped by gates={docs_dropped}"
+    )
     metadata = complaints[picked_rows].join(
         pl.DataFrame(evidence), on="ticket_no", how="left"
     )
