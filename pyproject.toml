@@ -80,6 +80,13 @@ ocr-deepseek = [
     "torchvision",
     "transformers==4.46.3",
 ]
+# Demo API (Phase 10) — light, conflicts with nothing; the skeleton's mocked
+# processor keeps it model-free until the Phase 8/9 wire-up
+serving = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "python-multipart>=0.0.9",  # multipart form parsing for POST /grievance
+]
 # MuRIL grievance categorizer
 categorizer = [
     "huggingface-hub",
@@ -98,6 +105,7 @@ janasunani-ingest-documents = "janasunani.ingestion.document_ingestion:main"
 janasunani-pipeline = "janasunani.pipeline.cli:main"
 janasunani-export-pipeline = "janasunani.pipeline.export:main"
 janasunani-evaluate-pii = "janasunani.pipeline.pii_eval:main"
+janasunani-api = "janasunani.serving.api:main"
 
 [build-system]
 requires = ["hatchling"]

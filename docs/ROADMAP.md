@@ -149,8 +149,13 @@ ingestion smoke — blocked on the Janasunani API credentials.
 
 *Week 3 — API-contract-first (re-ordered: the frontend must not sit at the tail of a
 serial chain with zero float).*
-1. **Phase 10 skeleton first** (~a day): the three endpoints + `/health` with a
-   **mocked processor** returning the real response shapes.
+1. ✅ **Phase 10 skeleton first** (2026-07-06): `janasunani/serving/` — the three
+   endpoints + `/health` + CORS behind a `serving` extra (`janasunani-api` CLI);
+   `schemas.py` is the frozen contract (field names mirror the pipeline DB /
+   `PIISpan` / lake columns so wire-up is plumbing, not renaming); processor,
+   history, and result store are injectable seams (`create_app`) — mock today,
+   Phase 8/9 inference + lake + `live_grievances` OLTP later. TestClient tests
+   pin the contract and must pass unchanged after wire-up.
 2. **Phase 11 scaffold immediately after**, built against the mocked contract — the
    demo's visible deliverable gets Weeks 3–4 of iteration instead of a cramped tail.
 3. Phases 8 + 9 fill in behind the stable contract: single-item inference, then the
