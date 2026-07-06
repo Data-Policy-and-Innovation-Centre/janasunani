@@ -87,9 +87,14 @@ def _iter_document_pages(doc_path: Path):
     if doc_path.suffix.lower() == ".pdf":
         from pdf2image import pdfinfo_from_path
 
-        from janasunani.pipeline.stages.page_type_classifier import _render_pdf_page
+        from janasunani.pipeline.stages.page_type_classifier import (
+            POPPLER_PATH,
+            _render_pdf_page,
+        )
 
-        n_pages = int(pdfinfo_from_path(str(doc_path))["Pages"])
+        n_pages = int(
+            pdfinfo_from_path(str(doc_path), poppler_path=POPPLER_PATH)["Pages"]
+        )
         for page_number in range(1, n_pages + 1):
             yield page_number, _render_pdf_page(doc_path, page_number)
     else:
