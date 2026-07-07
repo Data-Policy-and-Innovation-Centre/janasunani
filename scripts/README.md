@@ -7,7 +7,8 @@ as scripts rather than DVC stages. Each is safe to re-run.
 |---|---|
 | `migrate.sh` | Cold-start migration: ephemeral MySQL → restore dump → load OLTP ([migration/README](../janasunani/migration/README.md)). |
 | `gpu_smoke.sh` | DeepSeek OCR smoke on the GPU box ([terraform/README](../deploy/terraform/README.md), "GPU box"). |
-| `sample_english_complaints.py` | Sample English-subject complaints + their documents into a zip (below). |
+| `sample_english_complaints.py` | Sample English complaints (subject + document) into a zip (below). |
+| `bootstrap_pii_gold.py` | OCR a bundle + pre-annotate with the production analyzer → draft gold JSONL for the PII eval (below). |
 | `evaluate_pii_redaction.py` | Thin wrapper over `janasunani-evaluate-pii` (the PII gold-JSONL gate). |
 | `setup.sh` | Workspace setup backing `make setup` (uv, rclone, AWS CLI, hooks). |
 
@@ -76,6 +77,57 @@ english_complaints_sample.zip
 Exits non-zero if fewer than N complaints qualify, telling you how many
 candidates were checked. Both the subject gate and the document verdict logic
 have tests (`tests/test_sample_english_complaints.py`).
+
+## bootstrap_pii_gold.py
+
+Turns an English complaints bundle into labeling material for the PII eval
+(the ROADMAP gate: beat the legacy 80.56% any-overlap coverage before the
+backfill ships redacted pages).
+
+```bash
+uv run --extra pipeline-core python scripts/bootstrap_pii_gold.py \
+    [--bundle data/output/english_complaints_sample.zip] \
+    [--out data/output/pii_gold_draft.jsonl] [--max-pages-per-doc N]
+```
+
+For every document page it runs pytesseract OCR and pre-annotates the text
+with the **production** Presidio analyzer, writing two files:
+
+- `pii_gold_draft.jsonl` — the machine-editable draft, in exactly the format
+  `janasunani-evaluate-pii --gold` consumes;
+- `pii_gold_draft.review.txt` — the same pages with spans marked inline
+  (`⟦NAME:Ramesh Kumar⟧`) for a fast human read.
+
+**The draft is not gold.** It contains what the analyzer already finds, so an
+unedited draft scores ~100% by construction. The human pass *is* the
+measurement: **add** the PII the analyzer missed (these become the recall
+misses), **delete** false hits, **fix** boundaries/labels. Then:
+
+```bash
+uv run --extra pipeline-core janasunani-evaluate-pii --gold <corrected.jsonl>
+```
+
+### Gold-file lifecycle
+
+- **Draft** (`data/output/pii_gold_draft.jsonl`): regenerable by this script —
+  not tracked anywhere, gitignored, safe to delete.
+- **Corrected gold** (`data/external/pii_gold.jsonl`): irreplaceable human
+  labeling work — **DVC-tracked** so it survives any one machine. Only the
+  `.dvc` pointer (md5 + path) enters git; the content goes to the private,
+  IAM-scoped S3 remote — the same posture as the raw dump, which also holds
+  citizen PII. Never commit the file itself (the `no-raw-data-in-git` CI
+  guard blocks it; pointers are exempt). Promote after the label pass:
+
+  ```bash
+  mkdir -p data/external && mv <corrected> data/external/pii_gold.jsonl
+  dvc add data/external/pii_gold.jsonl && dvc push
+  git add data/external/pii_gold.jsonl.dvc   # commit the pointer
+  ```
+
+  Reproduce the eval anywhere with bucket access:
+  `dvc pull` → `janasunani-evaluate-pii --gold data/external/pii_gold.jsonl`.
+  When the gold set grows, `dvc add` again — each eval result stays diffable
+  against the exact gold revision that produced it.
 
 ### Debugging a run
 
