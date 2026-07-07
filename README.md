@@ -144,7 +144,7 @@ The GPU box is a `gpu_box_count = 0/1` toggle (~$1/hr while up).
 
 ## Documentation
 
-- [docs/HANDOFF.md](docs/HANDOFF.md) — current state, work queue, cloud
+- [docs/HANDOFF.md](docs/HANDOFF-2026-07-07.md) — current state, work queue, cloud as of July 7th, 2026.
   state, and the hard safety rules. **New agent or contributor? Start here.**
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — system overview: data flow,
   storage layers, environments, infrastructure, invariants.
