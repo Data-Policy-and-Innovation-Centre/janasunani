@@ -115,6 +115,18 @@ Downloads each complaint's document to S3 (or local disk in dev) and records
 status back into OLTP. *Currently parked: live Janasunani API credentials are
 unavailable.*
 
+### 7 · Demo API (Phase 10 skeleton — mocked processor)
+
+```bash
+uv run --extra serving janasunani-api        # http://127.0.0.1:8000, docs at /docs
+```
+
+The full endpoint surface the frontend builds against (`POST /grievance`,
+`GET /grievance/{id}`, `GET /history`, `/health`) with a mocked processor
+returning the real response shapes — no models load. Real inference/routing
+swap in behind the same contract at Phase 8–9 wire-up.
+Contract details: [janasunani/serving/README.md](janasunani/serving/README.md).
+
 ### Tests (the gate for every change)
 
 ```bash
@@ -141,6 +153,7 @@ The GPU box is a `gpu_box_count = 0/1` toggle (~$1/hr while up).
   [ingestion](janasunani/ingestion/README.md) ·
   [olap](janasunani/olap/README.md) ·
   [pipeline](janasunani/pipeline/README.md) ·
+  [serving](janasunani/serving/README.md) ·
   [deploy](deploy/README.md) ·
   [terraform](deploy/terraform/README.md) ·
   [scripts](scripts/README.md) ·
