@@ -20,6 +20,9 @@ This plan is the source of truth, **mirrored into the repo at `docs/ROADMAP.md`*
 
 > This section exists so a reviewer with **no prior context** can understand where
 > the project actually stands, reproduce it, and give input on the plan below.
+> **Current state lives in [HANDOFF.md](HANDOFF.md) (2026-07-07)** — this
+> snapshot is kept as the Week-1-era baseline; the week-by-week items below
+> carry the ✅/⬜ status.
 
 **Branch:** `feat/migration-foundation` (clean). Foundation Phases 0–4 are built,
 tested, and committed; Phase 5 is next. **Nothing has run on AWS yet** — every
@@ -142,6 +145,11 @@ ingestion smoke — blocked on the Janasunani API credentials.
    Odia, matching DSI. Box destroyed after the run (create/destroy per use).
 7. ⬜ **PII eval before sample backfill**: label ~100-200 real pages and beat the
    legacy 80.56% any-overlap baseline before exporting real-page outputs.
+   *Tooling merged (PRs #10/#11/#13) and labeling material generated
+   2026-07-06: 50-doc English bundle → 85 pre-annotated pages / 573 draft
+   spans (`data/output/pii_gold_draft_n50.jsonl` + `.review.txt`, local,
+   regenerable — commands in HANDOFF.md). Remaining: the maintainer's manual
+   labeling pass → evaluate → DVC-promote to `data/external/pii_gold.jsonl`.*
 8. ⬜ **Sample backfill only** (~200 curated docs; pick STANDARD storage class — parts
    of the documents bucket are GLACIER-archived), not the full corpus → OLTP → lake.
 9. ⬜ MLflow slim (Phase 6 folded in): local backend on the CPU box, artifacts to S3 —
