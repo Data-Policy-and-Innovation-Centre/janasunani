@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
   test-and-validate-pipeline:
@@ -32,8 +31,15 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     steps:
+      # PR-controlled code (test suite, deps) runs in this job, so the
+      # checkout must not persist a token: this job only ever holds the
+      # default read-only GITHUB_TOKEN, but persisting it is needless
+      # exposure and would become a real problem if permissions here ever
+      # change.
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -62,11 +68,50 @@ jobs:
         run: uv run pytest --cov=janasunani --cov-report=term-missing:skip-covered --cov-report=xml
 
       - name: Write coverage markdown
-        if: github.event_name == 'pull_request'
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
         run: uv run coverage report -m --skip-covered --format=markdown > coverage.md
 
+      - name: Upload coverage XML
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+
+      - name: Upload coverage markdown
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-md
+          path: coverage.md
+
+      # Validate the pipeline DEFINITION only — do not execute data stages in CI.
+      # `materialize` needs the operational OLTP DB (SQLite dev file or the box's
+      # Postgres), and the cold-start migration needs the 3.2 GB DVC-tracked dump
+      # plus Docker + MySQL. These produce data and run on the operational box /
+      # a scheduled job, never on a clean CI runner.
+      - name: Validate DVC pipeline definition
+        run: |
+          uv run dvc dag
+          uv run dvc dag --md >> "$GITHUB_STEP_SUMMARY" || true
+
+  # Kept separate from the test job so the write-scoped token never shares a
+  # job with PR-controlled code (test suite, deps): that job only checks out
+  # code and runs it, this job only downloads a plain-text artifact and
+  # posts a comment.
+  post-coverage-comment:
+    needs: test-and-validate-pipeline
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.test-and-validate-pipeline.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Download coverage markdown
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-md
+
       - name: Comment coverage on PR
-        if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
@@ -110,19 +155,3 @@ jobs:
                 body,
               });
             }
-
-      - name: Upload coverage XML
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-xml
-          path: coverage.xml
-
-      # Validate the pipeline DEFINITION only — do not execute data stages in CI.
-      # `materialize` needs the operational OLTP DB (SQLite dev file or the box's
-      # Postgres), and the cold-start migration needs the 3.2 GB DVC-tracked dump
-      # plus Docker + MySQL. These produce data and run on the operational box /
-      # a scheduled job, never on a clean CI runner.
-      - name: Validate DVC pipeline definition
-        run: |
-          uv run dvc dag
-          uv run dvc dag --md >> "$GITHUB_STEP_SUMMARY" || true
