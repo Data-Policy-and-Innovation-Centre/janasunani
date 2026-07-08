@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+/*
+ * DPIC design tokens — single source of truth for the frontend theme.
+ * Mirrored from the installed `dpic` package:
+ *   .venv/lib/python3.13/site-packages/dpic/branding/colors.py
+ *   .venv/lib/python3.13/site-packages/dpic/branding/typography.py
+ * Maroon is the sole accent (chrome, not fills). Calibri with a web fallback
+ * stack — Gotham / Adobe Garamond are licensed desktop fonts, not used here.
+ */
+
+:root {
+  /* Maroon */
+  --dpic-maroon: #8b1524; /* primary accent: headers, rules, buttons, labels */
+  --dpic-maroon-full: #800000; /* full-bleed section/hero/footer bars */
+
+  /* Neutrals / text ramp */
+  --dpic-white: #ffffff;
+  --dpic-text-dark: #1a1a1a; /* headings, key body */
+  --dpic-text-body: #444444; /* body copy */
+  --dpic-text-secondary: #666666; /* captions, secondary */
+
+  /* Surfaces */
+  --dpic-surface: #ffffff;
+  --dpic-card: #f2f2f2; /* card fill, alt table row */
+  --dpic-panel: #f7f7f7; /* subtle panels */
+  --dpic-border: #dddddd; /* borders, hairlines */
+  --dpic-stat-tile: #a6a6a6;
+
+  /* Greystones */
+  --dpic-greystone-dark: #767676;
+  --dpic-greystone-light: #d6d6ce;
+
+  /* Semantic */
+  --dpic-positive: #8a9045;
+  --dpic-negative: #8f3931;
+
+  /* Type stacks — Calibri with faithful web fallbacks */
+  --dpic-font-sans: Calibri, "Segoe UI", system-ui, -apple-system, sans-serif;
+  --dpic-font-mono: "Courier New", monospace;
+}
+
+/* Expose the tokens to Tailwind so utilities like `bg-maroon`,
+   `text-body`, `border-hair`, `font-sans` are generated once. */
+@theme inline {
+  --color-maroon: var(--dpic-maroon);
+  --color-maroon-full: var(--dpic-maroon-full);
+
+  --color-text-dark: var(--dpic-text-dark);
+  --color-text-body: var(--dpic-text-body);
+  --color-text-secondary: var(--dpic-text-secondary);
+
+  --color-surface: var(--dpic-surface);
+  --color-card: var(--dpic-card);
+  --color-panel: var(--dpic-panel);
+  --color-hair: var(--dpic-border);
+  --color-stat-tile: var(--dpic-stat-tile);
+
+  --color-greystone-dark: var(--dpic-greystone-dark);
+  --color-greystone-light: var(--dpic-greystone-light);
+
+  --color-positive: var(--dpic-positive);
+  --color-negative: var(--dpic-negative);
+
+  --font-sans: var(--dpic-font-sans);
+  --font-mono: var(--dpic-font-mono);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--dpic-surface);
+  color: var(--dpic-text-body);
+  font-family: var(--dpic-font-sans);
+  -webkit-font-smoothing: antialiased;
+}
