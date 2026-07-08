@@ -212,6 +212,11 @@ outputs/reports/*
 !data/clean/.gitkeep
 !data/interim/.gitkeep
 !data/processed/.gitkeep
+
+# MLflow default local tracking + artifact store (janasunani/config.py
+# MLFLOW_TRACKING_URI default). Run metadata and logged artifact copies are
+# generated locally and must never be committed alongside DVC-tracked bytes.
+mlruns/
 !outputs/figures/.gitkeep
 !outputs/tables/.gitkeep
 !outputs/reports/.gitkeep

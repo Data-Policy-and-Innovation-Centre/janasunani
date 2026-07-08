@@ -47,16 +47,46 @@ def ensure_experiment(
     tracking_uri: Optional[str] = None,
     artifact_uri: Optional[str] = None,
 ) -> str:
-    """Return an MLflow experiment id, creating it if needed."""
+    """Return an MLflow experiment id, creating it if needed.
+
+    MLflow pins an experiment's artifact location at creation time; it cannot be
+    changed later. If ``artifact_uri`` (or ``settings.MLFLOW_ARTIFACT_URI``) names
+    a desired artifact root and an experiment with this name already exists
+    pointing somewhere else, raise instead of silently reusing it — otherwise
+    artifacts would keep landing in the stale location (e.g. the local default)
+    even after the caller configured a durable root (e.g. S3), while
+    registration still reports success.
+    """
     configure_tracking(tracking_uri)
+    desired_artifact_uri = artifact_uri or settings.MLFLOW_ARTIFACT_URI
     client = MlflowClient()
     experiment = client.get_experiment_by_name(name)
     if experiment is not None:
+        if desired_artifact_uri is not None and _normalize_artifact_uri(
+            experiment.artifact_location
+        ) != _normalize_artifact_uri(desired_artifact_uri):
+            raise ValueError(
+                f"Experiment {name!r} already exists with artifact_location "
+                f"{experiment.artifact_location!r}, which differs from the "
+                f"requested artifact root {desired_artifact_uri!r}. MLflow "
+                "cannot relocate an experiment's artifact store after "
+                "creation; use a differently named experiment or reconcile "
+                "the artifact root before proceeding."
+            )
         return experiment.experiment_id
     return client.create_experiment(
         name,
-        artifact_location=artifact_uri or settings.MLFLOW_ARTIFACT_URI,
+        artifact_location=desired_artifact_uri,
     )
+
+
+def _normalize_artifact_uri(uri: Optional[str]) -> Optional[str]:
+    """Normalize an artifact URI for equality comparison across MLflow's
+    own formatting (e.g. trailing slashes) without changing the compared
+    values' meaning."""
+    if uri is None:
+        return None
+    return uri.rstrip("/")
 
 
 def log_model_artifact(
@@ -84,13 +114,15 @@ def log_model_artifact(
     experiment_id = ensure_experiment(
         experiment_name, tracking_uri=tracking_uri, artifact_uri=artifact_uri
     )
-    tags = {
-        DVC_PATH_TAG: dvc_path,
-        DVC_HASH_TAG: dvc_hash,
-        "artifact.local_path": path.as_posix(),
-    }
+    tags: dict[str, str] = {"artifact.local_path": path.as_posix()}
     if extra_tags:
         tags.update(extra_tags)
+    # The DVC provenance tags are the guarantee this module exists to provide:
+    # they must always reflect the artifact actually logged in this call, so
+    # apply them last and let them win over any caller-supplied extra_tags
+    # (accidental or otherwise) that reuse the same reserved keys.
+    tags[DVC_PATH_TAG] = dvc_path
+    tags[DVC_HASH_TAG] = dvc_hash
 
     with mlflow.start_run(experiment_id=experiment_id) as run:
         mlflow.set_tags(tags)
