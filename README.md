@@ -157,6 +157,8 @@ The GPU box is a `gpu_box_count = 0/1` toggle (~$1/hr while up).
   storage layers, environments, infrastructure, invariants.
 - [docs/ROADMAP.md](docs/ROADMAP.md) — the plan and current status (source of
   truth for sequencing).
+- [docs/DEPLOY.md](docs/DEPLOY.md) — end-to-end cloud deployment runbook
+  (provision → migrate → run → back up; the two boxes and hard rules).
 - Per-package detail: [db](janasunani/db/README.md) ·
   [migration](janasunani/migration/README.md) ·
   [ingestion](janasunani/ingestion/README.md) ·

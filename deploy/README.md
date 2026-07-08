@@ -3,6 +3,10 @@
 Two halves: [`terraform/`](terraform/README.md) creates the EC2 boxes;
 `docker-compose.yml` is what runs **on** the CPU box.
 
+> **Full end-to-end runbook:** [docs/DEPLOY.md](../docs/DEPLOY.md) — provision →
+> migrate → run → back up. This file and `terraform/README.md` are the
+> per-directory detail behind it.
+
 ## docker-compose.yml (CPU box)
 
 Grows service-by-service as Part II lands (`oltp` today; `mlflow` → `api` →
