@@ -6,6 +6,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
   test-and-validate-pipeline:
     runs-on: ubuntu-latest
@@ -28,8 +31,15 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     steps:
+      # PR-controlled code (test suite, deps) runs in this job, so the
+      # checkout must not persist a token: this job only ever holds the
+      # default read-only GITHUB_TOKEN, but persisting it is needless
+      # exposure and would become a real problem if permissions here ever
+      # change.
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -54,8 +64,26 @@ jobs:
       - name: Sync dependencies
         run: uv sync --all-groups --extra serving
 
-      - name: Run tests
-        run: uv run pytest
+      - name: Run tests with coverage
+        run: uv run pytest --cov=janasunani --cov-report=term-missing:skip-covered --cov-report=xml
+
+      - name: Write coverage markdown
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        run: uv run coverage report -m --skip-covered --format=markdown > coverage.md
+
+      - name: Upload coverage XML
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+
+      - name: Upload coverage markdown
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-md
+          path: coverage.md
 
       # Validate the pipeline DEFINITION only — do not execute data stages in CI.
       # `materialize` needs the operational OLTP DB (SQLite dev file or the box's
@@ -66,3 +94,64 @@ jobs:
         run: |
           uv run dvc dag
           uv run dvc dag --md >> "$GITHUB_STEP_SUMMARY" || true
+
+  # Kept separate from the test job so the write-scoped token never shares a
+  # job with PR-controlled code (test suite, deps): that job only checks out
+  # code and runs it, this job only downloads a plain-text artifact and
+  # posts a comment.
+  post-coverage-comment:
+    needs: test-and-validate-pipeline
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.test-and-validate-pipeline.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Download coverage markdown
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-md
+
+      - name: Comment coverage on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+            const marker = "<!-- janasunani-coverage-report -->";
+            const report = fs.readFileSync("coverage.md", "utf8");
+            const body = `${marker}
+            ## Test Coverage
+
+            ${report}
+
+            Full XML report is available as the \`coverage-xml\` workflow artifact.`;
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+
+            const comments = await github.rest.issues.listComments({
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            });
+
+            const existing = comments.data.find(
+              (comment) =>
+                comment.user.type === "Bot" && comment.body.includes(marker)
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body,
+              });
+            }
