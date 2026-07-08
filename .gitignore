@@ -216,3 +216,8 @@ outputs/reports/*
 !outputs/tables/.gitkeep
 !outputs/reports/.gitkeep
 .DS_Store
+
+# Claude Code: machine-local settings + agent scratch worktrees
+# (shared .claude/settings.json stays tracked)
+.claude/settings.local.json
+.claude/worktrees/
