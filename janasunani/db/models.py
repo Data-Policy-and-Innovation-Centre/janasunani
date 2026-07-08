@@ -22,9 +22,11 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
+    JSON,
     String,
     UniqueConstraint,
     func,
@@ -264,6 +266,33 @@ class PipelineDocument(Base):
     grievance = Column(String, nullable=True)
     summary = Column(String, nullable=True)
     grievance_category = Column(String, nullable=True)
+
+
+class LiveGrievance(Base):
+    """One live demo submission persisted by the serving API.
+
+    Historical complaints stay faithful to the dump in ``complaints``. Demo
+    submissions use this sibling table so the API can write/read live results
+    without mutating the historical schema. The full API response is kept in
+    ``result_json`` to preserve the frozen serving contract exactly.
+    """
+
+    __tablename__ = "live_grievances"
+
+    id = Column(String, primary_key=True)
+    ticket_no = Column(String, unique=True, nullable=False, index=True)
+    status = Column(String, nullable=False)
+    submitted_on = Column(DateTime, nullable=False, index=True)
+    district = Column(String, nullable=True, index=True)
+    source = Column(String, nullable=False)
+    category = Column(String, nullable=True, index=True)
+    subcategory = Column(String, nullable=True)
+    language = Column(String, nullable=True)
+    dept = Column(String, nullable=True, index=True)
+    office = Column(String, nullable=True)
+    routing_method = Column(String, nullable=True)
+    routing_confidence = Column(Float, nullable=True)
+    result_json = Column(JSON, nullable=False)
 
 
 class APIRequestTracking(Base):

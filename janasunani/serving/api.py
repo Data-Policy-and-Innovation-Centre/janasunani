@@ -10,8 +10,8 @@ Endpoints (the full surface; shapes in schemas.py are the frozen contract):
 
 Skeleton wiring (swapped at Phase 8/9 wire-up, endpoints unchanged):
 processor = ``MockGrievanceProcessor``; history = ``MockHistory``; submitted
-results live in an in-process dict (wire-up persists to the ``live_grievances``
-OLTP table instead — the dict, like everything mock, dies with the process).
+results go through an injectable store. The module-level app uses the
+``live_grievances`` OLTP table; tests keep the process-local store.
 
 Run:  uv run --extra serving janasunani-api          # 127.0.0.1:8000
 CORS: comma-separated ``JANASUNANI_CORS_ORIGINS`` (default ``*`` — fine for
@@ -31,6 +31,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 from starlette.concurrency import run_in_threadpool
 
+from janasunani.config import settings
 from janasunani.serving.history import HistoryProvider, MockHistory
 from janasunani.serving.processor import GrievanceProcessor, MockGrievanceProcessor
 from janasunani.serving.schemas import (
@@ -38,15 +39,22 @@ from janasunani.serving.schemas import (
     HealthResponse,
     HistoryPage,
 )
+from janasunani.serving.store import (
+    DatabaseResultStore,
+    InMemoryResultStore,
+    ResultStore,
+)
 
 
 def create_app(
     processor: Optional[GrievanceProcessor] = None,
     history: Optional[HistoryProvider] = None,
+    result_store: Optional[ResultStore] = None,
 ) -> FastAPI:
     """App factory; tests and the wire-up inject their own processor/history."""
     processor = processor or MockGrievanceProcessor()
     history = history or MockHistory()
+    result_store = result_store or InMemoryResultStore()
 
     app = FastAPI(title="Janasunani 2.0 API", version="0.1.0")
     app.add_middleware(
@@ -56,8 +64,6 @@ def create_app(
         allow_headers=["*"],
     )
 
-    # Skeleton-only store for GET /grievance/{id}; replaced by OLTP at wire-up.
-    results: dict[str, GrievanceResult] = {}
     # next() has no await point, so concurrent submissions can't mint the same
     # number (len(results)+1 could: requests overlap at `await file.read()`).
     ticket_seq = itertools.count(1)
@@ -81,7 +87,7 @@ def create_app(
             raise HTTPException(status_code=422, detail="'text' is empty.")
 
         grievance_id = uuid.uuid4().hex[:12]
-        ticket_no = f"JS{next(ticket_seq):07d}"
+        ticket_no = f"JS{next(ticket_seq):07d}{grievance_id[:4].upper()}"
         # The processor protocol is sync (real inference is CPU/GPU-bound
         # work); run it off the event loop so a slow OCR/model call doesn't
         # block /health and other requests on this worker at wire-up.
@@ -96,7 +102,7 @@ def create_app(
                 district=district,
             )
         )
-        results[grievance_id] = result
+        await result_store.save(result, district=district)
         logger.info(
             f"grievance {grievance_id} ({ticket_no}): "
             f"{result.extraction.source} via {processor.name} -> "
@@ -105,8 +111,8 @@ def create_app(
         return result
 
     @app.get("/grievance/{grievance_id}", response_model=GrievanceResult)
-    def get_grievance(grievance_id: str) -> GrievanceResult:
-        result = results.get(grievance_id)
+    async def get_grievance(grievance_id: str) -> GrievanceResult:
+        result = await result_store.get(grievance_id)
         if result is None:
             raise HTTPException(status_code=404, detail="No such grievance.")
         return result
@@ -126,7 +132,7 @@ def create_app(
     return app
 
 
-app = create_app()
+app = create_app(result_store=DatabaseResultStore(settings.OLTP_DB_URL))
 
 
 def main() -> None:

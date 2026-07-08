@@ -2,7 +2,7 @@
 
 from sqlalchemy import create_engine, inspect
 
-from janasunani.db.models import ActionHistory, Base, Complaint
+from janasunani.db.models import ActionHistory, Base, Complaint, LiveGrievance
 
 
 def test_metadata_creates_expected_tables():
@@ -15,6 +15,7 @@ def test_metadata_creates_expected_tables():
         "districts",
         "api_request_tracking",
         "action_history_api_request_tracking",
+        "live_grievances",
     } <= tables
 
 
@@ -38,3 +39,20 @@ def test_complaint_models_full_dump_plus_ingestion_columns():
 def test_action_history_has_ticket_and_tracking_keys():
     cols = set(ActionHistory.__table__.columns.keys())
     assert {"ticket_no", "tracking_id", "action_taken_by", "action_status"} <= cols
+
+
+def test_live_grievance_preserves_result_payload():
+    cols = set(LiveGrievance.__table__.columns.keys())
+    assert {
+        "id",
+        "ticket_no",
+        "status",
+        "submitted_on",
+        "district",
+        "source",
+        "category",
+        "dept",
+        "routing_method",
+        "routing_confidence",
+        "result_json",
+    } <= cols
