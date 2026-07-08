@@ -1,6 +1,6 @@
 import asyncio
-from datetime import datetime, timedelta
-from typing import List, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, List, Mapping, Optional
 
 import pytz
 from loguru import logger
@@ -16,6 +16,7 @@ from .models import ActionHistory as ActionHistoryModel
 from .models import ActionHistoryAPIRequestTracking, APIRequestTracking
 from .models import Complaint as ComplaintModel
 from .models import District
+from .models import LiveGrievance
 from .session import get_db
 
 
@@ -130,6 +131,77 @@ async def get_complaints_by_status(
         select(ComplaintModel).filter(ComplaintModel.status == status)
     )
     return result.scalars().all()
+
+
+def _parse_datetime(value: Any) -> datetime:
+    """Parse to a **naive UTC** datetime, matching the naive ``DateTime`` columns.
+
+    ``GrievanceResult.model_dump(mode="json")`` emits offset-bearing ISO
+    strings (the processor stamps ``datetime.now(UTC)``), but every timestamp
+    column in this schema is ``TIMESTAMP WITHOUT TIME ZONE``. Postgres/asyncpg
+    (unlike SQLite) refuses to bind a tz-aware value into a naive column, so
+    any aware datetime is normalized to naive UTC before it's handed back.
+    """
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    elif not isinstance(value, datetime):
+        raise TypeError(f"Expected datetime or ISO string, got {type(value).__name__}")
+
+    if value.tzinfo is not None:
+        value = value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+async def get_live_grievance_by_id(
+    db: AsyncSession, grievance_id: str
+) -> Optional[LiveGrievance]:
+    """Get a persisted live demo grievance by API id."""
+    result = await db.execute(
+        select(LiveGrievance).filter(LiveGrievance.id == grievance_id)
+    )
+    return result.scalars().first()
+
+
+async def create_or_update_live_grievance(
+    db: AsyncSession,
+    result_payload: Mapping[str, Any],
+    *,
+    district: Optional[str] = None,
+) -> LiveGrievance:
+    """Persist a serving ``GrievanceResult`` payload without changing its shape."""
+    extraction = result_payload.get("extraction") or {}
+    classification = result_payload.get("classification") or {}
+    routing = result_payload.get("routing") or {}
+    grievance_id = str(result_payload["id"])
+
+    values = {
+        "id": grievance_id,
+        "ticket_no": str(result_payload["ticket_no"]),
+        "status": str(result_payload["status"]),
+        "submitted_on": _parse_datetime(result_payload["submitted_on"]),
+        "district": district,
+        "source": str(extraction.get("source")),
+        "category": classification.get("category"),
+        "subcategory": classification.get("subcategory"),
+        "language": classification.get("language"),
+        "dept": routing.get("dept"),
+        "office": routing.get("office"),
+        "routing_method": routing.get("method"),
+        "routing_confidence": routing.get("confidence"),
+        "result_json": dict(result_payload),
+    }
+
+    live = await get_live_grievance_by_id(db, grievance_id)
+    if live is None:
+        live = LiveGrievance(**values)
+        db.add(live)
+    else:
+        for key, value in values.items():
+            setattr(live, key, value)
+
+    await db.commit()
+    await db.refresh(live)
+    return live
 
 
 # Action History CRUD operations

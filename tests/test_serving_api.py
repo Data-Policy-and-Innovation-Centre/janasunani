@@ -165,3 +165,14 @@ def test_same_text_gets_deterministic_classification(client):
     b = client.post("/grievance", data={"text": _TEXT}).json()
     assert a["classification"] == b["classification"]
     assert a["ticket_no"] != b["ticket_no"]  # but each submission is distinct
+
+
+def test_ticket_no_carries_full_grievance_id_suffix(client):
+    # Regression (Codex P2 on PR #19): the ticket_no used to suffix only the
+    # first 4 hex chars of grievance_id. ticket_seq is an in-process
+    # itertools.count that repeats across process restarts/workers, so a
+    # 4-hex suffix could collide against the DB's UNIQUE(ticket_no) index
+    # once persistence is live. The suffix must be the *entire* id.
+    body = client.post("/grievance", data={"text": _TEXT}).json()
+    assert body["ticket_no"].endswith(body["id"].upper())
+    assert len(body["ticket_no"]) == len("JS") + 7 + len(body["id"])

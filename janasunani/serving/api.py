@@ -10,8 +10,13 @@ Endpoints (the full surface; shapes in schemas.py are the frozen contract):
 
 Skeleton wiring (swapped at Phase 8/9 wire-up, endpoints unchanged):
 processor = ``MockGrievanceProcessor``; history = ``MockHistory``; submitted
-results live in an in-process dict (wire-up persists to the ``live_grievances``
-OLTP table instead — the dict, like everything mock, dies with the process).
+results go through an injectable store. The module-level app keeps the
+in-memory store — zero DB setup to run the mock skeleton — so the frontend's
+``uv run --extra serving janasunani-api`` target never depends on Alembic
+migrations having run. ``DatabaseResultStore`` (the ``live_grievances`` OLTP
+table) is available for explicit injection and is exercised by
+``tests/test_serving_persistence.py``; the real Phase 10 wire-up will inject
+it into ``create_app`` explicitly.
 
 Run:  uv run --extra serving janasunani-api          # 127.0.0.1:8000
 CORS: comma-separated ``JANASUNANI_CORS_ORIGINS`` (default ``*`` — fine for
@@ -38,15 +43,24 @@ from janasunani.serving.schemas import (
     HealthResponse,
     HistoryPage,
 )
+from janasunani.serving.store import InMemoryResultStore, ResultStore
+
+# DatabaseResultStore is deliberately not imported/used at module scope: the
+# module-level ``app`` below stays on the in-memory store so the mock
+# skeleton runs with zero DB setup. Callers that want OLTP persistence
+# construct their own app via ``create_app(result_store=DatabaseResultStore(...))``
+# (see janasunani.serving.store.DatabaseResultStore).
 
 
 def create_app(
     processor: Optional[GrievanceProcessor] = None,
     history: Optional[HistoryProvider] = None,
+    result_store: Optional[ResultStore] = None,
 ) -> FastAPI:
     """App factory; tests and the wire-up inject their own processor/history."""
     processor = processor or MockGrievanceProcessor()
     history = history or MockHistory()
+    result_store = result_store or InMemoryResultStore()
 
     app = FastAPI(title="Janasunani 2.0 API", version="0.1.0")
     app.add_middleware(
@@ -56,8 +70,6 @@ def create_app(
         allow_headers=["*"],
     )
 
-    # Skeleton-only store for GET /grievance/{id}; replaced by OLTP at wire-up.
-    results: dict[str, GrievanceResult] = {}
     # next() has no await point, so concurrent submissions can't mint the same
     # number (len(results)+1 could: requests overlap at `await file.read()`).
     ticket_seq = itertools.count(1)
@@ -81,7 +93,11 @@ def create_app(
             raise HTTPException(status_code=422, detail="'text' is empty.")
 
         grievance_id = uuid.uuid4().hex[:12]
-        ticket_no = f"JS{next(ticket_seq):07d}"
+        # Full grievance_id (not just a 4-hex slice) as the suffix: the counter
+        # resets on process restart / repeats across workers, so the ~48 bits
+        # of the full id are what actually keep ticket_no unique against the
+        # DB's UNIQUE index once persistence is live.
+        ticket_no = f"JS{next(ticket_seq):07d}{grievance_id.upper()}"
         # The processor protocol is sync (real inference is CPU/GPU-bound
         # work); run it off the event loop so a slow OCR/model call doesn't
         # block /health and other requests on this worker at wire-up.
@@ -96,7 +112,7 @@ def create_app(
                 district=district,
             )
         )
-        results[grievance_id] = result
+        await result_store.save(result, district=district)
         logger.info(
             f"grievance {grievance_id} ({ticket_no}): "
             f"{result.extraction.source} via {processor.name} -> "
@@ -105,8 +121,8 @@ def create_app(
         return result
 
     @app.get("/grievance/{grievance_id}", response_model=GrievanceResult)
-    def get_grievance(grievance_id: str) -> GrievanceResult:
-        result = results.get(grievance_id)
+    async def get_grievance(grievance_id: str) -> GrievanceResult:
+        result = await result_store.get(grievance_id)
         if result is None:
             raise HTTPException(status_code=404, detail="No such grievance.")
         return result
