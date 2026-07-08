@@ -1,7 +1,9 @@
 """Submitted-result stores for ``GET /grievance/{id}``.
 
 The API factory keeps an in-memory store available for contract tests and the
-mock skeleton. The module-level app uses ``DatabaseResultStore`` so live demo
+mock skeleton (the module-level app in ``api.py`` uses it by default, so the
+skeleton needs no DB setup). ``DatabaseResultStore`` is available for explicit
+injection (``create_app(result_store=DatabaseResultStore(...))``) so live demo
 submissions survive process restarts once the Alembic migration has run.
 """
 

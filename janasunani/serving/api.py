@@ -10,8 +10,13 @@ Endpoints (the full surface; shapes in schemas.py are the frozen contract):
 
 Skeleton wiring (swapped at Phase 8/9 wire-up, endpoints unchanged):
 processor = ``MockGrievanceProcessor``; history = ``MockHistory``; submitted
-results go through an injectable store. The module-level app uses the
-``live_grievances`` OLTP table; tests keep the process-local store.
+results go through an injectable store. The module-level app keeps the
+in-memory store — zero DB setup to run the mock skeleton — so the frontend's
+``uv run --extra serving janasunani-api`` target never depends on Alembic
+migrations having run. ``DatabaseResultStore`` (the ``live_grievances`` OLTP
+table) is available for explicit injection and is exercised by
+``tests/test_serving_persistence.py``; the real Phase 10 wire-up will inject
+it into ``create_app`` explicitly.
 
 Run:  uv run --extra serving janasunani-api          # 127.0.0.1:8000
 CORS: comma-separated ``JANASUNANI_CORS_ORIGINS`` (default ``*`` — fine for
@@ -31,7 +36,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 from starlette.concurrency import run_in_threadpool
 
-from janasunani.config import settings
 from janasunani.serving.history import HistoryProvider, MockHistory
 from janasunani.serving.processor import GrievanceProcessor, MockGrievanceProcessor
 from janasunani.serving.schemas import (
@@ -39,11 +43,13 @@ from janasunani.serving.schemas import (
     HealthResponse,
     HistoryPage,
 )
-from janasunani.serving.store import (
-    DatabaseResultStore,
-    InMemoryResultStore,
-    ResultStore,
-)
+from janasunani.serving.store import InMemoryResultStore, ResultStore
+
+# DatabaseResultStore is deliberately not imported/used at module scope: the
+# module-level ``app`` below stays on the in-memory store so the mock
+# skeleton runs with zero DB setup. Callers that want OLTP persistence
+# construct their own app via ``create_app(result_store=DatabaseResultStore(...))``
+# (see janasunani.serving.store.DatabaseResultStore).
 
 
 def create_app(
@@ -132,7 +138,7 @@ def create_app(
     return app
 
 
-app = create_app(result_store=DatabaseResultStore(settings.OLTP_DB_URL))
+app = create_app()
 
 
 def main() -> None:

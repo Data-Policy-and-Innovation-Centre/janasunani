@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, List, Mapping, Optional
 
 import pytz
@@ -134,11 +134,22 @@ async def get_complaints_by_status(
 
 
 def _parse_datetime(value: Any) -> datetime:
-    if isinstance(value, datetime):
-        return value
+    """Parse to a **naive UTC** datetime, matching the naive ``DateTime`` columns.
+
+    ``GrievanceResult.model_dump(mode="json")`` emits offset-bearing ISO
+    strings (the processor stamps ``datetime.now(UTC)``), but every timestamp
+    column in this schema is ``TIMESTAMP WITHOUT TIME ZONE``. Postgres/asyncpg
+    (unlike SQLite) refuses to bind a tz-aware value into a naive column, so
+    any aware datetime is normalized to naive UTC before it's handed back.
+    """
     if isinstance(value, str):
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    raise TypeError(f"Expected datetime or ISO string, got {type(value).__name__}")
+        value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    elif not isinstance(value, datetime):
+        raise TypeError(f"Expected datetime or ISO string, got {type(value).__name__}")
+
+    if value.tzinfo is not None:
+        value = value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
 
 
 async def get_live_grievance_by_id(
