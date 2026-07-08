@@ -114,6 +114,13 @@ class Settings(BaseSettings):
     AWS_REGION: str = os.getenv("AWS_REGION", "ap-south-1")
     AWS_S3_DOCUMENTS: str = os.getenv("AWS_S3_DOCUMENTS", "janasunani-documents-main")
 
+    # MLflow slim registry (local file backend by default; CPU box can set S3
+    # artifacts via MLFLOW_ARTIFACT_URI).
+    MLFLOW_TRACKING_URI: str = os.getenv(
+        "MLFLOW_TRACKING_URI", f"file://{(ROOT_DIR / 'mlruns').as_posix()}"
+    )
+    MLFLOW_ARTIFACT_URI: Optional[str] = os.getenv("MLFLOW_ARTIFACT_URI")
+
     model_config = SettingsConfigDict(env_file=ROOT_DIR / ".env", extra="ignore")
 
     @field_validator("DEBUG", mode="before")

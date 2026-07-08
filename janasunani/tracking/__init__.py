@@ -1,3 +1,15 @@
-"""Experiment/model tracking: local file-based MLflow tracking + model registry,
-dual-tracked with DVC (MLflow owns run/metric/registry metadata; DVC versions the
-artifact bytes, referenced from MLflow via path + content-hash tags)."""
+"""Experiment/model tracking helpers."""
+
+from janasunani.tracking.mlflow_utils import (
+    LoggedModelArtifact,
+    configure_tracking,
+    ensure_experiment,
+    log_model_artifact,
+)
+
+__all__ = [
+    "LoggedModelArtifact",
+    "configure_tracking",
+    "ensure_experiment",
+    "log_model_artifact",
+]
