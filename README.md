@@ -6,20 +6,21 @@ A raw grievance (typed text or a scanned document) is **extracted** (OCR),
 **classified** (category/department), **summarized**, and **routed** to the
 responsible office, ending in a Next.js demo UI.
 
-The repo is one Python package (`janasunani/`) built in two parts:
+The repo is one Python package (`janasunani/`) built **phase by phase** (see
+[docs/ROADMAP.md](docs/ROADMAP.md)):
 
-- **Part I — Foundation** *(built)*: the historical data load (1.37M complaints,
+- **Foundation — built:** the historical data load (1.37M complaints,
   6.56M action-history rows) into a swappable OLTP store, Parquet
   materialization for analytics, document ingestion → S3, the six-stage
   document-processing pipeline, and the AWS infrastructure (an always-on CPU
   box + an on-demand GPU box).
-- **Part II — Automation prototype** *(in progress)*: single-grievance
-  inference, hybrid routing, FastAPI serving, and the Next.js demo. The serving
-  API skeleton is on `main`; the routing engine, live persistence, lake-backed
-  history, MLflow registry, and a first-cut DPIC-branded Next.js frontend are
-  ongoing on feature branches. The demo runs **mock end-to-end** today (mock
-  processor + synthetic history) — real-time inference (Phase 8) is the gap that
-  swaps the mocks for real models behind the same contract.
+- **Automation prototype — in progress:** single-grievance inference, hybrid
+  routing, FastAPI serving, and the Next.js demo. The serving API skeleton is on
+  `main`; the routing engine, live persistence, lake-backed history, MLflow
+  registry, and a first-cut DPIC-branded Next.js frontend are ongoing on feature
+  branches. The demo runs **mock end-to-end** today (mock processor + synthetic
+  history) — real-time inference (Phase 8) is the gap that swaps the mocks for
+  real models behind the same contract.
 
 New here? Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) first;
 [docs/ROADMAP.md](docs/ROADMAP.md) is the plan and current status.

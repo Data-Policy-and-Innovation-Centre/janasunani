@@ -1,4 +1,4 @@
-# janasunani Roadmap — Part I: Foundation/Migration · Part II: Automation Prototype
+# janasunani Roadmap
 
 ## Context
 
@@ -7,12 +7,14 @@ Odisha. End goal: a **full automation prototype** — take a **raw grievance** (
 scanned document), **extract** text, **redact PII**, **classify** (category / subcategory / department),
 **summarize**, and **route** it to the responsible office — quickly — with a polished **Next.js demo**.
 
-- **Part I — Foundation** *(in progress)*: consolidate work from two other repos into one `janasunani/`
-  package and load the data: the cold-start SQL migration into the OLTP store, the downstream Parquet
-  materialization, document ingestion → S3, the document-processing/ML pipeline, and tracking.
-- **Part II — Automation Prototype & Demo**: a real-time single-grievance inference service, a hybrid
-  (rules + learned) routing engine, FastAPI serving that writes live grievances into the **same** OLTP DB,
-  and the Next.js UI.
+The system is built **phase by phase** (Phases 0–12; see the phase list and detail below). The earlier
+phases lay the **foundation** — consolidate work from two earlier repos into one `janasunani/` package and
+load the data: the cold-start SQL migration into a swappable OLTP store, the downstream Parquet
+materialization, document ingestion → S3, the six-stage document-processing/ML pipeline, and model tracking.
+The later phases add the **automation prototype** — real-time single-grievance inference, a hybrid
+(rules + learned) routing engine, FastAPI serving that writes live grievances into the **same** OLTP DB, and
+the Next.js demo UI. The later phases are built **API-contract-first** so the demo (the visible deliverable)
+never sits at the tail of a serial chain.
 
 This plan is the source of truth, **mirrored into the repo at `docs/ROADMAP.md`** (kept in sync).
 
@@ -29,7 +31,7 @@ cloud.** The full cold-start migration, Parquet lake, S3 ingestion, and the
 six-stage document pipeline (incl. the Presidio PII rebuild) are done; production
 Postgres holds the migrated data on the always-on CPU box (nightly `pg_dump` →
 S3), and the on-demand GPU box was shaken down for real (DeepSeek OCR) on
-2026-07-04. **Part II (automation prototype) is in progress**, built
+2026-07-04. **The automation-prototype phases (8–12) are in progress**, built
 API-contract-first: the Phase 10 serving skeleton is on `main`, and the routing
 engine, live-persistence, lake-backed history, MLflow registry, and a first-cut
 DPIC-branded Next.js frontend are **ongoing on feature branches** (see the
@@ -188,7 +190,7 @@ start GPU box → health check → demo → stop GPU box; latency pass; stakehol
 ```
   MySQL dump ──(migrate: from_sql_dump → from_mysql)──►  OLTP DB  ──(materialize: DuckDB/Polars)──►  Parquet lake
                                                           (SQLAlchemy,                                 (data/interim,
-  live demo app (Part II, seeded w/ fake data) ─────────► swappable)                                   DVC-tracked)
+  live demo app (Phases 8–12, seeded w/ fake data) ─────► swappable)                                   DVC-tracked)
                                                               │                                              │
                                                      point reads/writes                              analytics + ML
                                                       (FastAPI/demo)                                (DuckDB / Polars)
@@ -213,8 +215,8 @@ start GPU box → health check → demo → stop GPU box; latency pass; stakehol
 - SQL migration supports **both** a raw-dump cold start and a live-MySQL sync.
 - Doc-processing/ML pipeline source = the `grievance-pipeline` `document_pipeline` (NOT ORTPS).
 - MLflow: local file-based tracking + registry; artifacts to S3/DVC remote.
-- **Part II**: Next.js/React frontend; hybrid (rules + learned) routing; text **and** document input;
-  heavy/GPU inference.
+- **Automation (Phases 8–12)**: Next.js/React frontend; hybrid (rules + learned) routing; text **and**
+  document input; heavy/GPU inference.
 - **Testing policy**: every feature ships with real-code-path pytest tests, run before a phase is "done".
 - DVC-track the raw dump + derived Parquet; the OLTP DB is operational (not DVC-tracked) — back it up to S3.
 
@@ -239,7 +241,7 @@ start GPU box → health check → demo → stop GPU box; latency pass; stakehol
   PII rebuild, GPU shakedown 2026-07-04).
 - 🔄 **Phase 6** — MLflow slim: helpers on branch `feat/mlflow-slim-registry` (ongoing). ✅ **Phase 7 CI** —
   green with Postgres service container; docs stay late.
-- 🔄 **Phases 8–12** (Part II) — built API-contract-first; several components **ongoing on feature branches,
+- 🔄 **Phases 8–12** — built API-contract-first; several components **ongoing on feature branches,
   awaiting review/merge/integration** (none merged past the Phase 10 skeleton yet):
   - **Phase 8** ⬜ real-time inference core — NOT started; this is the gap that keeps the demo mock.
   - **Phase 9** 🔄 routing — `feat/rules-router` / `feat/rules-router-mappings` (rules layer; crosswalk to be
@@ -267,7 +269,7 @@ janasunani/
     materialize.py       #   OLTP DB -> Parquet (DuckDB sqlite/postgres scanner -> COPY)
     lake.py              #   read/query helpers over the Parquet lake (DuckDB/Polars)
   pipeline/              # document processing (OCR/PII/page-type/summarize/categorize)
-  inference/ routing/ serving/ tracking/                          # Part II
+  inference/ routing/ serving/ tracking/                          # automation (Phases 8–12)
 data/
   raw/                   # Dump20250730.sql (raw input, DVC-trackable)
   oltp/                  # OLTP DB file in dev (SQLite); Postgres volume in deploy   [relocate grievance.db here]
@@ -292,7 +294,11 @@ Parquet. Cover counts, idempotency, malformed inputs, the source→field mapping
 
 ---
 
-# PART I — Foundation
+# Phase-by-phase detail
+
+*Foundation phases (2b–7) first, then the automation phases (8–12). Phases 0–2/5
+are done and summarized under Implementation status above; the detail below covers
+the rest.*
 
 ## Phase 2b — Make OLTP swappable  🔄 next (small)
 - `config.py`: rename `DB_URL` → `OLTP_DB_URL` (default `sqlite+aiosqlite:///data/oltp/janasunani.db`;
@@ -375,9 +381,7 @@ Parquet. Cover counts, idempotency, malformed inputs, the source→field mapping
   shipping gated only by locally-run tests.
 - **Docs — stays late**: expand coverage; update `README`/`AGENTS`.
 
----
-
-# PART II — Automation Prototype & Demo  ⬜
+## Automation phases (8–12) — demo path & build order
 
 **Goal:** live single-grievance path — *raw input → extract → redact → classify → summarize → route →
 persist to OLTP → view* — behind FastAPI + a Next.js UI. The live app writes into the **same** OLTP DB
