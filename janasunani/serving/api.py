@@ -93,7 +93,11 @@ def create_app(
             raise HTTPException(status_code=422, detail="'text' is empty.")
 
         grievance_id = uuid.uuid4().hex[:12]
-        ticket_no = f"JS{next(ticket_seq):07d}{grievance_id[:4].upper()}"
+        # Full grievance_id (not just a 4-hex slice) as the suffix: the counter
+        # resets on process restart / repeats across workers, so the ~48 bits
+        # of the full id are what actually keep ticket_no unique against the
+        # DB's UNIQUE index once persistence is live.
+        ticket_no = f"JS{next(ticket_seq):07d}{grievance_id.upper()}"
         # The processor protocol is sync (real inference is CPU/GPU-bound
         # work); run it off the event loop so a slow OCR/model call doesn't
         # block /health and other requests on this worker at wire-up.
