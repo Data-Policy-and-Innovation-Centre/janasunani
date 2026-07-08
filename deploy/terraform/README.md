@@ -8,8 +8,10 @@
 > `most_recent = true` ([main.tf](main.tf)), so a newer Canonical image drifts the
 > `ami` attribute and Terraform plans to **destroy and recreate** the box — the
 > root volume is `delete_on_termination = true`, so a recreate **erases the
-> production data** (a subnet-ordering change can force the same). There is no
-> `prevent_destroy` guard.
+> production data** (a subnet-ordering change can force the same). The instance
+> now carries a `lifecycle` guard (`prevent_destroy = true`, `ignore_changes =
+> [ami, subnet_id]`), so `apply` will **error out rather than replace it** — but
+> don't rely on that as your only check.
 >
 > **Always `terraform plan` first** and scan for `aws_instance.cpu_box must be
 > replaced` or any `N to destroy` — if you see it, **STOP, do not apply.** The

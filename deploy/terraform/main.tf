@@ -121,6 +121,15 @@ resource "aws_instance" "cpu_box" {
     delete_on_termination = true
   }
 
+  lifecycle {
+    # Hard backstop: Terraform errors instead of destroying/replacing the box.
+    prevent_destroy = true
+    # AMI drift (most_recent) and default-subnet-list reordering must not
+    # force a replacement of the live, stateful box — keep whatever is
+    # already running instead of chasing the data source.
+    ignore_changes = [ami, subnet_id]
+  }
+
   tags = {
     Name = "janasunani-cpu-box"
   }
