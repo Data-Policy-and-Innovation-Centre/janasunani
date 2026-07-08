@@ -1,5 +1,21 @@
 # Janasunani demo infrastructure (Terraform)
 
+> ## ⚠️ The CPU box already exists and is always-on — do **not** blindly `terraform apply`
+>
+> The production CPU box (`i-0ef24e15a80ba7128`, EIP `52.66.116.80`) is **already
+> running and holds the migrated 1.37M/6.56M-row production data** on its root
+> volume. **`terraform apply` is NOT a safe no-op.** The Ubuntu AMI uses
+> `most_recent = true` ([main.tf](main.tf)), so a newer Canonical image drifts the
+> `ami` attribute and Terraform plans to **destroy and recreate** the box — the
+> root volume is `delete_on_termination = true`, so a recreate **erases the
+> production data** (a subnet-ordering change can force the same). There is no
+> `prevent_destroy` guard.
+>
+> **Always `terraform plan` first** and scan for `aws_instance.cpu_box must be
+> replaced` or any `N to destroy` — if you see it, **STOP, do not apply.** The
+> usage below is for a **first-time bring-up or deliberate rebuild**, not routine
+> ops on the existing box.
+
 Two instances, one always on:
 
 - the **always-on CPU box** for the demo stack (Week 1 of the roadmap): Ubuntu 24.04

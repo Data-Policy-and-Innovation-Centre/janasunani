@@ -1,5 +1,21 @@
 # Deployment runbook — Janasunani 2.0 (cloud)
 
+> ## ⚠️ The CPU box already exists and is always-on — do **not** blindly `terraform apply`
+>
+> The production CPU box (`i-0ef24e15a80ba7128`, EIP `52.66.116.80`) is **already
+> running and holds the migrated 1.37M/6.56M-row production data** on its root
+> volume. **`terraform apply` is NOT a safe no-op.** The Ubuntu AMI is resolved
+> with `most_recent = true`, so when Canonical ships a newer image the `ami`
+> attribute drifts and Terraform plans to **destroy and recreate** the box — and
+> the root volume is `delete_on_termination = true`, so a recreate **erases the
+> production data** (a subnet-ordering change can force the same). There is no
+> `prevent_destroy` guard.
+>
+> **Always run `terraform plan` first** and scan for `aws_instance.cpu_box must
+> be replaced` or any `N to destroy`. If you see it, **STOP — do not apply.**
+> The provisioning steps below (§1–§2) are for a **first-time bring-up or a
+> deliberate rebuild** — not routine operation of the existing box.
+
 The single source of truth for standing up and running Janasunani on AWS.
 Consolidates what was spread across [deploy/README.md](../deploy/README.md) and
 [deploy/terraform/README.md](../deploy/terraform/README.md); those remain as
