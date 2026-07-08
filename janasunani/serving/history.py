@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import random
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional, Protocol
 
+from janasunani.olap import lake
 from janasunani.serving.schemas import HistoryItem, HistoryPage
 
 _DISTRICTS = ("Khordha", "Cuttack", "Ganjam", "Sundargarh", "Balasore")
@@ -95,3 +97,77 @@ class MockHistory:
             limit=limit,
             offset=offset,
         )
+
+
+class LakeHistory:
+    """Parquet-lake backed history provider.
+
+    ``/history`` is historical-only by design: live submissions are fetched via
+    ``GET /grievance/{id}`` until the lake is re-materialized.
+    """
+
+    def __init__(self, lake_dir: Optional[Path] = None) -> None:
+        self._lake_dir = lake_dir
+
+    def search(
+        self,
+        *,
+        q: Optional[str] = None,
+        district: Optional[str] = None,
+        category: Optional[str] = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> HistoryPage:
+        complaints = lake.lake_path("complaints", self._lake_dir)
+        if not complaints.exists():
+            return HistoryPage(items=[], total=0, limit=limit, offset=offset)
+
+        where, params = _history_filters(q=q, district=district, category=category)
+        where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+        columns = (
+            "ticket_no, created_on, district, category, subcategory, dept, "
+            "status, office, grievance"
+        )
+        con = lake.connect(self._lake_dir)
+        try:
+            total = con.execute(
+                f"SELECT count(*) FROM complaints {where_sql}", params
+            ).fetchone()[0]
+            cursor = con.execute(
+                f"""
+                SELECT {columns}
+                FROM complaints
+                {where_sql}
+                ORDER BY created_on DESC NULLS LAST, ticket_no
+                LIMIT ? OFFSET ?
+                """,
+                [*params, limit, offset],
+            )
+            names = [col[0] for col in cursor.description]
+            items = [HistoryItem(**dict(zip(names, row))) for row in cursor.fetchall()]
+        finally:
+            con.close()
+        return HistoryPage(items=items, total=total, limit=limit, offset=offset)
+
+
+def _history_filters(
+    *,
+    q: Optional[str] = None,
+    district: Optional[str] = None,
+    category: Optional[str] = None,
+) -> tuple[list[str], list[str]]:
+    where: list[str] = []
+    params: list[str] = []
+    if district:
+        where.append("district = ?")
+        params.append(district)
+    if category:
+        where.append("category = ?")
+        params.append(category)
+    if q:
+        where.append(
+            "(lower(coalesce(grievance, '')) LIKE ? OR lower(ticket_no) LIKE ?)"
+        )
+        needle = f"%{q.casefold()}%"
+        params.extend([needle, needle])
+    return where, params
