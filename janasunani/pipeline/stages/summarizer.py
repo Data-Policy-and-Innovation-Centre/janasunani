@@ -159,3 +159,26 @@ def _summarize_text(text: str, tokenizer, model, torch, device: str) -> str:
             num_beams=4,
         )
     return tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+
+
+class Summarizer:
+    """Single-call, warm wrapper around the summarizer model.
+
+    Loads the model once in __init__ (unlike run_summarizer, which loads it
+    per batch run) and reuses the cached tokenizer/model/device handles across
+    calls to summarize(). Intended for in-process callers (e.g. a warm
+    inference processor) that summarize one document at a time.
+    """
+
+    def __init__(self) -> None:
+        self._tokenizer, self._model, self._torch, self._device = _load_model()
+
+    def summarize(self, text: str) -> str:
+        """Summarize a single piece of text using the warm model handles."""
+        flattened = " ".join(text.split())
+        if len(flattened.split()) < MIN_SUMMARY_LENGTH:
+            # Too short to meaningfully summarize (shorter than the model's
+            # own minimum summary length) - return the flattened text as-is
+            # instead of calling .generate().
+            return flattened
+        return _summarize_text(text, self._tokenizer, self._model, self._torch, self._device)
