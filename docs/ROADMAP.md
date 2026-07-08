@@ -225,11 +225,20 @@ start GPU box → health check → demo → stop GPU box; latency pass; stakehol
 - ✅ **Phase 4** — document ingestion → S3: `s3service`, ingestion `client` (`with_retry` +
   `JanasunaniAPIClient`), and `DocumentService` (download → S3/local, status into OLTP). Console script
   `janasunani-ingest-documents`. 30 tests (moto + respx).
-- 🔄 **Phase 5 (next)** — document processing pipeline (refold `document_pipeline`, DVC-track models).
-- ⬜ **Phases 6–7** — MLflow+DVC tracking, CI/docs. *(MLflow slim + minimal CI pulled forward to
-  Week 2; docs stay late.)*
-- ⬜ **Phases 8–12** (Part II) — inference, routing, serving (live → OLTP), frontend, deploy.
-  *(Built API-contract-first — see the Part II build-order note.)*
+- ✅ **Phase 5** — document processing pipeline (refolded `document_pipeline`, DVC-tracked models, Presidio
+  PII rebuild, GPU shakedown 2026-07-04).
+- 🔄 **Phase 6** — MLflow slim: helpers on branch `feat/mlflow-slim-registry` (ongoing). ✅ **Phase 7 CI** —
+  green with Postgres service container; docs stay late.
+- 🔄 **Phases 8–12** (Part II) — built API-contract-first; several components **ongoing on feature branches,
+  awaiting review/merge/integration** (none merged past the Phase 10 skeleton yet):
+  - **Phase 8** ⬜ real-time inference core — NOT started; this is the gap that keeps the demo mock.
+  - **Phase 9** 🔄 routing — `feat/rules-router` / `feat/rules-router-mappings` (rules layer; crosswalk to be
+    learned from OLAP history — see Phase 9). Not wired into serving.
+  - **Phase 10** 🔄 serving — skeleton merged; `feat/serving-live-persistence` (live→OLTP) +
+    `feat/lake-history-provider` (real `/history`) ongoing on branches.
+  - **Phase 11** 🔄 frontend — first cut on `feat/frontend-demo` (DPIC-branded, against the mock).
+  - **Phase 12** ⬜ demo integration & deployment.
+  - Docs: `chore/handoff-doc-links` (ongoing). *(Dead: `backend-plan-unsplit` — an ancestor of main, no diff.)*
 
 ## Package structure
 
@@ -301,7 +310,7 @@ Parquet. Cover counts, idempotency, malformed inputs, the source→field mapping
   prod on `settings.ENV`; console entry points.
 - **Tests**: `moto`-mocked S3 — `upload_fileobj` called; OLTP status columns updated; URL edge cases.
 
-## Phase 5 — Document processing pipeline  ⬜
+## Phase 5 — Document processing pipeline  ✅ *(merged to main; Presidio PII rebuild, GPU shakedown 2026-07-04)*
 - Refold `src/document_pipeline/**` → `janasunani/pipeline/**`; keep CLI, `PipelineConfig`, `STAGE_ORDER` +
   **lazy per-stage imports** (transformers-conflict fix). Populate `pipeline-core`/`ocr-deepseek`/
   `categorizer` optional dep groups **with hard pins** (DSI repo pins `transformers>=4.57,<5`, `numpy<2`,
@@ -341,9 +350,13 @@ Parquet. Cover counts, idempotency, malformed inputs, the source→field mapping
   ids. Applies to the OLTP exporter's Alembic revisions.
 - **Tests**: per-stage unit tests on fixtures; format+pytesseract smoke run on the 2-file sample.
 
-## Phase 6 — MLflow + DVC dual tracking  ⬜
+## Phase 6 — MLflow + DVC dual tracking  🔄 *(helpers on branch `feat/mlflow-slim-registry`)*
 - `tracking/mlflow_utils.py`: local backend, S3 artifacts; register models + tag each version with its DVC
   path + content hash. `dvc.yaml` stages mirror the flow.
+- **ONGOING (branch `feat/mlflow-slim-registry`, reviewed, tested):** slim helpers built —
+  `configure_tracking`/`ensure_experiment`/`log_model_artifact` with `dvc.path`/`dvc.hash` version tags,
+  `MLFLOW_TRACKING_URI`/`MLFLOW_ARTIFACT_URI` config. *Remaining:* actually register the mirrored
+  categorizer/summarizer/page-type models; not yet merged.
 - **Tests**: a logged run + registered version resolves to a real DVC artifact; `dvc dag` renders.
 
 ## Phase 7 — CI + docs  ⬜ *(split 2026-07-02)*
@@ -374,32 +387,61 @@ frontend/                         # Next.js + React + Tailwind
 deploy/                           # docker-compose (api, frontend, mlflow, oltp-postgres, proxy) + terraform/
 ```
 
-## Phase 8 — Real-time inference core  ⬜
+## Phase 8 — Real-time inference core  ⬜ *(NOT started — the one gap keeping the demo mock end-to-end)*
 - Each pipeline stage gets a single-item `process(text|image_bytes)->dict` beside its batch path. Warm
   `GrievanceProcessor` loads models once from the MLflow registry; text skips OCR. **OCR engine is
   configurable** (the existing `ocr_engine` switch): DeepSeek when CUDA is present (GPU box up during
   demo windows), pytesseract fallback otherwise — the doc path never hard-fails without a GPU.
 - **Tests**: one sample text + one PDF → structured result; heavy model-load mocked.
 
-## Phase 9 — Routing engine (hybrid)  ⬜
-- `routing/rules.py`: deterministic mapping from the `janasunani-mappings` master tables (category/
-  subcategory + district → dept → office/designation + escalation). *(AGENTS.md gate: confirm read access.)*
+## Phase 9 — Routing engine (hybrid)  🔄 *(components on branches; not yet wired into serving)*
+- **Rules layer built** (`routing/rules.py`, branches `feat/rules-router` → `feat/rules-router-mappings`):
+  a deterministic `RuleRouter`/`MappingRouter` producing the frozen `RoutingResult` shape. Reviewed, tested.
+- **Crosswalk decision (2026-07-08): learn category→department FROM THE DATA, not the master tables.**
+  The `janasunani-mappings` masters (`m_admin_category` / `m_admin_subcategory` / `m_admin_hierarchy_value`
+  = departments / `t_admin_escalation`) give clean category/subcategory + department + escalation lists, and
+  the dept↔escalation join is real (verified by content: dept 5 "Energy" → the four Odisha DISCOM CEOs). But
+  they carry **no category→department link** — `intCategoryGrp` is NULL on all 62 categories — so only ~4/62
+  categories resolve by exact name-match. That gap is not hand-authorable honestly; the source of truth is
+  the OLAP history itself, where **83.1% of the 1.37M complaints carry BOTH `category` and the `dept` they
+  were actually routed to**. Measured argmax accuracy of an empirical crosswalk over that history:
+  **category → dept 60.9% · +subcategory 67.5% · +subcategory+district 72.8%** (≈ the legacy MuRIL 0.71).
+  Build the crosswalk as `(category, subcategory, district) → argmax(dept, office)` carrying **support count
+  + concentration as real confidence** (not a stubbed number), with a **fallback ladder**
+  (cat+subcat+district → cat+subcat → cat → generic) that naturally covers the ~27/62 master categories with
+  little/no history. This **replaces the name-match hack** and becomes the rules layer.
 - `routing/model.py`: learned router trained on the OLAP history (features → handling office); MLflow-
-  registered. `routing/router.py`: combine + confidence/fallback.
-- **Sequencing:** rules router ships **first** and is demo-sufficient on its own (confidence stubbed);
+  registered — layered **above** the empirical crosswalk. `routing/router.py`: combine + confidence/fallback.
+- **Not yet wired into `serving/`** — the API still routes via the mock processor (`method:"mock"`); wiring
+  the router in is part of the Phase 8/10 wire-up.
+- **Sequencing:** the empirical crosswalk ships **first** (demo-sufficient, real data-derived confidence);
   the learned router lands only after the E2E demo path works, so the demo never blocks on training.
-- **Tests**: rule lookups; learned-router top-k on held-out; combiner fallback.
+- **Tests**: crosswalk lookups + fallback ladder; learned-router top-k on held-out; combiner fallback.
 
-## Phase 10 — Serving API + live wiring  ⬜ *(two steps: skeleton early, wire-up late)*
-- **Skeleton (start of Week 3, before Phases 8–9):** all endpoints + `/health` + CORS with a **mocked
-  processor** returning the real response shapes — the stable contract Phases 8/9/11 build against.
-- **Wire-up (after 8–9):** `POST /grievance` (text or file) → inference + routing → **persist a new
-  grievance into OLTP** (via `crud.py`) → return result; `GET /grievance/{id}` + status update;
-  `GET /history` browse/search via `olap/lake.py`. Models warm from MLflow. **Seed fake live grievances**.
+## Phase 10 — Serving API + live wiring  🔄 *(skeleton ✅ on main; persistence + real history ONGOING on branches)*
+- ✅ **Skeleton (merged to main, PR #12):** all endpoints + `/health` + CORS with a **mocked processor**
+  returning the real response shapes — the stable `serving/schemas.py` contract Phases 8/9/11 build against.
+- 🔄 **ONGOING — live persistence** (branch `feat/serving-live-persistence`, reviewed, tested): the
+  `live_grievances` sibling OLTP table + Alembic revision + injectable `ResultStore`
+  (`InMemory`/`Database`); `POST /grievance` persists, `GET /grievance/{id}` reads it back. Not merged.
+- 🔄 **ONGOING — real history** (branch `feat/lake-history-provider`, reviewed, tested): `LakeHistory`
+  serves `GET /history` from the real 1.37M-row Parquet lake (`olap/lake.py`) instead of `MockHistory`.
+  Not merged — **the app on `main` still uses `MockHistory` (synthetic rows) and the mock processor.**
+  Note: `feat/serving-live-persistence` and `feat/lake-history-provider` both edit `api.py`'s
+  `app = create_app(...)` line — a trivial conflict to reconcile into one `create_app(history=…, result_store=…)`.
+- ⬜ **Wire-up remaining (after Phase 8):** swap the mocked processor for real inference + routing so the
+  submit path is genuinely end-to-end. Models warm from MLflow. **Seed fake live grievances.**
 - **Tests**: API tests (TestClient) with mocked processor against a temp OLTP DB — submit→persist→fetch;
   history endpoint returns lake rows.
 
-## Phase 11 — Demo frontend (Next.js)  ⬜ *(starts against the Phase 10 mock, not after Phase 10)*
+## Phase 11 — Demo frontend (Next.js)  🔄 *(first cut built 2026-07-08 — ONGOING on branch `feat/frontend-demo`)*
+- 🔄 **First cut built** (branch `feat/frontend-demo`, DPIC-branded): Next.js 16 App Router + TypeScript +
+  Tailwind v4. Submit route (text/upload → staged result cards: extracted/redacted text + typed PII token
+  badges, classification, summary, routing w/ escalation + confidence) + History browse/search route. Types
+  mirror `serving/schemas.py`; `NEXT_PUBLIC_API_URL`; client-side fetch only. Brand tokens (maroon `#8B1524`,
+  Calibri) read from the installed `dpic` package. `npm run lint`/`build` green; endpoints verified live
+  against the mock API. Not merged. **Still mock end-to-end** (mock processor + `MockHistory` on `main`) —
+  the UI shape is real; classification/redaction/history become real at the Phase 8/10 wire-up.
 - Scaffolded right after the Phase 10 skeleton and built against the mocked contract, so it gets
   Weeks 3–4 of iteration instead of a cramped tail. Submit (text + upload) → staged view
   (extracted/redacted text, category/subcategory/dept, summary, routing + escalation + confidence) +
