@@ -16,17 +16,26 @@ scanned document), **extract** text, **redact PII**, **classify** (category / su
 
 This plan is the source of truth, **mirrored into the repo at `docs/ROADMAP.md`** (kept in sync).
 
-## Handoff snapshot — state as of 2026-07-02 (for a fresh reviewer)
+## Handoff snapshot — state as of 2026-07-08 (for a fresh reviewer)
 
 > This section exists so a reviewer with **no prior context** can understand where
 > the project actually stands, reproduce it, and give input on the plan below.
-> **Current state lives in [HANDOFF.md](HANDOFF.md) (2026-07-07)** — this
-> snapshot is kept as the Week-1-era baseline; the week-by-week items below
-> carry the ✅/⬜ status.
+> **The fine-grained work queue lives in [HANDOFF.md](HANDOFF.md)** (refreshed
+> alongside this snapshot); the week-by-week and per-Phase items below carry the
+> ✅/🔄/⬜ status.
 
-**Branch:** `feat/migration-foundation` (clean). Foundation Phases 0–4 are built,
-tested, and committed; Phase 5 is next. **Nothing has run on AWS yet** — every
-result below was verified on a local dev machine (macOS, `uv` + Docker).
+**Foundation (Phases 0–5): built, tested, merged to `main`, and running in the
+cloud.** The full cold-start migration, Parquet lake, S3 ingestion, and the
+six-stage document pipeline (incl. the Presidio PII rebuild) are done; production
+Postgres holds the migrated data on the always-on CPU box (nightly `pg_dump` →
+S3), and the on-demand GPU box was shaken down for real (DeepSeek OCR) on
+2026-07-04. **Part II (automation prototype) is in progress**, built
+API-contract-first: the Phase 10 serving skeleton is on `main`, and the routing
+engine, live-persistence, lake-backed history, MLflow registry, and a first-cut
+DPIC-branded Next.js frontend are **ongoing on feature branches** (see the
+per-Phase status below). The demo today is **mock end-to-end** (mock processor +
+`MockHistory`); **Phase 8 real-time inference is the one gap** before it runs on
+real models.
 
 **Source provenance — this repo consolidates code from two earlier projects**
 - **DB/ORM layer + document ingestion → S3 + config** — from `../grievance`,
@@ -67,11 +76,12 @@ result below was verified on a local dev machine (macOS, `uv` + Docker).
   application we are not using. Don't confuse it with the in-scope
   `document_pipeline`.
 
-**What's built and verified locally**
+**What's built and verified (local + cloud)**
 - **Cold-start migration `dump → OLTP`** — ran the full 3.2 GB `mysqldump` end to
-  end → **1,371,288 complaints + 6,556,171 action-history rows** in the SQLite
-  OLTP DB at `data/oltp/janasunani.db`. Load is deterministic + idempotent
-  (byte-reproducible OLTP DB across runs).
+  end → **1,371,288 complaints + 6,556,171 action-history rows**, both locally
+  (SQLite at `data/oltp/janasunani.db`) and on **cloud Postgres** (Week-1 run,
+  exact same counts). Load is deterministic + idempotent (byte-reproducible OLTP
+  DB across runs).
 - **OLTP is engine-swappable** via `OLTP_DB_URL` (SQLite locally / Postgres on
   AWS). Schema managed by **Alembic**; upgrade/downgrade verified on both engines.
   Conflict-inserts are dialect-portable (`_dialect_insert`).
@@ -79,8 +89,8 @@ result below was verified on a local dev machine (macOS, `uv` + Docker).
   ~481M + ~475M Parquet in ~26 s. This is the **one DVC-tracked transform**.
 - **Document ingestion → S3** — `s3service` + ingestion `client` (`with_retry`) +
   `DocumentService` (download → S3/local, status written back to OLTP).
-- **32 pytest tests green on the real code path** (async engine, moto S3, respx
-  HTTP); `ruff` clean.
+- **84 pytest tests green on the real code path** (async engine, moto S3, respx
+  HTTP, serving TestClient); `ruff` clean; **CI green** (Postgres service container).
 
 **How to reproduce (local)**
 ```bash

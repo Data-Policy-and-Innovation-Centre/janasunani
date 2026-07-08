@@ -14,7 +14,12 @@ The repo is one Python package (`janasunani/`) built in two parts:
   document-processing pipeline, and the AWS infrastructure (an always-on CPU
   box + an on-demand GPU box).
 - **Part II — Automation prototype** *(in progress)*: single-grievance
-  inference, hybrid routing, FastAPI serving, and the Next.js demo.
+  inference, hybrid routing, FastAPI serving, and the Next.js demo. The serving
+  API skeleton is on `main`; the routing engine, live persistence, lake-backed
+  history, MLflow registry, and a first-cut DPIC-branded Next.js frontend are
+  ongoing on feature branches. The demo runs **mock end-to-end** today (mock
+  processor + synthetic history) — real-time inference (Phase 8) is the gap that
+  swaps the mocks for real models behind the same contract.
 
 New here? Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) first;
 [docs/ROADMAP.md](docs/ROADMAP.md) is the plan and current status.
@@ -144,8 +149,9 @@ The GPU box is a `gpu_box_count = 0/1` toggle (~$1/hr while up).
 
 ## Documentation
 
-- [docs/HANDOFF.md](docs/HANDOFF-2026-07-07.md) — current state, work queue, cloud as of July 7th, 2026.
-  state, and the hard safety rules. **New agent or contributor? Start here.**
+- [docs/HANDOFF.md](docs/HANDOFF-2026-07-07.md) — current state, work queue,
+  cloud state, and the hard safety rules (as of July 7th, 2026).
+  **New agent or contributor? Start here.**
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — system overview: data flow,
   storage layers, environments, infrastructure, invariants.
 - [docs/ROADMAP.md](docs/ROADMAP.md) — the plan and current status (source of
