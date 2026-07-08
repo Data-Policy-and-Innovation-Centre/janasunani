@@ -36,7 +36,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 from starlette.concurrency import run_in_threadpool
 
-from janasunani.serving.history import HistoryProvider, MockHistory
+from janasunani.serving.history import HistoryProvider, LakeHistory, MockHistory
 from janasunani.serving.processor import GrievanceProcessor, MockGrievanceProcessor
 from janasunani.serving.schemas import (
     GrievanceResult,
@@ -142,7 +142,7 @@ def create_app(
     return app
 
 
-app = create_app()
+app = create_app(history=LakeHistory())
 
 
 def main() -> None:
