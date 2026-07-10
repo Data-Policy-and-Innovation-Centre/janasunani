@@ -151,13 +151,11 @@ The GPU box is a `gpu_box_count = 0/1` toggle (~$1/hr while up).
 
 ## Documentation
 
-- [docs/HANDOFF.md](docs/HANDOFF-2026-07-07.md) — current state, work queue,
-  cloud state, and the hard safety rules (as of July 7th, 2026).
+- [docs/ROADMAP.md](docs/ROADMAP.md) — the plan and current status (source of
+  truth for sequencing), including a project snapshot for a fresh reviewer.
   **New agent or contributor? Start here.**
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — system overview: data flow,
   storage layers, environments, infrastructure, invariants.
-- [docs/ROADMAP.md](docs/ROADMAP.md) — the plan and current status (source of
-  truth for sequencing).
 - [docs/DEPLOY.md](docs/DEPLOY.md) — end-to-end cloud deployment runbook
   (provision → migrate → run → back up; the two boxes and hard rules).
 - Per-package detail: [db](janasunani/db/README.md) ·

@@ -18,13 +18,11 @@ never sits at the tail of a serial chain.
 
 This plan is the source of truth, **mirrored into the repo at `docs/ROADMAP.md`** (kept in sync).
 
-## Handoff snapshot — state as of 2026-07-08 (for a fresh reviewer)
+## Project snapshot — state as of 2026-07-10 (for a fresh reviewer)
 
 > This section exists so a reviewer with **no prior context** can understand where
 > the project actually stands, reproduce it, and give input on the plan below.
-> **The fine-grained work queue lives in [HANDOFF.md](HANDOFF.md)** (refreshed
-> alongside this snapshot); the week-by-week and per-Phase items below carry the
-> ✅/🔄/⬜ status.
+> The week-by-week and per-Phase items below carry the ✅/🔄/⬜ status.
 
 **Foundation (Phases 0–5): built, tested, merged to `main`, and running in the
 cloud.** The full cold-start migration, Parquet lake, S3 ingestion, and the
@@ -160,7 +158,7 @@ ingestion smoke — blocked on the Janasunani API credentials.
    *Tooling merged (PRs #10/#11/#13) and labeling material generated
    2026-07-06: 50-doc English bundle → 85 pre-annotated pages / 573 draft
    spans (`data/output/pii_gold_draft_n50.jsonl` + `.review.txt`, local,
-   regenerable — commands in HANDOFF.md). Remaining: the maintainer's manual
+   regenerable via the PII-gold labeling tooling). Remaining: the maintainer's manual
    labeling pass → evaluate → DVC-promote to `data/external/pii_gold.jsonl`.*
 8. ⬜ **Sample backfill only** (~200 curated docs; pick STANDARD storage class — parts
    of the documents bucket are GLACIER-archived), not the full corpus → OLTP → lake.

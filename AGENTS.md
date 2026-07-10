@@ -1,11 +1,11 @@
 # Agent Notes
 
-**Start here: [docs/HANDOFF.md](docs/HANDOFF.md)** — current state, the work
-queue, cloud state, and the hard safety rules (data-loss and citizen-PII
-hazards are real; read them before touching anything operational). Then
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the system and
-[docs/ROADMAP.md](docs/ROADMAP.md) for sequencing (source of truth — keep it
-in sync as you land work).
+**Start here: [docs/ROADMAP.md](docs/ROADMAP.md)** — current state, phase
+status, and sequencing (the source of truth, incl. the project snapshot for a
+fresh reviewer; keep it in sync as you land work). The hard safety rules
+(data-loss and citizen-PII hazards are real; read them before touching anything
+operational) live in this file below and in [docs/DEPLOY.md](docs/DEPLOY.md).
+Then [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the system overview.
 
 ## Data Access Restriction
 - Treat everything under `data/` as proprietary and sensitive (real citizen

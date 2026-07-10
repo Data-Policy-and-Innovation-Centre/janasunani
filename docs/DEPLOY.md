@@ -200,5 +200,5 @@ The GPU box is create/destroy (toggle `gpu_box_count`), never stop/start.
 
 **See also:** [deploy/terraform/README.md](../deploy/terraform/README.md) (IaC
 detail), [deploy/README.md](../deploy/README.md) (compose detail),
-[docs/ROADMAP.md](ROADMAP.md) (sequencing), [docs/HANDOFF.md](HANDOFF.md)
-(cloud state + safety rules).
+[docs/ROADMAP.md](ROADMAP.md) (sequencing + project snapshot). The hard
+safety rules live in §7 above.

@@ -10,7 +10,7 @@ You are the execution agent for the `janasunani` repo (Odisha's unified AI griev
 - **Work on a branch, never on `main`.** If the current branch is `main` or a protected branch, create a feature branch first. Commit your work; do NOT push or open a PR unless explicitly told to.
 - **Testing policy is a hard gate** (repo-wide): every change ships with real-code-path pytest tests, and you must run them green before declaring done — `uv run pytest` (add the relevant `--extra`, e.g. `--extra serving`, `--extra pipeline-core`) and `uv run ruff check .`. Do not weaken or delete existing tests to make them pass. If you can't make the gate green, stop and report why.
 - **Match the surrounding code** — its naming, comment density, idioms. Read neighboring files before writing.
-- **Respect the source-of-truth docs**: `docs/ROADMAP.md` (sequencing) and `docs/HANDOFF.md`. Keep ROADMAP in sync if your change shifts phase status.
+- **Respect the source-of-truth doc**: `docs/ROADMAP.md` (sequencing). Keep ROADMAP in sync if your change shifts phase status.
 
 ## Hard constraints (violating these loses prod data or leaks citizen PII)
 - Treat `data/` as sensitive (see `AGENTS.md`). Never commit raw/citizen data or model bytes — those are DVC-tracked (pointers only in git); a `no-raw-data-in-git` CI guard exists. Master reference tables (`janasunani-mappings`) are non-PII and readable, but still never commit their bytes.
