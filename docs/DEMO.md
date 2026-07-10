@@ -51,7 +51,7 @@ Exits non-zero if any dependency is missing. Expected output when ready:
 ```
 [OK  ] categorizer config: .../models/categorizer/config.json
 [OK  ] categorizer weights: .../categorizer/model.safetensors | .../pytorch_model.bin
-[OK  ] categorizer tokenizer: .../categorizer/tokenizer.json | .../tokenizer_config.json
+[OK  ] categorizer tokenizer: .../categorizer/tokenizer.json | .../vocab.txt
 [OK  ] categorizer label encoder: .../categorizer/label_encoder_ROS_wDOCS_english.pkl
 [OK  ] page-type config: .../vit_type_classifier/config.json
 [OK  ] page-type weights: .../vit_type_classifier/model.safetensors | .../pytorch_model.bin

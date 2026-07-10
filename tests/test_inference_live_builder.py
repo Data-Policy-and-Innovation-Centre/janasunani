@@ -282,11 +282,12 @@ def test_preflight_binary_probe_error_becomes_failed_check(tmp_path, monkeypatch
     assert "unavailable" in by_name["tesseract"].detail
 
 
-def test_preflight_covers_exactly_the_build_processor_required_files(tmp_path):
-    """Drift guard: the model files preflight reports on must be exactly the
-    ones `build_processor` hard-requires, since both derive from
-    `_required_model_files`. If the two ever diverge, a 'green' preflight
-    could precede a failed startup."""
+def test_preflight_reports_every_shared_required_model_file(tmp_path):
+    """`preflight` must report on exactly the model files in the shared
+    `_required_model_files` list (no dropped/renamed/reformatted entry). This
+    guards preflight's *use* of the shared list; the companion test below
+    guards `build_processor`'s use of it -- together they close the
+    green-preflight-then-failed-startup drift gap."""
     reported = {c.detail for c in preflight(tmp_path) if c.name not in {
         "tesseract",
         "pdfinfo/pdftoppm",
@@ -297,6 +298,43 @@ def test_preflight_covers_exactly_the_build_processor_required_files(tmp_path):
     }
 
     assert reported == required
+
+
+def test_build_processor_requires_exactly_the_shared_model_files(tmp_path, monkeypatch):
+    """Load-bearing drift guard: record every artifact `build_processor`
+    actually hard-requires and assert it equals the shared list preflight
+    reports on. Catches a hard requirement added *inline* in `build_processor`
+    (bypassing `_required_model_files`), which would let a green preflight
+    precede a failed warm-up -- the exact failure the shared list prevents."""
+    _write_dummy_model_artifacts(tmp_path)
+
+    recorded: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        service,
+        "_require_model_artifact",
+        lambda candidates, _component: recorded.append(
+            tuple(str(path) for path in candidates)
+        ),
+    )
+
+    class _StopAfterArtifactChecks(Exception):
+        pass
+
+    # OCR-dependency check runs immediately after the model-file loop; raise
+    # here to stop before the (heavy, real) model construction.
+    def _stop() -> None:
+        raise _StopAfterArtifactChecks
+
+    monkeypatch.setattr(service, "_require_ocr_dependencies", _stop)
+
+    with pytest.raises(_StopAfterArtifactChecks):
+        build_processor(tmp_path)
+
+    required = {
+        tuple(str(path) for path in candidates)
+        for candidates, _ in _required_model_files(Path(tmp_path))
+    }
+    assert set(recorded) == required
 
 
 class RejectingProcessor:
