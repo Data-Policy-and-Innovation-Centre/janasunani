@@ -31,6 +31,12 @@ OUTPUT_DATA_DIR = DATA_DIR / "output"
 OLTP_DATA_DIR = DATA_DIR / "oltp"
 DOCUMENTS_DIR = RAW_DATA_DIR / "documents"
 
+# The built-in local-SQLite fallback for `Settings.OLTP_DB_URL`. Exposed so
+# callers (e.g. `janasunani.inference.serve`) can tell an *explicit* OLTP
+# configuration (shell env var or `.env`) apart from this default without
+# duplicating the literal.
+DEFAULT_OLTP_DB_URL = f"sqlite+aiosqlite:///{OLTP_DATA_DIR.as_posix()}/janasunani.db"
+
 OUTPUTS_DIR = ROOT_DIR / "outputs"
 FIGURES_DIR = OUTPUTS_DIR / "figures"
 REPORTS_DIR = OUTPUTS_DIR / "reports"
@@ -95,9 +101,7 @@ class Settings(BaseSettings):
 
     # OLTP store (async SQLAlchemy; swappable engine via this URL).
     # Default: local SQLite. Deploy: e.g. postgresql+asyncpg://user:pass@host/db
-    OLTP_DB_URL: str = os.getenv(
-        "OLTP_DB_URL", f"sqlite+aiosqlite:///{OLTP_DATA_DIR.as_posix()}/janasunani.db"
-    )
+    OLTP_DB_URL: str = os.getenv("OLTP_DB_URL", DEFAULT_OLTP_DB_URL)
     DB_PASSWORD: Optional[str] = os.getenv("DB_PASSWORD")
 
     # MySQL source for migration (cold-start dump restore or live sync)

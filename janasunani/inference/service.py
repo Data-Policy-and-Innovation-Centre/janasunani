@@ -9,6 +9,7 @@ component exactly once.
 from __future__ import annotations
 
 import os
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Optional, Protocol
@@ -275,6 +276,41 @@ def _require_file(path: Path, component: str) -> None:
         )
 
 
+def _require_binary(binary: str, install_hint: str) -> None:
+    if shutil.which(binary) is None:
+        raise RuntimeError(
+            f"missing required OCR system binary {binary!r}. {install_hint}"
+        )
+
+
+def _require_ocr_dependencies() -> None:
+    """Fail startup when the OCR system binaries pytesseract/pdf2image shell
+    out to are absent.
+
+    Without this, `build_processor` only imports the OCR *functions* -- it
+    never checks that `tesseract`/Poppler are actually installed. `/health`
+    would then report the `pipeline` processor healthy, and every document
+    upload would only fail later, mid-request, as "corrupt/quality-rejected"
+    input, instead of failing loudly at startup.
+
+    Deliberately does not verify the Odia (`ori`) traineddata is installed:
+    that requires shelling out to `tesseract --list-langs`, whose output
+    format is not consistent enough across tesseract versions/platforms to
+    check reliably here. Operators should confirm it manually post-install.
+    """
+    _require_binary(
+        "tesseract",
+        "Install Tesseract OCR and the Odia language pack, e.g. "
+        "`apt-get install tesseract-ocr tesseract-ocr-ori` or "
+        "`brew install tesseract tesseract-lang`.",
+    )
+    _require_binary(
+        "pdftoppm",
+        "Install Poppler so PDF pages can be rendered for OCR, e.g. "
+        "`apt-get install poppler-utils` or `brew install poppler`.",
+    )
+
+
 def build_processor(models_dir: str | Path | None = None) -> PipelineGrievanceProcessor:
     """Strictly construct and warm the production processor.
 
@@ -293,6 +329,7 @@ def build_processor(models_dir: str | Path | None = None) -> PipelineGrievancePr
         "categorizer label encoder",
     )
     _require_file(page_type_dir / "config.json", "page-type model")
+    _require_ocr_dependencies()
 
     # Import and construct in pipeline order. This also keeps the module-level
     # mock app usable when none of the ML extras are installed.
