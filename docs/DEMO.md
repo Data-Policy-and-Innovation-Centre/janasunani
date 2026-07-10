@@ -17,11 +17,17 @@ locally first, then repeated on the box.
 
 | Dependency | How to get it | Checked by |
 |---|---|---|
-| Model artifacts under `models/` (categorizer, page-type ViT) | `dvc pull` | `janasunani-demo-preflight` |
-| `tesseract` + Odia (`ori`) language pack | `brew install tesseract tesseract-lang` / `apt-get install tesseract-ocr tesseract-ocr-ori` | preflight |
+| Model artifacts under `models/` (categorizer, page-type ViT) | `dvc pull models/categorizer.dvc models/page_type_classifier/vit_type_classifier.dvc` | `janasunani-demo-preflight` |
+| `tesseract` binary | `brew install tesseract` / `apt-get install tesseract-ocr` | preflight |
+| Odia (`ori`) traineddata | `brew install tesseract-lang` / `apt-get install tesseract-ocr-ori` | **manual** — `tesseract --list-langs \| grep ori` (preflight checks only the binary) |
 | Poppler (`pdfinfo` **and** `pdftoppm`) | `brew install poppler` / `apt-get install poppler-utils` | preflight |
 | The `demo` Python extra | `uv sync --extra demo` | — |
 | A reachable Postgres (see §3) | Docker | manual (`pg_isready`) |
+
+> **Do not run an unqualified `dvc pull`** on a demo box — the workspace also
+> DVC-tracks the raw SQL dump and document samples (real grievance PII). Pull
+> only the model targets above (plus the routing mappings,
+> `data/raw/janasunani-mappings.dvc`, if you want `method: "rules"` routing).
 
 The summarizer downloads `facebook/bart-large-cnn` (~1.6 GB) from the Hugging
 Face hub **on first startup** — unlike the categorizer/page-type models it is

@@ -77,6 +77,24 @@ def test_build_processor_fails_closed_on_partial_mirror_missing_weights(tmp_path
         build_processor(tmp_path)
 
 
+def test_build_processor_fails_closed_when_only_tokenizer_config_present(tmp_path):
+    """(Codex P2 re-review on PR #26) `tokenizer_config.json` holds only
+    tokenizer settings, not the vocabulary. A mirror with the config but no
+    `tokenizer.json`/`vocab.txt` must fail closed rather than crash inside
+    `AutoTokenizer.from_pretrained`."""
+    categorizer_dir = tmp_path / "categorizer"
+    categorizer_dir.mkdir(parents=True)
+    (categorizer_dir / "config.json").write_text("{}")
+    (categorizer_dir / "model.safetensors").write_bytes(b"")
+    (categorizer_dir / "label_encoder_ROS_wDOCS_english.pkl").write_bytes(b"")
+    (categorizer_dir / "tokenizer_config.json").write_text("{}")  # settings only
+
+    with pytest.raises(
+        RuntimeError, match="missing local categorizer tokenizer artifact"
+    ):
+        build_processor(tmp_path)
+
+
 def test_preflight_flags_partial_mirror_missing_weights(tmp_path, monkeypatch):
     """(Codex P2 on PR #26) The fast preflight must also catch the partial
     mirror -- a green preflight has to mean the model dir is actually usable."""

@@ -386,11 +386,17 @@ def _required_model_files(root: Path) -> list[tuple[tuple[Path, ...], str]]:
 
     Each entry lists one-or-more candidate paths; the requirement is satisfied
     when *any* candidate exists (e.g. HF weights may be `model.safetensors`
-    *or* `pytorch_model.bin`; a tokenizer ships `tokenizer.json` *or* a
-    `tokenizer_config.json` + vocab). This covers not just the config/label
-    encoder but the actual tokenizer/weight files the HF `from_pretrained`
-    calls load during warm-up -- a partial DVC mirror (config present, weights
-    missing) must fail the check, not sail through to a mid-warm-up crash.
+    *or* `pytorch_model.bin`). This covers not just the config/label encoder
+    but the actual tokenizer/weight files the HF `from_pretrained` calls load
+    during warm-up -- a partial DVC mirror (config present, weights missing)
+    must fail the check, not sail through to a mid-warm-up crash.
+
+    The tokenizer candidates are the files that actually carry the vocabulary
+    -- `tokenizer.json` (a self-contained fast tokenizer) *or* `vocab.txt`
+    (the MuRIL/BERT vocab loaded alongside `tokenizer_config.json`).
+    `tokenizer_config.json` is deliberately NOT accepted on its own: it only
+    holds tokenizer *settings*, so a mirror with just the config still crashes
+    in `AutoTokenizer.from_pretrained`.
     """
     categorizer_dir = root / "categorizer"
     page_type_dir = root / "page_type_classifier" / "vit_type_classifier"
@@ -406,7 +412,7 @@ def _required_model_files(root: Path) -> list[tuple[tuple[Path, ...], str]]:
         (
             (
                 categorizer_dir / "tokenizer.json",
-                categorizer_dir / "tokenizer_config.json",
+                categorizer_dir / "vocab.txt",
             ),
             "categorizer tokenizer",
         ),
