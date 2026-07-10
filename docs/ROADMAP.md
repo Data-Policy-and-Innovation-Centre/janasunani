@@ -158,12 +158,14 @@ ingestion smoke — blocked on the Janasunani API credentials.
    *Tooling merged (PRs #10/#11/#13) and labeling material generated
    2026-07-06: 50-doc English bundle → 85 pre-annotated pages / 573 draft
    spans (`data/output/pii_gold_draft_n50.jsonl` + `.review.txt`, local,
-   regenerable via the PII-gold labeling tooling). Remaining: the maintainer's manual
-   labeling pass → evaluate → DVC-promote to `data/external/pii_gold.jsonl`.*
+   regenerable via the PII-gold labeling tooling). Remaining: the intern labeling
+   pass → evaluate (record the score in the DVC-tracked `eval_results.jsonl`, cf. Phase 6) →
+   DVC-promote to `data/external/pii_gold.jsonl`.*
 8. ⬜ **Sample backfill only** (~200 curated docs; pick STANDARD storage class — parts
    of the documents bucket are GLACIER-archived), not the full corpus → OLTP → lake.
-9. ⬜ MLflow slim (Phase 6 folded in): local backend on the CPU box, artifacts to S3 —
-   now cataloguing OUR mirrored/rebuilt models, not pointers to others' accounts.
+9. ⬜ Model tracking: **DVC is the tracker through the demo**; MLflow registration is deferred to the
+   retrain phase (see Phase 6). Near-term — at evaluation time — log metrics to a DVC-tracked
+   `data/output/eval_results.jsonl`, seeded with the DSI baselines.
 
 *Week 3 — API-contract-first (re-ordered: the frontend must not sit at the tail of a
 serial chain with zero float).*
@@ -365,13 +367,25 @@ the rest.*
   ids. Applies to the OLTP exporter's Alembic revisions.
 - **Tests**: per-stage unit tests on fixtures; format+pytesseract smoke run on the 2-file sample.
 
-## Phase 6 — MLflow + DVC dual tracking  🔄 *(helpers on branch `feat/mlflow-slim-registry`)*
-- `tracking/mlflow_utils.py`: local backend, S3 artifacts; register models + tag each version with its DVC
-  path + content hash. `dvc.yaml` stages mirror the flow.
-- **ONGOING (branch `feat/mlflow-slim-registry`, reviewed, tested):** slim helpers built —
-  `configure_tracking`/`ensure_experiment`/`log_model_artifact` with `dvc.path`/`dvc.hash` version tags,
-  `MLFLOW_TRACKING_URI`/`MLFLOW_ARTIFACT_URI` config. *Remaining:* actually register the mirrored
-  categorizer/summarizer/page-type models; not yet merged.
+## Phase 6 — model tracking (DVC now; MLflow deferred to retrain)  🔄 *(slim helpers on branch `feat/mlflow-slim-registry`)*
+- **Reality check (2026-07-10):** the live path (`build_processor`) resolves models straight from the
+  DVC-tracked `models/` dir; nothing in `inference/`/`serving/` touches MLflow. Over DVC (versioned
+  bytes, git-pinned via `dvc.lock`, S3 remote), the MLflow **registry** adds no runtime value *today* —
+  the models are static, externally-sourced, and loaded by path. So model **registration is deferred to
+  the retrain phase**, when there are candidate versions to compare/promote; it is **not** a demo
+  prerequisite (DVC already delivers demo reproducibility).
+- **Tracking starts paying off at *evaluation*, not training.** The first activity that produces
+  comparable numbers is scoring models on gold/held-out data (PII eval; categorizer/ViT scoring). For
+  the first handful of eval runs, record metrics in a **DVC-tracked eval-results file**
+  (`data/output/eval_results.jsonl`: model version + gold-data version + metrics) — simpler than a
+  tracking server, same compare-against-baseline ability. **Seed row = the DSI baselines** (MuRIL 0.71,
+  page-type ViT 0.67, PII 80.56% overlap) so retrains have a versioned, machine-readable baseline rather
+  than report-PDF prose.
+- **Adopt MLflow when run volume demands it** — many retrain candidates → interactive comparison +
+  registry stages (`Staging`/`Production`, so serving asks for "Production" instead of a hardcoded DVC
+  path). The slim helpers stay as-is until then: `configure_tracking`/`ensure_experiment`/
+  `log_model_artifact` with `dvc.path`/`dvc.hash` version tags, `MLFLOW_TRACKING_URI`/
+  `MLFLOW_ARTIFACT_URI` config (branch `feat/mlflow-slim-registry`, reviewed/tested, not yet merged).
 - **Tests**: a logged run + registered version resolves to a real DVC artifact; `dvc dag` renders.
 
 ## Phase 7 — CI + docs  ⬜ *(split 2026-07-02)*
@@ -568,7 +582,8 @@ above; the short answers:
    `create-next-app` + Tailwind + shadcn/ui, two routes, client-side fetch only (see Phase 11).
 4. **Scope.** Deferred: full historical OCR backfill (~200-doc curated sample instead) and Playwright.
    Kept: learned router + MLflow registry, sequenced so the demo never blocks on them (rules router
-   first; MLflow wired in week 2 when models first need serving).
+   first; MLflow registration deferred to the retrain phase — the demo serves DVC-tracked models by
+   path, so MLflow adds no runtime value until there are candidate versions to compare/promote).
 5. **Architecture.** The split is sound. Sharp edges now documented: the history-freshness gap (Open
    items), keep-the-pipeline's-internal-DB + OLTP exporter (Phase 5), PII-tagger legacy artifact
    layout (Phase 5), the `dvc repro`-is-SQLite-only caveat (structural decisions), and `config.py`'s
