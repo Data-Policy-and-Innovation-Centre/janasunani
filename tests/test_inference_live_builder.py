@@ -85,7 +85,7 @@ def test_build_processor_fails_when_pdftoppm_binary_is_missing(tmp_path, monkeyp
     monkeypatch.setattr(page_renderer, "POPPLER_PATH", None)
 
     with pytest.raises(
-        RuntimeError, match="missing required OCR system binary 'pdftoppm'"
+        RuntimeError, match="missing required OCR system binary 'pdfinfo/pdftoppm'"
     ):
         build_processor(tmp_path)
 
@@ -124,9 +124,12 @@ def test_poppler_available_via_backend_path_when_absent_from_path(
 ):
     """(Codex P2 on PR #25) `page_renderer.POPPLER_PATH` is exactly how the
     renderer resolves a non-PATH Poppler install; the preflight must honor
-    it instead of false-aborting startup."""
+    it instead of false-aborting startup. Both `pdfinfo` and `pdftoppm` must
+    be present in the configured dir -- `pdf2image.convert_from_path` needs
+    both."""
     fake_bin_dir = tmp_path / "poppler-bin"
     fake_bin_dir.mkdir()
+    (fake_bin_dir / "pdfinfo").write_bytes(b"")
     (fake_bin_dir / "pdftoppm").write_bytes(b"")
     monkeypatch.setattr(page_renderer, "POPPLER_PATH", str(fake_bin_dir))
     monkeypatch.setattr(service.shutil, "which", lambda _binary: None)
@@ -139,6 +142,29 @@ def test_poppler_unavailable_when_neither_backend_path_nor_path_resolve(monkeypa
     monkeypatch.setattr(service.shutil, "which", lambda _binary: None)
 
     assert service._poppler_available() is False
+
+
+def test_poppler_unavailable_when_pdfinfo_missing_from_path(monkeypatch):
+    """(Codex P2 re-review on PR #25) A partial Poppler install that only
+    exposes `pdftoppm` on PATH must still fail preflight: `pdf2image` also
+    shells out to `pdfinfo` to read the page count, and a partial install
+    previously passed here only to fail later, mid-request, with
+    `PDFInfoNotInstalledError`."""
+    monkeypatch.setattr(page_renderer, "POPPLER_PATH", None)
+    monkeypatch.setattr(
+        service.shutil,
+        "which",
+        lambda binary: "/usr/bin/pdftoppm" if binary == "pdftoppm" else None,
+    )
+
+    assert service._poppler_available() is False
+
+
+def test_poppler_available_when_both_binaries_are_on_path(monkeypatch):
+    monkeypatch.setattr(page_renderer, "POPPLER_PATH", None)
+    monkeypatch.setattr(service.shutil, "which", lambda _binary: "/usr/bin/fake")
+
+    assert service._poppler_available() is True
 
 
 class RejectingProcessor:

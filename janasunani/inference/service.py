@@ -34,6 +34,10 @@ RELEVANT_PAGE_TYPES = frozenset(
 SUPPORTED_DOCUMENT_SUFFIXES = frozenset(
     {".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".gif"}
 )
+# Matches the categorizer's own non-English fallback (`category="Uncategorized"`,
+# see PHASE-8C.md): the first real-model demo targets English, so a non-English
+# summary would otherwise be a hallucinated BART guess over unsupported input.
+UNSUPPORTED_LANGUAGE_SUMMARY = "Summary unavailable for non-English submission."
 
 
 class InferenceInputError(ValueError):
@@ -174,11 +178,17 @@ class PipelineGrievanceProcessor:
             redacted_text if extraction.source == "text" else model_text_source
         )
         language = self._detect_language(classifier_text)
-        if self._is_english_compatible(classifier_text):
+        is_english = self._is_english_compatible(classifier_text)
+        if is_english:
             category = self._categorizer.predict(classifier_text)
+            summary = self._summarizer.summarize(classifier_text)
         else:
+            # Same gate as the categorizer: BART is only warmed for the
+            # English demo target, and would otherwise hallucinate a summary
+            # over text it was never validated on (both the typed-text and
+            # document paths share this single check).
             category = "Uncategorized"
-        summary = self._summarizer.summarize(classifier_text)
+            summary = UNSUPPORTED_LANGUAGE_SUMMARY
         routing = self._router.route(category=category, district=district)
 
         return GrievanceResult(
@@ -305,19 +315,29 @@ def _tesseract_available() -> bool:
 
 
 def _poppler_available() -> bool:
-    """Resolve pdftoppm exactly as `page_renderer` does, not just PATH.
+    """Resolve Poppler exactly as `page_renderer` does, not just PATH.
 
     Reuses `page_renderer.POPPLER_PATH` -- computed at import time from the
     bundled `~/.local/poppler` install (falling back to `/usr/bin`) -- the
     same value `page_renderer.render_page` passes to `pdf2image` as
     `poppler_path`. Falls back to a plain PATH lookup when that isn't set.
+
+    `pdf2image.convert_from_path` (what `render_page` calls) shells out to
+    BOTH `pdfinfo` (to read the page count) and `pdftoppm` (to rasterize
+    pages) -- a partial install with only one of the two still raises
+    `PDFInfoNotInstalledError` at request time. Both binaries must resolve
+    for either the configured `POPPLER_PATH` or the PATH fallback to count.
     """
     from janasunani.pipeline.stages.ocr_extraction import page_renderer
 
     poppler_dir = page_renderer.POPPLER_PATH
-    if poppler_dir and (Path(poppler_dir) / "pdftoppm").is_file():
-        return True
-    return shutil.which("pdftoppm") is not None
+    if poppler_dir:
+        poppler_path = Path(poppler_dir)
+        if (poppler_path / "pdfinfo").is_file() and (
+            poppler_path / "pdftoppm"
+        ).is_file():
+            return True
+    return shutil.which("pdfinfo") is not None and shutil.which("pdftoppm") is not None
 
 
 def _require_ocr_dependencies() -> None:
@@ -344,7 +364,7 @@ def _require_ocr_dependencies() -> None:
     )
     _require_binary(
         _poppler_available(),
-        "pdftoppm",
+        "pdfinfo/pdftoppm",
         "Install Poppler so PDF pages can be rendered for OCR, e.g. "
         "`apt-get install poppler-utils` or `brew install poppler`.",
     )

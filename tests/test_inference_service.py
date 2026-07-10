@@ -7,6 +7,7 @@ import pytest
 
 from janasunani.inference.ocr import OcrQualityError, OcrResult
 from janasunani.inference.service import (
+    UNSUPPORTED_LANGUAGE_SUMMARY,
     InferenceInputError,
     PipelineGrievanceProcessor,
     _guard_page_type_predict,
@@ -266,8 +267,10 @@ def test_rejects_unusable_ocr_results(ocr_result, message):
 
 def test_non_english_is_uncategorized_and_uses_routing_fallback():
     categorizer = RecordingCategorizer()
+    summarizer = RecordingSummarizer()
     processor = _processor(
         categorizer=categorizer,
+        summarizer=summarizer,
         english=False,
         language="or",
     )
@@ -275,9 +278,82 @@ def test_non_english_is_uncategorized_and_uses_routing_fallback():
     result = _process(processor, text="ମୋ ଗାଁର ରାସ୍ତା ଭାଙ୍ଗି ଯାଇଛି।")
 
     assert categorizer.inputs == []
+    assert summarizer.inputs == []
     assert result.classification.category == "Uncategorized"
     assert result.classification.language == "or"
+    assert result.summary == UNSUPPORTED_LANGUAGE_SUMMARY
     assert result.routing.method == "fallback"
+
+
+def test_non_english_pdf_skips_bart_summary_on_class_one_pages():
+    """(Codex P2 re-review on PR #25) The same language gate that skips the
+    English-only categorizer must also skip BART summarization -- on the
+    document path this means the gated class-1 pages that feed the model
+    text source, not just the typed-text path."""
+
+    def ocr(_bytes, _name):
+        return OcrResult(
+            full_text="ମୋ ଗାଁର ରାସ୍ତା ଭାଙ୍ଗି ଯାଇଛି।",
+            pages=1,
+            per_page=[("ମୋ ଗାଁର ରାସ୍ତା ଭାଙ୍ଗି ଯାଇଛି।", "Letter")],
+        )
+
+    categorizer = RecordingCategorizer()
+    summarizer = RecordingSummarizer()
+    processor = _processor(
+        ocr=ocr,
+        categorizer=categorizer,
+        summarizer=summarizer,
+        english=False,
+        language="or",
+    )
+
+    result = _process(
+        processor,
+        text=None,
+        document_name="complaint.pdf",
+        document_bytes=b"%PDF-synthetic",
+    )
+
+    assert categorizer.inputs == []
+    assert summarizer.inputs == []
+    assert result.classification.category == "Uncategorized"
+    assert result.summary == UNSUPPORTED_LANGUAGE_SUMMARY
+    assert result.routing.method == "fallback"
+
+
+def test_english_pdf_still_gets_real_bart_summary():
+    """Guards the happy path byte-for-byte: English-compatible document text
+    must still reach BART and get the real (non-fallback) summary."""
+
+    def ocr(_bytes, _name):
+        return OcrResult(
+            full_text="Ramesh needs a road repair.",
+            pages=1,
+            per_page=[("Ramesh needs a road repair.", "Letter")],
+        )
+
+    categorizer = RecordingCategorizer(category="Roads & Bridges")
+    summarizer = RecordingSummarizer()
+    processor = _processor(
+        ocr=ocr,
+        categorizer=categorizer,
+        summarizer=summarizer,
+        english=True,
+        language="en",
+    )
+
+    result = _process(
+        processor,
+        text=None,
+        document_name="complaint.pdf",
+        document_bytes=b"%PDF-synthetic",
+    )
+
+    model_input = "[NAME] needs a road repair."
+    assert summarizer.inputs == [model_input]
+    assert result.summary == f"summary: {model_input}"
+    assert result.classification.category == "Roads & Bridges"
 
 
 def test_warm_components_are_constructed_once_and_reused():
