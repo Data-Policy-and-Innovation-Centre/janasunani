@@ -106,6 +106,7 @@ janasunani-pipeline = "janasunani.pipeline.cli:main"
 janasunani-export-pipeline = "janasunani.pipeline.export:main"
 janasunani-evaluate-pii = "janasunani.pipeline.pii_eval:main"
 janasunani-api = "janasunani.serving.api:main"
+janasunani-api-live = "janasunani.inference.serve:main"
 
 [build-system]
 requires = ["hatchling"]

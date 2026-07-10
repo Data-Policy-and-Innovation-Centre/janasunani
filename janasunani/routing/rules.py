@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
 from typing import Optional
 
 from janasunani.routing.mappings import (
@@ -177,8 +178,9 @@ class MappingRouter:
        data). Hit -> ``method="rules"``.
     3. The shared generic fallback (``method="fallback"``), via ``RuleRouter``.
 
-    The CSVs are loaded once at construction (module-level ``DEFAULT_ROUTER``
-    loads them once per process), not per request.
+    The CSVs are loaded once at construction. The module-level
+    ``DEFAULT_ROUTER`` defers that construction until its first route so
+    import-only API and test paths do not probe optional local artifacts.
     """
 
     def __init__(
@@ -242,4 +244,39 @@ class MappingRouter:
         )
 
 
-DEFAULT_ROUTER = MappingRouter()
+class _LazyDefaultRouter:
+    """Construct the optional CSV-backed router on its first real request."""
+
+    def __init__(self) -> None:
+        self._router: MappingRouter | None = None
+        self._lock = Lock()
+
+    def _get(self) -> MappingRouter:
+        if self._router is None:
+            with self._lock:
+                if self._router is None:
+                    self._router = MappingRouter()
+        return self._router
+
+    def route(
+        self,
+        *,
+        category: str,
+        subcategory: Optional[str] = None,
+        district: Optional[str] = None,
+    ) -> RoutingResult:
+        return self._get().route(
+            category=category,
+            subcategory=subcategory,
+            district=district,
+        )
+
+    def route_input(self, route_input: RouteInput) -> RoutingResult:
+        return self.route(
+            category=route_input.category,
+            subcategory=route_input.subcategory,
+            district=route_input.district,
+        )
+
+
+DEFAULT_ROUTER = _LazyDefaultRouter()

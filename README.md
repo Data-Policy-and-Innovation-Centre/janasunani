@@ -18,9 +18,8 @@ The repo is one Python package (`janasunani/`) built **phase by phase** (see
   routing, FastAPI serving, and the Next.js demo. The serving API skeleton is on
   `main`; the routing engine, live persistence, lake-backed history, MLflow
   registry, and a first-cut DPIC-branded Next.js frontend are ongoing on feature
-  branches. The demo runs **mock end-to-end** today (mock processor + synthetic
-  history) — real-time inference (Phase 8) is the gap that swaps the mocks for
-  real models behind the same contract.
+  branches. Phase 8 now provides an opt-in real local-model server behind the
+  same contract; the default API remains mocked for frontend development.
 
 New here? Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) first;
 [docs/ROADMAP.md](docs/ROADMAP.md) is the plan and current status.
@@ -121,16 +120,18 @@ Downloads each complaint's document to S3 (or local disk in dev) and records
 status back into OLTP. *Currently parked: live Janasunani API credentials are
 unavailable.*
 
-### 7 · Demo API (Phase 10 skeleton — mocked processor)
+### 7 · Demo API (default mock or opt-in live processor)
 
 ```bash
 uv run --extra serving janasunani-api        # http://127.0.0.1:8000, docs at /docs
+uv run --extra serving --extra pipeline-core --extra categorizer janasunani-api-live
 ```
 
 The full endpoint surface the frontend builds against (`POST /grievance`,
 `GET /grievance/{id}`, `GET /history`, `/health`) with a mocked processor
-returning the real response shapes — no models load. Real inference/routing
-swap in behind the same contract at Phase 8–9 wire-up.
+returning the real response shapes — no models load. The live command strictly
+loads local DVC model artifacts and runs pytesseract, Presidio, MuRIL, BART,
+and rules routing behind the same contract.
 Contract details: [janasunani/serving/README.md](janasunani/serving/README.md).
 
 ### Tests (the gate for every change)

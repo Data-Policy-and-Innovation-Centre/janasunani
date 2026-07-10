@@ -18,6 +18,15 @@ table) is available for explicit injection and is exercised by
 ``tests/test_serving_persistence.py``; the real Phase 10 wire-up will inject
 it into ``create_app`` explicitly.
 
+``history`` defaults to ``MockHistory`` -- the demo/frontend-contract server
+must never serve real citizen ``/history`` rows by default. Set
+``JANASUNANI_REAL_HISTORY=1`` to opt this module-level app into the
+lake-backed ``LakeHistory`` instead (see ``_history_from_env``). There is
+still no auth/redaction on ``/history``, so this opt-in is for trusted/local
+demo runs only, never a public deploy. ``janasunani-api-live``
+(``janasunani/inference/serve.py``) always uses ``LakeHistory`` regardless of
+this flag -- it's a deliberate real-data run by construction.
+
 Run:  uv run --extra serving janasunani-api          # 127.0.0.1:8000
 CORS: comma-separated ``JANASUNANI_CORS_ORIGINS`` (default ``*`` — fine for
 the skeleton; pin to the frontend origin at deploy).
@@ -36,6 +45,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 from starlette.concurrency import run_in_threadpool
 
+from janasunani.inference.service import InferenceInputError
 from janasunani.serving.history import HistoryProvider, LakeHistory, MockHistory
 from janasunani.serving.processor import GrievanceProcessor, MockGrievanceProcessor
 from janasunani.serving.schemas import (
@@ -101,17 +111,20 @@ def create_app(
         # The processor protocol is sync (real inference is CPU/GPU-bound
         # work); run it off the event loop so a slow OCR/model call doesn't
         # block /health and other requests on this worker at wire-up.
-        result = await run_in_threadpool(
-            functools.partial(
-                processor.process,
-                grievance_id=grievance_id,
-                ticket_no=ticket_no,
-                text=text,
-                document_name=file.filename if file else None,
-                document_bytes=await file.read() if file else None,
-                district=district,
+        try:
+            result = await run_in_threadpool(
+                functools.partial(
+                    processor.process,
+                    grievance_id=grievance_id,
+                    ticket_no=ticket_no,
+                    text=text,
+                    document_name=file.filename if file else None,
+                    document_bytes=await file.read() if file else None,
+                    district=district,
+                )
             )
-        )
+        except InferenceInputError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         await result_store.save(result, district=district)
         logger.info(
             f"grievance {grievance_id} ({ticket_no}): "
@@ -142,7 +155,21 @@ def create_app(
     return app
 
 
-app = create_app(history=LakeHistory())
+def _history_from_env() -> HistoryProvider:
+    """Pick the module-level app's history provider from ``JANASUNANI_REAL_HISTORY``.
+
+    Defaults to ``MockHistory`` -- the safe choice for the demo/contract
+    server. Only a truthy ``JANASUNANI_REAL_HISTORY`` (``1``/``true``/``yes``,
+    case-insensitive) opts into ``LakeHistory``, which reads real citizen
+    grievances from the Parquet lake with no auth/redaction on `/history`.
+    """
+    flag = os.environ.get("JANASUNANI_REAL_HISTORY", "").strip().lower()
+    if flag in ("1", "true", "yes"):
+        return LakeHistory()
+    return MockHistory()
+
+
+app = create_app(history=_history_from_env())
 
 
 def main() -> None:
