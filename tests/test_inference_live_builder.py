@@ -19,7 +19,9 @@ from janasunani.inference import serve  # noqa: E402
 from janasunani.inference import service  # noqa: E402
 from janasunani.inference.service import (  # noqa: E402
     InferenceInputError,
+    _required_model_files,
     build_processor,
+    preflight,
 )
 from janasunani.pipeline.stages.ocr_extraction import page_renderer  # noqa: E402
 from janasunani.serving.api import create_app  # noqa: E402
@@ -165,6 +167,80 @@ def test_poppler_available_when_both_binaries_are_on_path(monkeypatch):
     monkeypatch.setattr(service.shutil, "which", lambda _binary: "/usr/bin/fake")
 
     assert service._poppler_available() is True
+
+
+def test_preflight_all_ok_when_dependencies_present(tmp_path, monkeypatch):
+    """With the model artifacts on disk and both OCR binaries resolvable,
+    every preflight check passes -- the same set of conditions under which
+    `build_processor` reaches the model warm-up."""
+    _write_dummy_model_artifacts(tmp_path)
+    monkeypatch.setattr(service.shutil, "which", lambda _binary: "/usr/bin/fake")
+    monkeypatch.setattr(page_renderer, "POPPLER_PATH", None)
+
+    checks = preflight(tmp_path)
+
+    assert checks, "preflight must report at least one dependency"
+    assert all(check.ok for check in checks)
+
+
+def test_preflight_reports_missing_artifacts_without_raising(tmp_path, monkeypatch):
+    """Unlike `build_processor` (which raises on the first missing artifact),
+    preflight never raises: it reports each missing model file as `ok=False`
+    so an operator sees the full picture in one pass."""
+    monkeypatch.setattr(service.shutil, "which", lambda _binary: "/usr/bin/fake")
+    monkeypatch.setattr(page_renderer, "POPPLER_PATH", None)
+
+    checks = preflight(tmp_path)  # empty models dir -> artifacts absent
+
+    model_checks = [c for c in checks if c.name != "tesseract" and "pdf" not in c.name]
+    assert model_checks and all(not c.ok for c in model_checks)
+
+
+def test_preflight_reports_missing_binaries(tmp_path, monkeypatch):
+    """Model artifacts present but no OCR binaries -> only the binary checks
+    fail, and preflight still returns a full report."""
+    _write_dummy_model_artifacts(tmp_path)
+    monkeypatch.setattr(service.shutil, "which", lambda _binary: None)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "fake-home")
+    monkeypatch.setattr(page_renderer, "POPPLER_PATH", None)
+
+    by_name = {c.name: c.ok for c in preflight(tmp_path)}
+
+    assert by_name["tesseract"] is False
+    assert by_name["pdfinfo/pdftoppm"] is False
+    assert by_name["categorizer"] is True
+
+
+def test_preflight_binary_probe_error_becomes_failed_check(tmp_path, monkeypatch):
+    """A probe that raises (e.g. the pipeline-core extra is not installed, so
+    importing pytesseract fails) is reported as a failed check rather than
+    crashing the whole preflight."""
+    _write_dummy_model_artifacts(tmp_path)
+
+    def _boom() -> bool:
+        raise ImportError("pytesseract not installed")
+
+    monkeypatch.setattr(service, "_tesseract_available", _boom)
+    monkeypatch.setattr(service, "_poppler_available", _boom)
+
+    by_name = {c.name: c for c in preflight(tmp_path)}
+
+    assert by_name["tesseract"].ok is False
+    assert "unavailable" in by_name["tesseract"].detail
+
+
+def test_preflight_covers_exactly_the_build_processor_required_files(tmp_path):
+    """Drift guard: the model files preflight reports on must be exactly the
+    ones `build_processor` hard-requires, since both derive from
+    `_required_model_files`. If the two ever diverge, a 'green' preflight
+    could precede a failed startup."""
+    reported = {c.detail for c in preflight(tmp_path) if c.name not in {
+        "tesseract",
+        "pdfinfo/pdftoppm",
+    }}
+    required = {str(path) for path, _ in _required_model_files(Path(tmp_path))}
+
+    assert reported == required
 
 
 class RejectingProcessor:

@@ -96,6 +96,16 @@ categorizer = [
     "torch",
     "transformers>=4.57,<5",
 ]
+# One warm process for the live demo: the frozen serving API + every in-process
+# pipeline model. Conflict-free by construction (only `ocr-deepseek` clashes
+# with pipeline-core/categorizer, and it is deliberately excluded — DeepSeek OCR
+# runs out-of-process on the GPU box). Launch with:
+#   uv run --extra demo janasunani-api-live
+demo = [
+    "janasunani[serving]",
+    "janasunani[pipeline-core]",
+    "janasunani[categorizer]",
+]
 
 [project.scripts]
 janasunani-migrate-mysql = "janasunani.migration.from_mysql:main"
@@ -107,6 +117,7 @@ janasunani-export-pipeline = "janasunani.pipeline.export:main"
 janasunani-evaluate-pii = "janasunani.pipeline.pii_eval:main"
 janasunani-api = "janasunani.serving.api:main"
 janasunani-api-live = "janasunani.inference.serve:main"
+janasunani-demo-preflight = "janasunani.inference.serve:preflight_main"
 
 [build-system]
 requires = ["hatchling"]
@@ -126,6 +137,9 @@ packages = ["janasunani"]
 conflicts = [
     [{ extra = "ocr-deepseek" }, { extra = "pipeline-core" }],
     [{ extra = "ocr-deepseek" }, { extra = "categorizer" }],
+    # `demo` bundles pipeline-core + categorizer (transformers>=4.57), so it
+    # inherits their clash with DeepSeek's transformers==4.46.3 pin.
+    [{ extra = "ocr-deepseek" }, { extra = "demo" }],
 ]
 
 [tool.uv.sources]
