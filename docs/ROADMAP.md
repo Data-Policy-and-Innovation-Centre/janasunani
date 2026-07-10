@@ -32,12 +32,12 @@ six-stage document pipeline (incl. the Presidio PII rebuild) are done; productio
 Postgres holds the migrated data on the always-on CPU box (nightly `pg_dump` →
 S3), and the on-demand GPU box was shaken down for real (DeepSeek OCR) on
 2026-07-04. **The automation-prototype phases (8–12) are in progress**, built
-API-contract-first: the Phase 10 serving skeleton is on `main`, and the routing
-engine, live-persistence, lake-backed history, MLflow registry, and a first-cut
-DPIC-branded Next.js frontend are **ongoing on feature branches** (see the
-per-Phase status below). The demo today is **mock end-to-end** (mock processor +
-`MockHistory`); **Phase 8 real-time inference is the one gap** before it runs on
-real models.
+API-contract-first: the Phase 10 serving skeleton, live persistence/history,
+Phase 9 rules router, and Phase 8 warm inference processor are built, while the
+MLflow registry and a first-cut DPIC-branded Next.js frontend remain in
+progress (see the per-Phase status below). The default API deliberately remains
+mocked; the opt-in `janasunani-api-live` command runs local real models behind
+the same frozen contract.
 
 **Source provenance — this repo consolidates code from two earlier projects**
 - **DB/ORM layer + document ingestion → S3 + config** — from `../grievance`,
@@ -241,13 +241,14 @@ start GPU box → health check → demo → stop GPU box; latency pass; stakehol
   PII rebuild, GPU shakedown 2026-07-04).
 - 🔄 **Phase 6** — MLflow slim: helpers on branch `feat/mlflow-slim-registry` (ongoing). ✅ **Phase 7 CI** —
   green with Postgres service container; docs stay late.
-- 🔄 **Phases 8–12** — built API-contract-first; several components **ongoing on feature branches,
-  awaiting review/merge/integration** (none merged past the Phase 10 skeleton yet):
-  - **Phase 8** ⬜ real-time inference core — NOT started; this is the gap that keeps the demo mock.
-  - **Phase 9** 🔄 routing — `feat/rules-router` / `feat/rules-router-mappings` (rules layer; crosswalk to be
-    learned from OLAP history — see Phase 9). Not wired into serving.
-  - **Phase 10** 🔄 serving — skeleton merged; `feat/serving-live-persistence` (live→OLTP) +
-    `feat/lake-history-provider` (real `/history`) ongoing on branches.
+- 🔄 **Phases 8–12** — built API-contract-first; the real backend path is now available opt-in while
+  frontend/deployment integration remains:
+  - **Phase 8** ✅ real-time inference core — 8A warm summarizer, 8B standalone OCR, and 8C warm
+    processor/live CLI complete. Local DVC model artifacts are required and startup fails closed.
+  - **Phase 9** 🔄 routing — deterministic rules/mappings route the live processor now; the learned
+    OLAP-history crosswalk remains follow-up work.
+  - **Phase 10** ✅ serving — frozen mock API, live persistence, lake-backed history, and opt-in real
+    processor wiring are built. The module-level API remains mock by design.
   - **Phase 11** 🔄 frontend — first cut on `feat/frontend-demo` (DPIC-branded, against the mock).
   - **Phase 12** ⬜ demo integration & deployment.
   - Docs: `chore/handoff-doc-links` (ongoing). *(Dead: `backend-plan-unsplit` — an ancestor of main, no diff.)*
@@ -401,12 +402,29 @@ frontend/                         # Next.js + React + Tailwind
 deploy/                           # docker-compose (api, frontend, mlflow, oltp-postgres, proxy) + terraform/
 ```
 
-## Phase 8 — Real-time inference core  ⬜ *(NOT started — the one gap keeping the demo mock end-to-end)*
-- Each pipeline stage gets a single-item `process(text|image_bytes)->dict` beside its batch path. Warm
-  `GrievanceProcessor` loads models once from the MLflow registry; text skips OCR. **OCR engine is
-  configurable** (the existing `ocr_engine` switch): DeepSeek when CUDA is present (GPU box up during
-  demo windows), pytesseract fallback otherwise — the doc path never hard-fails without a GPU.
-- **Tests**: one sample text + one PDF → structured result; heavy model-load mocked.
+## Phase 8 — Real-time inference core  ✅ *(8A + 8B + 8C complete)*
+- ✅ **8A:** `Summarizer` is a warm single-item wrapper over public
+  `facebook/bart-large-cnn`; short inputs avoid an unnecessary generation call.
+- ✅ **8B:** `ocr_document()` renders and OCRs one uploaded document without the
+  batch artifact DB, preserves per-page text/type metadata, rejects quality
+  collapse, and reports truncation at the synchronous page cap.
+- ✅ **8C:** `PipelineGrievanceProcessor` warms the local DVC-mirrored page-type
+  and MuRIL models, BART, then Presidio once. Typed text skips OCR; documents use
+  pytesseract and feed only non-empty Letter/Form/Application/Text Only pages to
+  classification and summarization while preserving all accepted OCR text in
+  the response. Non-English-compatible text is `Uncategorized`; routing uses
+  `DEFAULT_ROUTER` (`rules`/`fallback`, never `mock`). Corrupt, unsupported,
+  blank, quality-rejected, truncated, and irrelevant-only documents fail with
+  a typed input error surfaced as HTTP 422.
+- ✅ **Strict live server:** `janasunani-api-live` loads local models directly,
+  fails startup if dependencies/artifacts are missing, serves `LakeHistory`,
+  and uses OLTP persistence only when `OLTP_DB_URL` is explicitly set. The
+  module-level `janasunani.serving.api:app` and `janasunani-api` stay mocked.
+  DeepSeek (separate process) and MLflow runtime model resolution remain
+  follow-up work.
+- **Tests:** dependency-injected text/PDF processor paths, page gating,
+  invalid/unsafe input rejection, warm reuse, strict builder/store selection,
+  unchanged serving contract, and an opt-in real-model smoke.
 
 ## Phase 9 — Routing engine (hybrid)  🔄 *(components on branches; not yet wired into serving)*
 - **Rules layer built** (`routing/rules.py`, branches `feat/rules-router` → `feat/rules-router-mappings`):
@@ -426,25 +444,26 @@ deploy/                           # docker-compose (api, frontend, mlflow, oltp-
   little/no history. This **replaces the name-match hack** and becomes the rules layer.
 - `routing/model.py`: learned router trained on the OLAP history (features → handling office); MLflow-
   registered — layered **above** the empirical crosswalk. `routing/router.py`: combine + confidence/fallback.
-- **Not yet wired into `serving/`** — the API still routes via the mock processor (`method:"mock"`); wiring
-  the router in is part of the Phase 8/10 wire-up.
+- **Live wiring complete for the deterministic layer** — `janasunani-api-live`
+  routes through `DEFAULT_ROUTER`; only the default mock command returns
+  `method:"mock"`.
 - **Sequencing:** the empirical crosswalk ships **first** (demo-sufficient, real data-derived confidence);
   the learned router lands only after the E2E demo path works, so the demo never blocks on training.
 - **Tests**: crosswalk lookups + fallback ladder; learned-router top-k on held-out; combiner fallback.
 
-## Phase 10 — Serving API + live wiring  🔄 *(skeleton ✅ on main; persistence + real history ONGOING on branches)*
+## Phase 10 — Serving API + live wiring  ✅ *(default mock + opt-in live)*
 - ✅ **Skeleton (merged to main, PR #12):** all endpoints + `/health` + CORS with a **mocked processor**
   returning the real response shapes — the stable `serving/schemas.py` contract Phases 8/9/11 build against.
-- 🔄 **ONGOING — live persistence** (branch `feat/serving-live-persistence`, reviewed, tested): the
+- ✅ **Live persistence:** the
   `live_grievances` sibling OLTP table + Alembic revision + injectable `ResultStore`
-  (`InMemory`/`Database`); `POST /grievance` persists, `GET /grievance/{id}` reads it back. Not merged.
-- 🔄 **ONGOING — real history** (branch `feat/lake-history-provider`, reviewed, tested): `LakeHistory`
+  (`InMemory`/`Database`); `POST /grievance` persists, `GET /grievance/{id}` reads it back.
+- ✅ **Real history:** `LakeHistory`
   serves `GET /history` from the real 1.37M-row Parquet lake (`olap/lake.py`) instead of `MockHistory`.
-  Not merged — **the app on `main` still uses `MockHistory` (synthetic rows) and the mock processor.**
-  Note: `feat/serving-live-persistence` and `feat/lake-history-provider` both edit `api.py`'s
-  `app = create_app(...)` line — a trivial conflict to reconcile into one `create_app(history=…, result_store=…)`.
-- ⬜ **Wire-up remaining (after Phase 8):** swap the mocked processor for real inference + routing so the
-  submit path is genuinely end-to-end. Models warm from MLflow. **Seed fake live grievances.**
+  The module-level app uses it with the mock processor; the live CLI uses it
+  with the real processor.
+- ✅ **Opt-in wire-up:** `janasunani-api-live` mounts real inference/routing.
+  Local DVC artifacts are loaded directly for Phase 8C; MLflow runtime
+  resolution and seeded fake live grievances remain follow-up work.
 - **Tests**: API tests (TestClient) with mocked processor against a temp OLTP DB — submit→persist→fetch;
   history endpoint returns lake rows.
 
