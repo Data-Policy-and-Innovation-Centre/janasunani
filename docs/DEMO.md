@@ -43,13 +43,21 @@ uv run --extra demo janasunani-demo-preflight
 Exits non-zero if any dependency is missing. Expected output when ready:
 
 ```
-[OK  ] categorizer: .../models/categorizer/config.json
-[OK  ] categorizer label encoder: .../label_encoder_ROS_wDOCS_english.pkl
-[OK  ] page-type model: .../page_type_classifier/vit_type_classifier/config.json
+[OK  ] categorizer config: .../models/categorizer/config.json
+[OK  ] categorizer weights: .../categorizer/model.safetensors | .../pytorch_model.bin
+[OK  ] categorizer tokenizer: .../categorizer/tokenizer.json | .../tokenizer_config.json
+[OK  ] categorizer label encoder: .../categorizer/label_encoder_ROS_wDOCS_english.pkl
+[OK  ] page-type config: .../vit_type_classifier/config.json
+[OK  ] page-type weights: .../vit_type_classifier/model.safetensors | .../pytorch_model.bin
+[OK  ] page-type image processor: .../vit_type_classifier/preprocessor_config.json
 [OK  ] tesseract: OCR text-extraction binary
 [OK  ] pdfinfo/pdftoppm: PDF page renderer (poppler)
 [INFO] OLTP: explicit URL set -> DatabaseResultStore (persistent)
 ```
+
+The weight/tokenizer entries accept either candidate filename (`model.safetensors`
+or `pytorch_model.bin`); a partial mirror missing the weights fails preflight
+rather than crashing mid-warm-up.
 
 ---
 

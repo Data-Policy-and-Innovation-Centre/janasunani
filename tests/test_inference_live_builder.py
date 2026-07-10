@@ -39,22 +39,56 @@ def _reset_ocr_binary_resolution(monkeypatch):
 
 
 def _write_dummy_model_artifacts(root: Path) -> None:
-    """Satisfy `build_processor`'s `_require_file` artifact checks with
-    placeholder files so a test can reach the code that runs after them
-    (e.g. the OCR-dependency preflight) without needing real DVC-mirrored
-    model weights."""
+    """Satisfy `build_processor`'s artifact checks with placeholder files so a
+    test can reach the code that runs after them (e.g. the OCR-dependency
+    preflight) without needing real DVC-mirrored model weights. Must cover
+    every requirement in `_required_model_files` -- including the tokenizer/
+    weight files, not just config -- or the checks abort before those points."""
     categorizer_dir = root / "categorizer"
     categorizer_dir.mkdir(parents=True)
     (categorizer_dir / "config.json").write_text("{}")
     (categorizer_dir / "label_encoder_ROS_wDOCS_english.pkl").write_bytes(b"")
+    (categorizer_dir / "model.safetensors").write_bytes(b"")
+    (categorizer_dir / "tokenizer.json").write_text("{}")
     page_type_dir = root / "page_type_classifier" / "vit_type_classifier"
     page_type_dir.mkdir(parents=True)
     (page_type_dir / "config.json").write_text("{}")
+    (page_type_dir / "model.safetensors").write_bytes(b"")
+    (page_type_dir / "preprocessor_config.json").write_text("{}")
 
 
 def test_build_processor_fails_closed_when_local_models_are_missing(tmp_path):
-    with pytest.raises(RuntimeError, match="missing local categorizer artifact"):
+    with pytest.raises(RuntimeError, match="missing local categorizer config artifact"):
         build_processor(tmp_path)
+
+
+def test_build_processor_fails_closed_on_partial_mirror_missing_weights(tmp_path):
+    """(Codex P2 on PR #26) A partial DVC mirror -- config + label encoder
+    present but the HF weights (`model.safetensors`/`pytorch_model.bin`)
+    missing -- must fail closed, not crash mid-warm-up inside
+    `AutoModel...from_pretrained`."""
+    categorizer_dir = tmp_path / "categorizer"
+    categorizer_dir.mkdir(parents=True)
+    (categorizer_dir / "config.json").write_text("{}")
+    (categorizer_dir / "tokenizer.json").write_text("{}")
+    (categorizer_dir / "label_encoder_ROS_wDOCS_english.pkl").write_bytes(b"")
+
+    with pytest.raises(RuntimeError, match="missing local categorizer weights artifact"):
+        build_processor(tmp_path)
+
+
+def test_preflight_flags_partial_mirror_missing_weights(tmp_path, monkeypatch):
+    """(Codex P2 on PR #26) The fast preflight must also catch the partial
+    mirror -- a green preflight has to mean the model dir is actually usable."""
+    _write_dummy_model_artifacts(tmp_path)
+    (tmp_path / "categorizer" / "model.safetensors").unlink()  # weights gone
+    monkeypatch.setattr(service.shutil, "which", lambda _binary: "/usr/bin/fake")
+    monkeypatch.setattr(page_renderer, "POPPLER_PATH", None)
+
+    by_name = {c.name: c.ok for c in preflight(tmp_path)}
+
+    assert by_name["categorizer weights"] is False
+    assert by_name["categorizer config"] is True
 
 
 def test_build_processor_fails_when_tesseract_binary_is_missing(tmp_path, monkeypatch):
@@ -208,7 +242,8 @@ def test_preflight_reports_missing_binaries(tmp_path, monkeypatch):
 
     assert by_name["tesseract"] is False
     assert by_name["pdfinfo/pdftoppm"] is False
-    assert by_name["categorizer"] is True
+    assert by_name["categorizer config"] is True
+    assert by_name["categorizer weights"] is True
 
 
 def test_preflight_binary_probe_error_becomes_failed_check(tmp_path, monkeypatch):
@@ -238,7 +273,10 @@ def test_preflight_covers_exactly_the_build_processor_required_files(tmp_path):
         "tesseract",
         "pdfinfo/pdftoppm",
     }}
-    required = {str(path) for path, _ in _required_model_files(Path(tmp_path))}
+    required = {
+        " | ".join(str(path) for path in candidates)
+        for candidates, _ in _required_model_files(Path(tmp_path))
+    }
 
     assert reported == required
 

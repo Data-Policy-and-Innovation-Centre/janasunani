@@ -278,10 +278,11 @@ def _detect_language(text: str) -> str:
         return "unknown"
 
 
-def _require_file(path: Path, component: str) -> None:
-    if not path.is_file():
+def _require_model_artifact(candidates: tuple[Path, ...], component: str) -> None:
+    if not any(path.is_file() for path in candidates):
+        shown = " | ".join(str(path) for path in candidates)
         raise RuntimeError(
-            f"missing local {component} artifact: {path}. Run `dvc pull` "
+            f"missing local {component} artifact: {shown}. Run `dvc pull` "
             "for the mirrored models before starting the live API."
         )
 
@@ -376,22 +377,55 @@ def _resolve_models_root(models_dir: str | Path | None) -> Path:
     return Path(configured_dir).expanduser() if configured_dir else MODELS_DIR
 
 
-def _required_model_files(root: Path) -> list[tuple[Path, str]]:
-    """The mandatory local model artifacts, as (path, component) pairs.
+def _required_model_files(root: Path) -> list[tuple[tuple[Path, ...], str]]:
+    """The mandatory local model artifacts, as (candidate-paths, component).
 
     Single source of truth shared by `build_processor` (which hard-requires
     each) and `preflight` (which reports on each), so a fast pre-check can
     never disagree with what the real startup actually loads.
+
+    Each entry lists one-or-more candidate paths; the requirement is satisfied
+    when *any* candidate exists (e.g. HF weights may be `model.safetensors`
+    *or* `pytorch_model.bin`; a tokenizer ships `tokenizer.json` *or* a
+    `tokenizer_config.json` + vocab). This covers not just the config/label
+    encoder but the actual tokenizer/weight files the HF `from_pretrained`
+    calls load during warm-up -- a partial DVC mirror (config present, weights
+    missing) must fail the check, not sail through to a mid-warm-up crash.
     """
     categorizer_dir = root / "categorizer"
     page_type_dir = root / "page_type_classifier" / "vit_type_classifier"
     return [
-        (categorizer_dir / "config.json", "categorizer"),
+        ((categorizer_dir / "config.json",), "categorizer config"),
         (
-            categorizer_dir / "label_encoder_ROS_wDOCS_english.pkl",
+            (
+                categorizer_dir / "model.safetensors",
+                categorizer_dir / "pytorch_model.bin",
+            ),
+            "categorizer weights",
+        ),
+        (
+            (
+                categorizer_dir / "tokenizer.json",
+                categorizer_dir / "tokenizer_config.json",
+            ),
+            "categorizer tokenizer",
+        ),
+        (
+            (categorizer_dir / "label_encoder_ROS_wDOCS_english.pkl",),
             "categorizer label encoder",
         ),
-        (page_type_dir / "config.json", "page-type model"),
+        ((page_type_dir / "config.json",), "page-type config"),
+        (
+            (
+                page_type_dir / "model.safetensors",
+                page_type_dir / "pytorch_model.bin",
+            ),
+            "page-type weights",
+        ),
+        (
+            (page_type_dir / "preprocessor_config.json",),
+            "page-type image processor",
+        ),
     ]
 
 
@@ -418,8 +452,12 @@ def preflight(models_dir: str | Path | None = None) -> list[DependencyCheck]:
     """
     root = _resolve_models_root(models_dir)
     checks = [
-        DependencyCheck(component, path.is_file(), str(path))
-        for path, component in _required_model_files(root)
+        DependencyCheck(
+            component,
+            any(path.is_file() for path in candidates),
+            " | ".join(str(path) for path in candidates),
+        )
+        for candidates, component in _required_model_files(root)
     ]
 
     def _binary_check(name: str, probe: Callable[[], bool], detail: str) -> None:
@@ -448,8 +486,8 @@ def build_processor(models_dir: str | Path | None = None) -> PipelineGrievancePr
     categorizer_dir = root / "categorizer"
     page_type_dir = root / "page_type_classifier" / "vit_type_classifier"
 
-    for path, component in _required_model_files(root):
-        _require_file(path, component)
+    for candidates, component in _required_model_files(root):
+        _require_model_artifact(candidates, component)
     _require_ocr_dependencies()
 
     # Import and construct in pipeline order. This also keeps the module-level
