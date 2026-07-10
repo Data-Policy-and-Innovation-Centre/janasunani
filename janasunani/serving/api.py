@@ -36,6 +36,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 from starlette.concurrency import run_in_threadpool
 
+from janasunani.inference.service import InferenceInputError
 from janasunani.serving.history import HistoryProvider, LakeHistory, MockHistory
 from janasunani.serving.processor import GrievanceProcessor, MockGrievanceProcessor
 from janasunani.serving.schemas import (
@@ -101,17 +102,20 @@ def create_app(
         # The processor protocol is sync (real inference is CPU/GPU-bound
         # work); run it off the event loop so a slow OCR/model call doesn't
         # block /health and other requests on this worker at wire-up.
-        result = await run_in_threadpool(
-            functools.partial(
-                processor.process,
-                grievance_id=grievance_id,
-                ticket_no=ticket_no,
-                text=text,
-                document_name=file.filename if file else None,
-                document_bytes=await file.read() if file else None,
-                district=district,
+        try:
+            result = await run_in_threadpool(
+                functools.partial(
+                    processor.process,
+                    grievance_id=grievance_id,
+                    ticket_no=ticket_no,
+                    text=text,
+                    document_name=file.filename if file else None,
+                    document_bytes=await file.read() if file else None,
+                    district=district,
+                )
             )
-        )
+        except InferenceInputError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         await result_store.save(result, district=district)
         logger.info(
             f"grievance {grievance_id} ({ticket_no}): "
