@@ -16,7 +16,9 @@ pytest.importorskip("python_multipart")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from janasunani.serving import api as api_module  # noqa: E402
 from janasunani.serving.api import create_app  # noqa: E402
+from janasunani.serving.history import LakeHistory, MockHistory  # noqa: E402
 
 _TEXT = (
     "The hand pump in Balianta village has been broken for two months. "
@@ -176,3 +178,41 @@ def test_ticket_no_carries_full_grievance_id_suffix(client):
     body = client.post("/grievance", data={"text": _TEXT}).json()
     assert body["ticket_no"].endswith(body["id"].upper())
     assert len(body["ticket_no"]) == len("JS") + 7 + len(body["id"])
+
+
+# --- Codex P1 on PR #25: the module-level app must default to MockHistory ---
+# (never real citizen /history rows) unless an operator explicitly opts in.
+
+
+def test_history_from_env_defaults_to_mock_history_when_flag_is_unset(monkeypatch):
+    monkeypatch.delenv("JANASUNANI_REAL_HISTORY", raising=False)
+    assert isinstance(api_module._history_from_env(), MockHistory)
+
+
+@pytest.mark.parametrize("falsy_value", ["", "0", "false", "False", "no", "off"])
+def test_history_from_env_treats_falsy_values_as_mock(monkeypatch, falsy_value):
+    monkeypatch.setenv("JANASUNANI_REAL_HISTORY", falsy_value)
+    assert isinstance(api_module._history_from_env(), MockHistory)
+
+
+@pytest.mark.parametrize("truthy_value", ["1", "true", "True", "TRUE", "yes", "Yes"])
+def test_history_from_env_selects_lake_history_when_flag_is_truthy(
+    monkeypatch, truthy_value
+):
+    monkeypatch.setenv("JANASUNANI_REAL_HISTORY", truthy_value)
+    # LakeHistory() itself never touches the lake on disk -- it only opens
+    # the Parquet file lazily inside `.search()` -- so this stays a type
+    # assertion and never reads real citizen data.
+    assert isinstance(api_module._history_from_env(), LakeHistory)
+
+
+def test_module_app_serves_mock_history_data_by_default(monkeypatch):
+    """End-to-end: the same construction the module-level `app` uses, with
+    the flag unset, must serve the deterministic MockHistory rows (never
+    reach for the real lake)."""
+    monkeypatch.delenv("JANASUNANI_REAL_HISTORY", raising=False)
+    app = create_app(history=api_module._history_from_env())
+    client = TestClient(app)
+
+    body = client.get("/history", params={"limit": 1}).json()
+    assert body["items"][0]["ticket_no"].startswith("CMO2024")

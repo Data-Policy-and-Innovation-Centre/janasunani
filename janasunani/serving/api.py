@@ -18,6 +18,15 @@ table) is available for explicit injection and is exercised by
 ``tests/test_serving_persistence.py``; the real Phase 10 wire-up will inject
 it into ``create_app`` explicitly.
 
+``history`` defaults to ``MockHistory`` -- the demo/frontend-contract server
+must never serve real citizen ``/history`` rows by default. Set
+``JANASUNANI_REAL_HISTORY=1`` to opt this module-level app into the
+lake-backed ``LakeHistory`` instead (see ``_history_from_env``). There is
+still no auth/redaction on ``/history``, so this opt-in is for trusted/local
+demo runs only, never a public deploy. ``janasunani-api-live``
+(``janasunani/inference/serve.py``) always uses ``LakeHistory`` regardless of
+this flag -- it's a deliberate real-data run by construction.
+
 Run:  uv run --extra serving janasunani-api          # 127.0.0.1:8000
 CORS: comma-separated ``JANASUNANI_CORS_ORIGINS`` (default ``*`` — fine for
 the skeleton; pin to the frontend origin at deploy).
@@ -146,7 +155,21 @@ def create_app(
     return app
 
 
-app = create_app(history=LakeHistory())
+def _history_from_env() -> HistoryProvider:
+    """Pick the module-level app's history provider from ``JANASUNANI_REAL_HISTORY``.
+
+    Defaults to ``MockHistory`` -- the safe choice for the demo/contract
+    server. Only a truthy ``JANASUNANI_REAL_HISTORY`` (``1``/``true``/``yes``,
+    case-insensitive) opts into ``LakeHistory``, which reads real citizen
+    grievances from the Parquet lake with no auth/redaction on `/history`.
+    """
+    flag = os.environ.get("JANASUNANI_REAL_HISTORY", "").strip().lower()
+    if flag in ("1", "true", "yes"):
+        return LakeHistory()
+    return MockHistory()
+
+
+app = create_app(history=_history_from_env())
 
 
 def main() -> None:

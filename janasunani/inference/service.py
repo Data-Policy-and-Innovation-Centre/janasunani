@@ -276,11 +276,48 @@ def _require_file(path: Path, component: str) -> None:
         )
 
 
-def _require_binary(binary: str, install_hint: str) -> None:
-    if shutil.which(binary) is None:
+def _require_binary(present: bool, binary: str, install_hint: str) -> None:
+    if not present:
         raise RuntimeError(
             f"missing required OCR system binary {binary!r}. {install_hint}"
         )
+
+
+def _tesseract_available() -> bool:
+    """Resolve tesseract exactly as `pytesseract_backend` does, not just PATH.
+
+    Reuses `pytesseract_backend._configure_tesseract` -- the backend's own
+    resolver -- so this preflight can never drift from what OCR calls will
+    actually find. That function tries, in order, `TESSERACT_CMD`, `PATH`,
+    and the bundled `~/.local/tesseract` install, and sets
+    `pytesseract.pytesseract.tesseract_cmd` as a side effect when one exists.
+    A bare PATH-only check would false-abort startup on a box where the
+    binary is only reachable via one of the other two mechanisms.
+    """
+    import pytesseract
+    from janasunani.pipeline.stages.ocr_extraction.pytesseract_backend import (
+        _configure_tesseract,
+    )
+
+    _configure_tesseract()
+    resolved = pytesseract.pytesseract.tesseract_cmd
+    return Path(resolved).is_file() or shutil.which(resolved) is not None
+
+
+def _poppler_available() -> bool:
+    """Resolve pdftoppm exactly as `page_renderer` does, not just PATH.
+
+    Reuses `page_renderer.POPPLER_PATH` -- computed at import time from the
+    bundled `~/.local/poppler` install (falling back to `/usr/bin`) -- the
+    same value `page_renderer.render_page` passes to `pdf2image` as
+    `poppler_path`. Falls back to a plain PATH lookup when that isn't set.
+    """
+    from janasunani.pipeline.stages.ocr_extraction import page_renderer
+
+    poppler_dir = page_renderer.POPPLER_PATH
+    if poppler_dir and (Path(poppler_dir) / "pdftoppm").is_file():
+        return True
+    return shutil.which("pdftoppm") is not None
 
 
 def _require_ocr_dependencies() -> None:
@@ -299,12 +336,14 @@ def _require_ocr_dependencies() -> None:
     check reliably here. Operators should confirm it manually post-install.
     """
     _require_binary(
+        _tesseract_available(),
         "tesseract",
         "Install Tesseract OCR and the Odia language pack, e.g. "
         "`apt-get install tesseract-ocr tesseract-ocr-ori` or "
         "`brew install tesseract tesseract-lang`.",
     )
     _require_binary(
+        _poppler_available(),
         "pdftoppm",
         "Install Poppler so PDF pages can be rendered for OCR, e.g. "
         "`apt-get install poppler-utils` or `brew install poppler`.",

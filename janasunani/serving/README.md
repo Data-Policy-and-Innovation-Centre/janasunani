@@ -20,6 +20,13 @@ It uses `DatabaseResultStore` only when `OLTP_DB_URL` is explicitly set;
 otherwise submitted synthetic results stay in memory. Run the
 `live_grievances` Alembic migration before enabling OLTP persistence.
 
+`janasunani-api`'s `/history` defaults to `MockHistory` -- it never serves
+real citizen data unless you explicitly set `JANASUNANI_REAL_HISTORY=1`, which
+opts it into the lake-backed `LakeHistory`. `janasunani-api-live` always uses
+`LakeHistory`, regardless of that flag -- it's a deliberate real-data run.
+There is still no auth/redaction on `/history`, so the real-history opt-in
+(and the live server generally) is for trusted/local demo runs only.
+
 `JANASUNANI_API_HOST` / `JANASUNANI_API_PORT` / `JANASUNANI_CORS_ORIGINS`
 (comma-separated; default `*` — pin to the frontend origin at deploy).
 
@@ -45,7 +52,7 @@ wire-up).
 | Seam | Default `janasunani-api` | Opt-in `janasunani-api-live` |
 |---|---|---|
 | processor | `MockGrievanceProcessor` — deterministic canned values; **toy regex "redaction", NOT Presidio** | `PipelineGrievanceProcessor`: pytesseract, page-type gating, Presidio, MuRIL, BART, `DEFAULT_ROUTER`; models warmed once |
-| history | Parquet lake via `LakeHistory` | Parquet lake via `LakeHistory` |
+| history | `MockHistory`, unless `JANASUNANI_REAL_HISTORY=1` opts into the Parquet lake via `LakeHistory` | Parquet lake via `LakeHistory`, always |
 | result store | in-process dict | in-process dict unless explicit `OLTP_DB_URL`, then `live_grievances` via `DatabaseResultStore` |
 
 The live processor returns HTTP 422 for invalid combinations and unsafe or
