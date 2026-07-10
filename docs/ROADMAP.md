@@ -495,7 +495,15 @@ deploy/                           # docker-compose (api, frontend, mlflow, oltp-
 - **Tests**: manual verification against the demo checklist (Playwright deferred post-demo; the
   pytest policy for the Python side is unchanged).
 
-## Phase 12 — Demo integration & deployment  ⬜ *(integration only — compose grows incrementally)*
+## Phase 12 — Demo integration & deployment  🔄 *(integration only — compose grows incrementally)*
+- 🔄 **Local live bring-up validated** (branch `feat/demo-live-api` → `feat/demo-integration`): added the
+  conflict-free `demo` extra + `janasunani-demo-preflight`; ran `janasunani-api-live` against a throwaway
+  Postgres 17 with `live_grievances` migrated — `/health` reports `pipeline`, a real typed grievance **and**
+  a real PDF (OCR → page-type gate → redaction → MuRIL → BART → routing) both round-trip through
+  `GET /grievance/{id}` and persist to `live_grievances`. Runbook: [docs/DEMO.md](DEMO.md). Findings logged
+  there: routing degrades to `fallback` without the DVC mappings; PII recall is weak on Indian names
+  (feeds the eval work); BART is hub-downloaded at boot (darwin `hf_xet` hang guarded). **Next: repeat on
+  the CPU box; wire the frontend; load routing mappings.**
 - `deploy/docker-compose.yml` starts in **Week 2** with just `oltp` (replacing the ad-hoc `docker run`)
   and gains each service as it's born (`mlflow` → `api` → `frontend` → `proxy`), so this phase is
   integration + runbook + latency — not the first time the runtime composition exists in the repo.

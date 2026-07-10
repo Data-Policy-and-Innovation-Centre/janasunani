@@ -19,7 +19,9 @@ from janasunani.inference import serve  # noqa: E402
 from janasunani.inference import service  # noqa: E402
 from janasunani.inference.service import (  # noqa: E402
     InferenceInputError,
+    _required_model_files,
     build_processor,
+    preflight,
 )
 from janasunani.pipeline.stages.ocr_extraction import page_renderer  # noqa: E402
 from janasunani.serving.api import create_app  # noqa: E402
@@ -37,22 +39,74 @@ def _reset_ocr_binary_resolution(monkeypatch):
 
 
 def _write_dummy_model_artifacts(root: Path) -> None:
-    """Satisfy `build_processor`'s `_require_file` artifact checks with
-    placeholder files so a test can reach the code that runs after them
-    (e.g. the OCR-dependency preflight) without needing real DVC-mirrored
-    model weights."""
+    """Satisfy `build_processor`'s artifact checks with placeholder files so a
+    test can reach the code that runs after them (e.g. the OCR-dependency
+    preflight) without needing real DVC-mirrored model weights. Must cover
+    every requirement in `_required_model_files` -- including the tokenizer/
+    weight files, not just config -- or the checks abort before those points."""
     categorizer_dir = root / "categorizer"
     categorizer_dir.mkdir(parents=True)
     (categorizer_dir / "config.json").write_text("{}")
     (categorizer_dir / "label_encoder_ROS_wDOCS_english.pkl").write_bytes(b"")
+    (categorizer_dir / "model.safetensors").write_bytes(b"")
+    (categorizer_dir / "tokenizer.json").write_text("{}")
     page_type_dir = root / "page_type_classifier" / "vit_type_classifier"
     page_type_dir.mkdir(parents=True)
     (page_type_dir / "config.json").write_text("{}")
+    (page_type_dir / "model.safetensors").write_bytes(b"")
+    (page_type_dir / "preprocessor_config.json").write_text("{}")
 
 
 def test_build_processor_fails_closed_when_local_models_are_missing(tmp_path):
-    with pytest.raises(RuntimeError, match="missing local categorizer artifact"):
+    with pytest.raises(RuntimeError, match="missing local categorizer config artifact"):
         build_processor(tmp_path)
+
+
+def test_build_processor_fails_closed_on_partial_mirror_missing_weights(tmp_path):
+    """(Codex P2 on PR #26) A partial DVC mirror -- config + label encoder
+    present but the HF weights (`model.safetensors`/`pytorch_model.bin`)
+    missing -- must fail closed, not crash mid-warm-up inside
+    `AutoModel...from_pretrained`."""
+    categorizer_dir = tmp_path / "categorizer"
+    categorizer_dir.mkdir(parents=True)
+    (categorizer_dir / "config.json").write_text("{}")
+    (categorizer_dir / "tokenizer.json").write_text("{}")
+    (categorizer_dir / "label_encoder_ROS_wDOCS_english.pkl").write_bytes(b"")
+
+    with pytest.raises(RuntimeError, match="missing local categorizer weights artifact"):
+        build_processor(tmp_path)
+
+
+def test_build_processor_fails_closed_when_only_tokenizer_config_present(tmp_path):
+    """(Codex P2 re-review on PR #26) `tokenizer_config.json` holds only
+    tokenizer settings, not the vocabulary. A mirror with the config but no
+    `tokenizer.json`/`vocab.txt` must fail closed rather than crash inside
+    `AutoTokenizer.from_pretrained`."""
+    categorizer_dir = tmp_path / "categorizer"
+    categorizer_dir.mkdir(parents=True)
+    (categorizer_dir / "config.json").write_text("{}")
+    (categorizer_dir / "model.safetensors").write_bytes(b"")
+    (categorizer_dir / "label_encoder_ROS_wDOCS_english.pkl").write_bytes(b"")
+    (categorizer_dir / "tokenizer_config.json").write_text("{}")  # settings only
+
+    with pytest.raises(
+        RuntimeError, match="missing local categorizer tokenizer artifact"
+    ):
+        build_processor(tmp_path)
+
+
+def test_preflight_flags_partial_mirror_missing_weights(tmp_path, monkeypatch):
+    """(Codex P2 on PR #26) The fast preflight must also catch the partial
+    mirror -- a green preflight has to mean the model dir is actually usable."""
+    _write_dummy_model_artifacts(tmp_path)
+    (tmp_path / "categorizer" / "model.safetensors").unlink()  # weights gone
+    monkeypatch.setattr(service.shutil, "which", lambda _binary: "/usr/bin/fake")
+    monkeypatch.setattr(page_renderer, "POPPLER_PATH", None)
+
+    by_name = {c.name: c.ok for c in preflight(tmp_path)}
+
+    assert by_name["categorizer weights"] is False
+    assert by_name["categorizer config"] is True
 
 
 def test_build_processor_fails_when_tesseract_binary_is_missing(tmp_path, monkeypatch):
@@ -165,6 +219,122 @@ def test_poppler_available_when_both_binaries_are_on_path(monkeypatch):
     monkeypatch.setattr(service.shutil, "which", lambda _binary: "/usr/bin/fake")
 
     assert service._poppler_available() is True
+
+
+def test_preflight_all_ok_when_dependencies_present(tmp_path, monkeypatch):
+    """With the model artifacts on disk and both OCR binaries resolvable,
+    every preflight check passes -- the same set of conditions under which
+    `build_processor` reaches the model warm-up."""
+    _write_dummy_model_artifacts(tmp_path)
+    monkeypatch.setattr(service.shutil, "which", lambda _binary: "/usr/bin/fake")
+    monkeypatch.setattr(page_renderer, "POPPLER_PATH", None)
+
+    checks = preflight(tmp_path)
+
+    assert checks, "preflight must report at least one dependency"
+    assert all(check.ok for check in checks)
+
+
+def test_preflight_reports_missing_artifacts_without_raising(tmp_path, monkeypatch):
+    """Unlike `build_processor` (which raises on the first missing artifact),
+    preflight never raises: it reports each missing model file as `ok=False`
+    so an operator sees the full picture in one pass."""
+    monkeypatch.setattr(service.shutil, "which", lambda _binary: "/usr/bin/fake")
+    monkeypatch.setattr(page_renderer, "POPPLER_PATH", None)
+
+    checks = preflight(tmp_path)  # empty models dir -> artifacts absent
+
+    model_checks = [c for c in checks if c.name != "tesseract" and "pdf" not in c.name]
+    assert model_checks and all(not c.ok for c in model_checks)
+
+
+def test_preflight_reports_missing_binaries(tmp_path, monkeypatch):
+    """Model artifacts present but no OCR binaries -> only the binary checks
+    fail, and preflight still returns a full report."""
+    _write_dummy_model_artifacts(tmp_path)
+    monkeypatch.setattr(service.shutil, "which", lambda _binary: None)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "fake-home")
+    monkeypatch.setattr(page_renderer, "POPPLER_PATH", None)
+
+    by_name = {c.name: c.ok for c in preflight(tmp_path)}
+
+    assert by_name["tesseract"] is False
+    assert by_name["pdfinfo/pdftoppm"] is False
+    assert by_name["categorizer config"] is True
+    assert by_name["categorizer weights"] is True
+
+
+def test_preflight_binary_probe_error_becomes_failed_check(tmp_path, monkeypatch):
+    """A probe that raises (e.g. the pipeline-core extra is not installed, so
+    importing pytesseract fails) is reported as a failed check rather than
+    crashing the whole preflight."""
+    _write_dummy_model_artifacts(tmp_path)
+
+    def _boom() -> bool:
+        raise ImportError("pytesseract not installed")
+
+    monkeypatch.setattr(service, "_tesseract_available", _boom)
+    monkeypatch.setattr(service, "_poppler_available", _boom)
+
+    by_name = {c.name: c for c in preflight(tmp_path)}
+
+    assert by_name["tesseract"].ok is False
+    assert "unavailable" in by_name["tesseract"].detail
+
+
+def test_preflight_reports_every_shared_required_model_file(tmp_path):
+    """`preflight` must report on exactly the model files in the shared
+    `_required_model_files` list (no dropped/renamed/reformatted entry). This
+    guards preflight's *use* of the shared list; the companion test below
+    guards `build_processor`'s use of it -- together they close the
+    green-preflight-then-failed-startup drift gap."""
+    reported = {c.detail for c in preflight(tmp_path) if c.name not in {
+        "tesseract",
+        "pdfinfo/pdftoppm",
+    }}
+    required = {
+        " | ".join(str(path) for path in candidates)
+        for candidates, _ in _required_model_files(Path(tmp_path))
+    }
+
+    assert reported == required
+
+
+def test_build_processor_requires_exactly_the_shared_model_files(tmp_path, monkeypatch):
+    """Load-bearing drift guard: record every artifact `build_processor`
+    actually hard-requires and assert it equals the shared list preflight
+    reports on. Catches a hard requirement added *inline* in `build_processor`
+    (bypassing `_required_model_files`), which would let a green preflight
+    precede a failed warm-up -- the exact failure the shared list prevents."""
+    _write_dummy_model_artifacts(tmp_path)
+
+    recorded: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        service,
+        "_require_model_artifact",
+        lambda candidates, _component: recorded.append(
+            tuple(str(path) for path in candidates)
+        ),
+    )
+
+    class _StopAfterArtifactChecks(Exception):
+        pass
+
+    # OCR-dependency check runs immediately after the model-file loop; raise
+    # here to stop before the (heavy, real) model construction.
+    def _stop() -> None:
+        raise _StopAfterArtifactChecks
+
+    monkeypatch.setattr(service, "_require_ocr_dependencies", _stop)
+
+    with pytest.raises(_StopAfterArtifactChecks):
+        build_processor(tmp_path)
+
+    required = {
+        tuple(str(path) for path in candidates)
+        for candidates, _ in _required_model_files(Path(tmp_path))
+    }
+    assert set(recorded) == required
 
 
 class RejectingProcessor:
