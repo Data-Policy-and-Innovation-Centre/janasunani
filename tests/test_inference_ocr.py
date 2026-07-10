@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from janasunani.inference.ocr import OcrResult, ocr_document
+from janasunani.inference.ocr import OcrQualityError, OcrResult, ocr_document
 
 
 class FakeImage:
@@ -195,8 +195,10 @@ def test_max_pages_caps_the_page_loop():
         ("page 2 text (auto)", None),
         ("page 3 text (auto)", None),
     ]
-    # The loop must stop at the cap without even attempting page 4.
-    assert len(tmp_paths) == 3
+    assert result.truncated is True
+    # The loop must stop at the cap and OCR nothing past it — the only
+    # extra render is the page-4 truncation probe (no extract/classify).
+    assert len(tmp_paths) == 4
 
 
 def test_default_max_pages_protects_a_huge_document():
@@ -211,7 +213,42 @@ def test_default_max_pages_protects_a_huge_document():
     )
 
     assert result.pages == 50
-    assert len(tmp_paths) == 50
+    assert result.truncated is True
+    assert len(tmp_paths) == 51  # 50 rendered pages + 1 truncation probe
+
+
+def test_max_pages_not_truncated_when_document_ends_exactly_at_the_cap():
+    """A document with exactly `max_pages` pages is not truncated — the
+    probe past the cap hits the renderer's normal end-of-document error."""
+    tmp_paths: list[Path] = []
+    result = ocr_document(
+        document_bytes=b"%PDF-fake-bytes",
+        document_name="exact.pdf",
+        extract_text_fn=fake_extract_text_fn,
+        render_page_fn=make_render_page_fn(3, tmp_paths),
+        max_pages=3,
+    )
+
+    assert result.pages == 3
+    assert result.truncated is False
+    assert len(tmp_paths) == 4  # 3 rendered pages + 1 truncation probe
+
+
+def test_unbounded_max_pages_is_never_truncated():
+    """`max_pages=None` (unbounded) always runs to real end-of-document via
+    `break`, so the truncation probe never fires and `truncated` stays
+    False."""
+    tmp_paths: list[Path] = []
+    result = ocr_document(
+        document_bytes=b"%PDF-fake-bytes",
+        document_name="complaint.pdf",
+        extract_text_fn=fake_extract_text_fn,
+        render_page_fn=make_render_page_fn(5, tmp_paths),
+        max_pages=None,
+    )
+
+    assert result.pages == 5
+    assert result.truncated is False
 
 
 def test_quality_check_fn_skips_pages_that_fail_the_check():
@@ -237,6 +274,81 @@ def test_quality_check_fn_skips_pages_that_fail_the_check():
         ("page 1 text (auto)", None),
         ("page 3 text (auto)", None),
     ]
+
+
+def test_quality_check_fn_rejecting_every_page_raises_ocr_quality_error():
+    """If `quality_check_fn` was supplied and every rendered page fails it,
+    an empty OcrResult would be indistinguishable from a legitimately blank
+    document — so this must raise instead of returning a blank result that
+    would silently route into redaction/classification."""
+    tmp_paths: list[Path] = []
+
+    def quality_check_fn(text: str) -> bool:
+        return False
+
+    try:
+        ocr_document(
+            document_bytes=b"%PDF-fake-bytes",
+            document_name="garbage.pdf",
+            extract_text_fn=fake_extract_text_fn,
+            render_page_fn=make_render_page_fn(3, tmp_paths),
+            quality_check_fn=quality_check_fn,
+        )
+    except OcrQualityError as exc:
+        assert "garbage.pdf" in str(exc)
+    else:
+        raise AssertionError("expected OcrQualityError")
+
+    # Temp file must still be cleaned up even though the error propagated.
+    assert not tmp_paths[0].exists()
+
+
+def test_quality_check_fn_rejecting_single_page_document_raises():
+    """A single-page document whose one page fails the quality check is the
+    same "every page rejected" case, not a special-cased empty document."""
+    tmp_paths: list[Path] = []
+
+    def quality_check_fn(text: str) -> bool:
+        return False
+
+    try:
+        ocr_document(
+            document_bytes=b"fake-image-bytes",
+            document_name="scan.jpg",
+            extract_text_fn=fake_extract_text_fn,
+            render_page_fn=make_render_page_fn(1, tmp_paths),
+            quality_check_fn=quality_check_fn,
+        )
+    except OcrQualityError:
+        pass
+    else:
+        raise AssertionError("expected OcrQualityError")
+
+
+def test_no_quality_check_fn_does_not_raise_ocr_quality_error():
+    """`OcrQualityError` is scoped to "a quality hook was supplied and
+    rejected everything." A page-less/empty document with *no* hook is a
+    separate, legitimately-empty case: page 1's render failure still
+    propagates as the existing `ValueError` (unrelated, pre-existing
+    behavior) — not the new `OcrQualityError` — because the quality gate
+    never engages when `quality_check_fn` is None."""
+
+    def render_page_fn(file_path: Path, page_number: int):
+        raise ValueError("could not render page 1: unsupported file type")
+
+    try:
+        ocr_document(
+            document_bytes=b"bytes",
+            document_name="empty.pdf",
+            extract_text_fn=fake_extract_text_fn,
+            render_page_fn=render_page_fn,
+        )
+    except OcrQualityError:
+        raise AssertionError("must not raise OcrQualityError without a hook") from None
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError from page 1 to propagate")
 
 
 def test_quality_check_fn_default_none_is_a_no_op():

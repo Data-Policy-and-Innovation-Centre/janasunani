@@ -28,6 +28,17 @@ DEFAULT_SUFFIX = ".pdf"
 DEFAULT_MAX_PAGES = 50
 
 
+class OcrQualityError(Exception):
+    """Raised when `quality_check_fn` rejected every rendered page.
+
+    Distinct from a genuinely empty/page-less document: this only fires when
+    at least one page rendered *and* a quality hook was supplied, so the
+    caller can mark the grievance unreadable instead of routing an
+    indistinguishable-from-legitimate blank `OcrResult` into redaction,
+    classification, and routing.
+    """
+
+
 @dataclass
 class OcrResult:
     """Result of OCR-ing one uploaded document."""
@@ -35,6 +46,11 @@ class OcrResult:
     full_text: str
     pages: int
     per_page: list[tuple[str, str | None]]  # (page_text, page_type_label_or_None)
+    # True when the page loop stopped because it hit `max_pages` and at
+    # least one more page existed beyond the cap — signals that `full_text`
+    # / `per_page` are a partial document, not the whole thing. Defaulted
+    # for backward compatibility with existing positional/partial callers.
+    truncated: bool = False
 
 
 def ocr_document(
@@ -69,15 +85,25 @@ def ocr_document(
         max_pages: Stop after this many pages (default `DEFAULT_MAX_PAGES`),
             protecting the live worker from a huge/accidental multi-hundred
             -page document. Pass a larger int, or `None`, to lift the cap.
+            If the document has more pages than the cap, the result comes
+            back with `truncated=True` (see `OcrResult`) instead of silently
+            looking like a complete document.
         quality_check_fn: Optional `(page_text) -> bool` run on each page's
             extracted text. A page whose text fails the check (returns
             `False`) is skipped — excluded from `full_text` and `per_page`
             — so looped/garbage OCR output can't reach redaction or
             classification downstream. `None` (default) applies no check.
+            If every rendered page fails the check, `OcrQualityError` is
+            raised rather than returning an `OcrResult` indistinguishable
+            from a legitimate blank document.
 
     Returns:
-        OcrResult with the joined full text, page count, and per-page
-        (text, label) pairs.
+        OcrResult with the joined full text, page count, per-page
+        (text, label) pairs, and a `truncated` flag.
+
+    Raises:
+        OcrQualityError: `quality_check_fn` was supplied, at least one page
+            rendered, and every rendered page failed the quality check.
     """
     suffix = Path(document_name).suffix or DEFAULT_SUFFIX
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
@@ -88,6 +114,7 @@ def ocr_document(
         per_page: list[tuple[str, str | None]] = []
         page_number = 1
         rendered_any_page = False
+        truncated = False
         while max_pages is None or page_number <= max_pages:
             try:
                 image = render_page_fn(tmp_path, page_number)
@@ -111,8 +138,38 @@ def ocr_document(
                 continue
             per_page.append((text, label))
             page_number += 1
+        else:
+            # The `while` condition went false (`page_number > max_pages`),
+            # not a `break` — the loop stopped because of the cap, not
+            # because we ran out of document. Probe exactly one page past
+            # the cap to tell "cap == document length" (not truncated) apart
+            # from "more content was dropped" (truncated), without OCR-ing
+            # any further pages.
+            if max_pages is not None:
+                try:
+                    render_page_fn(tmp_path, max_pages + 1)
+                except (ValueError, IndexError):
+                    truncated = False
+                else:
+                    truncated = True
+
+        if quality_check_fn is not None and rendered_any_page and not per_page:
+            # Every rendered page failed the quality check. Returning an
+            # empty OcrResult here would be indistinguishable from a
+            # legitimately blank document, so a blank grievance would flow
+            # into redaction/classification/routing — raise instead so the
+            # caller can mark the grievance unreadable.
+            raise OcrQualityError(
+                f"all {page_number - 1} rendered page(s) of {document_name!r} "
+                "failed the quality check"
+            )
 
         full_text = "\n\n".join(text for text, _ in per_page)
-        return OcrResult(full_text=full_text, pages=len(per_page), per_page=per_page)
+        return OcrResult(
+            full_text=full_text,
+            pages=len(per_page),
+            per_page=per_page,
+            truncated=truncated,
+        )
     finally:
         os.unlink(tmp_path)
