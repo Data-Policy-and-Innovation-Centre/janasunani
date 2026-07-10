@@ -128,3 +128,130 @@ def test_temp_file_removed_even_on_extract_error():
         raise AssertionError("expected RuntimeError to propagate")
 
     assert not tmp_paths[0].exists()
+
+
+def test_first_page_render_failure_propagates():
+    """`render_page` raises ValueError for both end-of-document AND an
+    unsupported/corrupt upload. If page 1 itself fails to render, that's
+    never "end of document" (there's no document 0) — it must propagate so
+    an unsupported file isn't silently routed as a blank grievance."""
+    tmp_paths: list[Path] = []
+
+    def render_page_fn(file_path: Path, page_number: int) -> FakeImage:
+        tmp_paths.append(file_path)
+        raise ValueError("could not render page 1: unsupported file type")
+
+    try:
+        ocr_document(
+            document_bytes=b"this is not a pdf or image",
+            document_name="notes.txt",
+            extract_text_fn=fake_extract_text_fn,
+            render_page_fn=render_page_fn,
+        )
+    except ValueError as exc:
+        assert "could not render page 1" in str(exc)
+    else:
+        raise AssertionError("expected ValueError from page 1 to propagate")
+
+    # Temp file must still be cleaned up even though the error propagated.
+    assert not tmp_paths[0].exists()
+
+
+def test_page_n_render_failure_terminates_cleanly_with_earlier_pages():
+    """Once at least one page has rendered, a later render failure is the
+    normal end-of-document signal, not a propagated error — the pages seen
+    so far are kept."""
+    tmp_paths: list[Path] = []
+    result = ocr_document(
+        document_bytes=b"%PDF-fake-bytes",
+        document_name="complaint.pdf",
+        extract_text_fn=fake_extract_text_fn,
+        render_page_fn=make_render_page_fn(2, tmp_paths),
+    )
+
+    assert result.pages == 2
+    assert result.full_text == "page 1 text (auto)\n\npage 2 text (auto)"
+    assert result.per_page == [
+        ("page 1 text (auto)", None),
+        ("page 2 text (auto)", None),
+    ]
+
+
+def test_max_pages_caps_the_page_loop():
+    """A document with more pages than `max_pages` stops at the cap instead
+    of OCR-ing every page synchronously."""
+    tmp_paths: list[Path] = []
+    result = ocr_document(
+        document_bytes=b"%PDF-fake-bytes",
+        document_name="huge.pdf",
+        extract_text_fn=fake_extract_text_fn,
+        render_page_fn=make_render_page_fn(10, tmp_paths),
+        max_pages=3,
+    )
+
+    assert result.pages == 3
+    assert result.per_page == [
+        ("page 1 text (auto)", None),
+        ("page 2 text (auto)", None),
+        ("page 3 text (auto)", None),
+    ]
+    # The loop must stop at the cap without even attempting page 4.
+    assert len(tmp_paths) == 3
+
+
+def test_default_max_pages_protects_a_huge_document():
+    """The out-of-the-box default caps the live path even when the caller
+    doesn't pass `max_pages` explicitly."""
+    tmp_paths: list[Path] = []
+    result = ocr_document(
+        document_bytes=b"%PDF-fake-bytes",
+        document_name="huge.pdf",
+        extract_text_fn=fake_extract_text_fn,
+        render_page_fn=make_render_page_fn(500, tmp_paths),
+    )
+
+    assert result.pages == 50
+    assert len(tmp_paths) == 50
+
+
+def test_quality_check_fn_skips_pages_that_fail_the_check():
+    """An injected quality_check_fn that rejects a page's text excludes that
+    page from both `full_text` and `per_page`, so looped/garbage OCR output
+    can't reach redaction/classification downstream."""
+    tmp_paths: list[Path] = []
+
+    def quality_check_fn(text: str) -> bool:
+        return "page 2" not in text
+
+    result = ocr_document(
+        document_bytes=b"%PDF-fake-bytes",
+        document_name="complaint.pdf",
+        extract_text_fn=fake_extract_text_fn,
+        render_page_fn=make_render_page_fn(3, tmp_paths),
+        quality_check_fn=quality_check_fn,
+    )
+
+    assert result.pages == 2
+    assert result.full_text == "page 1 text (auto)\n\npage 3 text (auto)"
+    assert result.per_page == [
+        ("page 1 text (auto)", None),
+        ("page 3 text (auto)", None),
+    ]
+
+
+def test_quality_check_fn_default_none_is_a_no_op():
+    """Without a quality_check_fn (the default), the pytesseract path is
+    unchanged — no pages are filtered."""
+    tmp_paths: list[Path] = []
+    result = ocr_document(
+        document_bytes=b"%PDF-fake-bytes",
+        document_name="complaint.pdf",
+        extract_text_fn=fake_extract_text_fn,
+        render_page_fn=make_render_page_fn(2, tmp_paths),
+    )
+
+    assert result.pages == 2
+    assert result.per_page == [
+        ("page 1 text (auto)", None),
+        ("page 2 text (auto)", None),
+    ]
