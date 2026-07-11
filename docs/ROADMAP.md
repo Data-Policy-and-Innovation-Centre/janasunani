@@ -249,8 +249,11 @@ start GPU box → health check → demo → stop GPU box; latency pass; stakehol
     OLAP-history crosswalk remains follow-up work.
   - **Phase 10** ✅ serving — frozen mock API, live persistence, lake-backed history, and opt-in real
     processor wiring are built. The module-level API remains mock by design.
-  - **Phase 11** 🔄 frontend — first cut on `feat/frontend-demo` (DPIC-branded, against the mock).
-  - **Phase 12** ⬜ demo integration & deployment.
+  - **Phase 11** 🔄 frontend — first cut on `feat/frontend-demo` (DPIC-branded, against the mock);
+    live-wired to `janasunani-api-live` on `feat/demo-frontend-live`.
+  - **Phase 12** 🔄 demo integration & deployment — local runbook (`docs/DEMO.md`), `Makefile`
+    live-demo targets (`preflight`/`db`/`api`/`frontend`/`up`/`down`), and preflight in place;
+    cloud compose deployment still to come.
   - Docs: `chore/handoff-doc-links` (ongoing). *(Dead: `backend-plan-unsplit` — an ancestor of main, no diff.)*
 
 ## Package structure
@@ -491,7 +494,7 @@ deploy/                           # docker-compose (api, frontend, mlflow, oltp-
 - **Tests**: API tests (TestClient) with mocked processor against a temp OLTP DB — submit→persist→fetch;
   history endpoint returns lake rows.
 
-## Phase 11 — Demo frontend (Next.js)  🔄 *(first cut built 2026-07-08 — ONGOING on branch `feat/frontend-demo`)*
+## Phase 11 — Demo frontend (Next.js)  🔄 *(first cut built 2026-07-08; live-wired 2026-07-10)*
 - 🔄 **First cut built** (branch `feat/frontend-demo`, DPIC-branded): Next.js 16 App Router + TypeScript +
   Tailwind v4. Submit route (text/upload → staged result cards: extracted/redacted text + typed PII token
   badges, classification, summary, routing w/ escalation + confidence) + History browse/search route. Types
@@ -499,6 +502,13 @@ deploy/                           # docker-compose (api, frontend, mlflow, oltp-
   Calibri) read from the installed `dpic` package. `npm run lint`/`build` green; endpoints verified live
   against the mock API. Not merged. **Still mock end-to-end** (mock processor + `MockHistory` on `main`) —
   the UI shape is real; classification/redaction/history become real at the Phase 8/10 wire-up.
+- ✅ **Live-wired** (branch `feat/demo-frontend-live` → `feat/demo-integration`): pointed
+  `NEXT_PUBLIC_API_URL` at `janasunani-api-live` and verified real responses render — real `fallback` and
+  `rules` routing (not just mock's canned value), null `subcategory`, real Presidio PII spans, and the
+  document/OCR path (`source:"document"`, `ocr_model:"pytesseract"`, `pages`). No contract drift found
+  (`lib/types.ts` already matched `serving/schemas.py` exactly); removed stale "results are mocked" copy
+  from the submit/history/layout chrome and added an explanatory note for `fallback`-routed results.
+  `npm run lint`/`build` green.
 - Scaffolded right after the Phase 10 skeleton and built against the mocked contract, so it gets
   Weeks 3–4 of iteration instead of a cramped tail. Submit (text + upload) → staged view
   (extracted/redacted text, category/subcategory/dept, summary, routing + escalation + confidence) +
@@ -514,8 +524,8 @@ deploy/                           # docker-compose (api, frontend, mlflow, oltp-
   a real PDF (OCR → page-type gate → redaction → MuRIL → BART → routing) both round-trip through
   `GET /grievance/{id}` and persist to `live_grievances`. Runbook: [docs/DEMO.md](DEMO.md). Findings logged
   there: routing degrades to `fallback` without the DVC mappings; PII recall is weak on Indian names
-  (feeds the eval work); BART is hub-downloaded at boot (darwin `hf_xet` hang guarded). **Next: repeat on
-  the CPU box; wire the frontend; load routing mappings.**
+  (feeds the eval work); BART is hub-downloaded at boot (darwin `hf_xet` hang guarded). Frontend now
+  wired to this live API (Phase 11). **Next: repeat on the CPU box; load routing mappings.**
 - `deploy/docker-compose.yml` starts in **Week 2** with just `oltp` (replacing the ad-hoc `docker run`)
   and gains each service as it's born (`mlflow` → `api` → `frontend` → `proxy`), so this phase is
   integration + runbook + latency — not the first time the runtime composition exists in the repo.

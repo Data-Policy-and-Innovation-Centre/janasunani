@@ -11,6 +11,25 @@ For the full **cloud** deployment (CPU box + compose + backups) see
 [DEPLOY.md](DEPLOY.md). This document is the **integration bring-up** — proven
 locally first, then repeated on the box.
 
+> **Fast path — `make`.** The `Makefile` wraps every step below:
+> `make models` (scoped DVC pull) · `make preflight` · `make up` (throwaway
+> Postgres + API + frontend, waits for `processor: pipeline` before starting the
+> UI, one `Ctrl-C` stops both) · `make down` (tear down by port). `make api`/
+> `make up` provision and migrate the local Postgres for you — if you point
+> `OLTP_DB_URL` at anything other than the throwaway default they skip that step
+> and never migrate it (you manage that database yourself).
+>
+> This fast path is **local**. It assumes a dev machine with Docker, `uv`,
+> Node/npm, and `lsof`. The CPU box is **not** provisioned for `make up` (no
+> Node, demo ports 3000/8000 closed by the security group, and prod Postgres
+> already on 5432) — deploy there via [DEPLOY.md](DEPLOY.md) (compose), not this
+> fast path. To *view* a locally-run demo from another machine, SSH-tunnel the
+> ports rather than exposing them:
+> `ssh -L 3000:127.0.0.1:3000 -L 8000:127.0.0.1:8000 <box>`.
+>
+> The numbered sections below are the underlying manual commands, for running a
+> step by hand.
+
 ---
 
 ## 1. Prerequisites
@@ -76,11 +95,11 @@ rather than crashing mid-warm-up.
 ```bash
 docker run -d --name janasunani-demo-oltp \
   -e POSTGRES_PASSWORD=demo -e POSTGRES_DB=janasunani \
-  -p 127.0.0.1:5432:5432 \
+  -p 127.0.0.1:5544:5432 \
   -v janasunani-demo-oltp:/var/lib/postgresql/data \
   postgres:17
 
-export OLTP_DB_URL="postgresql+asyncpg://postgres:demo@127.0.0.1:5432/janasunani"
+export OLTP_DB_URL="postgresql+asyncpg://postgres:demo@127.0.0.1:5544/janasunani"
 uv run alembic upgrade head   # creates live_grievances (+ the rest of the schema)
 ```
 
@@ -97,7 +116,7 @@ touches the historical `complaints` data. Never `docker compose down -v`.
 ## 4. Launch + health gate
 
 ```bash
-export OLTP_DB_URL="postgresql+asyncpg://postgres:demo@127.0.0.1:5432/janasunani"
+export OLTP_DB_URL="postgresql+asyncpg://postgres:demo@127.0.0.1:5544/janasunani"
 uv run --extra demo janasunani-api-live      # host/port: JANASUNANI_API_HOST/PORT
 ```
 

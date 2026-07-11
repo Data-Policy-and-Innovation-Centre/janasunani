@@ -10,8 +10,7 @@ export default function SubmitPage() {
         <p className="max-w-2xl text-sm text-text-secondary">
           Enter grievance text or upload a document. The demo extracts the
           text, redacts PII, classifies the grievance, summarises it, and
-          proposes a routing. Results are illustrative — the processor is
-          currently mocked.
+          proposes a routing.
         </p>
       </div>
       <SubmitForm />
