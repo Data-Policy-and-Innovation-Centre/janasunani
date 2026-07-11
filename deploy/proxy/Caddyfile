@@ -1,0 +1,25 @@
+# Single-origin reverse proxy for the Janasunani demo (see deploy/docker-compose.yml
+# service `proxy`). SITE_ADDRESS/DEMO_USER/DEMO_PASSWORD_HASH come from
+# deploy/.env (compose applies bootable defaults if unset — see the `proxy`
+# service's `environment:` block) — never hard-code the domain or credentials
+# here.
+#
+# TLS: SITE_ADDRESS is a nip.io hostname (e.g. 52-66-116-80.nip.io), so Caddy
+# obtains a real Let's Encrypt cert automatically (no manual cert management).
+#
+# The whole site sits behind HTTP Basic Auth: production grievance data
+# (browsable at /history, and directly at /api/history and /api/grievance/{id})
+# must not be openly public. Generate a real hash with:
+#   docker run --rm caddy:2-alpine caddy hash-password --plaintext '<password>'
+{$SITE_ADDRESS}
+
+basic_auth {
+	{$DEMO_USER} {$DEMO_PASSWORD_HASH}
+}
+
+handle_path /api/* {
+	reverse_proxy api:8000
+}
+handle {
+	reverse_proxy frontend:3000
+}

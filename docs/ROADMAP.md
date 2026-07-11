@@ -518,6 +518,26 @@ deploy/                           # docker-compose (api, frontend, mlflow, oltp-
   pytest policy for the Python side is unchanged).
 
 ## Phase 12 — Demo integration & deployment  🔄 *(integration only — compose grows incrementally)*
+- 🔄 **Automated CI → GHCR → box deploy built** (branch `deploy/cpu-box` →
+  `feat/demo-integration`): `frontend/Dockerfile` (Next 16 standalone output) +
+  `deploy/api.Dockerfile` (uv `demo` extra, BuildKit SSH for the private
+  `dpic` dep, reuses `DPIC_GITHUB_SSH_KEY`) + `deploy/api-entrypoint.sh`
+  (`alembic upgrade head` → `janasunani-api-live`); `deploy/docker-compose.yml`
+  grows to `oltp` + `api` + `frontend` + `proxy` (Caddy, nip.io TLS,
+  site-wide `basic_auth` — production data must not be openly public); models
+  and the DVC lake/mappings stay host bind-mounts (`:ro`), never baked into
+  images. `deploy/deploy.sh` is the only sanctioned box-side up-path (pulls,
+  brings up, health-gates on `/health`'s `"processor":"pipeline"`, never
+  `down`). `.github/workflows/deploy.yml` (`workflow_dispatch`-only) builds
+  both images and deploys over SSH using a temporary CI IAM role
+  (`deploy/terraform/ci.tf`, GitHub OIDC) that opens/closes port 22 on the
+  box's security group for the run only. `tests/test_deploy_stack.py` +
+  `uv run ruff check .` + `npm run lint`/`build` + `terraform validate` all
+  green. **Not yet run**: the authoritative `linux/amd64` `api` image build
+  is CI's job (too large/wrong-arch for local dev machines), and the
+  maintainer still owns `terraform apply` of `ci.tf`, the box's one-time
+  setup (GHCR login, `deploy/.env`), and the first live `workflow_dispatch` —
+  see [docs/DEPLOY.md §4](DEPLOY.md#4--automated-demo-deploy-ci--ghcr--box).
 - 🔄 **Local live bring-up validated** (branch `feat/demo-live-api` → `feat/demo-integration`): added the
   conflict-free `demo` extra + `janasunani-demo-preflight`; ran `janasunani-api-live` against a throwaway
   Postgres 17 with `live_grievances` migrated — `/health` reports `pipeline`, a real typed grievance **and**
@@ -554,8 +574,11 @@ container for the demo (no RDS needed), repointable to RDS via `OLTP_DB_URL`.
 - **Storage**: DVC remote `s3://dpic-dvc-cache/janasunani` (raw dump + Parquet lake + model artifacts);
   `s3://janasunani-documents-*` (documents); `s3://…/mlflow-artifacts`. OLTP DB → Postgres volume (SQLite
   file in dev), snapshotted to S3. **Don't DVC-track the big OLTP DB** — track dump + derived Parquet.
-- **Images/CI**: GitHub Actions → GHCR; one image per dep group (core / ocr-deepseek / categorizer). GPU
-  base for api/pipeline; slim Node for frontend.
+- **Images/CI**: GitHub Actions → GHCR (private); `api` (`deploy/api.Dockerfile`, `demo` extra,
+  `python:3.13-slim` base) + `frontend` (`frontend/Dockerfile`, `node:22-alpine`, Next standalone output)
+  wired up in Phase 12 (`.github/workflows/deploy.yml`, `workflow_dispatch`-only — see
+  [docs/DEPLOY.md §4](DEPLOY.md#4--automated-demo-deploy-ci--ghcr--box)). Batch/offline pipeline images
+  (core / ocr-deepseek / categorizer) remain future work — not needed for the demo.
 - **IaC**: minimal Terraform (`deploy/terraform/`): EC2 + IAM role + security group + S3. App-level is compose.
 - **Config/secrets**: per-service `.env` (+ `.env.example`) + IAM role for S3. No managed secret store.
 

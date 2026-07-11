@@ -27,6 +27,13 @@ Two instances, one always on:
 - the **on-demand GPU box** (`gpu.tf`) for DeepSeek OCR batch runs and demo windows —
   count-toggled, off by default, nothing stateful on it. See "GPU box" below.
 
+Plus [`ci.tf`](ci.tf): a GitHub OIDC provider + `janasunani-ci-deploy` IAM role that
+the automated deploy workflow (`.github/workflows/deploy.yml`) assumes to
+temporarily open/close port 22 on `aws_security_group.cpu_box` for the runner's IP
+only, during the deploy job. Doesn't touch the instance, its user_data, or the
+baseline ingress rules above. See [docs/DEPLOY.md](../../docs/DEPLOY.md) §"Automated
+demo deploy" for the full setup (repo secrets/vars, one-time box prerequisites).
+
 ## Usage
 
 ```bash

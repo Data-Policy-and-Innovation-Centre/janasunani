@@ -2,11 +2,17 @@
 #
 # Grows service-by-service as Part II lands (mlflow -> api -> frontend ->
 # proxy); Phase 12 is integration, not a big-bang compose. Config comes from
-# deploy/.env (gitignored; see .env.example).
+# deploy/.env (gitignored; see .env.example). `mlflow` is not needed for the
+# demo and is intentionally still absent — see docs/ROADMAP.md Phase 12.
 #
 # `oltp` adopts the ALREADY-RUNNING production volume by name — the container
 # name and volume match what scripts (backup cron) and the Week-1 setup use.
 # NEVER `docker compose down -v`: the OLTP volume holds the migrated data.
+#
+# `api`/`frontend`/`proxy` are built by CI (.github/workflows/deploy.yml) and
+# published to a private GHCR; the box pulls tagged images, it never builds
+# them. Bring the stack up/down with `deploy/deploy.sh`, the only sanctioned
+# up-path (see deploy/README.md) — it never runs `down`.
 
 name: janasunani
 
@@ -30,9 +36,85 @@ services:
       timeout: 5s
       retries: 5
 
+  # Real-inference demo API (janasunani-api-live). Image built + pushed by CI
+  # (deploy/api.Dockerfile via .github/workflows/deploy.yml); the box only
+  # ever pulls. Models/data are host bind-mounts, never baked into the image,
+  # so a new IMAGE_TAG deploy doesn't require re-pulling model weights.
+  api:
+    image: ${API_IMAGE:-ghcr.io/data-policy-and-innovation-centre/janasunani-api}:${IMAGE_TAG:?set IMAGE_TAG in deploy/.env}
+    container_name: janasunani-api
+    restart: unless-stopped
+    environment:
+      OLTP_DB_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@oltp:5432/janasunani
+    volumes:
+      - ../models:/app/models:ro
+      - ../data/interim:/app/data/interim:ro
+      - ../data/raw/janasunani-mappings:/app/data/raw/janasunani-mappings:ro
+      - hf-cache:/hf-cache
+    depends_on:
+      oltp:
+        condition: service_healthy
+    healthcheck:
+      # Real weight loading (BART, MuRIL, ViT, Presidio) takes minutes on
+      # first boot, hence the long start_period; matches the mocked API's
+      # health contract (`{"status":"ok","processor":"pipeline"}`).
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; b = urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).read(); exit(0 if b'\"processor\":\"pipeline\"' in b else 1)",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 1500s
+
+  # DPIC-branded Next.js demo frontend. NEXT_PUBLIC_API_URL=/api is baked in
+  # at image build time (frontend/Dockerfile) — relative fetches through the
+  # proxy, no CORS, no baked-in host/IP.
+  frontend:
+    image: ${FRONTEND_IMAGE:-ghcr.io/data-policy-and-innovation-centre/janasunani-frontend}:${IMAGE_TAG:?set IMAGE_TAG in deploy/.env}
+    container_name: janasunani-frontend
+    restart: unless-stopped
+
+  # Single public entry point: TLS via nip.io + Caddy's automatic Let's
+  # Encrypt, HTTP Basic Auth in front of the whole site (production grievance
+  # data must not be openly public — see deploy/proxy/Caddyfile). Not
+  # health-gated on `api` so cert issuance/redirects aren't blocked by the
+  # API's multi-minute warm start.
+  proxy:
+    image: caddy:2-alpine
+    container_name: janasunani-proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+      # Defaults keep `docker compose up` bootable even if deploy/.env hasn't
+      # set real credentials yet — but the default hash is PUBLISHED (this
+      # file, in git) and therefore already-compromised. It authenticates
+      # user "demo" / password "change-me-immediately". Override both in
+      # deploy/.env before pointing anyone at the box; see deploy/proxy/Caddyfile.
+      DEMO_USER: ${DEMO_USER:-demo}
+      DEMO_PASSWORD_HASH: ${DEMO_PASSWORD_HASH:-$$2a$$14$$8e2qziRww0K6CnnHRBsfmOgkmae4Jfl5ujT9s5/sG.DrRpirifMOm}
+    volumes:
+      - ./proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - api
+      - frontend
+
 volumes:
   oltp-data:
     # Pre-existing named volume from the Week-1 bring-up; compose must attach
     # to it, not create its own.
     external: true
     name: janasunani-oltp
+  # HF hub cache (facebook/bart-large-cnn, ~1.6 GB) — not DVC-mirrored, so
+  # this volume avoids re-downloading it on every container recreate.
+  hf-cache:
+  caddy-data:
+  caddy-config:

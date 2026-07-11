@@ -124,17 +124,143 @@ uv run dvc commit && uv run dvc push    # push the Parquet outs to the DVC remot
 
 ## 3 · Run the application stack
 
-The Compose stack **grows service-by-service** as phases land; today it defines
-only `oltp`. Future services (`mlflow` → `api` → `frontend` → `proxy`) get added
-at Phase 12 integration, reaching Postgres over the Compose network.
+The Compose stack **grows service-by-service** as phases land: `oltp` (Week 1)
+then `api` / `frontend` / `proxy` (the automated CI→GHCR→box deploy, §4
+below). `mlflow` is not needed for the demo and stays absent — see
+[docs/ROADMAP.md](ROADMAP.md) Phase 12.
 
 ```bash
 cd ~/janasunani/deploy
-docker compose up -d            # bring up all defined services
+docker compose up -d oltp       # first-time bring-up only — see §2 above
 docker compose ps               # health
 ```
 
-## 4 · Backups (nightly `pg_dump`)
+`api`/`frontend`/`proxy` are **not** brought up with a plain `docker compose
+up -d`: they're pulled-and-deployed images, and `deploy/deploy.sh` is the only
+sanctioned way to bring them up (it health-gates the rollout instead of
+returning as soon as the containers start) — see §4.
+
+## 4 · Automated demo deploy (CI → GHCR → box)
+
+The routine way to ship a new build of `api`/`frontend`: GitHub Actions builds
+both images, pushes them to a **private** GHCR, then SSHes into the box and
+runs `deploy/deploy.sh`. Trigger is `workflow_dispatch` only — **Actions →
+"Deploy demo" → Run workflow** (optionally set `image_tag` to redeploy an
+existing tag instead of rebuilding — a rollback).
+
+### Architecture
+
+```
+Browser --443/80--> proxy (Caddy, only public service)
+                       |-- handle_path /api/* --> api:8000   (prefix stripped)
+                       `-- handle          --> frontend:3000
+api --> oltp:5432 (compose network; existing container/volume, untouched)
+```
+
+- **TLS**: `SITE_ADDRESS` is a [nip.io](https://nip.io) hostname
+  (`52-66-116-80.nip.io` — resolves to the box's own Elastic IP by
+  construction), so Caddy obtains a real Let's Encrypt certificate
+  automatically — no DNS to manage, no self-signed warning. It's a
+  `deploy/.env` var, never hard-coded (`deploy/proxy/Caddyfile`).
+- **Auth**: the whole site sits behind Caddy `basic_auth` (bcrypt hash) —
+  production grievance data (`/history`, `/api/history`,
+  `/api/grievance/{id}`) must not be openly public.
+- **Models/data**: host bind-mounts (`../models`, `../data/interim`,
+  `../data/raw/janasunani-mappings`, all `:ro`) — never baked into the `api`
+  image. A new deploy doesn't re-pull model weights; a model update is a
+  separate `dvc pull` on the box.
+- **GHCR is private**: the box authenticates with a `read:packages`-scoped
+  PAT (§"One-time box setup" below), not a public pull.
+
+### One-time box setup (maintainer)
+
+```bash
+cd ~/janasunani && git fetch && git checkout deploy/cpu-box   # or whatever branch owns this stack
+cd ~/janasunani
+# Scoped pull — do NOT run a bare `dvc pull` (see docs/DEMO.md §1):
+uv run dvc pull models/categorizer.dvc models/page_type_classifier/vit_type_classifier.dvc data/raw/janasunani-mappings.dvc
+ls data/interim/*.parquet   # already on the box from §"Materialize" above; if missing, `uv run dvc pull data/interim`
+
+# GHCR is private — authenticate with a read:packages PAT (GitHub → Settings
+# → Developer settings → Personal access tokens; classic or fine-grained,
+# read:packages only):
+echo "<PAT>" | docker login ghcr.io -u <github-username> --password-stdin
+
+cd ~/janasunani/deploy
+cp .env.example .env && chmod 600 .env
+# fill in: POSTGRES_PASSWORD (URL-safe — no ':' '@' '/' '?'; matches §2),
+#          SITE_ADDRESS=52-66-116-80.nip.io,
+#          DEMO_USER + DEMO_PASSWORD_HASH (see .env.example — the shipped
+#          default is a PUBLISHED, already-compromised placeholder):
+docker run --rm caddy:2-alpine caddy hash-password --plaintext '<a real password>'
+```
+
+Then the maintainer (not CI, not this file's author) provisions CI's AWS
+access and repo secrets/vars — **run each of these yourself; nothing here
+does it for you:**
+
+```bash
+cd deploy/terraform
+terraform plan     # scan for `N to destroy` on the EXISTING resources —
+                    # ci.tf only ADDS an OIDC provider + IAM role; if you see
+                    # any destroy/replace on aws_instance.cpu_box or
+                    # aws_security_group.cpu_box, STOP, do not apply.
+terraform apply
+terraform output ci_deploy_role_arn cpu_box_security_group_id
+```
+
+| Secret / var | Where | Value |
+|---|---|---|
+| `DPIC_GITHUB_SSH_KEY` | secret | already exists (pipeline.yml reuses it) |
+| `BOX_SSH_KEY` | secret | a **new, CI-only** SSH keypair's private half — generate with `ssh-keygen -t ed25519 -f ci-deploy-key -N ''`; put the **public** half in the box's `~/.ssh/authorized_keys` |
+| `BOX_SSH_KNOWN_HOSTS` | secret | `ssh-keyscan 52.66.116.80` output |
+| `BOX_HOST` | repo var | `52.66.116.80` |
+| `CI_DEPLOY_ROLE_ARN` | repo var | `terraform output -raw ci_deploy_role_arn` |
+| `BOX_SG_ID` | repo var | `terraform output -raw cpu_box_security_group_id` |
+
+### Routine flow
+
+**Actions → "Deploy demo" → Run workflow** (leave `image_tag` empty to build
+from the current default branch, or set it to redeploy/roll back to an
+existing SHA). The workflow: builds `api`+`frontend` for `linux/amd64` (the
+box's arch — this can't be validated on an arm64 dev machine, see
+"Known gaps" below), pushes both to GHCR, opens port 22 to the runner's own
+IP on `aws_security_group.cpu_box` (via the OIDC-assumed `ci_deploy` role),
+ships `docker-compose.yml` / `deploy.sh` / `proxy/Caddyfile` to
+`~/janasunani/deploy/` over SCP, runs `deploy/deploy.sh` over SSH (which pulls
+images, brings the stack up, and blocks until `/health` reports
+`"processor":"pipeline"` through the proxy), then **always** revokes the
+port-22 rule, success or failure.
+
+**Rollback**: run the workflow again with `image_tag` set to a prior
+`github.sha` that was previously deployed (GHCR keeps every pushed tag) — or
+by hand on the box: `IMAGE_TAG=<sha> bash deploy/deploy.sh`.
+
+### Hard rules specific to this path
+
+- Port 22 is admin-only (`var.admin_cidr`, §1) **except** during a running
+  deploy job, when CI's own IP is temporarily authorized and then revoked
+  (`if: always()`) — never widen the baseline security group rule itself.
+- `deploy/deploy.sh` never runs `docker compose down` (let alone `-v`) — see
+  §7 below.
+- Never point pytest at the box's Postgres (§7) — this path doesn't change
+  that; CI's own test job runs against a throwaway Postgres, never the box.
+- Disk hygiene: `deploy.sh` runs `docker image prune -f` after a successful
+  deploy; if disk pressure still builds up (many SHAs pushed over time),
+  `docker image prune -af --filter until=720h` clears anything untagged and
+  unused for 30+ days.
+
+### Known gaps — what this repo's automation does NOT verify for you
+
+- **The `linux/amd64` `api` build itself** — it resolves ~8–12 GB of CUDA
+  torch and can only be built for real on an amd64 runner (GitHub Actions),
+  never on an arm64 dev Mac. Review the Dockerfile carefully; the first real
+  signal is the CI build log / GHCR push.
+- **On-box browser E2E** — submit a grievance → real pipeline output renders
+  and persists to `live_grievances` → `/history` shows it → `basic_auth`
+  actually gates access. Do this once after the first automated deploy.
+
+## 5 · Backups (nightly `pg_dump`)
 
 **Policy:** a nightly `pg_dump | aws s3 cp` writes a snapshot to
 `s3://grievance-database-backups-main/janasunani/`. The IAM role already grants
@@ -154,7 +280,7 @@ aws s3 ls s3://grievance-database-backups-main/janasunani/
 ```
 *(TODO: codify this into `user_data.sh` or a systemd timer so it survives a rebuild.)*
 
-## 5 · GPU box (on demand)
+## 6 · GPU box (on demand)
 
 ```bash
 # up: set gpu_box_count = 1 in terraform.tfvars, then
@@ -171,7 +297,7 @@ bash scripts/gpu_smoke.sh       # 2-file DeepSeek smoke: format (pipeline-core e
 terraform apply
 ```
 
-## 6 · Lifecycle & cost control
+## 7 · Lifecycle & cost control
 
 ```bash
 # pause the CPU box (keeps the EIP address and the EBS/volume data):
@@ -180,10 +306,11 @@ aws ec2 start-instances --instance-ids $(terraform output -raw instance_id)
 ```
 The GPU box is create/destroy (toggle `gpu_box_count`), never stop/start.
 
-## 7 · Hard rules (violating these loses production data or leaks PII)
+## 8 · Hard rules (violating these loses production data or leaks PII)
 
 1. **Never `docker compose down -v`** on the CPU box — the external volume
    `janasunani-oltp` holds the migrated 1.37M/6.56M-row production data.
+   `deploy/deploy.sh` (§4) never runs `down` at all.
 2. **Never point pytest at the box's Postgres** — test fixtures DROP TABLES.
    Tests use a throwaway Postgres on `127.0.0.1:5433` only.
 3. **Push GPU-box outputs before teardown** — its root volume dies with it.
@@ -191,6 +318,11 @@ The GPU box is create/destroy (toggle `gpu_box_count`), never stop/start.
    guards enforce). The Postgres password lives only in the box's chmod-600
    `deploy/.env`.
 5. S3 access is via the **instance role** — no static keys on the boxes.
+6. **Port 22 stays admin-only** (`var.admin_cidr`) outside a running deploy
+   job — CI's temporary widening (§4) is scoped to `ci_deploy`'s narrow IAM
+   policy (`ec2:AuthorizeSecurityGroupIngress`/`RevokeSecurityGroupIngress` on
+   `aws_security_group.cpu_box` only) and is always revoked, success or
+   failure.
 
 ## Reference
 
@@ -199,11 +331,17 @@ The GPU box is create/destroy (toggle `gpu_box_count`), never stop/start.
 `instance_type` (t3.xlarge), `root_volume_gb` (150), `gpu_box_count` (0),
 `gpu_instance_type` (g6.xlarge), `gpu_availability_zone` (ap-south-1a),
 `ssh_public_key_path` (`~/.ssh/id_ed25519.pub`), and the three bucket vars.
+[ci.tf](../deploy/terraform/ci.tf) adds `create_github_oidc_provider` (default
+`true` — see its comment on the one-per-account OIDC provider limit).
 
 **Buckets:** documents `janasunani-documents-main` · DVC cache
 `dpic-dvc-cache/janasunani` · DB backups `grievance-database-backups-main`.
 
+**Secrets/vars for the automated deploy** (§4): see the table there —
+`DPIC_GITHUB_SSH_KEY` (existing), `BOX_SSH_KEY` + `BOX_SSH_KNOWN_HOSTS`
+(secrets), `BOX_HOST` + `CI_DEPLOY_ROLE_ARN` + `BOX_SG_ID` (repo vars).
+
 **See also:** [deploy/terraform/README.md](../deploy/terraform/README.md) (IaC
 detail), [deploy/README.md](../deploy/README.md) (compose detail),
 [docs/ROADMAP.md](ROADMAP.md) (sequencing + project snapshot). The hard
-safety rules live in §7 above.
+safety rules live in §8 above.

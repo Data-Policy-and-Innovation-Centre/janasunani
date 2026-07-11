@@ -1,0 +1,171 @@
+name: Deploy demo
+
+# Hand-triggered only — this workflow builds and pushes private GHCR images
+# and then SSHes into the always-on CPU box, so it never runs on a PR/push
+# trigger. Optional `image_tag` re-deploys an existing image without
+# rebuilding (e.g. a rollback to a prior commit SHA).
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Existing image tag to (re)deploy, e.g. a prior commit SHA. Leave empty to build from this ref."
+        required: false
+        type: string
+
+concurrency:
+  group: deploy-demo
+  cancel-in-progress: false
+
+env:
+  API_IMAGE: ghcr.io/data-policy-and-innovation-centre/janasunani-api
+  FRONTEND_IMAGE: ghcr.io/data-policy-and-innovation-centre/janasunani-frontend
+
+jobs:
+  build-api:
+    if: ${{ inputs.image_tag == '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Forwards the existing dpic-org deploy key (already a CI secret, used
+      # by pipeline.yml) so `uv sync --extra demo` inside the Docker build can
+      # resolve the private `dpic` git dependency over BuildKit `ssh: default`.
+      - name: Configure SSH agent for the private dpic dependency
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DPIC_GITHUB_SSH_KEY }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push api image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/api.Dockerfile
+          platforms: linux/amd64
+          push: true
+          ssh: default
+          tags: |
+            ${{ env.API_IMAGE }}:${{ github.sha }}
+            ${{ env.API_IMAGE }}:demo
+          # Registry cache, not GHA cache: the `demo` extra resolves CUDA
+          # torch (~8-12 GB image) — well past the GHA cache size budget.
+          cache-from: type=registry,ref=${{ env.API_IMAGE }}:buildcache
+          cache-to: type=registry,ref=${{ env.API_IMAGE }}:buildcache,mode=max
+
+  build-frontend:
+    if: ${{ inputs.image_tag == '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          file: frontend/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+            ${{ env.FRONTEND_IMAGE }}:demo
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: [build-api, build-frontend]
+    # Runs even when the build jobs were skipped (image_tag input set) —
+    # only bail out on an actual build failure or a cancelled run.
+    if: ${{ !failure() && !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Resolve image tag
+        id: tag
+        run: |
+          tag="${{ inputs.image_tag }}"
+          echo "value=${tag:-${{ github.sha }}}" >> "$GITHUB_OUTPUT"
+
+      # Federated (OIDC) credentials — no long-lived AWS access key stored as
+      # a GitHub secret. Role/trust policy: deploy/terraform/ci.tf.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.CI_DEPLOY_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Open port 22 to this runner
+        run: |
+          RUNNER_IP="$(curl -4 -s https://checkip.amazonaws.com)"
+          echo "runner_cidr=${RUNNER_IP}/32" >> "$GITHUB_ENV"
+          aws ec2 authorize-security-group-ingress \
+            --group-id "${{ vars.BOX_SG_ID }}" \
+            --protocol tcp --port 22 --cidr "${RUNNER_IP}/32"
+
+      - name: Configure SSH for the box
+        run: |
+          mkdir -p -m 0700 ~/.ssh
+          printf '%s\n' "${{ secrets.BOX_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "${{ secrets.BOX_SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Ship deploy artifacts to the box
+        run: |
+          ssh ubuntu@${{ vars.BOX_HOST }} "mkdir -p ~/janasunani/deploy/proxy"
+          scp deploy/docker-compose.yml ubuntu@${{ vars.BOX_HOST }}:~/janasunani/deploy/docker-compose.yml
+          scp deploy/deploy.sh ubuntu@${{ vars.BOX_HOST }}:~/janasunani/deploy/deploy.sh
+          scp deploy/proxy/Caddyfile ubuntu@${{ vars.BOX_HOST }}:~/janasunani/deploy/proxy/Caddyfile
+
+      - name: Deploy
+        run: |
+          ssh ubuntu@${{ vars.BOX_HOST }} "IMAGE_TAG=${{ steps.tag.outputs.value }} bash janasunani/deploy/deploy.sh"
+
+      # Always runs, even if the deploy step failed — port 22 must not stay
+      # open to the runner's transient IP beyond this job.
+      - name: Revoke port 22 from this runner
+        if: ${{ always() && env.runner_cidr != '' }}
+        run: |
+          aws ec2 revoke-security-group-ingress \
+            --group-id "${{ vars.BOX_SG_ID }}" \
+            --protocol tcp --port 22 --cidr "${{ env.runner_cidr }}"

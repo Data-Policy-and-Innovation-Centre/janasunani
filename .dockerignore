@@ -1,0 +1,21 @@
+# Build context for deploy/api.Dockerfile (context = repo root). Keeps the
+# multi-GB DVC-tracked data/models and dev-only cruft out of the image build
+# context — models/data are bind-mounted at runtime (deploy/docker-compose.yml),
+# never baked in.
+.git
+.dvc/cache
+.venv
+data
+models
+frontend
+node_modules
+mlruns
+outputs
+logs
+notebooks
+tests
+deploy/terraform
+**/__pycache__
+*.sqlite
+.env
+deploy/.env
