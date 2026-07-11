@@ -14,6 +14,10 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
+To bring up the **live API and this frontend together**, run `make up` from the
+repo root (throwaway Postgres + `janasunani-api-live` + `npm run dev`, wired to
+each other; one `Ctrl-C` stops all, `make down` cleans up).
+
 ## Pointing at an API
 
 Set `NEXT_PUBLIC_API_URL` in `.env.local` (see `.env.local.example`). It is

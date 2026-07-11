@@ -170,6 +170,7 @@ The GPU box is a `gpu_box_count = 0/1` toggle (~$1/hr while up).
   [ingestion](janasunani/ingestion/README.md) ·
   [olap](janasunani/olap/README.md) ·
   [pipeline](janasunani/pipeline/README.md) ·
+  [inference](janasunani/inference/README.md) ·
   [serving](janasunani/serving/README.md) ·
   [deploy](deploy/README.md) ·
   [terraform](deploy/terraform/README.md) ·

@@ -11,6 +11,14 @@ For the full **cloud** deployment (CPU box + compose + backups) see
 [DEPLOY.md](DEPLOY.md). This document is the **integration bring-up** — proven
 locally first, then repeated on the box.
 
+> **Fast path — `make`.** The `Makefile` wraps every step below:
+> `make models` (scoped DVC pull) · `make preflight` · `make up` (throwaway
+> Postgres + API + frontend, one `Ctrl-C` stops all) · `make down` (tear it
+> down). `make api`/`make up` provision and migrate the local Postgres for you
+> — if you override `OLTP_DB_URL` to an off-box database they skip that step and
+> never migrate it. The numbered sections below are the underlying manual
+> commands, for when you want to run a step by hand or on the CPU box.
+
 ---
 
 ## 1. Prerequisites

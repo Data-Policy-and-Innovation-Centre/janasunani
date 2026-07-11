@@ -251,7 +251,9 @@ start GPU box → health check → demo → stop GPU box; latency pass; stakehol
     processor wiring are built. The module-level API remains mock by design.
   - **Phase 11** 🔄 frontend — first cut on `feat/frontend-demo` (DPIC-branded, against the mock);
     live-wired to `janasunani-api-live` on `feat/demo-frontend-live`.
-  - **Phase 12** ⬜ demo integration & deployment.
+  - **Phase 12** 🔄 demo integration & deployment — local runbook (`docs/DEMO.md`), `Makefile`
+    live-demo targets (`preflight`/`db`/`api`/`frontend`/`up`/`down`), and preflight in place;
+    cloud compose deployment still to come.
   - Docs: `chore/handoff-doc-links` (ongoing). *(Dead: `backend-plan-unsplit` — an ancestor of main, no diff.)*
 
 ## Package structure
