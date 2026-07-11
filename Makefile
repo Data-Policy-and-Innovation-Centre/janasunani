@@ -9,7 +9,10 @@ EXHIBITS_REMOTE ?= $(BOX_REMOTE):'$(BOX_PROJECT_ROOT)/Analysis/Exhibits/'
 # Live-demo stack (see docs/DEMO.md). Throwaway Postgres only — never the prod
 # volume, never the :5433 pytest-fixture DB.
 PG_CONTAINER   ?= janasunani-demo-oltp
-PG_PORT        ?= 5432
+# Host port for the throwaway demo Postgres. Deliberately NOT 5432 (the CPU-box
+# production oltp binds 127.0.0.1:5432 in deploy/docker-compose.yml) nor 5433
+# (the pytest-fixture DB, which DROPS TABLES) — keep the demo clear of both.
+PG_PORT        ?= 5544
 API_PORT       ?= 8000
 API_HOST       ?= 127.0.0.1
 FRONTEND_PORT  ?= 3000
@@ -23,9 +26,11 @@ DEMO_OLTP_URL   = postgresql+asyncpg://postgres:demo@127.0.0.1:$(PG_PORT)/janasu
 #   to force a database for one run regardless of .env.
 OLTP_DB_URL    ?= $(DEMO_OLTP_URL)
 # Base URL the browser calls -- baked into the frontend bundle at build time.
-# On a remote/box run this MUST be an address the viewer's browser can reach
-# (not 127.0.0.1); set API_HOST=0.0.0.0 too so the API binds all interfaces.
-# See docs/DEPLOY.md. Example: make up API_URL=http://<box-ip>:8000 API_HOST=0.0.0.0
+# The `make` fast path is LOCAL: a box/remote deployment (open ports, Node,
+# compose) is docs/DEPLOY.md's job, not `make up`. To view a local/box-run demo
+# from another machine, SSH-tunnel the ports and keep this default:
+#   ssh -L $(FRONTEND_PORT):127.0.0.1:$(FRONTEND_PORT) -L $(API_PORT):127.0.0.1:$(API_PORT) <box>
+# API_URL/API_HOST remain overridable for advanced setups.
 API_URL        ?= http://127.0.0.1:$(API_PORT)
 -include .env
 SHELL          := /bin/bash
@@ -214,10 +219,17 @@ up: preflight db
 	  PORT="$(FRONTEND_PORT)" NEXT_PUBLIC_API_URL="$(API_URL)" npm run dev
 
 # Tear down by PORT (overridable), not a global process-name match, so this
-# never kills an unrelated live API/frontend on the same machine.
+# never kills an unrelated live API/frontend on the same machine. Needs `lsof`
+# to find the port owners; if it is absent we say so rather than silently
+# leaving the API/frontend running.
 down:
-	-@PIDS=$$(lsof -ti tcp:$(API_PORT) 2>/dev/null); [ -n "$$PIDS" ] && kill $$PIDS 2>/dev/null || true
-	-@PIDS=$$(lsof -ti tcp:$(FRONTEND_PORT) 2>/dev/null); [ -n "$$PIDS" ] && kill $$PIDS 2>/dev/null || true
+	@if command -v lsof >/dev/null 2>&1; then \
+	  for p in $(API_PORT) $(FRONTEND_PORT); do \
+	    PIDS=$$(lsof -ti tcp:$$p 2>/dev/null); [ -n "$$PIDS" ] && kill $$PIDS 2>/dev/null || true; \
+	  done; \
+	else \
+	  echo "lsof not found — cannot stop API/frontend by port; stop them manually (e.g. 'docker compose down' on the box)."; \
+	fi
 	-docker rm -f $(PG_CONTAINER)
 	-docker volume rm $(PG_CONTAINER)
 	@echo "Demo stack torn down."
