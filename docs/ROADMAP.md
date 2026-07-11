@@ -455,13 +455,25 @@ deploy/                           # docker-compose (api, frontend, mlflow, oltp-
   + concentration as real confidence** (not a stubbed number), with a **fallback ladder**
   (cat+subcat+district → cat+subcat → cat → generic) that naturally covers the ~27/62 master categories with
   little/no history. This **replaces the name-match hack** and becomes the rules layer.
-- `routing/model.py`: learned router trained on the OLAP history (features → handling office); MLflow-
-  registered — layered **above** the empirical crosswalk. `routing/router.py`: combine + confidence/fallback.
+- **Learned router — reframed to a purely learned scorer (TABLED post-demo; direction set 2026-07-10).**
+  Supersede the hybrid rules+learned split with a single **learned scorer** that ranks
+  `(category[/subcategory/district]) → (dept, office)` candidate routes on more than historical incidence:
+  1. **Incidence** of the routing pair in the OLAP history — the empirical crosswalk above (argmax +
+     support/concentration) is the incidence-only baseline.
+  2. **Resolution / disposal time** for that pair (how fast the office actually closes such grievances).
+  3. **Citizen benefit** of the outcome.
+  So the router optimizes for where grievances get *resolved well*, not merely where they were historically
+  *sent* (plain argmax replicates past routing, misroutes and all). ⚠️ **Known omitted-variable-bias risk:**
+  disposal time and benefit are confounded — harder cases run longer regardless of office, and selection
+  into offices isn't random — so the scored objective needs causal care (controls/instruments) before it
+  drives real routing. Left as an open modeling problem for now. `routing/model.py` / `routing/router.py`.
 - **Live wiring complete for the deterministic layer** — `janasunani-api-live`
   routes through `DEFAULT_ROUTER`; only the default mock command returns
   `method:"mock"`.
-- **Sequencing:** the empirical crosswalk ships **first** (demo-sufficient, real data-derived confidence);
-  the learned router lands only after the E2E demo path works, so the demo never blocks on training.
+- **Sequencing (revised 2026-07-10):** the demo ships on **`method:"fallback"`** — both the empirical
+  crosswalk AND the learned scorer are **deferred until after the demo**, so the E2E demo path never blocks
+  on routing modeling. (Earlier plan shipped the empirical crosswalk first; deprioritized to unblock the
+  demo.)
 - **Tests**: crosswalk lookups + fallback ladder; learned-router top-k on held-out; combiner fallback.
 
 ## Phase 10 — Serving API + live wiring  ✅ *(default mock + opt-in live)*

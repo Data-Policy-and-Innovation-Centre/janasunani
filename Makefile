@@ -6,6 +6,13 @@ RAW_LOCAL      ?= data/raw/
 EXHIBITS_LOCAL ?= outputs/
 INCOMING_REMOTE ?= $(BOX_REMOTE):'$(BOX_PROJECT_ROOT)/Data/Raw/'
 EXHIBITS_REMOTE ?= $(BOX_REMOTE):'$(BOX_PROJECT_ROOT)/Analysis/Exhibits/'
+# Live-demo stack (see docs/DEMO.md). Throwaway Postgres only — never the prod
+# volume, never the :5433 pytest-fixture DB.
+PG_CONTAINER   ?= janasunani-demo-oltp
+PG_PORT        ?= 5432
+API_PORT       ?= 8000
+OLTP_URL       ?= postgresql+asyncpg://postgres:demo@127.0.0.1:$(PG_PORT)/janasunani
+API_URL        ?= http://127.0.0.1:$(API_PORT)
 -include .env
 SHELL          := /bin/bash
 .SHELLFLAGS    := -euo pipefail -c
@@ -24,6 +31,14 @@ help:
 	@echo "  make deliver         Copy exhibits to Box without deleting remote files"
 	@echo "  make box-paths       Show resolved local and Box paths"
 	@echo "  make status          Show what has changed"
+	@echo ""
+	@echo "  Live demo (real-inference API — see docs/DEMO.md):"
+	@echo "  make models          DVC-pull ONLY the demo model artifacts"
+	@echo "  make preflight       Fast readiness check (models + OCR binaries)"
+	@echo "  make db              Start throwaway Postgres + run migrations"
+	@echo "  make api             Run the live real-inference API"
+	@echo "  make frontend        Run the Next.js UI against the live API"
+	@echo "  make down            Tear down the demo API + throwaway DB"
 	@echo ""
 
 setup:
@@ -106,3 +121,41 @@ status:
 _check_git_clean:
 	@git diff --quiet && git diff --cached --quiet || \
 	  (echo "Uncommitted changes. Commit or stash first." && exit 1)
+
+# --- Live demo (real-inference API). `models` and `frontend` share names with
+# repo directories, so this whole group must be .PHONY or make treats them as
+# up-to-date files and skips the recipe.
+.PHONY: models preflight db api frontend down
+
+models:
+	@echo "Pulling ONLY the demo model artifacts (not the PII-bearing data)..."
+	uv run dvc pull models/categorizer.dvc models/page_type_classifier/vit_type_classifier.dvc
+
+preflight:
+	uv run --extra demo janasunani-demo-preflight
+
+db:
+	@echo "Starting throwaway Postgres '$(PG_CONTAINER)' on 127.0.0.1:$(PG_PORT)..."
+	docker run -d --name $(PG_CONTAINER) -e POSTGRES_PASSWORD=demo \
+	  -e POSTGRES_DB=janasunani -p 127.0.0.1:$(PG_PORT):5432 \
+	  -v $(PG_CONTAINER):/var/lib/postgresql/data postgres:17
+	@echo "Waiting for Postgres to accept connections..."
+	@for i in $$(seq 1 30); do \
+	  docker exec $(PG_CONTAINER) pg_isready -U postgres -d janasunani >/dev/null 2>&1 && break; \
+	  sleep 1; \
+	done
+	OLTP_DB_URL="$(OLTP_URL)" uv run alembic upgrade head
+	@echo "Demo DB ready."
+
+api: preflight
+	OLTP_DB_URL="$(OLTP_URL)" JANASUNANI_API_PORT="$(API_PORT)" \
+	  uv run --extra demo janasunani-api-live
+
+frontend:
+	cd frontend && npm install && NEXT_PUBLIC_API_URL="$(API_URL)" npm run dev
+
+down:
+	-pkill -f janasunani-api-live
+	-docker rm -f $(PG_CONTAINER)
+	-docker volume rm $(PG_CONTAINER)
+	@echo "Demo stack torn down."
