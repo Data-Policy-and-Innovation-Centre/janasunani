@@ -162,14 +162,18 @@ api --> oltp:5432 (compose network; existing container/volume, untouched)
   construction), so Caddy obtains a real Let's Encrypt certificate
   automatically — no DNS to manage, no self-signed warning. It's a
   `deploy/.env` var, never hard-coded (`deploy/proxy/Caddyfile`).
-- **Auth**: the whole site sits behind Caddy `basic_auth` (bcrypt hash,
-  no default — compose refuses to start `proxy` without one set in
-  `deploy/.env`) — production grievance data (`/history`, `/api/history`,
+- **Auth**: the whole site sits behind Caddy `basic_auth` (bcrypt hash) —
+  production grievance data (`/history`, `/api/history`,
   `/api/grievance/{id}`) must not be openly public. One exemption:
   `/api/health` bypasses `basic_auth` (leaks nothing but
   `{"status":"ok","processor":"pipeline"}`) so `deploy/deploy.sh`'s own
   end-to-end check — and any external uptime monitor — can probe it
-  unauthenticated.
+  unauthenticated. The credentials live in `deploy/proxy.env` (a *separate*
+  file from `deploy/.env` — Compose interpolates `$` in `deploy/.env`
+  values, which would mangle a bcrypt hash like `$2a$14$...`; `env_file`
+  injects `proxy.env`'s contents verbatim, no interpolation, no escaping
+  needed). `deploy/deploy.sh` fails closed if the hash isn't set to a
+  real-looking value — compose itself has no default.
 - **Models/data**: host bind-mounts (`../models`, `../data/interim`,
   `../data/raw/janasunani-mappings`, all `:ro`) — never baked into the `api`
   image. A new deploy doesn't re-pull model weights; a model update is a
@@ -195,8 +199,12 @@ cd ~/janasunani/deploy
 cp .env.example .env && chmod 600 .env
 # fill in: POSTGRES_PASSWORD (URL-safe — no ':' '@' '/' '?'; matches §2),
 #          SITE_ADDRESS=52-66-116-80.nip.io,
-#          DEMO_USER (defaults to "demo" if left unset) + DEMO_PASSWORD_HASH
-#          (NO default — compose refuses to start the proxy without it):
+#          IMAGE_TAG can stay blank (deploy.sh writes it on every deploy)
+
+cp proxy.env.example proxy.env && chmod 600 proxy.env
+# fill in DEMO_PASSWORD_HASH in proxy.env (NOT deploy/.env — Compose would
+# mangle the '$' in a bcrypt hash pasted into deploy/.env; deploy.sh refuses
+# to bring the full stack up without a real-looking hash here):
 docker run --rm caddy:2-alpine caddy hash-password --plaintext '<a real password>'
 ```
 

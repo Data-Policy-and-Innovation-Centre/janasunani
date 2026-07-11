@@ -13,6 +13,7 @@ is reproducible and `deploy.sh` never `docker compose down -v`s the
 production OLTP volume.
 """
 
+import re
 import subprocess
 
 import yaml
@@ -24,6 +25,7 @@ COMPOSE_PATH = DEPLOY_DIR / "docker-compose.yml"
 CADDYFILE_PATH = DEPLOY_DIR / "proxy" / "Caddyfile"
 DEPLOY_SH_PATH = DEPLOY_DIR / "deploy.sh"
 ENTRYPOINT_PATH = DEPLOY_DIR / "api-entrypoint.sh"
+DEPLOY_WORKFLOW_PATH = ROOT_DIR / ".github" / "workflows" / "deploy.yml"
 
 
 def _compose() -> dict:
@@ -95,6 +97,76 @@ def test_app_images_are_pinned_to_image_tag_not_latest():
         assert ":latest" not in image
 
 
+def test_compose_does_not_use_required_var_syntax_for_app_vars():
+    """compose interpolates the WHOLE file before selecting services, so a
+    `:?` (required-variable) on IMAGE_TAG or DEMO_PASSWORD_HASH would abort
+    even an oltp-only `docker compose up -d oltp` (Codex PR #29 finding) --
+    the documented first-time bring-up that only ever sets
+    POSTGRES_PASSWORD. deploy.sh enforces both being set to a real value
+    instead; compose itself must stay permissive so that command still
+    works. (oltp's own POSTGRES_PASSWORD is exempt -- it's exactly the var
+    an oltp-only command does set, and requiring it there is the point.)"""
+    compose = _compose()
+
+    api_image = compose["services"]["api"]["image"]
+    frontend_image = compose["services"]["frontend"]["image"]
+    assert ":?" not in api_image, f"api image must not use ':?': {api_image!r}"
+    assert ":?" not in frontend_image, (
+        f"frontend image must not use ':?': {frontend_image!r}"
+    )
+
+    proxy_env = compose["services"]["proxy"].get("environment") or {}
+    for key, value in proxy_env.items():
+        assert ":?" not in str(value), (
+            f"proxy environment {key} must not use ':?': {value!r}"
+        )
+
+
+def test_frontend_has_a_healthcheck():
+    """The health-gate must catch a dead/mispackaged frontend too, not just
+    a dead api (Codex PR #29 finding) -- deploy.sh waits on this."""
+    compose = _compose()
+
+    frontend = compose["services"]["frontend"]
+    assert "healthcheck" in frontend
+    assert frontend["healthcheck"]["test"]
+
+
+def test_proxy_credentials_come_from_a_dedicated_env_file_not_interpolated():
+    """Compose interpolates `$` in `environment:`/the main `.env` file, which
+    would mangle a bcrypt hash like `$2a$14$...` (Codex PR #29 finding).
+    DEMO_USER/DEMO_PASSWORD_HASH must come from a separate `env_file` (no
+    compose interpolation applied to its contents), not `environment:` and
+    not the main deploy/.env. Live-verified: a real `$2a$14$...` hash placed
+    in the env_file reaches Caddy byte-for-byte intact and authenticates the
+    matching plaintext password."""
+    compose = _compose()
+
+    proxy = compose["services"]["proxy"]
+    proxy_env = proxy.get("environment") or {}
+    assert "DEMO_PASSWORD_HASH" not in proxy_env, (
+        "DEMO_PASSWORD_HASH must not be a compose `environment:` entry -- "
+        "compose interpolates '$' in these values and would mangle a bcrypt "
+        "hash; use env_file instead"
+    )
+    assert "DEMO_USER" not in proxy_env
+
+    env_files = proxy.get("env_file")
+    assert env_files, "proxy service must load DEMO_USER/DEMO_PASSWORD_HASH via env_file"
+    assert any("proxy.env" in f for f in env_files)
+
+    # The main deploy/.env.example must not carry the hash either.
+    env_example = (DEPLOY_DIR / ".env.example").read_text()
+    assert "DEMO_PASSWORD_HASH=" not in env_example
+
+    # deploy/proxy.env (the real, filled-in file) must never be committed;
+    # only the .example template is tracked.
+    assert (DEPLOY_DIR / "proxy.env.example").exists()
+    with open(ROOT_DIR / ".gitignore") as f:
+        gitignore = f.read()
+    assert "deploy/proxy.env" in gitignore
+
+
 def test_caddyfile_routes_api_and_frontend():
     text = CADDYFILE_PATH.read_text()
 
@@ -126,27 +198,32 @@ def test_proxy_password_hash_has_no_published_default():
     """A default bcrypt hash baked into a file that's in git is a published,
     already-compromised credential — anyone who can read this repo could
     authenticate to production /history and /api (Codex PR #29 finding).
-    DEMO_PASSWORD_HASH must fail closed (compose's `:?` required-variable
-    syntax); DEMO_USER may default since the username isn't the secret."""
-    compose = _compose()
+    No compose file or example env file may ship a real-looking (full-shape)
+    bcrypt hash; deploy/proxy.env.example must ship it empty, and deploy.sh
+    (not compose) fails closed on it being unset. Matches on the full bcrypt
+    shape ($2a$<cost>$<53 more chars>), not just the "$2a$" prefix, so an
+    explanatory code comment illustrating the shape (e.g. "$2a$14$...") isn't
+    a false positive."""
+    bcrypt_shape = re.compile(r"\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}")
 
-    hash_value = compose["services"]["proxy"]["environment"]["DEMO_PASSWORD_HASH"]
-    assert ":?" in hash_value, (
-        f"DEMO_PASSWORD_HASH must be a required (':?') compose variable, not a "
-        f"defaulted one: {hash_value!r}"
-    )
-    assert "$2a$" not in hash_value, (
-        f"DEMO_PASSWORD_HASH must not embed a real/published bcrypt hash as a "
-        f"fallback default: {hash_value!r}"
+    compose_text = COMPOSE_PATH.read_text()
+    assert not bcrypt_shape.search(compose_text), (
+        "docker-compose.yml must not embed a real/published bcrypt hash "
+        "anywhere"
     )
 
-    # The env.example placeholder must stay empty too — never a real hash.
-    env_example = (DEPLOY_DIR / ".env.example").read_text()
-    for line in env_example.splitlines():
+    proxy_env_example = (DEPLOY_DIR / "proxy.env.example").read_text()
+    assert not bcrypt_shape.search(proxy_env_example)
+    for line in proxy_env_example.splitlines():
         if line.startswith("DEMO_PASSWORD_HASH="):
             assert line == "DEMO_PASSWORD_HASH=", (
-                f"deploy/.env.example must not ship a real hash: {line!r}"
+                f"deploy/proxy.env.example must not ship a real hash: {line!r}"
             )
+
+    # The main deploy/.env.example must not carry it either (see the
+    # env_file test above for *why* it moved).
+    env_example = (DEPLOY_DIR / ".env.example").read_text()
+    assert not bcrypt_shape.search(env_example)
 
 
 def test_entrypoint_and_deploy_script_are_valid_shell():
@@ -168,3 +245,66 @@ def test_deploy_script_never_tears_down_the_volume():
         assert not ("down" in line and "-v" in line), (
             f"deploy.sh must never `docker compose down -v`: {line!r}"
         )
+
+
+def test_deploy_script_reloads_caddy_after_shipping_a_new_caddyfile():
+    """The Caddyfile is bind-mounted, so `docker compose up -d` alone leaves
+    an already-running proxy container's config untouched -- a shipped auth/
+    routing/TLS change would be silently ignored while the deploy still
+    reports success (Codex PR #29 finding). deploy.sh must issue a graceful
+    reload, guarded so a brand-new (not-yet-running) proxy container --
+    which already loads the current file at startup -- doesn't error.
+    Live-verified against a real caddy:2-alpine container: `caddy reload
+    --config /etc/caddy/Caddyfile --adapter caddyfile` applies a changed
+    file with no dropped connections, and is a safe no-op when unchanged."""
+    text = DEPLOY_SH_PATH.read_text()
+
+    assert "caddy reload" in text
+    assert "--config /etc/caddy/Caddyfile" in text
+    assert "--adapter caddyfile" in text
+    # Guarded, not unconditional -- must reference whether the proxy
+    # container was already running before this invocation of `up -d`.
+    assert re.search(r"proxy_was_running", text)
+
+
+def test_deploy_script_waits_on_both_api_and_frontend_health():
+    """A dead/mispackaged frontend must fail the deploy, not just a dead api
+    (Codex PR #29 finding)."""
+    text = DEPLOY_SH_PATH.read_text()
+
+    assert "janasunani-api" in text
+    assert "janasunani-frontend" in text
+
+
+def test_deploy_script_fails_closed_on_the_demo_password_hash():
+    """deploy.sh (not compose -- see the ':?' test above) is where "no real
+    password hash configured" must stop a full-stack deploy instead of
+    silently exposing production /history and /api behind a broken or
+    empty auth (Codex PR #29 finding)."""
+    text = DEPLOY_SH_PATH.read_text()
+
+    assert "proxy.env" in text
+    assert "DEMO_PASSWORD_HASH" in text
+    # Must actually validate the value looks like a bcrypt hash (prefix
+    # $2a$/$2b$/$2y$), not just check that the file/variable exists.
+    assert "2[aby]" in text, (
+        "deploy.sh must validate DEMO_PASSWORD_HASH looks like a real "
+        f"bcrypt hash, not just that it's non-empty: no bcrypt-prefix "
+        f"check found in {DEPLOY_SH_PATH}"
+    )
+    assert "exit 1" in text
+
+
+def test_deploy_workflow_rejects_short_shas():
+    """build-api/build-frontend only ever publish the FULL github.sha (40
+    hex chars) plus the `demo` moving tag -- never a short SHA. A regex that
+    accepts 7-39 char short SHAs lets a rollback request pass validation and
+    then fail `docker compose pull` with a confusing image-not-found error
+    (Codex PR #29 finding)."""
+    text = DEPLOY_WORKFLOW_PATH.read_text()
+
+    assert "{40}" in text, (
+        "deploy.yml's image_tag validation must require exactly 40 hex "
+        "chars (the full commit SHA), not a variable-length short SHA"
+    )
+    assert "{7,40}" not in text and "{7," not in text

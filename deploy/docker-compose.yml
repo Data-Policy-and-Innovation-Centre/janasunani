@@ -13,6 +13,14 @@
 # published to a private GHCR; the box pulls tagged images, it never builds
 # them. Bring the stack up/down with `deploy/deploy.sh`, the only sanctioned
 # up-path (see deploy/README.md) — it never runs `down`.
+#
+# IMAGE_TAG/DEMO_PASSWORD_HASH deliberately do NOT use compose's `:?`
+# required-variable syntax here: compose interpolates the WHOLE file before
+# selecting services, so a `:?` on api/frontend/proxy vars would abort even
+# an oltp-only `docker compose up -d oltp` (the documented first-time
+# bring-up, docs/DEPLOY.md §2) that only ever sets POSTGRES_PASSWORD.
+# deploy/deploy.sh enforces both being set (to a real value, not a
+# placeholder) before it brings up the full stack instead.
 
 name: janasunani
 
@@ -41,7 +49,7 @@ services:
   # ever pulls. Models/data are host bind-mounts, never baked into the image,
   # so a new IMAGE_TAG deploy doesn't require re-pulling model weights.
   api:
-    image: ${API_IMAGE:-ghcr.io/data-policy-and-innovation-centre/janasunani-api}:${IMAGE_TAG:?set IMAGE_TAG in deploy/.env}
+    image: ${API_IMAGE:-ghcr.io/data-policy-and-innovation-centre/janasunani-api}:${IMAGE_TAG}
     container_name: janasunani-api
     restart: unless-stopped
     environment:
@@ -74,15 +82,25 @@ services:
   # at image build time (frontend/Dockerfile) — relative fetches through the
   # proxy, no CORS, no baked-in host/IP.
   frontend:
-    image: ${FRONTEND_IMAGE:-ghcr.io/data-policy-and-innovation-centre/janasunani-frontend}:${IMAGE_TAG:?set IMAGE_TAG in deploy/.env}
+    image: ${FRONTEND_IMAGE:-ghcr.io/data-policy-and-innovation-centre/janasunani-frontend}:${IMAGE_TAG}
     container_name: janasunani-frontend
     restart: unless-stopped
+    healthcheck:
+      # The health-gate must catch a dead/mispackaged frontend too, not just
+      # a dead api. Hits the app directly inside the container (not through
+      # the proxy, which sits behind basic_auth) — Next standalone serves on
+      # :3000 with no auth of its own. busybox wget ships in node:22-alpine.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   # Single public entry point: TLS via nip.io + Caddy's automatic Let's
   # Encrypt, HTTP Basic Auth in front of the whole site (production grievance
   # data must not be openly public — see deploy/proxy/Caddyfile). Not
-  # health-gated on `api` so cert issuance/redirects aren't blocked by the
-  # API's multi-minute warm start.
+  # health-gated on `api`/`frontend` so cert issuance/redirects aren't
+  # blocked by the API's multi-minute warm start.
   proxy:
     image: caddy:2-alpine
     container_name: janasunani-proxy
@@ -92,14 +110,17 @@ services:
       - "443:443"
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:-:80}
-      # Fail closed: DEMO_USER may default (the username isn't the secret),
-      # but there is NO default password hash — compose refuses to start the
-      # proxy without one explicitly set in deploy/.env. A published default
-      # here would mean anyone who can read this repo could authenticate to
-      # production /history and /api. Generate a hash with:
-      #   docker run --rm caddy:2-alpine caddy hash-password --plaintext '<password>'
-      DEMO_USER: ${DEMO_USER:-demo}
-      DEMO_PASSWORD_HASH: ${DEMO_PASSWORD_HASH:?set DEMO_PASSWORD_HASH in deploy/.env -- generate with 'docker run --rm caddy:2-alpine caddy hash-password --plaintext <pw>'}
+    # DEMO_USER/DEMO_PASSWORD_HASH live in a SEPARATE env file, not here and
+    # not deploy/.env: compose interpolates `$` in `environment:`/`.env`
+    # values, so a bcrypt hash like `$2a$14$...` pasted into deploy/.env
+    # would get mangled ($2a/$14 parsed as variable references) unless every
+    # `$` were doubled. `env_file` injects its contents into the container
+    # verbatim, with NO compose interpolation applied — paste a real hash
+    # into deploy/proxy.env as-is. See deploy/proxy.env.example.
+    # deploy/deploy.sh enforces (fail closed) that the hash is actually set
+    # before bringing this service up; compose itself has no default here.
+    env_file:
+      - ./proxy.env
     volumes:
       - ./proxy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

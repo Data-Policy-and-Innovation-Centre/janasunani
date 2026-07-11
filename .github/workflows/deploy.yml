@@ -131,16 +131,20 @@ jobs:
       # `inputs.image_tag` is attacker-influenceable (anyone who can dispatch
       # this workflow chooses it) and ends up in a bash string run over SSH
       # on the box below — pass it through `env:` rather than inlining
-      # `${{ }}` into the script, and reject anything that isn't a plausible
-      # git SHA or the `demo` moving tag before it's used anywhere.
+      # `${{ }}` into the script, and reject anything that isn't a tag the
+      # build jobs could actually have published before it's used anywhere.
+      # build-api/build-frontend only ever push the FULL `github.sha` (40 hex
+      # chars) and the `demo` moving tag — never a short SHA — so a short SHA
+      # here would pass validation but then fail `docker compose pull` with a
+      # confusing "manifest not found"; the regex is deliberately exact.
       - name: Resolve and validate image tag
         id: tag
         env:
           INPUT_TAG: ${{ inputs.image_tag }}
         run: |
           tag="${INPUT_TAG:-${{ github.sha }}}"
-          if [[ ! "$tag" =~ ^[a-fA-F0-9]{7,40}$ && "$tag" != demo ]]; then
-            echo "invalid image_tag: $tag" >&2
+          if [[ ! "$tag" =~ ^[a-fA-F0-9]{40}$ && "$tag" != demo ]]; then
+            echo "invalid image_tag: $tag (must be a full 40-char commit SHA or 'demo')" >&2
             exit 1
           fi
           echo "value=$tag" >> "$GITHUB_OUTPUT"

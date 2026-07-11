@@ -30,9 +30,13 @@ Four services today: `oltp` (Postgres, since Week 1) plus `api` / `frontend` /
 `proxy`, which landed with the automated CI→GHCR→box deploy. `mlflow` is not
 needed for the demo and is intentionally still absent (see
 [docs/ROADMAP.md](../docs/ROADMAP.md) Phase 12). Config from `deploy/.env`
-(gitignored — holds `POSTGRES_PASSWORD`, `IMAGE_TAG`, `SITE_ADDRESS`,
-`DEMO_USER`/`DEMO_PASSWORD_HASH`; the box's copy is chmod 600 — see
-[.env.example](.env.example)).
+(gitignored — holds `POSTGRES_PASSWORD`, `IMAGE_TAG`, `SITE_ADDRESS`; the
+box's copy is chmod 600 — see [.env.example](.env.example)) plus a
+*separate* `deploy/proxy.env` (gitignored — holds `DEMO_USER`/
+`DEMO_PASSWORD_HASH`; see [proxy.env.example](proxy.env.example)). The two
+files are split on purpose: Compose interpolates `$` in `deploy/.env`
+values, which would mangle a bcrypt hash; `env_file` injects `proxy.env`
+verbatim with no interpolation.
 
 The `oltp` service (postgres:17, container `janasunani-oltp`) **adopts the
 already-running production volume by name** (`janasunani-oltp`, declared
@@ -48,11 +52,16 @@ TLS via nip.io + automatic Let's Encrypt and gating the whole site behind
 HTTP Basic Auth (`deploy/proxy/Caddyfile`) — production grievance data must
 not be openly public.
 
-**`deploy/deploy.sh` is the only sanctioned up-path.** It pulls the tagged
-images, brings the stack up, and blocks until `api` reports healthy before
-exiting 0 — run it by hand (`IMAGE_TAG=<sha> bash deploy/deploy.sh`) or let CI
-run it (`.github/workflows/deploy.yml`, `workflow_dispatch`-only). Don't
-`docker compose up` directly on the box; you'll skip the health gate.
+**`deploy/deploy.sh` is the only sanctioned up-path.** It fails closed if
+`deploy/proxy.env`'s `DEMO_PASSWORD_HASH` isn't set to a real-looking value,
+pulls the tagged images, brings the stack up, reloads Caddy if the proxy
+container was already running (the Caddyfile is bind-mounted — `up -d` alone
+won't push a changed one into an already-running container), and blocks
+until **both** `api` and `frontend` report healthy before exiting 0 — run it
+by hand (`IMAGE_TAG=<sha> bash deploy/deploy.sh`) or let CI run it
+(`.github/workflows/deploy.yml`, `workflow_dispatch`-only). Don't
+`docker compose up` directly on the box; you'll skip the health gate and the
+Caddy reload.
 
 Rules that protect the data:
 

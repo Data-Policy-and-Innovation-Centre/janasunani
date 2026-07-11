@@ -147,6 +147,10 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+# deploy/proxy.env holds the Caddy basic_auth credentials (bcrypt hash) for
+# the box's demo proxy -- a real secret, never committed (see
+# deploy/proxy.env.example).
+deploy/proxy.env
 
 # Spyder project settings
 .spyderproject
