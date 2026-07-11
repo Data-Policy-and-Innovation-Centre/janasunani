@@ -162,9 +162,14 @@ api --> oltp:5432 (compose network; existing container/volume, untouched)
   construction), so Caddy obtains a real Let's Encrypt certificate
   automatically — no DNS to manage, no self-signed warning. It's a
   `deploy/.env` var, never hard-coded (`deploy/proxy/Caddyfile`).
-- **Auth**: the whole site sits behind Caddy `basic_auth` (bcrypt hash) —
-  production grievance data (`/history`, `/api/history`,
-  `/api/grievance/{id}`) must not be openly public.
+- **Auth**: the whole site sits behind Caddy `basic_auth` (bcrypt hash,
+  no default — compose refuses to start `proxy` without one set in
+  `deploy/.env`) — production grievance data (`/history`, `/api/history`,
+  `/api/grievance/{id}`) must not be openly public. One exemption:
+  `/api/health` bypasses `basic_auth` (leaks nothing but
+  `{"status":"ok","processor":"pipeline"}`) so `deploy/deploy.sh`'s own
+  end-to-end check — and any external uptime monitor — can probe it
+  unauthenticated.
 - **Models/data**: host bind-mounts (`../models`, `../data/interim`,
   `../data/raw/janasunani-mappings`, all `:ro`) — never baked into the `api`
   image. A new deploy doesn't re-pull model weights; a model update is a
@@ -190,24 +195,34 @@ cd ~/janasunani/deploy
 cp .env.example .env && chmod 600 .env
 # fill in: POSTGRES_PASSWORD (URL-safe — no ':' '@' '/' '?'; matches §2),
 #          SITE_ADDRESS=52-66-116-80.nip.io,
-#          DEMO_USER + DEMO_PASSWORD_HASH (see .env.example — the shipped
-#          default is a PUBLISHED, already-compromised placeholder):
+#          DEMO_USER (defaults to "demo" if left unset) + DEMO_PASSWORD_HASH
+#          (NO default — compose refuses to start the proxy without it):
 docker run --rm caddy:2-alpine caddy hash-password --plaintext '<a real password>'
 ```
 
-Then the maintainer (not CI, not this file's author) provisions CI's AWS
-access and repo secrets/vars — **run each of these yourself; nothing here
-does it for you:**
+Then the maintainer (not CI, not this file's author) creates a GitHub
+Actions **environment** and provisions CI's AWS access and repo
+secrets/vars — **run each of these yourself; nothing here does it for you:**
 
-```bash
-cd deploy/terraform
-terraform plan     # scan for `N to destroy` on the EXISTING resources —
-                    # ci.tf only ADDS an OIDC provider + IAM role; if you see
-                    # any destroy/replace on aws_instance.cpu_box or
-                    # aws_security_group.cpu_box, STOP, do not apply.
-terraform apply
-terraform output ci_deploy_role_arn cpu_box_security_group_id
-```
+1. **GitHub → repo Settings → Environments → New environment**, name it
+   exactly `box-deploy` (matches `environment: box-deploy` in
+   `.github/workflows/deploy.yml` and the OIDC trust condition in
+   `deploy/terraform/ci.tf`) — the `deploy` job cannot obtain AWS
+   credentials without this existing. Optional but recommended: add yourself
+   as a required reviewer on the environment so a live deploy needs a manual
+   approval click.
+2. Apply the CI IAM role/OIDC provider:
+   ```bash
+   cd deploy/terraform
+   terraform plan     # scan for `N to destroy` on the EXISTING resources —
+                       # ci.tf only ADDS an OIDC provider + IAM role; if you see
+                       # any destroy/replace on aws_instance.cpu_box or
+                       # aws_security_group.cpu_box, STOP, do not apply.
+   terraform apply
+   terraform output ci_deploy_role_arn cpu_box_security_group_id
+   ```
+3. Set these secrets/vars (secrets are repo-level; the vars below can be
+   repo-level or scoped to the `box-deploy` environment):
 
 | Secret / var | Where | Value |
 |---|---|---|

@@ -11,9 +11,22 @@
 # (browsable at /history, and directly at /api/history and /api/grievance/{id})
 # must not be openly public. Generate a real hash with:
 #   docker run --rm caddy:2-alpine caddy hash-password --plaintext '<password>'
+#
+# Exception: /api/health is exempt from basic_auth. It leaks nothing (just
+# `{"status":"ok","processor":"pipeline"}`) and deploy/deploy.sh's own
+# end-to-end health check curls it unauthenticated — without this exemption
+# EVERY deploy would 401 on that curl and be reported as failed. Scoping via
+# a `not path` matcher on `basic_auth` (rather than a separate handle block)
+# keeps the single `handle_path /api/*` block as the one place that proxies
+# to `api:8000` with the `/api` prefix stripped — `basic_auth` still applies
+# to every other route reached through it. Verified against a real
+# `caddy:2-alpine` container: unauthenticated `/api/health` -> 200 (routed
+# to the api's `/health`, prefix stripped); unauthenticated `/` and
+# `/api/other` -> 401.
 {$SITE_ADDRESS}
 
-basic_auth {
+@protected not path /api/health
+basic_auth @protected {
 	{$DEMO_USER} {$DEMO_PASSWORD_HASH}
 }
 

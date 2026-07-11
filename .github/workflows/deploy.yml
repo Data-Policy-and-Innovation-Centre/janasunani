@@ -111,6 +111,14 @@ jobs:
     if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # Pins the GitHub OIDC `sub` claim this job presents to
+    # `repo:.../janasunani:environment:box-deploy` (deploy/terraform/ci.tf's
+    # trust policy matches on exactly that) — narrows who/what can assume
+    # ci_deploy far more than "any ref in this repo", and leaves room for a
+    # required-reviewer gate on the environment later. Maintainer must create
+    # the "box-deploy" environment once (Settings -> Environments) — see
+    # docs/DEPLOY.md.
+    environment: box-deploy
     permissions:
       contents: read
       id-token: write
@@ -120,11 +128,22 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Resolve image tag
+      # `inputs.image_tag` is attacker-influenceable (anyone who can dispatch
+      # this workflow chooses it) and ends up in a bash string run over SSH
+      # on the box below — pass it through `env:` rather than inlining
+      # `${{ }}` into the script, and reject anything that isn't a plausible
+      # git SHA or the `demo` moving tag before it's used anywhere.
+      - name: Resolve and validate image tag
         id: tag
+        env:
+          INPUT_TAG: ${{ inputs.image_tag }}
         run: |
-          tag="${{ inputs.image_tag }}"
-          echo "value=${tag:-${{ github.sha }}}" >> "$GITHUB_OUTPUT"
+          tag="${INPUT_TAG:-${{ github.sha }}}"
+          if [[ ! "$tag" =~ ^[a-fA-F0-9]{7,40}$ && "$tag" != demo ]]; then
+            echo "invalid image_tag: $tag" >&2
+            exit 1
+          fi
+          echo "value=$tag" >> "$GITHUB_OUTPUT"
 
       # Federated (OIDC) credentials — no long-lived AWS access key stored as
       # a GitHub secret. Role/trust policy: deploy/terraform/ci.tf.
@@ -158,8 +177,10 @@ jobs:
           scp deploy/proxy/Caddyfile ubuntu@${{ vars.BOX_HOST }}:~/janasunani/deploy/proxy/Caddyfile
 
       - name: Deploy
+        env:
+          TAG: ${{ steps.tag.outputs.value }}
         run: |
-          ssh ubuntu@${{ vars.BOX_HOST }} "IMAGE_TAG=${{ steps.tag.outputs.value }} bash janasunani/deploy/deploy.sh"
+          ssh ubuntu@${{ vars.BOX_HOST }} "IMAGE_TAG=${TAG} bash janasunani/deploy/deploy.sh"
 
       # Always runs, even if the deploy step failed — port 22 must not stay
       # open to the runner's transient IP beyond this job.

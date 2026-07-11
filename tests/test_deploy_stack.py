@@ -106,6 +106,49 @@ def test_caddyfile_routes_api_and_frontend():
     assert "basic_auth" in text
 
 
+def test_caddyfile_exempts_health_from_basic_auth():
+    """deploy.sh's own end-to-end check curls /api/health unauthenticated —
+    without an exemption, basic_auth would 401 every single deploy's health
+    check (Codex PR #29 finding). Verified live against a real caddy:2-alpine
+    container: unauthenticated /api/health -> 200 (routed to the api's
+    /health, prefix stripped); unauthenticated / and /api/other -> 401."""
+    text = CADDYFILE_PATH.read_text()
+
+    assert "not path /api/health" in text
+    # The matcher must actually be attached to the basic_auth directive
+    # (not just declared and unused).
+    matcher_name = text.split("not path /api/health")[0].splitlines()[-1].split()[0]
+    assert matcher_name.startswith("@")
+    assert f"basic_auth {matcher_name}" in text
+
+
+def test_proxy_password_hash_has_no_published_default():
+    """A default bcrypt hash baked into a file that's in git is a published,
+    already-compromised credential — anyone who can read this repo could
+    authenticate to production /history and /api (Codex PR #29 finding).
+    DEMO_PASSWORD_HASH must fail closed (compose's `:?` required-variable
+    syntax); DEMO_USER may default since the username isn't the secret."""
+    compose = _compose()
+
+    hash_value = compose["services"]["proxy"]["environment"]["DEMO_PASSWORD_HASH"]
+    assert ":?" in hash_value, (
+        f"DEMO_PASSWORD_HASH must be a required (':?') compose variable, not a "
+        f"defaulted one: {hash_value!r}"
+    )
+    assert "$2a$" not in hash_value, (
+        f"DEMO_PASSWORD_HASH must not embed a real/published bcrypt hash as a "
+        f"fallback default: {hash_value!r}"
+    )
+
+    # The env.example placeholder must stay empty too — never a real hash.
+    env_example = (DEPLOY_DIR / ".env.example").read_text()
+    for line in env_example.splitlines():
+        if line.startswith("DEMO_PASSWORD_HASH="):
+            assert line == "DEMO_PASSWORD_HASH=", (
+                f"deploy/.env.example must not ship a real hash: {line!r}"
+            )
+
+
 def test_entrypoint_and_deploy_script_are_valid_shell():
     for path, shell in ((ENTRYPOINT_PATH, "sh"), (DEPLOY_SH_PATH, "bash")):
         result = subprocess.run(

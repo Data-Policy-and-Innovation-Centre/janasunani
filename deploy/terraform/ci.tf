@@ -78,18 +78,36 @@ resource "aws_iam_role" "ci_deploy" {
       Condition = {
         StringEquals = {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-        }
-        StringLike = {
-          # Any ref/event on this repo — workflow_dispatch is the only
-          # trigger (deploy.yml), but the sub claim varies by ref, so this
-          # stays a wildcard on the repo rather than pinning a branch.
-          "token.actions.githubusercontent.com:sub" = "repo:Data-Policy-and-Innovation-Centre/janasunani:*"
+          # Pinned to the `deploy` job's GitHub Actions *environment*
+          # (`environment: box-deploy` in .github/workflows/deploy.yml), not
+          # just the repo — this is deliberately narrower than
+          # "repo:.../janasunani:*" (any ref/event). The maintainer creates
+          # the "box-deploy" environment once (Settings -> Environments); it
+          # also leaves room to add a required-reviewer gate there later
+          # without touching this policy. See the security note on
+          # aws_iam_role_policy.ci_deploy_sg below for why this trust
+          # narrowing matters more than usual for this specific role.
+          "token.actions.githubusercontent.com:sub" = "repo:Data-Policy-and-Innovation-Centre/janasunani:environment:box-deploy"
         }
       }
     }]
   })
 }
 
+# SECURITY NOTE: EC2 does not support a port/protocol/CIDR condition key for
+# ec2:AuthorizeSecurityGroupIngress / RevokeSecurityGroupIngress — IAM can
+# scope this role to *which security group* it may edit (below), but not to
+# "only a port-22 rule" or "only a /32 CIDR". A caller holding this role
+# could, in principle, authorize ingress on any port/CIDR on
+# aws_security_group.cpu_box, not just the port-22/runner-IP rule
+# deploy.yml's "Open port 22 to this runner" step actually adds. The
+# compensating controls are (a) the narrowed OIDC trust above — only the
+# `box-deploy` environment of THIS repo's `deploy` job can assume the role at
+# all — and (b) the workflow's `if: always()` revoke step, so any window is
+# bounded to a single job run. Tightening further would need a custom
+# same-account permission boundary or moving the SG edit out of IAM entirely
+# (e.g. a Lambda invoked via a narrowly-scoped API); not worth the added
+# complexity for a single-maintainer demo box.
 resource "aws_iam_role_policy" "ci_deploy_sg" {
   name = "janasunani-ci-deploy-sg-ingress"
   role = aws_iam_role.ci_deploy.id
