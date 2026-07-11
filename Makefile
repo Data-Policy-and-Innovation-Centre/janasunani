@@ -11,12 +11,21 @@ EXHIBITS_REMOTE ?= $(BOX_REMOTE):'$(BOX_PROJECT_ROOT)/Analysis/Exhibits/'
 PG_CONTAINER   ?= janasunani-demo-oltp
 PG_PORT        ?= 5432
 API_PORT       ?= 8000
+API_HOST       ?= 127.0.0.1
 FRONTEND_PORT  ?= 3000
-# Single source of truth for the OLTP database. Settings/preflight/api all read
-# OLTP_DB_URL, so use that one name here too. `?=` means an operator-provided
-# OLTP_DB_URL (shell env or .env) wins over this throwaway-demo default, keeping
-# preflight, db, and api pointed at the SAME database.
-OLTP_DB_URL    ?= postgresql+asyncpg://postgres:demo@127.0.0.1:$(PG_PORT)/janasunani
+# The one database `db` will provision/migrate a throwaway container for. `db`
+# acts ONLY when OLTP_DB_URL equals this exact DSN, so it never creates one
+# database and migrates another, and never touches an off-box URL.
+DEMO_OLTP_URL   = postgresql+asyncpg://postgres:demo@127.0.0.1:$(PG_PORT)/janasunani
+# The OLTP database Settings/preflight/api all read. Precedence, highest first:
+#   `make OLTP_DB_URL=... <target>` (command line) > OLTP_DB_URL in .env >
+#   a shell-exported OLTP_DB_URL > this demo default. Use the command-line form
+#   to force a database for one run regardless of .env.
+OLTP_DB_URL    ?= $(DEMO_OLTP_URL)
+# Base URL the browser calls -- baked into the frontend bundle at build time.
+# On a remote/box run this MUST be an address the viewer's browser can reach
+# (not 127.0.0.1); set API_HOST=0.0.0.0 too so the API binds all interfaces.
+# See docs/DEPLOY.md. Example: make up API_URL=http://<box-ip>:8000 API_HOST=0.0.0.0
 API_URL        ?= http://127.0.0.1:$(API_PORT)
 -include .env
 SHELL          := /bin/bash
@@ -137,20 +146,21 @@ models:
 	@echo "Pulling ONLY the demo model artifacts (not the PII-bearing data)..."
 	uv run dvc pull models/categorizer.dvc models/page_type_classifier/vit_type_classifier.dvc
 
+# `@` so the OLTP DSN (may carry a password) is not echoed into terminal logs.
 preflight:
-	OLTP_DB_URL="$(OLTP_DB_URL)" uv run --extra demo janasunani-demo-preflight
+	@OLTP_DB_URL="$(OLTP_DB_URL)" uv run --extra demo janasunani-demo-preflight
 
 # Idempotent: create the throwaway Postgres only if missing, start it if stopped,
 # always (re-)apply migrations (alembic upgrade head is a no-op when current).
-# Safe to depend on from `api`/`up`. Guard: only ever provisions/migrates the
-# LOCAL container — if OLTP_DB_URL was overridden to an off-box database we skip
-# entirely and never migrate it (protects prod; that DB is the operator's job).
+# Safe to depend on from `api`/`up`. Guard: acts ONLY when OLTP_DB_URL is exactly
+# the throwaway DEMO_OLTP_URL, so it never creates one database and migrates
+# another, and never provisions/migrates an operator's own (local or off-box) DB.
 db:
 	@set -e; \
-	case "$(OLTP_DB_URL)" in \
-	  *@127.0.0.1:*|*@localhost:*) ;; \
-	  *) echo "OLTP_DB_URL is not local ($(OLTP_DB_URL)); skipping throwaway-Postgres provisioning — manage that database yourself."; exit 0 ;; \
-	esac; \
+	if [ "$(OLTP_DB_URL)" != "$(DEMO_OLTP_URL)" ]; then \
+	  echo "OLTP_DB_URL is not the throwaway demo default; skipping provisioning — create and migrate that database yourself."; \
+	  exit 0; \
+	fi; \
 	if [ -n "$$(docker ps -q -f name=^$(PG_CONTAINER)$$)" ]; then \
 	  echo "Postgres '$(PG_CONTAINER)' already running."; \
 	elif [ -n "$$(docker ps -aq -f name=^$(PG_CONTAINER)$$)" ]; then \
@@ -169,27 +179,45 @@ db:
 	OLTP_DB_URL="$(OLTP_DB_URL)" uv run alembic upgrade head; \
 	echo "Demo DB ready."
 
+# `@` so the OLTP DSN is not echoed. API_HOST=0.0.0.0 to serve off-box.
 api: preflight db
-	OLTP_DB_URL="$(OLTP_DB_URL)" JANASUNANI_API_PORT="$(API_PORT)" \
-	  uv run --extra demo janasunani-api-live
+	@OLTP_DB_URL="$(OLTP_DB_URL)" JANASUNANI_API_HOST="$(API_HOST)" \
+	  JANASUNANI_API_PORT="$(API_PORT)" uv run --extra demo janasunani-api-live
 
 frontend:
-	cd frontend && npm install && NEXT_PUBLIC_API_URL="$(API_URL)" npm run dev
+	cd frontend && npm install && \
+	  PORT="$(FRONTEND_PORT)" NEXT_PUBLIC_API_URL="$(API_URL)" npm run dev
 
-# One command for the demo: ensure the DB, then API in the background + frontend
-# in the foreground. The trap fires on Ctrl-C (INT) or normal exit and reaps the
-# background API, so a single Ctrl-C stops both. `preflight` fails fast if models
-# or OCR binaries are missing; `db` brings up the throwaway Postgres first.
+# One command for the demo: ensure the DB, start the API in the background, wait
+# for it to report `processor: pipeline`, THEN start the frontend in the
+# foreground. If the API dies or never turns healthy we abort instead of serving
+# a UI against a dead backend. The trap reaps only the API process we launched
+# (its PID + children) -- never a global `pkill` that could hit an unrelated
+# live API on the same box. A single Ctrl-C on the frontend stops both.
 up: preflight db
-	@echo "Serving API (background, :$(API_PORT)) + frontend (foreground, :$(FRONTEND_PORT)). Ctrl-C stops both."
-	OLTP_DB_URL="$(OLTP_DB_URL)" JANASUNANI_API_PORT="$(API_PORT)" \
-	  uv run --extra demo janasunani-api-live & \
-	trap 'pkill -f janasunani-api-live 2>/dev/null || true' EXIT INT TERM; \
-	cd frontend && npm install && NEXT_PUBLIC_API_URL="$(API_URL)" npm run dev
+	@set -e; \
+	echo "Starting live API (:$(API_PORT)) in the background..."; \
+	OLTP_DB_URL="$(OLTP_DB_URL)" JANASUNANI_API_HOST="$(API_HOST)" \
+	  JANASUNANI_API_PORT="$(API_PORT)" uv run --extra demo janasunani-api-live & \
+	API_PID=$$!; \
+	trap 'pkill -P $$API_PID 2>/dev/null; kill $$API_PID 2>/dev/null || true' EXIT INT TERM; \
+	echo "Waiting for the API to report processor=pipeline (model warm-up)..."; \
+	ready=; \
+	for i in $$(seq 1 150); do \
+	  if ! kill -0 $$API_PID 2>/dev/null; then echo "Live API exited during startup; aborting."; exit 1; fi; \
+	  if curl -sf http://127.0.0.1:$(API_PORT)/health 2>/dev/null | grep -q '"processor":"pipeline"'; then ready=1; break; fi; \
+	  sleep 2; \
+	done; \
+	[ -n "$$ready" ] || { echo "Live API did not become healthy in time; aborting."; exit 1; }; \
+	echo "Live API healthy (:$(API_PORT)). Starting frontend (:$(FRONTEND_PORT))..."; \
+	cd frontend && npm install && \
+	  PORT="$(FRONTEND_PORT)" NEXT_PUBLIC_API_URL="$(API_URL)" npm run dev
 
+# Tear down by PORT (overridable), not a global process-name match, so this
+# never kills an unrelated live API/frontend on the same machine.
 down:
-	-pkill -f janasunani-api-live
-	-PIDS=$$(lsof -ti tcp:$(FRONTEND_PORT) 2>/dev/null); [ -n "$$PIDS" ] && kill $$PIDS || true
+	-@PIDS=$$(lsof -ti tcp:$(API_PORT) 2>/dev/null); [ -n "$$PIDS" ] && kill $$PIDS 2>/dev/null || true
+	-@PIDS=$$(lsof -ti tcp:$(FRONTEND_PORT) 2>/dev/null); [ -n "$$PIDS" ] && kill $$PIDS 2>/dev/null || true
 	-docker rm -f $(PG_CONTAINER)
 	-docker volume rm $(PG_CONTAINER)
 	@echo "Demo stack torn down."

@@ -13,11 +13,19 @@ locally first, then repeated on the box.
 
 > **Fast path — `make`.** The `Makefile` wraps every step below:
 > `make models` (scoped DVC pull) · `make preflight` · `make up` (throwaway
-> Postgres + API + frontend, one `Ctrl-C` stops all) · `make down` (tear it
-> down). `make api`/`make up` provision and migrate the local Postgres for you
-> — if you override `OLTP_DB_URL` to an off-box database they skip that step and
-> never migrate it. The numbered sections below are the underlying manual
-> commands, for when you want to run a step by hand or on the CPU box.
+> Postgres + API + frontend, waits for `processor: pipeline` before starting the
+> UI, one `Ctrl-C` stops both) · `make down` (tear down by port). `make api`/
+> `make up` provision and migrate the local Postgres for you — if you point
+> `OLTP_DB_URL` at anything other than the throwaway default they skip that step
+> and never migrate it (you manage that database yourself).
+>
+> **On the box / remote:** `API_URL` is baked into the frontend bundle, so serve
+> with `make up API_URL=http://<box-ip>:$API_PORT API_HOST=0.0.0.0` — otherwise
+> a browser on another machine calls its own `127.0.0.1`. Full cloud path is in
+> [DEPLOY.md](DEPLOY.md).
+>
+> The numbered sections below are the underlying manual commands, for running a
+> step by hand.
 
 ---
 
