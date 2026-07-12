@@ -170,10 +170,17 @@ api --> oltp:5432 (compose network; existing container/volume, untouched)
   end-to-end check — and any external uptime monitor — can probe it
   unauthenticated. The credentials live in `deploy/proxy.env` (a *separate*
   file from `deploy/.env` — Compose interpolates `$` in `deploy/.env`
-  values, which would mangle a bcrypt hash like `$2a$14$...`; `env_file`
-  injects `proxy.env`'s contents verbatim, no interpolation, no escaping
-  needed). `deploy/deploy.sh` fails closed if the hash isn't set to a
-  real-looking value — compose itself has no default.
+  values, which would mangle a bcrypt hash like `$2a$14$...`). The `proxy`
+  service loads it via the long-form `env_file:` with `format: raw` (no
+  interpolation of `$`, version-independent — needs **Compose >= 2.24**;
+  `deploy/terraform/user_data.sh` installs `docker-compose-plugin` from
+  Docker's official apt repo, which tracks current stable releases, so this
+  is satisfied on a freshly-provisioned box) and `required: false` (so a
+  bare `docker compose up -d oltp`, §2, doesn't fail just because
+  `proxy.env` doesn't exist yet). `deploy/deploy.sh` fails closed if the
+  hash isn't set to a real-looking value before bringing the full stack
+  up — compose itself has no default and, deliberately, no required-var
+  gate on it either (see docker-compose.yml's header comment).
 - **Models/data**: host bind-mounts (`../models`, `../data/interim`,
   `../data/raw/janasunani-mappings`, all `:ro`) — never baked into the `api`
   image. A new deploy doesn't re-pull model weights; a model update is a

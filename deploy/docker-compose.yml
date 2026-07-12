@@ -114,13 +114,22 @@ services:
     # not deploy/.env: compose interpolates `$` in `environment:`/`.env`
     # values, so a bcrypt hash like `$2a$14$...` pasted into deploy/.env
     # would get mangled ($2a/$14 parsed as variable references) unless every
-    # `$` were doubled. `env_file` injects its contents into the container
-    # verbatim, with NO compose interpolation applied — paste a real hash
-    # into deploy/proxy.env as-is. See deploy/proxy.env.example.
-    # deploy/deploy.sh enforces (fail closed) that the hash is actually set
-    # before bringing this service up; compose itself has no default here.
+    # `$` were doubled. The long form below is required, not just `- ./proxy.env`:
+    #   - `format: raw` is what actually guarantees no interpolation of `$`
+    #     in proxy.env's values — some Compose versions DO interpolate
+    #     env_file values by default (unlike the Compose on this dev
+    #     machine, which happens not to); `raw` makes it version-independent.
+    #     Needs Compose >= 2.24 (the `format` key on env_file entries).
+    #   - `required: false` so a bare `docker compose up -d oltp` (the
+    #     documented first-time bring-up, before proxy.env exists at all)
+    #     doesn't fail just parsing/loading this file. deploy.sh enforces
+    #     (fail closed) that the hash is actually set before bringing the
+    #     full stack — including this service — up.
+    # See deploy/proxy.env.example.
     env_file:
-      - ./proxy.env
+      - path: ./proxy.env
+        required: false
+        format: raw
     volumes:
       - ./proxy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

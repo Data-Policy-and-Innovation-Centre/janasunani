@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: "Existing image tag to (re)deploy, e.g. a prior commit SHA. Leave empty to build from this ref."
+        description: "Full 40-char commit SHA to (re)deploy an already-published image (a rollback). Leave empty to build from this ref."
         required: false
         type: string
 
@@ -60,11 +60,17 @@ jobs:
           platforms: linux/amd64
           push: true
           ssh: default
-          tags: |
-            ${{ env.API_IMAGE }}:${{ github.sha }}
-            ${{ env.API_IMAGE }}:demo
+          # Only the immutable per-commit SHA tag — no moving `demo`/`latest`
+          # tag. build-api and build-frontend are independent jobs; if one
+          # pushed a moving tag and the other then failed, a later
+          # `image_tag: demo` deploy would mix api/frontend from different
+          # commits. The SHA tag is always both-or-neither (this job's push
+          # either succeeds or the whole job — and thus the deploy — fails).
+          tags: ${{ env.API_IMAGE }}:${{ github.sha }}
           # Registry cache, not GHA cache: the `demo` extra resolves CUDA
           # torch (~8-12 GB image) — well past the GHA cache size budget.
+          # (This `buildcache` tag is BuildKit's layer cache, unrelated to
+          # image tagging above — it's never pulled/deployed.)
           cache-from: type=registry,ref=${{ env.API_IMAGE }}:buildcache
           cache-to: type=registry,ref=${{ env.API_IMAGE }}:buildcache,mode=max
 
@@ -98,9 +104,9 @@ jobs:
           file: frontend/Dockerfile
           platforms: linux/amd64
           push: true
-          tags: |
-            ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
-            ${{ env.FRONTEND_IMAGE }}:demo
+          # Only the immutable per-commit SHA tag — see build-api's comment
+          # on why there's no moving `demo`/`latest` tag.
+          tags: ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -134,17 +140,19 @@ jobs:
       # `${{ }}` into the script, and reject anything that isn't a tag the
       # build jobs could actually have published before it's used anywhere.
       # build-api/build-frontend only ever push the FULL `github.sha` (40 hex
-      # chars) and the `demo` moving tag — never a short SHA — so a short SHA
-      # here would pass validation but then fail `docker compose pull` with a
-      # confusing "manifest not found"; the regex is deliberately exact.
+      # chars) — no moving tag exists (see their tags: comments) — so a
+      # short SHA here would pass a looser check but then fail
+      # `docker compose pull` with a confusing "manifest not found"; the
+      # regex is deliberately exact and deliberately excludes any
+      # non-SHA moving tag.
       - name: Resolve and validate image tag
         id: tag
         env:
           INPUT_TAG: ${{ inputs.image_tag }}
         run: |
           tag="${INPUT_TAG:-${{ github.sha }}}"
-          if [[ ! "$tag" =~ ^[a-fA-F0-9]{40}$ && "$tag" != demo ]]; then
-            echo "invalid image_tag: $tag (must be a full 40-char commit SHA or 'demo')" >&2
+          if [[ ! "$tag" =~ ^[a-fA-F0-9]{40}$ ]]; then
+            echo "invalid image_tag: $tag (must be a full 40-char commit SHA)" >&2
             exit 1
           fi
           echo "value=$tag" >> "$GITHUB_OUTPUT"

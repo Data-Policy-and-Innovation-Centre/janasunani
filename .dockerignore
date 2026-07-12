@@ -19,3 +19,7 @@ deploy/terraform
 *.sqlite
 .env
 deploy/.env
+# The real Basic Auth bcrypt hash (deploy/proxy.env.example is the tracked
+# template and must stay excluded from this — an explicit filename, not a
+# wildcard, so it can't accidentally catch *.env.example too).
+deploy/proxy.env

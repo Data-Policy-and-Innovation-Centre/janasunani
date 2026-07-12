@@ -26,6 +26,7 @@ CADDYFILE_PATH = DEPLOY_DIR / "proxy" / "Caddyfile"
 DEPLOY_SH_PATH = DEPLOY_DIR / "deploy.sh"
 ENTRYPOINT_PATH = DEPLOY_DIR / "api-entrypoint.sh"
 DEPLOY_WORKFLOW_PATH = ROOT_DIR / ".github" / "workflows" / "deploy.yml"
+DOCKERIGNORE_PATH = ROOT_DIR / ".dockerignore"
 
 
 def _compose() -> dict:
@@ -139,7 +140,16 @@ def test_proxy_credentials_come_from_a_dedicated_env_file_not_interpolated():
     compose interpolation applied to its contents), not `environment:` and
     not the main deploy/.env. Live-verified: a real `$2a$14$...` hash placed
     in the env_file reaches Caddy byte-for-byte intact and authenticates the
-    matching plaintext password."""
+    matching plaintext password.
+
+    Must be the LONG form with `format: raw` and `required: false` (round-3
+    finding): a bare `- ./proxy.env` is required-by-default, so Compose
+    fails to load the whole project -- including an oltp-only
+    `docker compose up -d oltp` -- when proxy.env doesn't exist yet; and
+    some Compose versions interpolate `$` in env_file values by default
+    unless `format: raw` says otherwise (this repo's dev-machine Compose
+    happens not to, which is exactly why this needs an explicit assertion,
+    not just a "seems to work locally" check)."""
     compose = _compose()
 
     proxy = compose["services"]["proxy"]
@@ -153,7 +163,20 @@ def test_proxy_credentials_come_from_a_dedicated_env_file_not_interpolated():
 
     env_files = proxy.get("env_file")
     assert env_files, "proxy service must load DEMO_USER/DEMO_PASSWORD_HASH via env_file"
-    assert any("proxy.env" in f for f in env_files)
+    assert isinstance(env_files, list) and isinstance(env_files[0], dict), (
+        "proxy's env_file must use the long form (a list of path/required/"
+        f"format mappings), not a bare list of path strings: {env_files!r}"
+    )
+    proxy_env_entry = next(e for e in env_files if "proxy.env" in e.get("path", ""))
+    assert proxy_env_entry.get("required") is False, (
+        "proxy.env's env_file entry must set required: false so an "
+        "oltp-only `docker compose up -d oltp` still works before "
+        "proxy.env exists"
+    )
+    assert proxy_env_entry.get("format") == "raw", (
+        "proxy.env's env_file entry must set format: raw so '$' in the "
+        "bcrypt hash is never interpolated, regardless of Compose version"
+    )
 
     # The main deploy/.env.example must not carry the hash either.
     env_example = (DEPLOY_DIR / ".env.example").read_text()
@@ -297,10 +320,10 @@ def test_deploy_script_fails_closed_on_the_demo_password_hash():
 
 def test_deploy_workflow_rejects_short_shas():
     """build-api/build-frontend only ever publish the FULL github.sha (40
-    hex chars) plus the `demo` moving tag -- never a short SHA. A regex that
-    accepts 7-39 char short SHAs lets a rollback request pass validation and
-    then fail `docker compose pull` with a confusing image-not-found error
-    (Codex PR #29 finding)."""
+    hex chars) -- never a short SHA. A regex that accepts 7-39 char short
+    SHAs lets a rollback request pass validation and then fail
+    `docker compose pull` with a confusing image-not-found error (Codex
+    PR #29 finding)."""
     text = DEPLOY_WORKFLOW_PATH.read_text()
 
     assert "{40}" in text, (
@@ -308,3 +331,53 @@ def test_deploy_workflow_rejects_short_shas():
         "chars (the full commit SHA), not a variable-length short SHA"
     )
     assert "{7,40}" not in text and "{7," not in text
+
+
+def test_dockerignore_excludes_proxy_env_but_not_its_example():
+    """The api build's context is the repo root (deploy/api.Dockerfile) --
+    without an explicit exclusion, `deploy/proxy.env` (the real Basic Auth
+    bcrypt hash) gets uploaded into the builder even though the Dockerfile
+    never COPYs it (round-3 Codex PR #29 finding). Live-verified: built a
+    throwaway image COPYing deploy/ with a fake deploy/proxy.env present --
+    only .env.example/proxy.env.example ended up in the context, never the
+    real files."""
+    import fnmatch
+
+    lines = [
+        line.strip()
+        for line in DOCKERIGNORE_PATH.read_text().splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+
+    assert "deploy/proxy.env" in lines, (
+        ".dockerignore must exclude deploy/proxy.env explicitly"
+    )
+    # Whatever pattern excludes it must not ALSO catch the tracked .example
+    # templates -- those have to stay reachable if a Dockerfile ever needs
+    # to reference them (and to keep the pattern obviously non-wildcard-risky).
+    for pattern in lines:
+        for must_stay_reachable in ("deploy/proxy.env.example", "deploy/.env.example"):
+            assert not fnmatch.fnmatch(must_stay_reachable, pattern), (
+                f".dockerignore pattern {pattern!r} must not also match "
+                f"{must_stay_reachable!r}"
+            )
+
+
+def test_deploy_workflow_has_no_moving_demo_tag():
+    """build-api and build-frontend are independent jobs. If one pushed a
+    moving `:demo` tag and the other then failed, a later `image_tag: demo`
+    deploy would mix api/frontend from different commits (round-3 Codex PR
+    #29 finding). Chosen fix: drop the moving tag entirely -- only the
+    immutable per-commit SHA is ever pushed, and `demo` is no longer a valid
+    image_tag input value either. (Confirmed via repo-wide grep before this
+    fix: nothing in compose/.env.example/deploy.sh/docs actually depended on
+    an image `:demo` tag existing.)"""
+    text = DEPLOY_WORKFLOW_PATH.read_text()
+
+    assert ":demo" not in text, (
+        "deploy.yml must not push or reference a moving ':demo' image tag "
+        "-- api/frontend builds are independent jobs and a partial push "
+        "would let a rollback mix commits"
+    )
+    # The tag regex must not special-case "demo" as a valid input either.
+    assert '"$tag" != demo' not in text and "!= demo" not in text
