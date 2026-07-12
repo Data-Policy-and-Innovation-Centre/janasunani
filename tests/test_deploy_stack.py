@@ -318,6 +318,91 @@ def test_deploy_script_fails_closed_on_the_demo_password_hash():
     assert "exit 1" in text
 
 
+def test_deploy_script_env_value_reads_survive_a_missing_key():
+    """`site="$(grep ... .env | cut -d= -f2-)"` and the equivalent
+    DEMO_PASSWORD_HASH read: under `set -euo pipefail`, if the key is
+    absent grep exits 1 and the WHOLE pipeline (feeding a command
+    substitution assignment) aborts the script right there, before the
+    `-z`/empty-value fallback ever runs -- and for SITE_ADDRESS this
+    happens AFTER `docker compose up -d`, so an already-changed stack gets
+    reported as a hard crash instead of falling through to the documented
+    ':80'/http default (round-5 Codex PR #29 finding). Each such read must
+    end in `|| true` so a missing key yields an empty string instead of
+    aborting. Live-verified under real `set -euo pipefail`: the bare form
+    aborts the script silently on a missing key; the `|| true` form
+    reaches the fallback logic with an empty value, exit 0."""
+    text = DEPLOY_SH_PATH.read_text()
+
+    for var_name, key in (("site", "SITE_ADDRESS"), ("demo_hash", "DEMO_PASSWORD_HASH")):
+        pattern = re.compile(
+            re.escape(var_name)
+            + r'="\$\(grep -E \'\^'
+            + re.escape(key)
+            + r"=' [^|]+\| cut -d= -f2- ?(\|\| true)?\)\""
+        )
+        match = pattern.search(text)
+        assert match, f"could not find the {key} read in {DEPLOY_SH_PATH}"
+        assert match.group(1) == "|| true", (
+            f"the {key} read (assigned to ${var_name}) must end in "
+            f"'|| true' so a missing key doesn't abort the script under "
+            f"set -o pipefail: {match.group(0)!r}"
+        )
+
+
+def test_deploy_script_rolls_back_on_health_or_smoke_check_failure():
+    """`docker compose up -d` immediately replaces whatever was previously
+    running with the new candidate -- if a health/smoke check fails AFTER
+    that, the public demo is left down on the broken candidate even though
+    .env still names the last known-good tag (round-5 Codex PR #29
+    finding). deploy.sh must capture the prior IMAGE_TAG before touching
+    anything and, on a post-up-d failure, re-`up -d` with it. Live-verified
+    end-to-end with two locally-tagged stand-in images (one serving a valid
+    /health body, one not): after a successful "good-v1" deploy, deploying
+    "bad-v2" times out its health check, and the script (a) prints a
+    rollback message, (b) re-runs `docker compose up -d` with
+    IMAGE_TAG=good-v1 -- confirmed via `docker inspect
+    janasunani-api --format {{.Config.Image}}` actually showing
+    local/stand-in-api:good-v1 again post-rollback, and /api/health
+    responding 200 again, (c) leaves .env's IMAGE_TAG at good-v1
+    throughout, (d) exits 1.
+
+    Explicit call sites (`rollback_and_fail`), not a blanket `trap ... ERR`:
+    a trap would also fire on the preflight/hash-check exits earlier in the
+    script, which happen before `docker compose up -d` and have nothing to
+    roll back from."""
+    text = DEPLOY_SH_PATH.read_text()
+
+    assert "prev_tag" in text, "must capture the prior IMAGE_TAG from .env"
+    assert "rollback_and_fail" in text
+
+    # Must actually re-deploy the prior tag, not just log about it.
+    assert re.search(r'IMAGE_TAG="\$prev_tag"\s+docker compose up -d', text), (
+        "rollback_and_fail must re-run `docker compose up -d` with "
+        "IMAGE_TAG set back to the captured prev_tag"
+    )
+
+    # Both failure sites this finding calls out must route through it.
+    assert re.search(r"rollback_and_fail\s*\n", text), (
+        "wait_healthy's timeout branch must call rollback_and_fail (not a "
+        "bare exit 1)"
+    )
+    assert re.search(r'grep -q .*\|\|\s*rollback_and_fail', text), (
+        "the final smoke-check curl must route a failed grep through "
+        "rollback_and_fail (not a bare pipeline exit)"
+    )
+
+    # Not a blanket ERR trap -- see the docstring for why. (Checks for an
+    # actual `trap ...` command, not just the word "trap" -- which shows up
+    # in this file's own explanatory comment about *not* using one.)
+    executable_lines = [
+        line for line in text.splitlines() if not line.strip().startswith("#")
+    ]
+    assert not any(re.match(r"\s*trap\b", line) for line in executable_lines), (
+        "deploy.sh should use explicit rollback_and_fail() call sites, not "
+        "a trap ... ERR handler (see the docstring for why)"
+    )
+
+
 def test_deploy_script_persists_image_tag_only_after_success():
     """deploy.sh must write the IMAGE_TAG= line into .env AFTER pull/up/
     reload/both health waits/the final smoke check all pass -- not before
@@ -340,9 +425,20 @@ def test_deploy_script_persists_image_tag_only_after_success():
                 return i
         raise AssertionError(f"{needle!r} not found in {DEPLOY_SH_PATH}")
 
+    def first_line_equal_to(needle: str) -> int:
+        # Exact (stripped) match -- distinguishes the real top-level
+        # `docker compose up -d` invocation from the same substring inside
+        # rollback_and_fail's `IMAGE_TAG="$prev_tag" docker compose up -d`,
+        # which appears earlier in the file (the function is defined before
+        # its call sites) but is not the line under test here.
+        for i, line in enumerate(lines):
+            if line.strip() == needle:
+                return i
+        raise AssertionError(f"no line exactly matching {needle!r} in {DEPLOY_SH_PATH}")
+
     write_line = first_line_containing("IMAGE_TAG=${IMAGE_TAG}")
     pull_line = first_line_containing("docker compose pull")
-    up_line = first_line_containing("docker compose up -d")
+    up_line = first_line_equal_to("docker compose up -d")
     wait_api_line = first_line_containing("wait_healthy janasunani-api")
     wait_frontend_line = first_line_containing("wait_healthy janasunani-frontend")
     # The final end-to-end check greps the health body through the proxy.
@@ -415,6 +511,31 @@ def test_deploy_job_is_scoped_to_the_box_deploy_environment():
     assert workflow["jobs"]["deploy"].get("environment") == "box-deploy"
     assert "environment" not in workflow["jobs"]["build-api"]
     assert "environment" not in workflow["jobs"]["build-frontend"]
+
+
+def test_deploy_job_runs_on_rollback_but_not_on_a_real_build_failure():
+    """`deploy` `needs: [build-api, build-frontend]`. On a rollback run
+    (image_tag set), both builds are SKIPPED by their own `if:` -- and
+    GitHub auto-skips a job whose needs were all skipped UNLESS the `if`
+    contains `always()` (round-5 Codex PR #29 finding: without it, every
+    rollback would silently no-op instead of deploying). `always()` alone
+    would be wrong too -- it would deploy even after a real build failure.
+    The combination `always() && !failure() && !cancelled()` is the fix:
+    always evaluate the condition past skipped needs, but still bail out on
+    an actual failure or a cancelled run."""
+    with open(DEPLOY_WORKFLOW_PATH) as f:
+        workflow = yaml.safe_load(f)
+
+    deploy_if = workflow["jobs"]["deploy"]["if"]
+    # PyYAML strips the ${{ }} wrapper's outer braces are template syntax,
+    # not YAML -- the whole thing loads as a plain string.
+    assert "always()" in deploy_if, (
+        "deploy's `if` must include always() or GitHub auto-skips it "
+        "whenever build-api/build-frontend were both skipped (a rollback "
+        "run, image_tag set)"
+    )
+    assert "!failure()" in deploy_if
+    assert "!cancelled()" in deploy_if
 
 
 def test_deploy_workflow_rejects_short_shas():

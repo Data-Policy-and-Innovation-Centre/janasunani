@@ -112,9 +112,15 @@ jobs:
 
   deploy:
     needs: [build-api, build-frontend]
-    # Runs even when the build jobs were skipped (image_tag input set) —
-    # only bail out on an actual build failure or a cancelled run.
-    if: ${{ !failure() && !cancelled() }}
+    # `always()` is load-bearing, not decorative: on a rollback run
+    # (image_tag set), build-api/build-frontend's own `if` SKIPS them —
+    # and GitHub auto-skips a job whose `needs` were all skipped unless the
+    # `if` contains `always()`. Without it, a rollback would silently never
+    # deploy. `!failure() && !cancelled()` still correctly blocks deploying
+    # when a build actually failed or the run was cancelled (bare
+    # `always()` alone would deploy even on a failed build — deliberately
+    # not used).
+    if: ${{ always() && !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     # Pins the GitHub OIDC `sub` claim this job presents to
