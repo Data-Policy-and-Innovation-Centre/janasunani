@@ -193,6 +193,15 @@ api --> oltp:5432 (compose network; existing container/volume, untouched)
   separate `dvc pull` on the box.
 - **GHCR is private**: the box authenticates with a `read:packages`-scoped
   PAT (§"One-time box setup" below), not a public pull.
+- **Reproducibility**: `api`/`frontend` are pinned to the full 40-char
+  `IMAGE_TAG` (never `latest`); every OTHER base image (`caddy:2-alpine` in
+  `docker-compose.yml`, `python:3.13-slim` and `ghcr.io/astral-sh/uv:0.9` in
+  `deploy/api.Dockerfile`, `node:22-alpine` in `frontend/Dockerfile`) is
+  pinned to a resolved `@sha256:...` digest, not just a floating tag — a
+  base image re-pulling something different underneath an otherwise-
+  unchanged Dockerfile is exactly the drift IMAGE_TAG pinning exists to
+  prevent. Bump a digest by re-resolving:
+  `docker buildx imagetools inspect <image>:<tag>`.
 
 ### One-time box setup (maintainer)
 
@@ -289,7 +298,61 @@ port-22 rule, success or failure.
 
 **Rollback**: run the workflow again with `image_tag` set to a prior
 `github.sha` that was previously deployed (GHCR keeps every pushed tag) — or
-by hand on the box: `IMAGE_TAG=<sha> bash deploy/deploy.sh`.
+by hand on the box: `IMAGE_TAG=<sha> bash deploy/deploy.sh`. In the common
+case you don't have to do this yourself: `deploy.sh` rolls back
+**automatically** when a deploy fails after it's already started replacing
+the running containers — see "Automatic rollback" below.
+
+### Automatic rollback
+
+`docker compose up -d` replaces the previously-running (working) containers
+with the new candidate immediately, before health is verified — so a bare
+"exit on failure" would leave the public demo down on a broken candidate.
+Instead, once `up -d` has run, every subsequent failure (the `up -d` command
+itself partially failing, the Caddy reload, either health wait, or the final
+smoke check) routes through a rollback:
+
+1. Restores `deploy/proxy/Caddyfile.deployed` — a snapshot of the last
+   Caddyfile that was actually part of a successful deploy — over the live
+   `deploy/proxy/Caddyfile` and reloads Caddy. (Independent of the image-tag
+   rollback below: redeploying the *same* `IMAGE_TAG` specifically to ship a
+   Caddyfile change can fail this way too.)
+2. If the tag actually changed, re-`docker compose up -d`s with `IMAGE_TAG`
+   set back to the last known-good value recorded in `deploy/.env`.
+3. **Re-verifies** the rollback with the same health wait used for a forward
+   deploy — it does **not** just assume the previous image comes back up.
+   If the previous image *also* fails to come up healthy (see "Migration
+   policy" below for the main way this happens), it prints a loud
+   `ROLLBACK FAILED` and says the demo is down, rather than a false "rolled
+   back" success.
+
+If there's no prior known-good tag (a first-ever deploy), rollback is
+skipped and the script just fails — there's nothing to roll back to.
+
+### Migration policy
+
+A rollback here re-deploys the **previous image, unchanged** — `deploy.sh`
+never runs `alembic downgrade` (the old image doesn't have the new revision
+file to downgrade *from*). That means every schema migration shipped
+through this pipeline must be **expand-only / backward-compatible**: the OLD
+code has to still be able to boot and run correctly against the NEW schema.
+
+- Fine: add a nullable column, add a new table, add an index.
+- **Not fine in the same deploy**: rename or drop a column/table, narrow a
+  type, add a `NOT NULL` without a default — anything the old code's queries
+  would choke on.
+- If you need one of the "not fine" changes, split it: an **expand** deploy
+  first (old code ignores the new column/table; ships and bakes for a
+  while), then a separate **contract** deploy later, once rolling back past
+  the expand step is no longer a realistic need.
+
+Violate this and a rollback can't un-migrate — the "rolled back" api
+container's `alembic upgrade head` (`deploy/api-entrypoint.sh`) either
+errors immediately (`Can't locate revision`, if the old image predates a
+revision the DB is already at) or runs but then crash-loops on a query the
+old code can't form against the new shape. `deploy.sh`'s rollback health
+re-check (above) will catch this and say so loudly — but only the migration
+policy itself prevents it.
 
 ### Hard rules specific to this path
 
@@ -300,10 +363,21 @@ by hand on the box: `IMAGE_TAG=<sha> bash deploy/deploy.sh`.
   §7 below.
 - Never point pytest at the box's Postgres (§7) — this path doesn't change
   that; CI's own test job runs against a throwaway Postgres, never the box.
-- Disk hygiene: `deploy.sh` runs `docker image prune -f` after a successful
-  deploy; if disk pressure still builds up (many SHAs pushed over time),
-  `docker image prune -af --filter until=720h` clears anything untagged and
-  unused for 30+ days.
+- A `flock` on `deploy/.deploy.lock` (gitignored, box-local) guards against a
+  hand-run `deploy.sh` interleaving with a CI-triggered one — the workflow's
+  own `concurrency:` group only serializes CI runs against each other, not
+  against someone running the script by hand on the box. A second run
+  blocks (doesn't error) until the first finishes.
+- **Disk hygiene**: this root volume also holds prod Postgres, models, the
+  Parquet lake, the HF cache, and the nightly `pg_dump` target — a
+  disk-full here risks all of those, not just the deploy. `deploy.sh`
+  refuses to even start pulling images if free space drops below ~20 GiB
+  (a few multiples of one ~8-12 GB api image), and after a successful
+  deploy prunes every SHA-tagged `janasunani-api`/`janasunani-frontend`
+  image except the current and previous (the rollback target) — plus the
+  usual `docker image prune -f` for dangling layers. If disk pressure still
+  builds up, `docker system df` shows where; `docker image prune -af
+  --filter until=720h` is the manual backstop.
 
 ### Known gaps — what this repo's automation does NOT verify for you
 
@@ -314,6 +388,39 @@ by hand on the box: `IMAGE_TAG=<sha> bash deploy/deploy.sh`.
 - **On-box browser E2E** — submit a grievance → real pipeline output renders
   and persists to `live_grievances` → `/history` shows it → `basic_auth`
   actually gates access. Do this once after the first automated deploy.
+
+### Known operational follow-ups
+
+Not implemented yet — tracked here so they aren't forgotten, not because
+they're low-stakes:
+
+- **Workflow timeout vs. deploy.sh's own runtime.** The `deploy` job's
+  `timeout-minutes: 45` (and the underlying SSH session) can be shorter than
+  a slow pull plus up to two 1800s (30 min) health waits plus a rollback
+  attempt — if the job/SSH connection is killed mid-`deploy.sh`, the script
+  dies with it, **skipping the rollback it would otherwise have run**.
+  Future: run `deploy.sh` detached on the box (`setsid`/`nohup`, or `trap ''
+  HUP`) and have the workflow poll an exit-status file instead of holding
+  the SSH session open for the whole run; raise the job timeout accordingly.
+- **Rollback ref/artifact skew.** A rollback dispatched from a newer ref
+  ships that ref's *current* `docker-compose.yml`/`Caddyfile` alongside the
+  *old* image being rolled back to — if those files changed shape between
+  the two commits (a new compose key the old image's entrypoint doesn't
+  expect, a Caddyfile routing change the old api doesn't serve), the
+  combination was never actually tested together. Future: dispatch a
+  rollback from the ref matching `image_tag` (checked-out branch/tag
+  matches), or have the workflow `git checkout` `inputs.image_tag` before
+  the artifact-shipping step so the shipped files match the image being
+  deployed.
+- **Security-group ingress rule leakage/collision.** The temporary port-22
+  `/32` rule (`.github/workflows/deploy.yml`) can leak if the runner dies
+  between the authorize and revoke steps (rare, but `if: always()` doesn't
+  help if the whole VM is killed), and a `terraform apply` mid-deploy would
+  reset `aws_security_group.cpu_box` to its baseline rules, stripping CI's
+  temporary one out from under a running deploy. Future: reconcile
+  (list-and-revoke) stale CI-added rules before authorizing a new one each
+  run, or move off SG-based ingress entirely to AWS SSM Session Manager
+  (no inbound port needed at all).
 
 ## 5 · Backups (nightly `pg_dump`)
 

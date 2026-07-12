@@ -13,7 +13,10 @@ is reproducible and `deploy.sh` never `docker compose down -v`s the
 production OLTP volume.
 """
 
+import os
 import re
+import shutil
+import stat
 import subprocess
 
 import yaml
@@ -27,6 +30,9 @@ DEPLOY_SH_PATH = DEPLOY_DIR / "deploy.sh"
 ENTRYPOINT_PATH = DEPLOY_DIR / "api-entrypoint.sh"
 DEPLOY_WORKFLOW_PATH = ROOT_DIR / ".github" / "workflows" / "deploy.yml"
 DOCKERIGNORE_PATH = ROOT_DIR / ".dockerignore"
+FRONTEND_DOCKERFILE_PATH = ROOT_DIR / "frontend" / "Dockerfile"
+API_DOCKERFILE_PATH = DEPLOY_DIR / "api.Dockerfile"
+DEPLOY_DOC_PATH = ROOT_DIR / "docs" / "DEPLOY.md"
 
 
 def _compose() -> dict:
@@ -386,10 +392,10 @@ def test_deploy_script_rolls_back_on_health_or_smoke_check_failure():
         "wait_healthy's timeout branch must call rollback_and_fail (not a "
         "bare exit 1)"
     )
-    assert re.search(r'grep -q .*\|\|\s*rollback_and_fail', text), (
-        "the final smoke-check curl must route a failed grep through "
-        "rollback_and_fail (not a bare pipeline exit)"
-    )
+    # The smoke check became a retry loop in round 6 (covers first-deploy
+    # TLS cert issuance latency) -- it calls rollback_and_fail once the
+    # retry deadline is exceeded, not inline on every failed grep.
+    assert "smoke_deadline" in text and "rollback_and_fail" in text[text.index("smoke_deadline"):]
 
     # Not a blanket ERR trap -- see the docstring for why. (Checks for an
     # actual `trap ...` command, not just the word "trap" -- which shows up
@@ -427,10 +433,15 @@ def test_deploy_script_persists_image_tag_only_after_success():
 
     def first_line_equal_to(needle: str) -> int:
         # Exact (stripped) match -- distinguishes the real top-level
-        # `docker compose up -d` invocation from the same substring inside
-        # rollback_and_fail's `IMAGE_TAG="$prev_tag" docker compose up -d`,
-        # which appears earlier in the file (the function is defined before
-        # its call sites) but is not the line under test here.
+        # invocation from the same substring inside rollback_and_fail's
+        # body, which is DEFINED earlier in the file (functions are
+        # declared before their call sites) but not the line under test
+        # here -- rollback_and_fail's re-`up -d` reads
+        # `IMAGE_TAG="$prev_tag" docker compose up -d` (different text) and
+        # its health re-check reads `wait_healthy janasunani-api &&
+        # wait_healthy janasunani-frontend` (joined with `&&`, not `||
+        # rollback_and_fail`), so exact-matching the real call sites' full
+        # text (with their `|| rollback_and_fail` suffix) avoids both.
         for i, line in enumerate(lines):
             if line.strip() == needle:
                 return i
@@ -438,9 +449,9 @@ def test_deploy_script_persists_image_tag_only_after_success():
 
     write_line = first_line_containing("IMAGE_TAG=${IMAGE_TAG}")
     pull_line = first_line_containing("docker compose pull")
-    up_line = first_line_equal_to("docker compose up -d")
-    wait_api_line = first_line_containing("wait_healthy janasunani-api")
-    wait_frontend_line = first_line_containing("wait_healthy janasunani-frontend")
+    up_line = first_line_equal_to("docker compose up -d || rollback_and_fail")
+    wait_api_line = first_line_equal_to("wait_healthy janasunani-api || rollback_and_fail")
+    wait_frontend_line = first_line_equal_to("wait_healthy janasunani-frontend || rollback_and_fail")
     # The final end-to-end check greps the health body through the proxy.
     smoke_check_line = first_line_containing('"processor":"pipeline"')
 
@@ -601,3 +612,383 @@ def test_deploy_workflow_has_no_moving_demo_tag():
     )
     # The tag regex must not special-case "demo" as a valid input either.
     assert '"$tag" != demo' not in text and "!= demo" not in text
+
+
+def test_deploy_script_has_a_flock_guard():
+    """A hand-run deploy.sh can interleave with a CI-triggered one -- the
+    workflow's `concurrency:` group only serializes CI runs against each
+    other, not a manual run on the box (Fable review, round-6 finding).
+    Must actually acquire the lock before doing anything else (checked
+    before the first `docker compose` invocation), not just mention
+    `flock` somewhere."""
+    text = DEPLOY_SH_PATH.read_text()
+    lines = text.splitlines()
+
+    flock_line = next(i for i, line in enumerate(lines) if re.search(r"\bflock\b", line))
+    pull_line = next(i for i, line in enumerate(lines) if line.strip() == "docker compose pull api frontend proxy")
+    assert flock_line < pull_line, "the flock guard must run before the first docker compose command"
+
+
+def test_deploy_script_has_a_disk_space_preflight():
+    """This root volume also holds prod Postgres, models, the lake, the HF
+    cache, and the nightly pg_dump target -- an ~8-12 GB api image pull that
+    runs the disk out of room risks all of those, not just the deploy
+    (Fable review, round-6 finding). Must check BEFORE `docker compose
+    pull`, not after."""
+    text = DEPLOY_SH_PATH.read_text()
+    lines = text.splitlines()
+
+    df_line = next(i for i, line in enumerate(lines) if "df -Pk" in line)
+    pull_line = next(i for i, line in enumerate(lines) if line.strip() == "docker compose pull api frontend proxy")
+    assert df_line < pull_line
+
+
+def test_deploy_script_prunes_old_sha_tagged_images_on_success():
+    """Each deploy leaves the prior ~8-12 GB SHA-tagged api image behind;
+    only dangling images were pruned before. Must keep exactly current +
+    previous (the rollback target), not prune unconditionally (that would
+    delete the rollback target itself) (Fable review, round-6 finding)."""
+    text = DEPLOY_SH_PATH.read_text()
+
+    assert re.search(r"docker images .* --format", text)
+    assert re.search(r'"\$tag" != "\$new_tag" && "\$tag" != "\$prev_tag"', text), (
+        "retention pruning must keep both new_tag (current) and prev_tag "
+        "(the rollback target), removing everything else"
+    )
+
+
+def test_deploy_script_smoke_check_retries():
+    """First deploy of a fresh nip.io hostname needs a few seconds for
+    Caddy to issue the Let's Encrypt cert -- a single-shot smoke check would
+    spuriously fail (and, post-round-5, trigger a pointless rollback) during
+    that window (Fable review, round-6 finding)."""
+    text = DEPLOY_SH_PATH.read_text()
+
+    assert "smoke_deadline" in text
+    assert re.search(r"while true", text)
+
+
+def test_health_log_dump_has_a_pii_guard_comment():
+    """The `docker logs --tail 100` dump on a health-wait failure lands in
+    repo-readable CI Actions logs -- must never carry a grievance payload
+    (Fable review, round-6 finding)."""
+    text = DEPLOY_SH_PATH.read_text()
+
+    idx = text.index("docker logs --tail 100")
+    preceding = text[:idx]
+    assert "CI Actions logs" in preceding or "CI logs" in preceding
+    assert "grievance payload" in preceding
+
+
+def test_env_example_warns_about_dollar_and_hash_in_password():
+    """Compose interpolates '$' and treats a bare '#' as a comment in .env
+    values -- POSTGRES_PASSWORD containing either could silently break
+    (Fable review, round-6 finding)."""
+    text = (DEPLOY_DIR / ".env.example").read_text()
+
+    idx = text.index("POSTGRES_PASSWORD=change-me")
+    preceding = text[:idx]
+    assert "'$'" in preceding or "$" in preceding
+    assert "#" in preceding
+
+
+def test_base_images_are_pinned_to_digests():
+    """Every base image besides the app images themselves (which are
+    already pinned to the full IMAGE_TAG) floats on a tag that's re-pulled
+    on every build/deploy -- a base image change underneath an unchanged
+    Dockerfile/compose file is exactly the drift IMAGE_TAG pinning exists to
+    prevent (Fable review, round-6 finding)."""
+    compose_text = COMPOSE_PATH.read_text()
+    assert re.search(r"caddy:2-alpine@sha256:[0-9a-f]{64}", compose_text)
+
+    api_dockerfile_text = API_DOCKERFILE_PATH.read_text()
+    assert re.search(r"python:3\.13-slim@sha256:[0-9a-f]{64}", api_dockerfile_text)
+    assert re.search(r"ghcr\.io/astral-sh/uv:0\.9@sha256:[0-9a-f]{64}", api_dockerfile_text)
+
+    frontend_dockerfile_text = FRONTEND_DOCKERFILE_PATH.read_text()
+    assert re.search(r"node:22-alpine@sha256:[0-9a-f]{64}", frontend_dockerfile_text)
+
+
+def test_caddyfile_deployed_snapshot_is_gitignored_and_versioned():
+    """`deploy/proxy/Caddyfile.deployed` is box-local runtime state (the
+    rollback target), written at the end of a successful deploy -- must
+    never be committed, and deploy.sh must both write it on success and
+    read it in rollback_and_fail (Fable review, round-6 finding)."""
+    gitignore_text = (ROOT_DIR / ".gitignore").read_text()
+    assert "Caddyfile.deployed" in gitignore_text
+
+    deploy_sh_text = DEPLOY_SH_PATH.read_text()
+    assert "cp proxy/Caddyfile proxy/Caddyfile.deployed" in deploy_sh_text
+    assert "proxy/Caddyfile.deployed" in deploy_sh_text
+    # Restoration must happen inside rollback_and_fail, before the
+    # tag-rollback decision (a same-tag redeploy shipping only a Caddyfile
+    # change has no image to roll back but still needs the file restored).
+    rollback_fn_start = deploy_sh_text.index("rollback_and_fail() {")
+    tag_decision = deploy_sh_text.index('if [[ -z "$prev_tag"', rollback_fn_start)
+    caddyfile_restore = deploy_sh_text.index("cp proxy/Caddyfile.deployed proxy/Caddyfile", rollback_fn_start)
+    assert rollback_fn_start < caddyfile_restore < tag_decision
+
+
+def test_migration_policy_is_documented():
+    """A rollback re-deploys the previous image unchanged and never runs
+    `alembic downgrade` -- every migration must be expand-only/backward-
+    compatible or a rollback can't un-migrate (Fable review, round-6 H1
+    finding). Must be documented in both api-entrypoint.sh (where the
+    migration actually runs) and docs/DEPLOY.md (the runbook)."""
+    entrypoint_text = ENTRYPOINT_PATH.read_text()
+    assert "MIGRATION POLICY" in entrypoint_text
+    assert "alembic downgrade" in entrypoint_text
+    assert "expand-only" in entrypoint_text or "backward-compat" in entrypoint_text
+
+    doc_text = DEPLOY_DOC_PATH.read_text()
+    assert "Migration policy" in doc_text
+    assert "expand-only" in doc_text or "backward-compat" in doc_text
+
+
+def test_rollback_reverifies_health_before_claiming_success():
+    """The core H1 regression: re-deploying the previous image does NOT
+    guarantee it comes up healthy (e.g. a migration the old image can't
+    satisfy) -- rollback_and_fail must call wait_healthy on the ROLLBACK
+    target and only print a "rolled back...healthy" success message if that
+    actually passes, with a distinct loud failure message if it doesn't."""
+    text = DEPLOY_SH_PATH.read_text()
+
+    rollback_fn = text[text.index("rollback_and_fail() {"):]
+    assert "wait_healthy janasunani-api" in rollback_fn
+    assert "wait_healthy janasunani-frontend" in rollback_fn
+    assert "ROLLBACK FAILED" in rollback_fn
+    assert "verified healthy" in rollback_fn
+
+
+def test_up_d_and_caddy_reload_route_through_rollback():
+    """Under `set -euo pipefail`, a bare `docker compose up -d` or `caddy
+    reload` failure exits the script directly -- AFTER the stack has
+    already started mutating -- with no rollback attempted (H2 finding).
+    Both must route through rollback_and_fail instead of bare-exiting."""
+    text = DEPLOY_SH_PATH.read_text()
+
+    assert re.search(r"docker compose up -d \|\| rollback_and_fail", text), (
+        "the main `docker compose up -d` must route failure through "
+        "rollback_and_fail"
+    )
+    assert re.search(r"caddy reload[^\n]*\|\| rollback_and_fail", text), (
+        "the main Caddy reload must route failure through rollback_and_fail"
+    )
+
+
+# --- Stubbed-docker subprocess tests: run the REAL deploy.sh with a fake
+# `docker`/`flock` on PATH so the rollback control flow (H1/H2) is exercised
+# as an actual regression test, not just a grep over the script text. Each
+# stub recognizes exactly the argv patterns deploy.sh uses (mirrors the
+# script's own docker invocations); a `docker compose up -d` call count in a
+# state file distinguishes the forward deploy attempt from the rollback
+# attempt, so tests can independently control whether each one "succeeds".
+
+_STUB_DOCKER = r"""#!/usr/bin/env bash
+set -euo pipefail
+state="${STUB_STATE_DIR:?STUB_STATE_DIR not set}"
+args="$*"
+
+case "$args" in
+  "compose version --short")
+    echo "2.35.0"; exit 0 ;;
+  "compose pull api frontend proxy")
+    exit 0 ;;
+  "compose up -d")
+    count_file="$state/up_count"
+    count=0
+    [[ -f "$count_file" ]] && count="$(cat "$count_file")"
+    count=$((count + 1))
+    echo "$count" > "$count_file"
+    if [[ "$count" -eq 1 ]]; then
+      exit "${STUB_FIRST_UP_EXIT:-0}"
+    else
+      exit "${STUB_ROLLBACK_UP_EXIT:-0}"
+    fi
+    ;;
+  "compose exec -T proxy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile")
+    exit "${STUB_RELOAD_EXIT:-0}" ;;
+esac
+
+if [[ "${1:-}" == "inspect" ]]; then
+  fmt="${3:-}"
+  if [[ "$fmt" == *State.Running* ]]; then
+    echo "${STUB_PROXY_RUNNING:-true}"
+    exit 0
+  fi
+  if [[ "$fmt" == *State.Health.Status* ]]; then
+    count_file="$state/up_count"
+    count=0
+    [[ -f "$count_file" ]] && count="$(cat "$count_file")"
+    if [[ "$count" -le 1 ]]; then
+      echo "${STUB_FIRST_HEALTH:-unhealthy}"
+    else
+      echo "${STUB_ROLLBACK_HEALTH:-unhealthy}"
+    fi
+    exit 0
+  fi
+  echo "unhealthy"
+  exit 0
+fi
+
+if [[ "${1:-}" == "logs" ]]; then
+  echo "fake log line"
+  exit 0
+fi
+
+if [[ "${1:-}" == "images" ]]; then
+  exit 0
+fi
+
+if [[ "${1:-}" == "image" && "${2:-}" == "prune" ]]; then
+  exit 0
+fi
+
+if [[ "${1:-}" == "rmi" ]]; then
+  exit 0
+fi
+
+echo "UNSTUBBED docker invocation: $*" >&2
+exit 99
+"""
+
+_STUB_FLOCK = "#!/bin/sh\nexit 0\n"
+
+
+def _write_executable(path, content):
+    path.write_text(content)
+    path.chmod(path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+
+
+def _make_stub_deploy_dir(tmp_path, caddyfile_diverged=False, **docker_env):
+    """A scratch deploy/ directory with a stubbed docker+flock on PATH,
+    running the REAL deploy.sh (copied verbatim) against fake docker state.
+    Returns (deploy_dir, env) for subprocess.run."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_executable(bin_dir / "docker", _STUB_DOCKER)
+    _write_executable(bin_dir / "flock", _STUB_FLOCK)
+
+    deploy_dir = tmp_path / "deploy"
+    deploy_dir.mkdir()
+    shutil.copy(DEPLOY_SH_PATH, deploy_dir / "deploy.sh")
+    (deploy_dir / "deploy.sh").chmod(0o755)
+    proxy_dir = deploy_dir / "proxy"
+    proxy_dir.mkdir()
+    deployed_content = "example.com {\n\trespond 200\n}\n"
+    (proxy_dir / "Caddyfile.deployed").write_text(deployed_content)
+    live_content = "example.com {\n\trespond 200\n}\n# shipped alongside this deploy\n" if caddyfile_diverged else deployed_content
+    (proxy_dir / "Caddyfile").write_text(live_content)
+    (deploy_dir / ".env").write_text(
+        "POSTGRES_PASSWORD=testpass\nSITE_ADDRESS=:80\nIMAGE_TAG=prev-good-tag\n"
+    )
+    (deploy_dir / "proxy.env").write_text(
+        "DEMO_USER=demo\n"
+        "DEMO_PASSWORD_HASH=$2a$14$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXY\n"
+    )
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}:{env['PATH']}"
+    env["STUB_STATE_DIR"] = str(state_dir)
+    env["WAIT_HEALTHY_TIMEOUT_S"] = "1"
+    env["WAIT_HEALTHY_POLL_S"] = "1"
+    env["MIN_FREE_KIB"] = "1"  # don't let the real disk-space preflight block a test run
+    env["IMAGE_TAG"] = "new-bad-tag"
+    env.update(docker_env)
+    return deploy_dir, env, deployed_content
+
+
+def _run_deploy_sh(deploy_dir, env):
+    return subprocess.run(
+        ["bash", str(deploy_dir / "deploy.sh")],
+        cwd=deploy_dir,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+def test_rollback_flow_succeeds_and_reports_honestly(tmp_path):
+    """H1 regression test: the forward deploy's health check fails, the
+    script rolls back, the rollback target comes up healthy, and the script
+    says so honestly -- without this fix it either bare-exited (pre-H1) or
+    could have printed "rolled back" without ever checking."""
+    deploy_dir, env, _ = _make_stub_deploy_dir(
+        tmp_path,
+        STUB_FIRST_HEALTH="unhealthy",
+        STUB_ROLLBACK_HEALTH="healthy",
+    )
+    result = _run_deploy_sh(deploy_dir, env)
+    combined = result.stdout + result.stderr
+
+    assert result.returncode == 1, combined
+    assert "Rolling back to last known-good IMAGE_TAG=prev-good-tag" in combined
+    assert "rolled back to prev-good-tag and verified healthy" in combined
+    assert "ROLLBACK FAILED" not in combined
+
+    env_text = (deploy_dir / ".env").read_text()
+    assert "IMAGE_TAG=new-bad-tag" not in env_text
+    assert "IMAGE_TAG=prev-good-tag" in env_text
+
+
+def test_rollback_flow_reports_failure_honestly_when_rollback_target_also_unhealthy(tmp_path):
+    """H1's exact regression scenario: the previous image ALSO can't come
+    up healthy (e.g. a migration it can't satisfy). Must print a loud
+    ROLLBACK FAILED / demo-is-down message and exit non-zero -- must NOT
+    claim the rollback succeeded."""
+    deploy_dir, env, _ = _make_stub_deploy_dir(
+        tmp_path,
+        STUB_FIRST_HEALTH="unhealthy",
+        STUB_ROLLBACK_HEALTH="unhealthy",
+    )
+    result = _run_deploy_sh(deploy_dir, env)
+    combined = result.stdout + result.stderr
+
+    assert result.returncode == 1, combined
+    assert "ROLLBACK FAILED" in combined
+    assert "DOWN" in combined
+    assert "verified healthy" not in combined
+
+
+def test_up_d_failure_routes_through_rollback_not_bare_exit(tmp_path):
+    """H2(a) regression test: `docker compose up -d` itself fails (not just
+    the health check afterward). Must still attempt a rollback, not bare-
+    exit under set -e."""
+    deploy_dir, env, _ = _make_stub_deploy_dir(
+        tmp_path,
+        STUB_FIRST_UP_EXIT="1",
+        STUB_ROLLBACK_UP_EXIT="0",
+        STUB_ROLLBACK_HEALTH="healthy",
+    )
+    result = _run_deploy_sh(deploy_dir, env)
+    combined = result.stdout + result.stderr
+
+    assert result.returncode == 1, combined
+    assert "Rolling back to last known-good IMAGE_TAG=prev-good-tag" in combined
+    assert "rolled back to prev-good-tag and verified healthy" in combined
+
+
+def test_rollback_restores_a_diverged_caddyfile(tmp_path):
+    """H2(b) regression test: the live Caddyfile diverged from
+    Caddyfile.deployed (shipped alongside the failed deploy). rollback_and_fail
+    must restore it from the snapshot, independent of whether the image tag
+    also changed."""
+    deploy_dir, env, deployed_content = _make_stub_deploy_dir(
+        tmp_path,
+        caddyfile_diverged=True,
+        STUB_FIRST_HEALTH="unhealthy",
+        STUB_ROLLBACK_HEALTH="healthy",
+    )
+    live_before = (deploy_dir / "proxy" / "Caddyfile").read_text()
+    assert live_before != deployed_content, "test setup sanity check"
+
+    result = _run_deploy_sh(deploy_dir, env)
+    combined = result.stdout + result.stderr
+
+    assert result.returncode == 1, combined
+    assert "Restoring the last known-good Caddyfile" in combined
+    assert (deploy_dir / "proxy" / "Caddyfile").read_text() == deployed_content

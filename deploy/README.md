@@ -52,16 +52,23 @@ TLS via nip.io + automatic Let's Encrypt and gating the whole site behind
 HTTP Basic Auth (`deploy/proxy/Caddyfile`) — production grievance data must
 not be openly public.
 
-**`deploy/deploy.sh` is the only sanctioned up-path.** It fails closed if
-`deploy/proxy.env`'s `DEMO_PASSWORD_HASH` isn't set to a real-looking value,
-pulls the tagged images, brings the stack up, reloads Caddy if the proxy
-container was already running (the Caddyfile is bind-mounted — `up -d` alone
-won't push a changed one into an already-running container), and blocks
-until **both** `api` and `frontend` report healthy before exiting 0 — run it
-by hand (`IMAGE_TAG=<sha> bash deploy/deploy.sh`) or let CI run it
+**`deploy/deploy.sh` is the only sanctioned up-path.** It preflights the
+Compose version and free disk, fails closed if `deploy/proxy.env`'s
+`DEMO_PASSWORD_HASH` isn't set to a real-looking value, pulls the tagged
+images, brings the stack up, reloads Caddy if the proxy container was
+already running (the Caddyfile is bind-mounted — `up -d` alone won't push a
+changed one into an already-running container), and blocks until **both**
+`api` and `frontend` report healthy before exiting 0 — run it by hand
+(`IMAGE_TAG=<sha> bash deploy/deploy.sh`) or let CI run it
 (`.github/workflows/deploy.yml`, `workflow_dispatch`-only). Don't
-`docker compose up` directly on the box; you'll skip the health gate and the
-Caddy reload.
+`docker compose up` directly on the box; you'll skip the health gate, the
+Caddy reload, and the disk/version preflights. If anything fails after the
+stack starts changing, it **automatically rolls back** (image *and*
+Caddyfile) and re-verifies the rollback is actually healthy before saying
+so — see [docs/DEPLOY.md §4](../docs/DEPLOY.md#4--automated-demo-deploy-ci--ghcr--box)
+("Automatic rollback" and "Migration policy" — a rollback can't undo a
+non-backward-compatible schema migration, only detect and report that it
+can't).
 
 Rules that protect the data:
 

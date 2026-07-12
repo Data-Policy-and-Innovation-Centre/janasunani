@@ -151,6 +151,11 @@ venv.bak/
 # the box's demo proxy -- a real secret, never committed (see
 # deploy/proxy.env.example).
 deploy/proxy.env
+# deploy/deploy.sh's box-local state: a snapshot of the last successfully
+# deployed Caddyfile (the rollback target) and a flock lockfile. Neither is
+# a secret, but both are runtime state generated on the box, not source.
+deploy/proxy/Caddyfile.deployed
+deploy/.deploy.lock
 
 # Spyder project settings
 .spyderproject

@@ -23,3 +23,7 @@ deploy/.env
 # template and must stay excluded from this — an explicit filename, not a
 # wildcard, so it can't accidentally catch *.env.example too).
 deploy/proxy.env
+# deploy.sh's box-local runtime state (rollback-target Caddyfile snapshot,
+# flock lockfile) — not secrets, just not build input either.
+deploy/proxy/Caddyfile.deployed
+deploy/.deploy.lock

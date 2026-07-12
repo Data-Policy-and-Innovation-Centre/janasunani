@@ -16,9 +16,16 @@
 # config.py derives ROOT_DIR/MODELS_DIR/data paths from `__file__`, and
 # alembic.ini uses a relative script_location — the source tree must live at
 # the same absolute path it was installed from.
-FROM python:3.13-slim AS build
+#
+# Base images are pinned to digests, not just floating tags: an image
+# built from a re-pulled `python:3.13-slim` (or uv) underneath an unchanged
+# api.Dockerfile is exactly the kind of drift the app images' own IMAGE_TAG
+# pinning (deploy/docker-compose.yml) exists to prevent. Bump by
+# re-resolving: `docker buildx imagetools inspect python:3.13-slim` /
+# `... ghcr.io/astral-sh/uv:0.9`.
+FROM python:3.13-slim@sha256:eb43ff125d8d58d7449dcba7d336c23bcac412f526d861db493b9994d8010280 AS build
 RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client && rm -rf /var/lib/apt/lists/*
-COPY --from=ghcr.io/astral-sh/uv:0.9 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.9@sha256:538e0b39736e7feae937a65983e49d2ab75e1559d35041f9878b7b7e51de91e4 /uv /uvx /bin/
 ENV UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
 WORKDIR /app
 RUN mkdir -p -m 0700 /root/.ssh && ssh-keyscan github.com >> /root/.ssh/known_hosts
@@ -32,7 +39,7 @@ COPY README.md alembic.ini ./
 COPY janasunani ./janasunani
 RUN --mount=type=ssh uv sync --locked --extra demo --no-dev
 
-FROM python:3.13-slim
+FROM python:3.13-slim@sha256:eb43ff125d8d58d7449dcba7d336c23bcac412f526d861db493b9994d8010280
 RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-ori poppler-utils && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /app /app

@@ -102,7 +102,13 @@ services:
   # health-gated on `api`/`frontend` so cert issuance/redirects aren't
   # blocked by the API's multi-minute warm start.
   proxy:
-    image: caddy:2-alpine
+    # Pinned to the caddy:2-alpine tag's digest as of this writing (Caddy
+    # 2.11.4-alpine) so a deploy is fully reproducible, not just IMAGE_TAG-
+    # pinned for api/frontend — a floating base tag re-pulling a different
+    # image underneath an unchanged deploy is exactly the kind of drift the
+    # IMAGE_TAG pinning elsewhere in this file exists to prevent. Bump by
+    # re-resolving: `docker buildx imagetools inspect caddy:2-alpine`.
+    image: caddy:2-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
     container_name: janasunani-proxy
     restart: unless-stopped
     ports:

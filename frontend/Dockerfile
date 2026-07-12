@@ -8,7 +8,11 @@
 # into the client bundle) and defaults to the relative `/api`, which the
 # Caddy proxy (deploy/proxy/Caddyfile) rewrites to the api service — so the
 # browser never sees a backend host/IP and there's no CORS to configure.
-FROM node:22-alpine AS build
+#
+# node:22-alpine is pinned to a digest, not just the floating tag, so a
+# build is fully reproducible — bump by re-resolving:
+# `docker buildx imagetools inspect node:22-alpine`.
+FROM node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2 AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -17,7 +21,7 @@ ARG NEXT_PUBLIC_API_URL=/api
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 RUN npm run build
 
-FROM node:22-alpine
+FROM node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2
 ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0
 WORKDIR /app
 COPY --from=build /app/.next/standalone ./
