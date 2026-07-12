@@ -119,7 +119,12 @@ services:
     #     in proxy.env's values — some Compose versions DO interpolate
     #     env_file values by default (unlike the Compose on this dev
     #     machine, which happens not to); `raw` makes it version-independent.
-    #     Needs Compose >= 2.24 (the `format` key on env_file entries).
+    #     Needs Compose >= 2.30.0 specifically (the `format` key on env_file
+    #     entries; `required: false` alone landed earlier, in 2.24, but is
+    #     useless without `format: raw` here) — on an older Compose the
+    #     whole file fails to PARSE, before any service starts. deploy.sh
+    #     preflights the installed Compose version and fails loudly if it's
+    #     too old, rather than surfacing that as an opaque parse error.
     #   - `required: false` so a bare `docker compose up -d oltp` (the
     #     documented first-time bring-up, before proxy.env exists at all)
     #     doesn't fail just parsing/loading this file. deploy.sh enforces

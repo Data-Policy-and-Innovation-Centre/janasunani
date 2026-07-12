@@ -318,6 +318,105 @@ def test_deploy_script_fails_closed_on_the_demo_password_hash():
     assert "exit 1" in text
 
 
+def test_deploy_script_persists_image_tag_only_after_success():
+    """deploy.sh must write the IMAGE_TAG= line into .env AFTER pull/up/
+    reload/both health waits/the final smoke check all pass -- not before
+    (round-4 Codex PR #29 finding). Writing it first meant a failed pull
+    (unpublished/rolled-back SHA, transient GHCR error) still left .env
+    pointing at a tag that never actually deployed, so a later bare
+    `docker compose up -d` would use the bad tag instead of the last
+    known-good one. Live-verified: a deploy with a nonexistent image tag
+    fails `docker compose pull` and leaves .env's IMAGE_TAG completely
+    unchanged; a deploy that gets through both health waits but fails the
+    final /api/health smoke check ALSO leaves .env unchanged; only a fully
+    successful run (pull -> up -> reload -> both healthy -> smoke check
+    passes) updates it."""
+    text = DEPLOY_SH_PATH.read_text()
+    lines = text.splitlines()
+
+    def first_line_containing(needle: str) -> int:
+        for i, line in enumerate(lines):
+            if needle in line:
+                return i
+        raise AssertionError(f"{needle!r} not found in {DEPLOY_SH_PATH}")
+
+    write_line = first_line_containing("IMAGE_TAG=${IMAGE_TAG}")
+    pull_line = first_line_containing("docker compose pull")
+    up_line = first_line_containing("docker compose up -d")
+    wait_api_line = first_line_containing("wait_healthy janasunani-api")
+    wait_frontend_line = first_line_containing("wait_healthy janasunani-frontend")
+    # The final end-to-end check greps the health body through the proxy.
+    smoke_check_line = first_line_containing('"processor":"pipeline"')
+
+    for label, line in (
+        ("docker compose pull", pull_line),
+        ("docker compose up -d", up_line),
+        ("wait_healthy janasunani-api", wait_api_line),
+        ("wait_healthy janasunani-frontend", wait_frontend_line),
+        ("the final smoke check", smoke_check_line),
+    ):
+        assert write_line > line, (
+            f"deploy.sh writes IMAGE_TAG into .env at line {write_line + 1}, "
+            f"but {label} is at line {line + 1} -- the .env write must come "
+            f"AFTER every one of these, not before"
+        )
+
+
+def test_deploy_script_preflights_compose_version():
+    """`format: raw` on env_file (docker-compose.yml's proxy service) needs
+    Compose >= 2.30.0 -- on an older Compose the whole file fails to parse
+    before any service starts, with an opaque error. deploy.sh must check
+    `docker compose version` and fail with a clear message before running
+    any compose command (round-4 Codex PR #29 finding)."""
+    text = DEPLOY_SH_PATH.read_text()
+    lines = text.splitlines()
+
+    version_check_line = next(
+        i for i, line in enumerate(lines) if "docker compose version" in line
+    )
+    pull_line = next(i for i, line in enumerate(lines) if "docker compose pull" in line)
+    assert version_check_line < pull_line, (
+        "deploy.sh must check the Compose version BEFORE the first real "
+        "compose command (docker compose pull), not after"
+    )
+    assert "2.30" in text, (
+        "deploy.sh's Compose version preflight must reference 2.30.0 "
+        "specifically (the version format: raw needs), not 2.24"
+    )
+    assert "2.24" not in text
+
+    # docker-compose.yml's explanatory comment and the runbook must state
+    # 2.30 as the actual minimum (either may still mention 2.24 in passing,
+    # contrasting it with 2.30 -- required: false alone landed in 2.24, but
+    # is useless here without format: raw, which needs 2.30 -- that's
+    # legitimate context, not the bug; the bug was stating 2.24 AS the
+    # minimum, which deploy.sh's own preflight -- checked strictly above --
+    # never does).
+    compose_text = COMPOSE_PATH.read_text()
+    assert "2.30" in compose_text
+
+    deploy_doc = (ROOT_DIR / "docs" / "DEPLOY.md").read_text()
+    assert "2.30" in deploy_doc
+
+
+def test_deploy_job_is_scoped_to_the_box_deploy_environment():
+    """Only the `deploy` job needs (and should be able) to read the
+    box-shell-granting secrets/vars (BOX_SSH_KEY, BOX_SSH_KNOWN_HOSTS,
+    BOX_HOST, CI_DEPLOY_ROLE_ARN, BOX_SG_ID) -- docs/DEPLOY.md directs the
+    maintainer to scope those to the `box-deploy` GitHub Actions environment
+    rather than the repo level (round-4 Codex PR #29 finding: a repo-level
+    secret is readable by any workflow any repo writer can add, bypassing
+    both the OIDC narrowing and the environment's required-reviewer gate).
+    That guidance only holds if `deploy` actually declares the environment
+    and the build jobs -- which never need box access -- don't."""
+    with open(DEPLOY_WORKFLOW_PATH) as f:
+        workflow = yaml.safe_load(f)
+
+    assert workflow["jobs"]["deploy"].get("environment") == "box-deploy"
+    assert "environment" not in workflow["jobs"]["build-api"]
+    assert "environment" not in workflow["jobs"]["build-frontend"]
+
+
 def test_deploy_workflow_rejects_short_shas():
     """build-api/build-frontend only ever publish the FULL github.sha (40
     hex chars) -- never a short SHA. A regex that accepts 7-39 char short

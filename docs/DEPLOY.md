@@ -172,15 +172,21 @@ api --> oltp:5432 (compose network; existing container/volume, untouched)
   file from `deploy/.env` — Compose interpolates `$` in `deploy/.env`
   values, which would mangle a bcrypt hash like `$2a$14$...`). The `proxy`
   service loads it via the long-form `env_file:` with `format: raw` (no
-  interpolation of `$`, version-independent — needs **Compose >= 2.24**;
-  `deploy/terraform/user_data.sh` installs `docker-compose-plugin` from
-  Docker's official apt repo, which tracks current stable releases, so this
-  is satisfied on a freshly-provisioned box) and `required: false` (so a
-  bare `docker compose up -d oltp`, §2, doesn't fail just because
-  `proxy.env` doesn't exist yet). `deploy/deploy.sh` fails closed if the
-  hash isn't set to a real-looking value before bringing the full stack
-  up — compose itself has no default and, deliberately, no required-var
-  gate on it either (see docker-compose.yml's header comment).
+  interpolation of `$`, version-independent — the `format` key on env_file
+  entries needs **Compose >= 2.30.0** specifically (not 2.24 — that's only
+  when `required: false` landed); on an older Compose the whole file fails
+  to *parse*, before any service starts. `deploy/terraform/user_data.sh`
+  installs `docker-compose-plugin` from Docker's official apt repo, which
+  tracks current stable releases, so this is satisfied on a
+  freshly-provisioned box — `deploy/deploy.sh` also preflights the
+  installed version and fails with a clear message if it's too old, rather
+  than letting compose's opaque parse error be the first sign) and
+  `required: false` (so a bare `docker compose up -d oltp`, §2, doesn't
+  fail just because `proxy.env` doesn't exist yet). `deploy/deploy.sh`
+  fails closed if the hash isn't set to a real-looking value before
+  bringing the full stack up — compose itself has no default and,
+  deliberately, no required-var gate on it either (see
+  docker-compose.yml's header comment).
 - **Models/data**: host bind-mounts (`../models`, `../data/interim`,
   `../data/raw/janasunani-mappings`, all `:ro`) — never baked into the `api`
   image. A new deploy doesn't re-pull model weights; a model update is a
@@ -223,9 +229,13 @@ secrets/vars — **run each of these yourself; nothing here does it for you:**
    exactly `box-deploy` (matches `environment: box-deploy` in
    `.github/workflows/deploy.yml` and the OIDC trust condition in
    `deploy/terraform/ci.tf`) — the `deploy` job cannot obtain AWS
-   credentials without this existing. Optional but recommended: add yourself
-   as a required reviewer on the environment so a live deploy needs a manual
-   approval click.
+   credentials without this existing, and (per step 3 below) can't read the
+   box-shell-granting secrets/vars without it either. **Strongly
+   recommended**: add yourself as a **required reviewer** on the
+   environment (a live deploy — SSH to the box holding production PII —
+   then needs a manual approval click) and, if this repo ever gains other
+   contributors, restrict which branches can deploy to it (Environment
+   protection rules → "Deployment branches").
 2. Apply the CI IAM role/OIDC provider:
    ```bash
    cd deploy/terraform
@@ -236,17 +246,32 @@ secrets/vars — **run each of these yourself; nothing here does it for you:**
    terraform apply
    terraform output ci_deploy_role_arn cpu_box_security_group_id
    ```
-3. Set these secrets/vars (secrets are repo-level; the vars below can be
-   repo-level or scoped to the `box-deploy` environment):
+3. Set these secrets/vars — **all five box-shell/box-address ones below go
+   on the `box-deploy` environment specifically** (repo Settings →
+   Environments → `box-deploy` → Environment secrets / Environment
+   variables), **not** repo-level. A repo-level secret is readable by any
+   workflow any repo writer can add or modify — for `BOX_SSH_KEY` in
+   particular that's a bypass of both the OIDC narrowing (ci.tf's `sub`
+   condition) and the environment's required-reviewer gate, handing out SSH
+   to the box that holds the migrated production grievance data. Only
+   `DPIC_GITHUB_SSH_KEY` stays a repo secret — it's a read-only deploy key
+   against `dpic-org` (used by the build jobs, which don't declare
+   `environment: box-deploy` and so can't see environment secrets anyway),
+   not something that grants access to the box itself.
 
 | Secret / var | Where | Value |
 |---|---|---|
-| `DPIC_GITHUB_SSH_KEY` | secret | already exists (pipeline.yml reuses it) |
-| `BOX_SSH_KEY` | secret | a **new, CI-only** SSH keypair's private half — generate with `ssh-keygen -t ed25519 -f ci-deploy-key -N ''`; put the **public** half in the box's `~/.ssh/authorized_keys` |
-| `BOX_SSH_KNOWN_HOSTS` | secret | `ssh-keyscan 52.66.116.80` output |
-| `BOX_HOST` | repo var | `52.66.116.80` |
-| `CI_DEPLOY_ROLE_ARN` | repo var | `terraform output -raw ci_deploy_role_arn` |
-| `BOX_SG_ID` | repo var | `terraform output -raw cpu_box_security_group_id` |
+| `DPIC_GITHUB_SSH_KEY` | **repo** secret | already exists (pipeline.yml reuses it) |
+| `BOX_SSH_KEY` | **`box-deploy` environment** secret | a **new, CI-only** SSH keypair's private half — generate with `ssh-keygen -t ed25519 -f ci-deploy-key -N ''`; put the **public** half in the box's `~/.ssh/authorized_keys` |
+| `BOX_SSH_KNOWN_HOSTS` | **`box-deploy` environment** secret | `ssh-keyscan 52.66.116.80` output |
+| `BOX_HOST` | **`box-deploy` environment** var | `52.66.116.80` |
+| `CI_DEPLOY_ROLE_ARN` | **`box-deploy` environment** var | `terraform output -raw ci_deploy_role_arn` |
+| `BOX_SG_ID` | **`box-deploy` environment** var | `terraform output -raw cpu_box_security_group_id` |
+
+The `deploy` job already declares `environment: box-deploy` (added for the
+OIDC trust narrowing — see ci.tf's comment), which is exactly what makes it
+able to read environment-scoped secrets/vars; `build-api`/`build-frontend`
+deliberately do *not* declare it, so they can't.
 
 ### Routine flow
 
@@ -368,8 +393,10 @@ The GPU box is create/destroy (toggle `gpu_box_count`), never stop/start.
 `dpic-dvc-cache/janasunani` · DB backups `grievance-database-backups-main`.
 
 **Secrets/vars for the automated deploy** (§4): see the table there —
-`DPIC_GITHUB_SSH_KEY` (existing), `BOX_SSH_KEY` + `BOX_SSH_KNOWN_HOSTS`
-(secrets), `BOX_HOST` + `CI_DEPLOY_ROLE_ARN` + `BOX_SG_ID` (repo vars).
+`DPIC_GITHUB_SSH_KEY` (existing, repo secret) vs. `BOX_SSH_KEY` +
+`BOX_SSH_KNOWN_HOSTS` + `BOX_HOST` + `CI_DEPLOY_ROLE_ARN` + `BOX_SG_ID`
+(**`box-deploy` environment** secrets/vars, not repo-level — see §4 for why
+that split matters).
 
 **See also:** [deploy/terraform/README.md](../deploy/terraform/README.md) (IaC
 detail), [deploy/README.md](../deploy/README.md) (compose detail),
