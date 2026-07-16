@@ -16,7 +16,7 @@ document-processing pipeline) into one `janasunani/` package, in two parts:
 
 - **Part I — Foundation** *(built)*: data migration into an OLTP store, Parquet
   materialization, document ingestion → S3, the document pipeline, cloud infra.
-- **Part II — Automation prototype** *(next)*: single-grievance inference,
+- **Part II — Automation prototype** *(in progress)*: single-grievance inference,
   routing, FastAPI serving, Next.js UI.
 
 ## The data flow, end to end
@@ -91,9 +91,11 @@ the inherited estimators.
 Managed by [Terraform](../deploy/terraform/README.md), state local, region
 ap-south-1, IAM instance roles only (no static keys):
 
-- **CPU box** (always on, t3.large, Elastic IP 52.66.116.80): Postgres OLTP in
-  Docker ([compose](../deploy/README.md)), migration/materialization one-offs,
-  nightly `pg_dump` → S3; will grow api/frontend/mlflow/proxy services.
+- **CPU box** (always on, t3.large, Elastic IP 52.66.116.80): Postgres OLTP,
+  `api`, `frontend`, and `proxy` (Caddy) in Docker
+  ([compose](../deploy/README.md)), migration/materialization one-offs,
+  nightly `pg_dump` → S3. `mlflow` is intentionally still absent (see
+  [ROADMAP.md](ROADMAP.md) Phase 12).
 - **GPU box** (on demand, g6.xlarge/L4, `gpu_box_count = 0/1` toggle, ~$1/hr
   while up): DeepSeek OCR batch runs and demo windows. Built from the Deep
   Learning Base AMI; created and destroyed per use — nothing stateful on it.
