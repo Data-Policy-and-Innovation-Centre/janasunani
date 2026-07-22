@@ -96,9 +96,11 @@ ap-south-1, IAM instance roles only (no static keys):
 
 - **CPU box** (always on, t3.large, Elastic IP 52.66.116.80): Postgres OLTP in
   Docker ([compose](../deploy/README.md)), migration/materialization one-offs,
-  nightly `pg_dump` → S3. The `api` / `frontend` / `proxy` (Caddy) services are
-  built and reviewed on `deploy/cpu-box` but not yet merged/applied; `mlflow`
-  remains planned for Phase 14.
+  nightly `pg_dump` → S3. The compose stack also defines the `api` / `frontend` /
+  `proxy` (Caddy) services with CI → GHCR → box deploy automation
+  (`.github/workflows/deploy.yml`); the stack is not yet brought up live on the
+  box (first live bring-up tracked in #30), and `mlflow` remains planned for
+  Phase 14.
 - **GPU box** (on demand, g6.xlarge/L4, `gpu_box_count = 0/1` toggle, ~$1/hr
   while up): DeepSeek OCR batch runs and demo windows. Built from the Deep
   Learning Base AMI; created and destroyed per use — nothing stateful on it.

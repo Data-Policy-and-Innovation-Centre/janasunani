@@ -5,7 +5,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Janasunani — Grievance Redressal Demo",
   description:
-    "DPIC demo: AI-assisted grievance intake, redaction, classification and routing. Illustrative — results are produced by a mock processor.",
+    "DPIC demo: AI-assisted grievance intake, redaction, classification and routing.",
 };
 
 function Header() {
@@ -54,8 +54,9 @@ function Footer() {
           University of Chicago &amp; Government of Odisha
         </span>
         <span className="text-white/70">
-          Data, Policy and Innovation Centre — demo build. Results shown are
-          illustrative and produced by a mock processor.
+          Data, Policy and Innovation Centre — demo build. A &quot;mock
+          result&quot; badge marks illustrative responses; unmarked results
+          come from the live pipeline.
         </span>
       </div>
     </footer>

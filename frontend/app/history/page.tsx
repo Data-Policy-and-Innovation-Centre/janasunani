@@ -7,8 +7,7 @@ export default function HistoryPageRoute() {
         <h1 className="text-2xl font-bold text-text-dark">Grievance history</h1>
         <p className="max-w-2xl text-sm text-text-secondary">
           Browse and search historical grievances. Filter by free-text,
-          district, or category. Rows are served by the mock history provider
-          until wire-up.
+          district, or category.
         </p>
       </div>
       <HistoryView />

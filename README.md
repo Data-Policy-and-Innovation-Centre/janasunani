@@ -123,15 +123,20 @@ unavailable.*
 ### 7 · Demo API (default mock or opt-in live processor)
 
 ```bash
-uv run --extra serving janasunani-api        # http://127.0.0.1:8000, docs at /docs
-uv run --extra serving --extra pipeline-core --extra categorizer janasunani-api-live
+uv run --extra serving janasunani-api        # mock; http://127.0.0.1:8000, docs at /docs
+
+uv run --extra demo janasunani-demo-preflight # check models + OCR binaries are ready
+uv run --extra demo janasunani-api-live       # real models behind the same contract
 ```
 
 The full endpoint surface the frontend builds against (`POST /grievance`,
 `GET /grievance/{id}`, `GET /history`, `/health`) with a mocked processor
-returning the real response shapes — no models load. The live command strictly
-loads local DVC model artifacts and runs pytesseract, Presidio, MuRIL, BART,
-and rules routing behind the same contract.
+returning the real response shapes — no models load. The live command (the
+conflict-free `demo` extra) strictly loads local DVC model artifacts and runs
+pytesseract, Presidio, MuRIL, BART, and rules routing behind the same contract,
+persisting each submission to `live_grievances` when `OLTP_DB_URL` is set.
+Full step-by-step bring-up (preflight → Postgres/migrations → launch → health →
+submit): **[docs/DEMO.md](docs/DEMO.md)**.
 Contract details: [janasunani/serving/README.md](janasunani/serving/README.md).
 
 ### Tests (the gate for every change)
@@ -156,6 +161,8 @@ The GPU box is a `gpu_box_count = 0/1` toggle (~$1/hr while up).
   **New agent or contributor? Start here.**
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — system overview: data flow,
   storage layers, environments, infrastructure, invariants.
+- [docs/DEMO.md](docs/DEMO.md) — live-inference demo runbook (preflight →
+  Postgres/migrations → `janasunani-api-live` → health → submit).
 - [docs/DEPLOY.md](docs/DEPLOY.md) — end-to-end cloud deployment runbook
   (provision → migrate → run → back up; the two boxes and hard rules).
 - Per-package detail: [db](janasunani/db/README.md) ·
@@ -163,6 +170,7 @@ The GPU box is a `gpu_box_count = 0/1` toggle (~$1/hr while up).
   [ingestion](janasunani/ingestion/README.md) ·
   [olap](janasunani/olap/README.md) ·
   [pipeline](janasunani/pipeline/README.md) ·
+  [inference](janasunani/inference/README.md) ·
   [serving](janasunani/serving/README.md) ·
   [deploy](deploy/README.md) ·
   [terraform](deploy/terraform/README.md) ·

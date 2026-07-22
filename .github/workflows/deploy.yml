@@ -1,0 +1,210 @@
+name: Deploy demo
+
+# Hand-triggered only — this workflow builds and pushes private GHCR images
+# and then SSHes into the always-on CPU box, so it never runs on a PR/push
+# trigger. Optional `image_tag` re-deploys an existing image without
+# rebuilding (e.g. a rollback to a prior commit SHA).
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Full 40-char commit SHA to (re)deploy an already-published image (a rollback). Leave empty to build from this ref."
+        required: false
+        type: string
+
+concurrency:
+  group: deploy-demo
+  cancel-in-progress: false
+
+env:
+  API_IMAGE: ghcr.io/data-policy-and-innovation-centre/janasunani-api
+  FRONTEND_IMAGE: ghcr.io/data-policy-and-innovation-centre/janasunani-frontend
+
+jobs:
+  build-api:
+    if: ${{ inputs.image_tag == '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Forwards the existing dpic-org deploy key (already a CI secret, used
+      # by pipeline.yml) so `uv sync --extra demo` inside the Docker build can
+      # resolve the private `dpic` git dependency over BuildKit `ssh: default`.
+      - name: Configure SSH agent for the private dpic dependency
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DPIC_GITHUB_SSH_KEY }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push api image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/api.Dockerfile
+          platforms: linux/amd64
+          push: true
+          ssh: default
+          # Only the immutable per-commit SHA tag — no moving `demo`/`latest`
+          # tag. build-api and build-frontend are independent jobs; if one
+          # pushed a moving tag and the other then failed, a later
+          # `image_tag: demo` deploy would mix api/frontend from different
+          # commits. The SHA tag is always both-or-neither (this job's push
+          # either succeeds or the whole job — and thus the deploy — fails).
+          tags: ${{ env.API_IMAGE }}:${{ github.sha }}
+          # Registry cache, not GHA cache: the `demo` extra resolves CUDA
+          # torch (~8-12 GB image) — well past the GHA cache size budget.
+          # (This `buildcache` tag is BuildKit's layer cache, unrelated to
+          # image tagging above — it's never pulled/deployed.)
+          cache-from: type=registry,ref=${{ env.API_IMAGE }}:buildcache
+          cache-to: type=registry,ref=${{ env.API_IMAGE }}:buildcache,mode=max
+
+  build-frontend:
+    if: ${{ inputs.image_tag == '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          file: frontend/Dockerfile
+          platforms: linux/amd64
+          push: true
+          # Only the immutable per-commit SHA tag — see build-api's comment
+          # on why there's no moving `demo`/`latest` tag.
+          tags: ${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: [build-api, build-frontend]
+    # `always()` is load-bearing, not decorative: on a rollback run
+    # (image_tag set), build-api/build-frontend's own `if` SKIPS them —
+    # and GitHub auto-skips a job whose `needs` were all skipped unless the
+    # `if` contains `always()`. Without it, a rollback would silently never
+    # deploy. `!failure() && !cancelled()` still correctly blocks deploying
+    # when a build actually failed or the run was cancelled (bare
+    # `always()` alone would deploy even on a failed build — deliberately
+    # not used).
+    if: ${{ always() && !failure() && !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Pins the GitHub OIDC `sub` claim this job presents to
+    # `repo:.../janasunani:environment:box-deploy` (deploy/terraform/ci.tf's
+    # trust policy matches on exactly that) — narrows who/what can assume
+    # ci_deploy far more than "any ref in this repo", and leaves room for a
+    # required-reviewer gate on the environment later. Maintainer must create
+    # the "box-deploy" environment once (Settings -> Environments) — see
+    # docs/DEPLOY.md.
+    environment: box-deploy
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # `inputs.image_tag` is attacker-influenceable (anyone who can dispatch
+      # this workflow chooses it) and ends up in a bash string run over SSH
+      # on the box below — pass it through `env:` rather than inlining
+      # `${{ }}` into the script, and reject anything that isn't a tag the
+      # build jobs could actually have published before it's used anywhere.
+      # build-api/build-frontend only ever push the FULL `github.sha` (40 hex
+      # chars) — no moving tag exists (see their tags: comments) — so a
+      # short SHA here would pass a looser check but then fail
+      # `docker compose pull` with a confusing "manifest not found"; the
+      # regex is deliberately exact and deliberately excludes any
+      # non-SHA moving tag.
+      - name: Resolve and validate image tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.image_tag }}
+        run: |
+          tag="${INPUT_TAG:-${{ github.sha }}}"
+          if [[ ! "$tag" =~ ^[a-fA-F0-9]{40}$ ]]; then
+            echo "invalid image_tag: $tag (must be a full 40-char commit SHA)" >&2
+            exit 1
+          fi
+          echo "value=$tag" >> "$GITHUB_OUTPUT"
+
+      # Federated (OIDC) credentials — no long-lived AWS access key stored as
+      # a GitHub secret. Role/trust policy: deploy/terraform/ci.tf.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.CI_DEPLOY_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Open port 22 to this runner
+        run: |
+          RUNNER_IP="$(curl -4 -s https://checkip.amazonaws.com)"
+          echo "runner_cidr=${RUNNER_IP}/32" >> "$GITHUB_ENV"
+          aws ec2 authorize-security-group-ingress \
+            --group-id "${{ vars.BOX_SG_ID }}" \
+            --protocol tcp --port 22 --cidr "${RUNNER_IP}/32"
+
+      - name: Configure SSH for the box
+        run: |
+          mkdir -p -m 0700 ~/.ssh
+          printf '%s\n' "${{ secrets.BOX_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "${{ secrets.BOX_SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Ship deploy artifacts to the box
+        run: |
+          ssh ubuntu@${{ vars.BOX_HOST }} "mkdir -p ~/janasunani/deploy/proxy"
+          scp deploy/docker-compose.yml ubuntu@${{ vars.BOX_HOST }}:~/janasunani/deploy/docker-compose.yml
+          scp deploy/deploy.sh ubuntu@${{ vars.BOX_HOST }}:~/janasunani/deploy/deploy.sh
+          scp deploy/proxy/Caddyfile ubuntu@${{ vars.BOX_HOST }}:~/janasunani/deploy/proxy/Caddyfile
+
+      - name: Deploy
+        env:
+          TAG: ${{ steps.tag.outputs.value }}
+        run: |
+          ssh ubuntu@${{ vars.BOX_HOST }} "IMAGE_TAG=${TAG} bash janasunani/deploy/deploy.sh"
+
+      # Always runs, even if the deploy step failed — port 22 must not stay
+      # open to the runner's transient IP beyond this job.
+      - name: Revoke port 22 from this runner
+        if: ${{ always() && env.runner_cidr != '' }}
+        run: |
+          aws ec2 revoke-security-group-ingress \
+            --group-id "${{ vars.BOX_SG_ID }}" \
+            --protocol tcp --port 22 --cidr "${{ env.runner_cidr }}"

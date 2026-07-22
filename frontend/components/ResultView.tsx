@@ -49,6 +49,7 @@ function confidenceTone(c: number): "positive" | "neutral" | "negative" {
 export function ResultView({ result }: { result: GrievanceResult }) {
   const { extraction, redaction, classification, routing } = result;
   const isMock = routing.method === "mock";
+  const isFallbackRouting = routing.method === "fallback";
 
   return (
     <div className="flex flex-col gap-4">
@@ -151,6 +152,13 @@ export function ResultView({ result }: { result: GrievanceResult }) {
         title="Routing"
         hint={`method: ${routing.method}`}
       >
+        {isFallbackRouting && (
+          <p className="mb-3 rounded-sm bg-panel px-3 py-2 text-xs text-text-secondary">
+            No specific rule matched this category/district — routed to the
+            generic public grievance cell as a safety net. Confidence is low
+            by design.
+          </p>
+        )}
         <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="Department" value={routing.dept} />
           <Field label="Handling office" value={routing.office} />
