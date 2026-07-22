@@ -136,32 +136,47 @@ the number the rebuilt stage must beat.
   migrated production data.
 - **Never run pytest on the CPU box against the prod container** — fixtures drop
   tables. See [tests/README](../tests/README.md).
-- The boxes hold no GitHub credential; clone/`uv sync` via SSH agent forwarding.
+- Source access uses SSH agent forwarding (no long-lived Git SSH key on the boxes).
+  The CPU box does hold a **read-scoped GHCR PAT** for image pulls (Phase 12 deploy)
+  — rotate/replace it (or move pulls to an instance-role-native registry); it is the
+  one standing credential on the box.
 
 ## Roadmap direction (Part III — planned)
 
-Post-demo, two workstreams mature the system (full detail + status in
-[ROADMAP.md](ROADMAP.md) Phases 13–15). Three principles a cold reader should
-know they're coming:
+Post-demo work is sequenced **evaluation-first, workflow-first, platform-light**
+(full detail + status in [ROADMAP.md](ROADMAP.md) Phases 13–19). What a cold
+reader should know is coming:
 
+- **Evaluation and safety come first.** Before touching the models, build a
+  per-task, per-language eval harness + governed gold sets, re-measure the current
+  models as a baseline, and close the operational-safety gaps (RBAC, egress
+  enforcement, tested restore, audit). Today "citizen text never leaves the box"
+  is enforced by policy, not by the network.
 - **Language-first invariant.** `pages.language` is the spine every stage keys
   off. Today the pipeline degrades non-English to `Uncategorized`/`fallback` via
-  English-only gates; Part III makes language first-class — detect language
-  (image-based before OCR to pick the OCR model; text-based **IndicLID** once
-  text exists, native **and romanized** Odia), normalize romanized → script
-  (IndicXlit), run Indic models the whole way down (IndicBART / IndicNER /
-  MuRIL-retrain), and **measure per-language** (an `eval_results.jsonl` harness).
-- **Modularity & model registry.** The hardcoded `STAGE_ORDER` + per-stage model
-  constants become a **stage registry** (configurable, dep-validated order) and a
-  **model registry** — every model resolved by name+stage from a DVC path or an
-  **MLflow** `Production` stage, so swaps/retrains are config, not code. This is
-  where MLflow finally earns its place (the Phase 6 "many retrain candidates"
-  trigger); the `mlflow` compose service lands here, not in the demo.
-- **Governance-intelligence layer.** On-box embeddings (DuckDB VSS) + statistical
-  spike detection + emergent-theme topic modeling over the 1.37M/6.56M corpus,
-  narrated by the on-box local Indic LLM — descriptive by design (comparative
-  office-performance claims carry omitted-variable-bias risk). No new datastore,
-  no external API.
+  English-only gates; Part III makes language first-class — an image-based signal
+  before OCR to pick the OCR model, a text-based **IndicLID** refine once text
+  exists (native **and romanized** Odia), romanized → script via **IndicXlit** as
+  a *separate derived field* (transliteration isn't length-preserving, so PII
+  offsets stay on the original text), Indic models the whole way down, and
+  per-language measurement.
+- **Minimal modularity + model registry.** The pipeline keeps a **fixed canonical
+  stage order shared by batch and live** (some orderings are policy invariants, not
+  free choices); only **models** become swappable, resolved by name/alias from a
+  DVC path or an **MLflow alias** (`@production`, not the deprecated stages). MLflow
+  is a **control-plane** (resolve at deploy/startup, pin in a release manifest,
+  one-command rollback), not a runtime dependency. This is the Phase 6 trigger; the
+  `mlflow` service lands here, not in the demo.
+- **Governance intelligence, spike-first.** Cheap statistical spike/anomaly
+  detection over structured lake fields ships first; on-box embeddings + case
+  retrieval + emergent themes (DuckDB VSS, capacity-gated) and local-LLM narration
+  come later, gated on the language normalization above. Descriptive by design; no
+  new datastore, no external API.
+- **Governed feedback + jurisdiction pack.** Officer corrections are captured,
+  curated, and learned from in shadow mode first (not autonomous online learning);
+  and the taxonomy/mappings/languages/thresholds/RBAC become portable config+data
+  so the system can target a second jurisdiction, which is what makes it a DPI
+  product rather than one deployment.
 
 ## Gates
 
