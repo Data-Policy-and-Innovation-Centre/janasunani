@@ -236,11 +236,14 @@ not replace, the tabled Phase 5/6/9 goals.
 ### Execution order
 
 1. **Finish and harden the demo** — auth/RBAC on real-data endpoints, egress
-   enforcement, a tested restore, baseline observability — before anything touches
-   real data.
+   enforcement, a tested restore, baseline observability — before any *additional*
+   real-data exposure or new Part III endpoint (the system already stores and
+   processes real citizen data).
 2. **Phase 13** — evaluation, gold sets, operational safety.
 3. **Phase 14** — model & pipeline platform (minimal).
-4. **Phase 15** — spike/anomaly detection (first government-visible value).
+4. **Phase 15** — spike/anomaly detection (first government-visible value). It uses
+   only structured lake fields, so it can run **alongside Phase 14** once Phase 13
+   lands — don't serialize it behind the model platform.
 5. **Phase 16** — Odia-first models, gated on Phase 13.
 6. **Phase 17** — semantic index, case retrieval, themes (needs Phase 16
    normalization; capacity-gated; local-LLM narration last).
@@ -301,15 +304,26 @@ better multilingual model from a more confident unsafe one.
 
 Make model swaps and retrains safe and reproducible without over-building.
 
-- **One typed processing recipe shared by batch and live.** Converge
-  `pipeline/pipeline.py` and `inference/service.py::process` on a single
-  fixed-order recipe with declared inputs/outputs and startup validation, so the
-  two paths cannot drift. The canonical order is
-  `format_classifier → ocr_extraction → language_id → transliteration →
-  pii_tagger → page_type_classifier → summarizer → categorizer` (the text-based
-  `language_id` / `transliteration` stages are added in Phase 16, after OCR; PII
-  precedes the summarizer because the summarizer reads redacted text). The order
-  is fixed, not configurable.
+- **One validated processing recipe shared by batch and live.** Converge
+  `pipeline/pipeline.py` and `inference/service.py::process` on a single recipe with
+  declared inputs/outputs and startup validation, so the two paths cannot drift. It
+  is a **fixed typed dataflow with explicit branches, not a literal linear chain**:
+  typed grievances skip format-classification / OCR / page-type; document
+  submissions include the page-level path and gating. The order is fixed (not
+  configurable), and the validator enforces the **mandatory safety edges** — PII
+  redaction before summarization/presentation, and original-text offsets kept
+  authoritative (text-based `language_id` / `transliteration`, added in Phase 16,
+  run after OCR and write a *derived* field, never the redaction span-of-record).
+- **Establish the jurisdiction config contract now** (not just in Phase 19). Define
+  the minimal seam — taxonomy, routing mappings, languages, retention, RBAC, eval
+  thresholds — as configuration during this phase, so Phases 15–18 don't bake in
+  Odisha-specific assumptions that are expensive to extract later. The second,
+  synthetic-jurisdiction *validation* stays in Phase 19.
+- **API evolution policy.** "New schemas, frozen contract untouched" won't hold as
+  correction and intelligence endpoints accumulate. Pin the current response
+  contract as **v1** and specify: additive compatibility, versioned routes,
+  idempotency, structured errors, upload/request-size limits, and async job/status
+  semantics for long OCR/GPU operations.
 - **Model registry.** Resolve every model by name/alias from a DVC path **or** an
   MLflow alias, not a hardcoded constant (`summarizer.py`, `categorizer/stage.py`,
   `pii_tagger.py`, `page_type_classifier.py`, `deepseek_backend.py`);
@@ -377,8 +391,10 @@ index is committed.
 - **On-box embeddings.** `olap/embed.py` writes `data/interim/embeddings.parquet`
   with schema `ticket_no, vector, model_version, source, kind, correction_id`, so a
   raw-grievance vector is distinguishable from a correction-derived one (edited
-  summary / label / route). A modern multilingual embedder: BGE-M3 as the floor,
-  an LLM-scale embedder (e5-mistral / gte-Qwen2) on the GPU box as the ceiling.
+  summary / label / route). The embedder is chosen from **benchmark candidates**
+  (e.g. BGE-M3, e5-mistral, gte-Qwen2) by multilingual task quality, licensing,
+  artifact size, build cost, and measured CPU/GPU performance — not a predetermined
+  floor/ceiling.
 - **Capacity gate before VSS/HNSW.** The dense index is the first genuinely new
   scaling regime on the downsized CPU box. Benchmark artifact size, build time,
   filtered-query p95, memory, restart/rebuild, and incremental updates before
@@ -421,7 +437,9 @@ The abstraction that turns "an Odisha deployment with reusable code" into
 something another government can adopt. Taxonomy, routing mappings, languages,
 model release, eval thresholds, retention rules, and RBAC policy all become
 **configuration and data**, with a portability test against a second, synthetic
-jurisdiction. It runs alongside the other phases as the export throughline.
+jurisdiction. The minimal config *contract* is established early (Phase 14) so
+Phases 15–18 don't embed Odisha assumptions; this phase is the second-jurisdiction
+**validation**. It runs alongside the other phases as the export throughline.
 
 ### Go / no-go gates
 
