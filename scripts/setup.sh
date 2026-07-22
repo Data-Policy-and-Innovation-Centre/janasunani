@@ -111,6 +111,41 @@ install_aws() {
     rm -rf "${tmpdir}"
 }
 
+# Poppler (pdfinfo/pdftoppm) and tesseract are system packages the OCR pipeline
+# shells out to at runtime. Unlike uv/rclone/aws they can't be installed into
+# ~/.local without sudo, so setup doesn't install them — it fails early with the
+# platform's install command rather than letting the pipeline crash on the first
+# PDF (pdf2image PDFInfoNotInstalledError). See docs/DEMO.md.
+check_system_ocr_deps() {
+    local missing=()
+    command -v pdfinfo   >/dev/null || missing+=("poppler-utils")
+    command -v pdftoppm  >/dev/null || missing+=("poppler-utils")
+    command -v tesseract >/dev/null || missing+=("tesseract-ocr")
+
+    if [ "${#missing[@]}" -gt 0 ]; then
+        # de-duplicate (poppler-utils provides both pdfinfo and pdftoppm)
+        local unique
+        unique="$(printf '%s\n' "${missing[@]}" | sort -u | tr '\n' ' ')"
+        echo "Missing system OCR/PDF binaries: ${unique% }"
+        if [ "$(uname -s)" = "Darwin" ]; then
+            echo "Install with: brew install poppler tesseract tesseract-lang"
+        else
+            echo "Install with: sudo apt-get update && sudo apt-get install -y \\"
+            echo "    poppler-utils tesseract-ocr tesseract-ocr-ori"
+        fi
+        echo "Then rerun: make setup"
+        exit 1
+    fi
+
+    # binary present, but the Odia (ori) traineddata may not be — the pipeline
+    # needs it for the ori OCR pass. Warn rather than fail; eng-only still runs.
+    if ! tesseract --list-langs 2>/dev/null | grep -qx ori; then
+        echo "WARNING: tesseract 'ori' (Odia) traineddata not found."
+        echo "  Debian/WSL: sudo apt-get install -y tesseract-ocr-ori"
+        echo "  macOS:      brew install tesseract-lang"
+    fi
+}
+
 install_missing_prereqs() {
     ensure_user_bin_on_path
 
@@ -123,6 +158,7 @@ install_missing_prereqs() {
     command -v uv >/dev/null || install_uv
     command -v rclone >/dev/null || install_rclone
     command -v aws >/dev/null || install_aws
+    check_system_ocr_deps
 
     command -v git >/dev/null
     command -v uv >/dev/null
