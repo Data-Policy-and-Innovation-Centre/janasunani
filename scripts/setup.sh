@@ -126,15 +126,23 @@ resolve_tesseract() {
     return 1
 }
 
-# Resolve a poppler binary (pdfinfo/pdftoppm) the same way the runtime does
-# (page_renderer.py / stage.py): the ~/.local poppler dir first, then PATH.
-resolve_poppler_bin() {
-    local user_bin="${HOME}/.local/poppler/usr/bin/$1"
-    if [ -x "${user_bin}" ]; then
-        echo "${user_bin}"
-        return 0
+# Is poppler usable the way the runtime uses it? The runtime (page_renderer.py /
+# stage.py) picks ONE poppler directory — keyed on whether pdfinfo exists there —
+# and pdf2image then looks for pdftoppm in that SAME directory. So both binaries
+# must live together: in the ~/.local dir, or in /usr/bin, or (POPPLER_PATH=None)
+# both found on PATH. A pdfinfo in ~/.local with pdftoppm only on PATH fails at
+# runtime, so it must fail here too.
+poppler_usable() {
+    local user_dir="${HOME}/.local/poppler/usr/bin"
+    if [ -x "${user_dir}/pdfinfo" ]; then
+        [ -x "${user_dir}/pdftoppm" ]
+        return
     fi
-    command -v "$1" 2>/dev/null
+    if [ -x "/usr/bin/pdfinfo" ]; then
+        [ -x "/usr/bin/pdftoppm" ]
+        return
+    fi
+    command -v pdfinfo >/dev/null && command -v pdftoppm >/dev/null
 }
 
 # Poppler (pdfinfo/pdftoppm) and tesseract are system packages the OCR pipeline
@@ -145,13 +153,11 @@ resolve_poppler_bin() {
 # $TESSERACT_CMD install is accepted here too — matching the runtime resolvers —
 # so it isn't false-failed. See docs/DEMO.md.
 check_system_ocr_deps() {
-    local tesseract_bin poppler_ok=1
-    resolve_poppler_bin pdfinfo  >/dev/null || poppler_ok=0
-    resolve_poppler_bin pdftoppm >/dev/null || poppler_ok=0
+    local tesseract_bin
     tesseract_bin="$(resolve_tesseract || true)"
 
-    if [ "${poppler_ok}" -eq 1 ] && [ -n "${tesseract_bin}" ]; then
-        warn_missing_odia_traineddata "${tesseract_bin}"
+    if poppler_usable && [ -n "${tesseract_bin}" ]; then
+        check_tesseract_langs "${tesseract_bin}"
         return
     fi
 
@@ -163,7 +169,7 @@ check_system_ocr_deps() {
         echo "Installing poppler-utils + tesseract-ocr (+ Odia) via apt..."
         if sudo apt-get update && sudo apt-get install -y \
             poppler-utils tesseract-ocr tesseract-ocr-ori; then
-            warn_missing_odia_traineddata
+            check_tesseract_langs
             return
         fi
         echo "Automatic install failed — install the packages above manually,"
@@ -182,12 +188,23 @@ check_system_ocr_deps() {
     exit 1
 }
 
-# The tesseract binary can be present without the Odia (ori) traineddata the
-# pipeline needs for its ori OCR pass. Warn rather than fail; eng-only still runs.
-# $1 = resolved tesseract path (defaults to PATH lookup after an apt install).
-warn_missing_odia_traineddata() {
-    local tesseract_bin="${1:-tesseract}"
-    if ! "${tesseract_bin}" --list-langs 2>/dev/null | grep -qx ori; then
+# Validate the resolved tesseract, then check its languages. Two distinct
+# outcomes the caller must not conflate:
+#   - the binary can't run (stale/broken $TESSERACT_CMD or PATH entry) -> FAIL,
+#     because pytesseract calls would later error or return empty OCR;
+#   - it runs but lacks the Odia (ori) traineddata -> WARN only, eng-only runs.
+# --list-langs is captured with 2>&1 so the language list is seen regardless of
+# which stream a given tesseract build prints it on; the exit code decides
+# runnable-vs-broken. $1 = resolved tesseract path (default: PATH after apt).
+check_tesseract_langs() {
+    local tesseract_bin="${1:-tesseract}" langs
+    if ! langs="$("${tesseract_bin}" --list-langs 2>&1)"; then
+        echo "tesseract at '${tesseract_bin}' failed to run (--list-langs):"
+        printf '%s\n' "${langs}"
+        echo "Repair or reinstall tesseract, then rerun: make setup"
+        exit 1
+    fi
+    if ! printf '%s\n' "${langs}" | grep -qx ori; then
         echo "WARNING: tesseract 'ori' (Odia) traineddata not found."
         echo "  Debian/WSL: sudo apt-get install -y tesseract-ocr-ori"
         echo "  macOS:      brew install tesseract-lang"
