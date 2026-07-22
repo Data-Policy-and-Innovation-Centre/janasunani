@@ -111,16 +111,49 @@ install_aws() {
     rm -rf "${tmpdir}"
 }
 
+# Resolve the tesseract binary the same way the runtime does
+# (pytesseract_backend.py / features.py): $TESSERACT_CMD, then PATH, then the
+# repo's no-sudo ~/.local install. Echoes the path on success.
+resolve_tesseract() {
+    local candidate
+    for candidate in "${TESSERACT_CMD:-}" "$(command -v tesseract 2>/dev/null)" \
+        "${HOME}/.local/tesseract/usr/bin/tesseract"; do
+        if [ -n "${candidate}" ] && [ -x "${candidate}" ]; then
+            echo "${candidate}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Resolve a poppler binary (pdfinfo/pdftoppm) the same way the runtime does
+# (page_renderer.py / stage.py): the ~/.local poppler dir first, then PATH.
+resolve_poppler_bin() {
+    local user_bin="${HOME}/.local/poppler/usr/bin/$1"
+    if [ -x "${user_bin}" ]; then
+        echo "${user_bin}"
+        return 0
+    fi
+    command -v "$1" 2>/dev/null
+}
+
 # Poppler (pdfinfo/pdftoppm) and tesseract are system packages the OCR pipeline
 # shells out to at runtime; without them it crashes on the first PDF (pdf2image
 # PDFInfoNotInstalledError). Unlike uv/rclone/aws they need a system package
 # manager, so on Debian/WSL (apt) we install them with sudo; elsewhere we print
-# the platform's install command and fail early. See docs/DEMO.md.
+# the platform's install command and fail early. A valid ~/.local (no-sudo) or
+# $TESSERACT_CMD install is accepted here too — matching the runtime resolvers —
+# so it isn't false-failed. See docs/DEMO.md.
 check_system_ocr_deps() {
-    command -v pdfinfo >/dev/null \
-        && command -v pdftoppm >/dev/null \
-        && command -v tesseract >/dev/null \
-        && { warn_missing_odia_traineddata; return; }
+    local tesseract_bin poppler_ok=1
+    resolve_poppler_bin pdfinfo  >/dev/null || poppler_ok=0
+    resolve_poppler_bin pdftoppm >/dev/null || poppler_ok=0
+    tesseract_bin="$(resolve_tesseract || true)"
+
+    if [ "${poppler_ok}" -eq 1 ] && [ -n "${tesseract_bin}" ]; then
+        warn_missing_odia_traineddata "${tesseract_bin}"
+        return
+    fi
 
     echo "Missing system OCR/PDF binaries (poppler and/or tesseract)."
 
@@ -151,8 +184,10 @@ check_system_ocr_deps() {
 
 # The tesseract binary can be present without the Odia (ori) traineddata the
 # pipeline needs for its ori OCR pass. Warn rather than fail; eng-only still runs.
+# $1 = resolved tesseract path (defaults to PATH lookup after an apt install).
 warn_missing_odia_traineddata() {
-    if ! tesseract --list-langs 2>/dev/null | grep -qx ori; then
+    local tesseract_bin="${1:-tesseract}"
+    if ! "${tesseract_bin}" --list-langs 2>/dev/null | grep -qx ori; then
         echo "WARNING: tesseract 'ori' (Odia) traineddata not found."
         echo "  Debian/WSL: sudo apt-get install -y tesseract-ocr-ori"
         echo "  macOS:      brew install tesseract-lang"
