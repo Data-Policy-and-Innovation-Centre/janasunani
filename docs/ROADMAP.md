@@ -7,14 +7,23 @@ Odisha. End goal: a **full automation prototype** — take a **raw grievance** (
 scanned document), **extract** text, **redact PII**, **classify** (category / subcategory / department),
 **summarize**, and **route** it to the responsible office — quickly — with a polished **Next.js demo**.
 
-The system is built **phase by phase** (Phases 0–12; see the phase list and detail below). The earlier
+The system is built **phase by phase** (Phases 0–15; see the phase list and detail below). The earlier
 phases lay the **foundation** — consolidate work from two earlier repos into one `janasunani/` package and
 load the data: the cold-start SQL migration into a swappable OLTP store, the downstream Parquet
 materialization, document ingestion → S3, the six-stage document-processing/ML pipeline, and model tracking.
-The later phases add the **automation prototype** — real-time single-grievance inference, a hybrid
+The middle phases add the **automation prototype** — real-time single-grievance inference, a hybrid
 (rules + learned) routing engine, FastAPI serving that writes live grievances into the **same** OLTP DB, and
 the Next.js demo UI. The later phases are built **API-contract-first** so the demo (the visible deliverable)
 never sits at the tail of a serial chain.
+
+**Part III — post-demo maturity (Phases 13–15, planned).** After the status-quo demo, the plan
+matures the models along a spine — *status-quo → improved (Odia-first, Indic) models → human-in-the-loop
+online learning* — on a **modularity foundation** (a stage registry with configurable order, a model
+registry, and MLflow-backed hot-switching) and adds a modern **governance-intelligence layer** (on-box
+embeddings + spike/theme detection) robust to native **and romanized Odia** and broken English. This
+extends — does not replace — the tabled Phase 5 (MuRIL retrain / PII-NER upgrade), Phase 6 (MLflow
+registry, whose adoption trigger this reaches), and Phase 9 (empirical crosswalk / learned scorer) goals.
+See the two new cross-cutting sections and Phases 13.0/13/14/15 below.
 
 This plan is the source of truth, **mirrored into the repo at `docs/ROADMAP.md`** (kept in sync).
 
@@ -252,6 +261,11 @@ start GPU box → health check → demo → stop GPU box; latency pass; stakehol
   - **Phase 11** 🔄 frontend — first cut on `feat/frontend-demo` (DPIC-branded, against the mock).
   - **Phase 12** ⬜ demo integration & deployment.
   - Docs: `chore/handoff-doc-links` (ongoing). *(Dead: `backend-plan-unsplit` — an ancestor of main, no diff.)*
+- ⬜ **Phases 13–15 — Part III post-demo maturity (planned 2026-07-22).** The model-maturity
+  spine (*status-quo → improved Odia-first models → human-in-the-loop online learning*) on a
+  modularity foundation (**13.0** stage/model registry + MLflow), plus the governance-intelligence
+  layer (**15**). Extends the tabled Phase 5/6/9 goals; not started. See the two new cross-cutting
+  sections + Phase 13.0/13/14/15 detail below.
 
 ## Package structure
 
@@ -386,6 +400,11 @@ the rest.*
   path). The slim helpers stay as-is until then: `configure_tracking`/`ensure_experiment`/
   `log_model_artifact` with `dvc.path`/`dvc.hash` version tags, `MLFLOW_TRACKING_URI`/
   `MLFLOW_ARTIFACT_URI` config (branch `feat/mlflow-slim-registry`, reviewed/tested, not yet merged).
+- **Trigger reached in Part III.** Phase 13 (Indic model swaps) and Phase 14 (online-learning
+  candidates) produce exactly the retrain-candidate volume this bullet names as the adoption
+  condition. **Phase 13.0 (F3)** wires these slim helpers into the model-resolution path
+  (registry-backed, `Production`-by-default) — fulfilling, not contradicting, this deferral. See the
+  "Modularity, switchability & MLflow" cross-cutting section below.
 - **Tests**: a logged run + registered version resolves to a real DVC artifact; `dvc dag` renders.
 
 ## Phase 7 — CI + docs  ⬜ *(split 2026-07-02)*
@@ -462,6 +481,11 @@ deploy/                           # docker-compose (api, frontend, mlflow, oltp-
 - **Sequencing:** the empirical crosswalk ships **first** (demo-sufficient, real data-derived confidence);
   the learned router lands only after the E2E demo path works, so the demo never blocks on training.
 - **Tests**: crosswalk lookups + fallback ladder; learned-router top-k on held-out; combiner fallback.
+- **Part III forward-pointer:** the empirical crosswalk above is landed/completed as **Phase 13.5**
+  (the "improved routing" step); the learned `routing/model.py` is **generalized in Phase 14** from a
+  routing-only scorer into a correction-fed **online-learning loop across all three decision surfaces**
+  (classification / summary / routing), reusing the Phase-15 embedding index as its fast-adaptation
+  layer. The OVB caveat on the disposal-time/benefit objective (Phase 14) applies to routing only.
 
 ## Phase 10 — Serving API + live wiring  ✅ *(default mock + opt-in live)*
 - ✅ **Skeleton (merged to main, PR #12):** all endpoints + `/health` + CORS with a **mocked processor**
@@ -497,13 +521,204 @@ deploy/                           # docker-compose (api, frontend, mlflow, oltp-
 
 ## Phase 12 — Demo integration & deployment  ⬜ *(integration only — compose grows incrementally)*
 - `deploy/docker-compose.yml` starts in **Week 2** with just `oltp` (replacing the ad-hoc `docker run`)
-  and gains each service as it's born (`mlflow` → `api` → `frontend` → `proxy`), so this phase is
+  and gains each service as it's born (`api` → `frontend` → `proxy`), so this phase is
   integration + runbook + latency — not the first time the runtime composition exists in the repo.
+  **`mlflow` is intentionally NOT part of the demo compose** — it lands in **Part III / Phase 13.0
+  (F3)** when there are retrain candidates to register/promote (see Phase 6 trigger).
 - On the **CPU box**: full stack + seed data; `make demo`. The GPU box runs the OCR container separately
   during demo windows (runbook: start GPU box → health check → demo → stop). Materialize Parquet on a
   schedule/one-off. Latency pass.
 - **Verify**: fresh bring-up → submit a grievance in the browser → pipeline + routing renders and persists
   to OLTP; history view shows historical tickets.
+
+---
+
+# Part III — post-demo maturity (Phases 13–15)  ⬜ *(planned 2026-07-22)*
+
+After the status-quo demo, two parallel workstreams mature the system and open it to
+third-party-government interest (the DPI-export framing). **Workstream A** — a model-maturity
+spine: *status-quo → improved (Odia-first, Indic) models → human-in-the-loop online learning*,
+built on a **modularity foundation** (Phase 13.0). **Workstream B** — a modern
+**governance-intelligence layer** (Phase 15), on-box, robust to native **and romanized Odia**
+and broken English. This **extends** the tabled Phase 5 (MuRIL retrain / PII-NER upgrade),
+Phase 6 (MLflow adoption trigger) and Phase 9 (empirical crosswalk / learned scorer) goals —
+no deletions, no conflicts.
+
+**Motivating gaps.** (1) *Odia is a second-class path* — Odia (native + romanized) and broken
+English are OCR'd but then degraded by English-only gates downstream (`categorizer/stage.py`
+`_is_english`, `pii_tagger.py` `WHERE language LIKE '%English%'`, `inference/service.py`
+English branch), so Odia grievances collapse to `Uncategorized` + `fallback`. (2) *No
+governance-intelligence layer* — the 1.37M/6.56M corpus (the real moat) is not aggregated into
+emergent-issue / spike intelligence. A prior BERTopic attempt failed on
+Odia/romanized/broken-English; diagnosed as an **embedder-quality + out-of-distribution**
+problem (not a clustering-algorithm one), and solvable **on-box** — the "citizen text never
+leaves the box" invariant holds throughout Part III (no external APIs).
+
+**Decisions locked with the maintainer (2026-07-22):**
+- **Local Indic LLM: phased hybrid.** Demo + improved-models tiers use *task-specific* Indic
+  models only. A local Indic LLM is added **later, as a batch job on the on-demand GPU box**
+  (the existing `gpu_box_count` create/destroy pattern — `deploy/terraform/gpu.tf`) to power
+  intelligence-layer narration + the hardest multilingual cases. **No always-on GPU billing, no
+  resident inference service.**
+- **Multilingual: Indic-native + relax gates**, not translate-to-English. IndicTrans2 kept only
+  as an optional low-confidence fallback / intelligence English-pivot (deferred).
+- **Intelligence layer: parallel post-demo track** — not a demo blocker (the demo still ships on
+  `fallback`/crosswalk routing per Phase 9).
+
+## Cross-cutting — Language-first invariant (Part III)
+
+`pages.language` is the spine every downstream stage already keys off. The invariant: **detect
+language early, normalize romanized → script, run multilingual models the whole way down, and
+measure per-language** — language-awareness as a pipeline property, not an "Odia mode" bolted
+on. Concretely: a first-class IndicLID language-ID stage (13.1) replaces the coarse
+format-classifier `Language` output; an IndicXlit transliteration step (13.2) canonicalizes
+romanized Odia before model calls; the English-only gates are relaxed (13.4); and every model
+change is gated by a **per-language eval harness** (13.6) with Odia / romanized-Odia / English
+slices, so parity is *provable* to a third-party government rather than assumed.
+
+## Cross-cutting — Modularity, switchability & MLflow (Phase 13.0)  ⬜ *(prerequisite for 13–14)*
+
+The model-maturity work is only safe if swapping a model or reordering the pipeline is a
+config/registry change, **not** a code edit. Built first:
+
+- **F1 — Stage registry + configurable order.** Replace the hardcoded `STAGE_ORDER` tuple +
+  if/elif dispatch (`pipeline/pipeline.py`) with a **stage registry**: each stage registers
+  `name → (run_callable, declared inputs/outputs)`, preserving the lazy-per-stage import
+  (register a thunk, import inside). The run sequence is **config-driven**
+  (`PipelineConfig.stages` becomes an ordered plan) and **dep-validated** by topological check
+  (e.g. `language_id` before `ocr`, `pii` before `categorizer`, `page_type` before
+  `summarizer`). Adding `language_id`/`transliteration`/`embed` becomes *registering* a stage.
+  The **warm processor** (`inference/service.py::process`) is a parallel hardcoded sequence —
+  bring it onto the same abstraction so batch + live stay in lockstep (the larger refactor here).
+- **F2 — Model registry.** Move all model ids/paths out of code constants (`summarizer.py`,
+  `categorizer/stage.py`, `pii_tagger.py`, `page_type_classifier.py`, `deepseek_backend.py`)
+  into one resolver returning a handle from either a **local DVC path** or an **MLflow registry
+  stage**. `PipelineConfig` + `Settings` (`config.py` — already has `MLFLOW_TRACKING_URI`/
+  `MLFLOW_ARTIFACT_URI`) carry the per-stage references. Model swaps (13.3, B.1) become config.
+- **F3 — MLflow adoption.** Wire the built-but-unmerged slim helpers (`tracking/mlflow_utils.py`,
+  branch `feat/mlflow-slim-registry`) into the resolve path: register versions with
+  `Staging`/`Production` + DVC path/hash provenance tags; F2 resolves `Production` by default.
+  **Infra:** the `mlflow` service lands in `deploy/docker-compose.yml` now (Phase 12 reserves
+  `mlflow → api → frontend → proxy`; ARCHITECTURE's "intentionally still absent" note updates) —
+  file backend + S3 artifacts via `MLFLOW_ARTIFACT_URI`. This is the Phase 6 trigger, fulfilled.
+- **F4 — `eval_results.jsonl` gates promotion.** Per-language eval metrics (13.6) become the gate
+  for promoting a candidate to `Production`: retrain → eval → compare in MLflow → promote →
+  serving resolves the new Production model with **zero code change**.
+- **Tests**: reordering/removing a stage via config changes the run and the dep-validator rejects
+  an illegal order; a registry model swap changes serving output with no code edit; MLflow shows
+  registered versions with stages + DVC tags and serving resolves `Production`.
+
+## Phase 13 — Multilingual / Odia-first pipeline (Tier 2 "improved models")  ⬜
+
+Built on the 13.0 foundation (new stages are *registered*; model swaps are *registry/config*).
+
+- **13.1 Language-ID stage (new, first-class).** Insert a `language_id` stage between
+  `format_classifier` and `ocr_extraction` that (over)writes `pages.language` using **IndicLID**
+  (native + romanized Indian-language ID incl. Odia), replacing the sklearn format classifier's
+  coarse `Language` output (`format_classifier/normalize.py`). Warm path: replace
+  `_detect_language` + the `is_english_compatible` injection (`inference/service.py`) with the
+  same call — flips both typed-text and document branches at once.
+- **13.2 Romanized → script normalization (new).** An **IndicXlit** transliteration step
+  canonicalizes romanized Odia → Odia script before model calls (mirrors the existing
+  length-preserving Indic-digit normalizer precedent in `pii_tagger.py`). Insert in
+  `ocr_extraction/stage.py::_process_page` (batch) and `service.py::process` (warm), before the
+  language/model calls.
+- **13.3 Multilingual model swaps (via the F2 registry).** Summarizer `facebook/bart-large-cnn`
+  → **IndicBART**/mT5-Indic (loader is already generic `AutoModelForSeq2SeqLM`); add an
+  **IndicNER**-backed `PERSON` recognizer to Presidio's registry (admit an Odia language code in
+  `supported_languages` + the `analyze(language=…)` calls; new token in
+  `ENTITY_TOKENS`/`ENTITY_ALIASES`) — this also lifts weak Indian-name recall on English pages;
+  **retrain MuRIL** on the OLTP corpus **including native + romanized Odia** (transliteration-
+  augment) — MuRIL already covers Odia, the blocker is the training slice (this is the Phase 5
+  tabled retrain).
+- **13.4 Relax the English-only gates (the crux).** Without this, the swaps don't fire. Relax
+  `_is_english` (`categorizer/stage.py`), the English branch + `UNSUPPORTED_LANGUAGE_SUMMARY`
+  (`service.py`), and `WHERE language LIKE '%English%'` (`pii_tagger.py`) — replace "English vs
+  not" with "route by detected language."
+- **13.5 Improved routing = the empirical crosswalk (lands Phase 9's tabled first step).**
+  `(category, subcategory, district) → argmax(dept, office)` from the lake `complaints` table
+  with **support + concentration as real confidence** and the fallback ladder, behind the
+  `_Router` Protocol, `method="rules"`. Ceilings: cat→dept 60.9% / +subcat 67.5% /
+  +subcat+district 72.8%.
+- **13.6 Per-language eval harness (new; gates 13.1–13.5 and feeds 13.0/F4).** No
+  `eval_results.jsonl` exists yet — build it modeled on `pipeline/pii_eval.py`
+  (`EvaluationReport.to_dict()`, `LEGACY_OVERLAP_BASELINE=0.8056`). One row per
+  `(model_version, gold_version, language)`; small gold slices for PII / categorization /
+  summarization in Odia, romanized-Odia, English.
+- **Verify:** Odia + romanized-Odia grievances to `janasunani-api-live` → non-`Uncategorized`
+  category, non-empty Odia summary, Odia names redacted, routing no longer forced to `fallback`;
+  English PII overlap still ≥ 0.8056.
+
+## Phase 14 — Human-in-the-loop online learning (classification, summarization, routing)  ⬜
+
+Officers correct **all three** AI decision surfaces — category/subcategory, summary, route — so
+the feedback loop is a general AI-HI flywheel, not routing-only. One shared correction substrate
+feeds three per-model signals.
+
+- **14.1 Shared correction-capture surface (new, non-breaking).** A new
+  `POST /grievance/{id}/correction` endpoint records `corrected_category`/`_subcategory`/
+  `_summary`/`_route` (+ who/when) alongside the AI output; **new schemas in a new module —
+  `serving/schemas.py` (frozen contract) untouched**. Persist via a `grievance_corrections`
+  sibling table (or extend `live_grievances` + `crud.create_or_update_live_grievance`). Needs
+  auth (officer identity).
+- **14.2 Two-speed learning (the honest "online").** Per-example gradient updates are unstable
+  for these transformers, so every correction feeds: a **fast layer** (embed the correction into
+  the Phase-15 index → the *next similar grievance* benefits at once via case-based retrieval:
+  nearest-neighbor category vote, retrieved officer-edited summaries as few-shot exemplars,
+  neighbor routes) and a **slow layer** (periodic batch retrain off the lake — batch, not
+  real-time, per the freshness model).
+- **14.3 Per-model signals.** *Classification* — corrected labels → MuRIL retrain (historical
+  `complaints.category` is already human labels, so the signal exists day one). *Summarization* —
+  AI-vs-edited summary → SFT/preference pairs for IndicBART (**forward-only**: no historical gold
+  summaries). *Routing* — a learned scorer (`routing/model.py`/`router.py`, `method="learned"`
+  already reserved) ranking on incidence + **disposal time** + citizen benefit, features joined
+  from `action_history` → `complaints`; override labels = routed dept/office vs the acting office.
+- **Confounding asymmetry (bake in):** classification + summarization corrections are clean
+  supervised signals; **routing's disposal-time/benefit objective carries the OVB caveat** (harder
+  cases run longer regardless of office; office selection isn't random) — keep scored routing
+  descriptive-assisted, not autonomous, until causal controls are in.
+
+## Phase 15 — Governance-intelligence layer (Workstream B)  ⬜ *(parallel post-demo)*
+
+Embeddings-first, unsupervised, on-box. Reuses the DuckDB/Parquet lake + the on-demand GPU box;
+**no new datastore, no external API**.
+
+- **B.1 On-box semantic index — inside DuckDB.** New `olap/embed.py` batch producer writes
+  `data/interim/embeddings.parquet` (`ticket_no`, `vector`, `model_version`); `lake.connect()`
+  auto-globs it (no registration). New `dvc.yaml` stage after `materialize`. Vector search via
+  DuckDB's **VSS** extension. **This fixes the prior BERTopic failure**: normalize-before-embed
+  (13.1/13.2 move romanized Odia in-distribution — the step the prior attempt lacked) + a modern
+  multilingual embedder (**BGE-M3** floor; LLM-scale **e5-mistral-7B / gte-Qwen2-7B** on the GPU
+  box as ceiling — a generation past mBERT/LaBSE, cross-lingual). Also powers **case-based
+  retrieval** (similar past grievances + their actual resolutions/disposal times) and
+  **duplicate/campaign detection**.
+- **B.2 Spike/anomaly detection (do first — cheapest win).** `(category × district × week)`
+  counts → EWMA / STL-residual / Poisson surprise ("water complaints in District X up 300% this
+  week"). No ML; DuckDB queries on a schedule.
+- **B.3 Emergent-theme topic modeling (two-track).** Embedding track (BERTopic-style with the
+  *good* embedder + normalization; clusters not matching the 62 categories = emergent issues) and
+  an **LLM-driven track** (once the phased-hybrid local Indic LLM lands as a GPU batch job:
+  TopicGPT-style taxonomy induction + zero-shot labeling — a local Indic LLM *reads*
+  broken-English/romanized-Odia better than any embedder *clusters* it: "SOTA topic modeling
+  without an API"). Local LLM also **narrates** clusters/spikes into a governance brief.
+- **B.4 Serving + frontend (non-breaking).** New `serving/intelligence.py` `APIRouter` + an
+  `AnalyticsProvider` Protocol mirroring `HistoryProvider`, reading aggregates via `olap/lake.py`
+  — **new schemas in the new module; `schemas.py` untouched**; **add auth** (read paths are
+  currently unauthenticated and this is real lake data). Frontend: `app/intelligence/page.tsx` +
+  `components/IntelligenceView.tsx` + nav link + `lib/api.ts`/`lib/types.ts`; reuse `ui.tsx` +
+  the `--dpic-stat-tile` token; a light charting lib (none exists today).
+- **Guardrail (bake in):** keep this layer **descriptive** (what/where/how-fast-growing).
+  Comparative *office-performance* claims hit the same OVB problem as Phase 14 — spikes + themes
+  are safe and shippable; performance rankings need causal care.
+
+## Part III — new config / deps / infra surface
+
+- `config.py` `Settings`: model refs for IndicLID, IndicXlit, IndicBART, IndicNER, the embedder,
+  and (later) the local LLM — following the `MODELS_DIR` + `Settings` pattern; F2 resolves them.
+- New uv extras per the transformers-conflict rule (a local Indic LLM likely needs its **own**
+  extra + Docker image, like `ocr-deepseek`); VSS + the embedder are new deps.
+- `deploy/docker-compose.yml` gains `mlflow` (13.0/F3); the GPU box gains batch jobs (embeddings,
+  later the LLM) under the existing create/destroy toggle — no resident service.
 
 ---
 

@@ -124,7 +124,11 @@ the number the rebuilt stage must beat.
 ## Security invariants
 
 - **Citizen text never leaves the box**: PII detection/redaction is fully
-  in-process (Presidio + local spaCy). No external redaction APIs, ever.
+  in-process (Presidio + local spaCy). No external redaction APIs, ever. This
+  extends to Part III — the multilingual models, on-box embeddings, and the
+  local Indic LLM (see below) all run in-process; **no citizen text goes to an
+  external LLM/embedding API**, which is also why the Indic-native (not
+  translate-via-cloud) approach was chosen.
 - Postgres password only in the box's chmod-600 `.env` / gitignored
   `deploy/.env`. Terraform state/tfvars, SSH keys: local only (CI + pre-commit
   guards enforce; `no-raw-data-in-git` blocks data files).
@@ -133,6 +137,30 @@ the number the rebuilt stage must beat.
 - **Never run pytest on the CPU box against the prod container** — fixtures drop
   tables. See [tests/README](../tests/README.md).
 - The boxes hold no GitHub credential; clone/`uv sync` via SSH agent forwarding.
+
+## Roadmap direction (Part III — planned)
+
+Post-demo, two workstreams mature the system (full detail + status in
+[ROADMAP.md](ROADMAP.md) Phases 13–15). Three principles a cold reader should
+know they're coming:
+
+- **Language-first invariant.** `pages.language` is the spine every stage keys
+  off. Today the pipeline degrades non-English to `Uncategorized`/`fallback` via
+  English-only gates; Part III makes language first-class — detect early
+  (IndicLID, native **and romanized** Odia), normalize romanized → script
+  (IndicXlit), run Indic models the whole way down (IndicBART / IndicNER /
+  MuRIL-retrain), and **measure per-language** (an `eval_results.jsonl` harness).
+- **Modularity & model registry.** The hardcoded `STAGE_ORDER` + per-stage model
+  constants become a **stage registry** (configurable, dep-validated order) and a
+  **model registry** — every model resolved by name+stage from a DVC path or an
+  **MLflow** `Production` stage, so swaps/retrains are config, not code. This is
+  where MLflow finally earns its place (the Phase 6 "many retrain candidates"
+  trigger); the `mlflow` compose service lands here, not in the demo.
+- **Governance-intelligence layer.** On-box embeddings (DuckDB VSS) + statistical
+  spike detection + emergent-theme topic modeling over the 1.37M/6.56M corpus,
+  narrated by the on-box local Indic LLM — descriptive by design (comparative
+  office-performance claims carry omitted-variable-bias risk). No new datastore,
+  no external API.
 
 ## Gates
 
