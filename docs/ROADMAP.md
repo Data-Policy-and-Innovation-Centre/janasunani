@@ -189,15 +189,27 @@ encoder, and the format-classifier pickle. The PII CRF weights were the one
 unrecoverable artifact and were rebuilt on Presidio; the training loop survives at
 DSI-repo commit `db4885f`.
 
-The DSI technical report is the only surviving eval record. These are the prior
-team's numbers, not re-measured on our pipeline — Phase 13 re-establishes them on
-our data, per language:
+The DSI clinic technical report ([`docs/Full Technical Report DPIC.pdf`](Full%20Technical%20Report%20DPIC.pdf))
+is the only surviving eval record — the **DSI clinic reference baselines**. These
+are the prior team's numbers on their own splits, not re-measured on our pipeline,
+and (crucially) **English-centric**: the OCR benchmark is English-only by
+construction, and the PII / summarizer gold is English. Phase 13 re-establishes
+each on *our* data, **per language**, and turns these into before-numbers rather
+than thresholds.
 
-- format classifier 75.71% avg accuracy; DeepSeek OCR 77.89% quality pass-rate;
-  page-type ViT 0.67; MuRIL categorizer 0.71 (fine-tuned on only 6,598
-  grievances); **PII 80.56% any-overlap / 50% exact-span** (106 sentences);
-  summarizer usefulness by page type (Text-Only 1.9, Letter 1.3, Forms 0.85,
-  Bills/IDs ~0).
+| Stage | Model as evaluated | Sample / split | Metric → result |
+|---|---|---|---|
+| Format classifier | XGBoost + OpenCV + SMOTE | 1,000 hand-labelled pages | avg acc across classifiers **75.71%**; best-model acc 81.97% / macro-precision 72.93% |
+| OCR (text extraction) | DeepSeek-OCR, **English only** | 96,469 English pages, heuristic quality gates (no transcription ground truth) | pass word-count≥20 85.52% / alpha≥0.5 84.04% / trigram≤0.25 91.14% / **all three 77.89%** |
+| PII tagger | RoBERTa BIO | 106-sentence / 2,126-token val split | B-PII F1 0.929 · I-PII F1 0.730 · O F1 0.995; **coverage 80.56% any-overlap / 50.00% exact-span** |
+| Page-type classifier | ViT (beat ViT+BERT / ViT+Longformer) | 1,500 pages, 70/30 | accuracy **0.67** / macro-F1 0.62; per-class F1 Letter 0.79 … Misc 0.44 |
+| Categorizer | MuRIL, fine-tuned on 6,598 | 65,999-grievance test | accuracy **0.7104** / macro-F1 0.6853 / weighted-F1 0.6947; per-class F1 Police-Case 0.85 … Social-Welfare 0.51 |
+| Summarizer | BART | 500-page qualitative, 0–3 usefulness | ROUGE deemed uninformative; usefulness Text-Only 1.9 · Letter 1.3 · Forms 0.85 · Identification 0.45 · Bills 0.40 |
+
+Efficiency (clinic, per 500 tokens): format 4.53s · OCR 18.86s · PII 4.67s ·
+page-type 2.49s · summarizer 1.84s · categorizer 2.82s (NVIDIA A100). The
+wide **per-class** spread on categorization and page-type is why the Phase 13
+scorecard reports per-category / per-entity, not just aggregates.
 
 ## 5. Part III — post-demo maturity (Phases 13–19)
 
@@ -264,8 +276,17 @@ better multilingual model from a more confident unsafe one.
   summary faithfulness, omission, harmful disclosure, and officer acceptance;
   latency and cost by path/model/language.
 - **Status-quo baseline.** Run the current English-centric models against the
-  Odia / romanized-Odia / English gold slices to get the before-numbers. The
-  inherited DSI baselines are a reference, not a release threshold.
+  Odia / romanized-Odia / English gold slices to get the before-numbers,
+  reproducing the **DSI clinic reference baselines** (§4 table, from
+  [`docs/Full Technical Report DPIC.pdf`](Full%20Technical%20Report%20DPIC.pdf))
+  as the English comparison point per task: format-classifier accuracy (75.71%
+  avg / 81.97% best), DeepSeek OCR quality-gate pass-rate (77.89% all-three, on
+  the English-only slice the clinic could measure), PII coverage (80.56%
+  any-overlap / 50.00% exact, plus B/I/O F1), page-type ViT (0.67 acc / 0.62
+  macro-F1), MuRIL categorization (0.7104 acc / 0.6853 macro-F1, **per-category**
+  given the 0.85→0.51 F1 spread), and summarizer usefulness by page type. These
+  are a reference and an English anchor, **not** a release threshold — the point
+  is the Odia / romanized-Odia deltas, which the clinic never measured.
 - **Gold-set governance.** Immutable versions, annotation guidance, adjudication,
   controlled access. Routing gets its own held-out gold, not only PII /
   categorization / summarization.
