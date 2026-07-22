@@ -574,7 +574,10 @@ on. Concretely: a first-class IndicLID language-ID stage (13.1) replaces the coa
 format-classifier `Language` output; an IndicXlit transliteration step (13.2) canonicalizes
 romanized Odia before model calls; the English-only gates are relaxed (13.4); and every model
 change is gated by a **per-language eval harness** (13.6) with Odia / romanized-Odia / English
-slices, so parity is *provable* to a third-party government rather than assumed.
+slices, so parity is *provable* to a third-party government rather than assumed. **Ordering
+caveat (Codex, PR #40):** a *text-based* language ID can't precede OCR on scanned docs — the
+pre-OCR signal stays **image-based** (for OCR-engine choice) and text-based IndicLID/transliteration
+run only once text exists (post-OCR, or immediately on the typed-text path). See Phase 13.1.
 
 ## Cross-cutting — Modularity, switchability & MLflow (Phase 13.0)  ⬜ *(prerequisite for 13–14)*
 
@@ -612,17 +615,29 @@ config/registry change, **not** a code edit. Built first:
 
 Built on the 13.0 foundation (new stages are *registered*; model swaps are *registry/config*).
 
-- **13.1 Language-ID stage (new, first-class).** Insert a `language_id` stage between
-  `format_classifier` and `ocr_extraction` that (over)writes `pages.language` using **IndicLID**
-  (native + romanized Indian-language ID incl. Odia), replacing the sklearn format classifier's
-  coarse `Language` output (`format_classifier/normalize.py`). Warm path: replace
-  `_detect_language` + the `is_english_compatible` injection (`inference/service.py`) with the
-  same call — flips both typed-text and document branches at once.
+- **13.1 Language ID — split by where text exists** *(corrects an earlier pre-OCR placement;
+  Codex review of PR #40).* A **text-based** IndicLID cannot run before OCR on scanned documents
+  (no `extracted_text` yet — only the format classifier's coarse image-derived `pages.language`).
+  So language handling splits by path rather than being a single pre-OCR stage:
+  - **Pre-OCR (scanned):** OCR-engine selection uses an **image-based** language signal — the
+    format classifier already predicts `Language` from the page *image* (`format_classifier/`),
+    which is exactly what picks the tesseract model (`eng`/`ori`/`eng+ori`). Improve this signal
+    if needed, but it stays image-based (a text LID here is impossible).
+  - **Post-OCR (scanned) + immediately (typed text):** a text-based **IndicLID** stage runs on
+    the actual text to *refine* `pages.language` (native + romanized Odia included) before the
+    downstream Indic stages. Warm path: replace `_detect_language` + the `is_english_compatible`
+    injection (`inference/service.py`) — text exists at once on the typed-text branch (flips
+    immediately); the document branch refines after OCR.
+
+  Net: `pages.language` is written coarsely (image) pre-OCR to choose the OCR model, then refined
+  (text) post-OCR to drive the Indic stages. The stage registry (13.0/F1) dep-validates this order.
 - **13.2 Romanized → script normalization (new).** An **IndicXlit** transliteration step
-  canonicalizes romanized Odia → Odia script before model calls (mirrors the existing
-  length-preserving Indic-digit normalizer precedent in `pii_tagger.py`). Insert in
-  `ocr_extraction/stage.py::_process_page` (batch) and `service.py::process` (warm), before the
-  language/model calls.
+  canonicalizes romanized Odia → Odia script (mirrors the existing length-preserving Indic-digit
+  normalizer precedent in `pii_tagger.py`). It operates **on text**, so it runs *after* the
+  post-OCR IndicLID refine (13.1) — in `ocr_extraction/stage.py::_process_page` after OCR (batch)
+  and `service.py::process` (warm) — before the downstream Indic model calls. Note romanized Odia
+  is overwhelmingly a **typed-text** phenomenon (typed text is never OCR'd), so this mostly fires
+  on the typed-text path; it also covers any OCR output that comes back romanized.
 - **13.3 Multilingual model swaps (via the F2 registry).** Summarizer `facebook/bart-large-cnn`
   → **IndicBART**/mT5-Indic (loader is already generic `AutoModelForSeq2SeqLM`); add an
   **IndicNER**-backed `PERSON` recognizer to Presidio's registry (admit an Odia language code in

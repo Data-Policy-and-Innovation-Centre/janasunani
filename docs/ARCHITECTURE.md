@@ -146,8 +146,9 @@ know they're coming:
 
 - **Language-first invariant.** `pages.language` is the spine every stage keys
   off. Today the pipeline degrades non-English to `Uncategorized`/`fallback` via
-  English-only gates; Part III makes language first-class — detect early
-  (IndicLID, native **and romanized** Odia), normalize romanized → script
+  English-only gates; Part III makes language first-class — detect language
+  (image-based before OCR to pick the OCR model; text-based **IndicLID** once
+  text exists, native **and romanized** Odia), normalize romanized → script
   (IndicXlit), run Indic models the whole way down (IndicBART / IndicNER /
   MuRIL-retrain), and **measure per-language** (an `eval_results.jsonl` harness).
 - **Modularity & model registry.** The hardcoded `STAGE_ORDER` + per-stage model
