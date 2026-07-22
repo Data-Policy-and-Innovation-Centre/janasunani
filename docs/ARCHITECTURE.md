@@ -118,8 +118,10 @@ DSI-controlled accounts. The PII model was the one unrecoverable artifact; its
 replacement is the Presidio-based stage (see
 [pipeline/README](../janasunani/pipeline/README.md)). The DSI technical report's
 measured baselines (the only surviving eval record) are recorded in
-[ROADMAP.md](ROADMAP.md) — headline: legacy PII coverage **80.56%** any-overlap,
-the number the rebuilt stage must beat.
+[ROADMAP.md](ROADMAP.md) — headline: legacy PII coverage **80.56%** any-overlap.
+Treat these as **reference baselines, not release thresholds**: Part III (Phase 13)
+re-measures the current models on our own data, per language, and sets per-task
+release gates.
 
 ## Security invariants
 
