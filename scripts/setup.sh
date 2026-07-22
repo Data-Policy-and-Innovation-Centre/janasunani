@@ -112,33 +112,46 @@ install_aws() {
 }
 
 # Poppler (pdfinfo/pdftoppm) and tesseract are system packages the OCR pipeline
-# shells out to at runtime. Unlike uv/rclone/aws they can't be installed into
-# ~/.local without sudo, so setup doesn't install them — it fails early with the
-# platform's install command rather than letting the pipeline crash on the first
-# PDF (pdf2image PDFInfoNotInstalledError). See docs/DEMO.md.
+# shells out to at runtime; without them it crashes on the first PDF (pdf2image
+# PDFInfoNotInstalledError). Unlike uv/rclone/aws they need a system package
+# manager, so on Debian/WSL (apt) we install them with sudo; elsewhere we print
+# the platform's install command and fail early. See docs/DEMO.md.
 check_system_ocr_deps() {
-    local missing=()
-    command -v pdfinfo   >/dev/null || missing+=("poppler-utils")
-    command -v pdftoppm  >/dev/null || missing+=("poppler-utils")
-    command -v tesseract >/dev/null || missing+=("tesseract-ocr")
+    command -v pdfinfo >/dev/null \
+        && command -v pdftoppm >/dev/null \
+        && command -v tesseract >/dev/null \
+        && { warn_missing_odia_traineddata; return; }
 
-    if [ "${#missing[@]}" -gt 0 ]; then
-        # de-duplicate (poppler-utils provides both pdfinfo and pdftoppm)
-        local unique
-        unique="$(printf '%s\n' "${missing[@]}" | sort -u | tr '\n' ' ')"
-        echo "Missing system OCR/PDF binaries: ${unique% }"
-        if [ "$(uname -s)" = "Darwin" ]; then
-            echo "Install with: brew install poppler tesseract tesseract-lang"
-        else
-            echo "Install with: sudo apt-get update && sudo apt-get install -y \\"
-            echo "    poppler-utils tesseract-ocr tesseract-ocr-ori"
+    echo "Missing system OCR/PDF binaries (poppler and/or tesseract)."
+
+    # Debian/Ubuntu/WSL: install directly. sudo elevates just this command,
+    # which is fine even though setup itself must not run as root.
+    if command -v apt-get >/dev/null; then
+        echo "Installing poppler-utils + tesseract-ocr (+ Odia) via apt..."
+        if sudo apt-get update && sudo apt-get install -y \
+            poppler-utils tesseract-ocr tesseract-ocr-ori; then
+            warn_missing_odia_traineddata
+            return
         fi
-        echo "Then rerun: make setup"
+        echo "Automatic install failed — install the packages above manually,"
+        echo "then rerun: make setup"
         exit 1
     fi
 
-    # binary present, but the Odia (ori) traineddata may not be — the pipeline
-    # needs it for the ori OCR pass. Warn rather than fail; eng-only still runs.
+    # No apt (macOS / other distros): can't assume a package manager or sudo.
+    if [ "$(uname -s)" = "Darwin" ]; then
+        echo "Install with: brew install poppler tesseract tesseract-lang"
+    else
+        echo "Install poppler-utils, tesseract-ocr and tesseract-ocr-ori with"
+        echo "your system package manager."
+    fi
+    echo "Then rerun: make setup"
+    exit 1
+}
+
+# The tesseract binary can be present without the Odia (ori) traineddata the
+# pipeline needs for its ori OCR pass. Warn rather than fail; eng-only still runs.
+warn_missing_odia_traineddata() {
     if ! tesseract --list-langs 2>/dev/null | grep -qx ori; then
         echo "WARNING: tesseract 'ori' (Odia) traineddata not found."
         echo "  Debian/WSL: sudo apt-get install -y tesseract-ocr-ori"
