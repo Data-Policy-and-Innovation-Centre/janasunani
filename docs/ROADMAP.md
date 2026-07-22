@@ -588,28 +588,35 @@ config/registry change, **not** a code edit. Built first:
   if/elif dispatch (`pipeline/pipeline.py`) with a **stage registry**: each stage registers
   `name → (run_callable, declared inputs/outputs)`, preserving the lazy-per-stage import
   (register a thunk, import inside). The run sequence is **config-driven**
-  (`PipelineConfig.stages` becomes an ordered plan) and **dep-validated** by topological check
-  (e.g. `language_id` before `ocr`, `pii` before `categorizer`, `page_type` before
-  `summarizer`). Adding `language_id`/`transliteration`/`embed` becomes *registering* a stage.
+  (`PipelineConfig.stages` becomes an ordered plan) and **dep-validated** by topological check.
+  Note the dep graph must match 13.1's corrected ordering: the **pre-OCR** language signal is the
+  *image-based* one inherent in `format_classifier` (runs first), while the **text-based**
+  `language_id`/`transliteration` stages depend on `ocr` and run *after* it — so the validator
+  encodes `format_classifier` → `ocr` → `language_id`/`transliteration`, then `pii` before
+  `categorizer`, `page_type` before `summarizer`. Adding a stage becomes *registering* it.
   The **warm processor** (`inference/service.py::process`) is a parallel hardcoded sequence —
   bring it onto the same abstraction so batch + live stay in lockstep (the larger refactor here).
 - **F2 — Model registry.** Move all model ids/paths out of code constants (`summarizer.py`,
   `categorizer/stage.py`, `pii_tagger.py`, `page_type_classifier.py`, `deepseek_backend.py`)
   into one resolver returning a handle from either a **local DVC path** or an **MLflow registry
-  stage**. `PipelineConfig` + `Settings` (`config.py` — already has `MLFLOW_TRACKING_URI`/
+  alias**. `PipelineConfig` + `Settings` (`config.py` — already has `MLFLOW_TRACKING_URI`/
   `MLFLOW_ARTIFACT_URI`) carry the per-stage references. Model swaps (13.3, B.1) become config.
 - **F3 — MLflow adoption.** Wire the built-but-unmerged slim helpers (`tracking/mlflow_utils.py`,
-  branch `feat/mlflow-slim-registry`) into the resolve path: register versions with
-  `Staging`/`Production` + DVC path/hash provenance tags; F2 resolves `Production` by default.
+  branch `feat/mlflow-slim-registry`) into the resolve path: register versions and resolve them by
+  **alias** (`@champion`/`@production`) + DVC path/hash provenance tags; F2 resolves `@production`
+  by default. *(Codex round 2: use MLflow **aliases**, not the legacy `Staging`/`Production`
+  **stages** — those are deprecated; this also updates the Phase 6 wording.)*
   **Infra:** the `mlflow` service lands in `deploy/docker-compose.yml` now (Phase 12 reserves
   `mlflow → api → frontend → proxy`; ARCHITECTURE's "intentionally still absent" note updates) —
   file backend + S3 artifacts via `MLFLOW_ARTIFACT_URI`. This is the Phase 6 trigger, fulfilled.
-- **F4 — `eval_results.jsonl` gates promotion.** Per-language eval metrics (13.6) become the gate
-  for promoting a candidate to `Production`: retrain → eval → compare in MLflow → promote →
-  serving resolves the new Production model with **zero code change**.
+- **F4 — `eval_results.jsonl` gates promotion.** Per-task, per-language eval metrics (13.6) become
+  the gate for promoting a candidate (moving its `@production` alias): retrain → eval → compare in
+  MLflow → promote → serving resolves the new `@production` model with **zero code change**. The
+  gate matches candidates **by task** (see 13.6 key) so it never compares a router against a
+  summarizer.
 - **Tests**: reordering/removing a stage via config changes the run and the dep-validator rejects
   an illegal order; a registry model swap changes serving output with no code edit; MLflow shows
-  registered versions with stages + DVC tags and serving resolves `Production`.
+  registered versions with aliases + DVC tags and serving resolves `@production`.
 
 ## Phase 13 — Multilingual / Odia-first pipeline (Tier 2 "improved models")  ⬜
 
@@ -632,12 +639,20 @@ Built on the 13.0 foundation (new stages are *registered*; model swaps are *regi
   Net: `pages.language` is written coarsely (image) pre-OCR to choose the OCR model, then refined
   (text) post-OCR to drive the Indic stages. The stage registry (13.0/F1) dep-validates this order.
 - **13.2 Romanized → script normalization (new).** An **IndicXlit** transliteration step
-  canonicalizes romanized Odia → Odia script (mirrors the existing length-preserving Indic-digit
-  normalizer precedent in `pii_tagger.py`). It operates **on text**, so it runs *after* the
+  canonicalizes romanized Odia → Odia script. It operates **on text**, so it runs *after* the
   post-OCR IndicLID refine (13.1) — in `ocr_extraction/stage.py::_process_page` after OCR (batch)
-  and `service.py::process` (warm) — before the downstream Indic model calls. Note romanized Odia
-  is overwhelmingly a **typed-text** phenomenon (typed text is never OCR'd), so this mostly fires
-  on the typed-text path; it also covers any OCR output that comes back romanized.
+  and `service.py::process` (warm). Note romanized Odia is overwhelmingly a **typed-text**
+  phenomenon (typed text is never OCR'd), so this mostly fires on the typed-text path; it also
+  covers any OCR output that comes back romanized.
+  - **⚠ Offset constraint (Codex round 2 — do NOT do this in place).** Transliteration is **not
+    length-preserving** (unlike the 1:1 Indic-digit normalizer in `pii_tagger.py` — that analogy
+    does *not* hold here). The frozen serving contract and `pii_tagger.detect_pii_spans` define
+    PII `start`/`end` over the **original** extracted text, so the transliterated form must be a
+    **separate derived field** consumed only by language-ID / classification / embedding —
+    **never** the string that redaction offsets are computed against. Redacting on transliterated
+    text (or applying its spans to the original) would misalign PII badges — a **privacy hazard**,
+    not a cosmetic bug. If a stage ever needs to map between the two, it carries an explicit
+    offset map, not an in-place rewrite.
 - **13.3 Multilingual model swaps (via the F2 registry).** Summarizer `facebook/bart-large-cnn`
   → **IndicBART**/mT5-Indic (loader is already generic `AutoModelForSeq2SeqLM`); add an
   **IndicNER**-backed `PERSON` recognizer to Presidio's registry (admit an Odia language code in
@@ -658,8 +673,10 @@ Built on the 13.0 foundation (new stages are *registered*; model swaps are *regi
 - **13.6 Per-language eval harness (new; gates 13.1–13.5 and feeds 13.0/F4).** No
   `eval_results.jsonl` exists yet — build it modeled on `pipeline/pii_eval.py`
   (`EvaluationReport.to_dict()`, `LEGACY_OVERLAP_BASELINE=0.8056`). One row per
-  `(model_version, gold_version, language)`; small gold slices for PII / categorization /
-  summarization in Odia, romanized-Odia, English.
+  `(task, model_name, model_version, gold_version, language)` — the **`task`/stage** key is
+  load-bearing (Codex round 2): PII, categorization, summarization and routing are independent
+  surfaces with their own candidates and metrics, so the F4 promotion gate must not compare across
+  them. Small gold slices for PII / categorization / summarization in Odia, romanized-Odia, English.
 - **Verify:** Odia + romanized-Odia grievances to `janasunani-api-live` → non-`Uncategorized`
   category, non-empty Odia summary, Odia names redacted, routing no longer forced to `fallback`;
   English PII overlap still ≥ 0.8056.
@@ -680,8 +697,11 @@ feeds three per-model signals.
   for these transformers, so every correction feeds: a **fast layer** (embed the correction into
   the Phase-15 index → the *next similar grievance* benefits at once via case-based retrieval:
   nearest-neighbor category vote, retrieved officer-edited summaries as few-shot exemplars,
-  neighbor routes) and a **slow layer** (periodic batch retrain off the lake — batch, not
-  real-time, per the freshness model).
+  neighbor routes) and a **slow layer** (periodic batch retrain — batch, not real-time, per the
+  freshness model). *(Codex round 2: `materialize` currently exports only complaints /
+  action_history / pages / documents, so the new `grievance_corrections` table must be added to
+  the materialize/DVC outputs, or the retrain reads it straight from OLTP — otherwise the
+  captured corrections never reach the training job.)*
 - **14.3 Per-model signals.** *Classification* — corrected labels → MuRIL retrain (historical
   `complaints.category` is already human labels, so the signal exists day one). *Summarization* —
   AI-vs-edited summary → SFT/preference pairs for IndicBART (**forward-only**: no historical gold
@@ -699,9 +719,15 @@ Embeddings-first, unsupervised, on-box. Reuses the DuckDB/Parquet lake + the on-
 **no new datastore, no external API**.
 
 - **B.1 On-box semantic index — inside DuckDB.** New `olap/embed.py` batch producer writes
-  `data/interim/embeddings.parquet` (`ticket_no`, `vector`, `model_version`); `lake.connect()`
-  auto-globs it (no registration). New `dvc.yaml` stage after `materialize`. Vector search via
-  DuckDB's **VSS** extension. **This fixes the prior BERTopic failure**: normalize-before-embed
+  `data/interim/embeddings.parquet`. Schema (Codex round 2): `ticket_no`, `vector`,
+  `model_version`, plus **`source`/`kind`** and a **`correction_id`** so a raw-grievance vector is
+  distinguishable from a correction-derived one (edited summary / label / route, per 14.2) —
+  otherwise the fast-adaptation layer can't retrieve the right evidence. `lake.connect()` auto-globs
+  the parquet as a queryable **view** (fine for scans; no registration needed there). New `dvc.yaml`
+  stage after `materialize`. **Search:** at ~1.37M vectors a brute-force `array_distance` scan is
+  viable to start; if latency demands an HNSW index, that needs a **persisted DuckDB table** +
+  `CREATE INDEX … USING HNSW` (VSS does not index a parquet view) — a build-time choice, not a
+  requirement. **This fixes the prior BERTopic failure**: normalize-before-embed
   (13.1/13.2 move romanized Odia in-distribution — the step the prior attempt lacked) + a modern
   multilingual embedder (**BGE-M3** floor; LLM-scale **e5-mistral-7B / gte-Qwen2-7B** on the GPU
   box as ceiling — a generation past mBERT/LaBSE, cross-lingual). Also powers **case-based
