@@ -181,7 +181,10 @@ reader should know is coming:
   and is language-agnostic: a semantic/metrics layer over the lake, an agentic
   natural-language-to-SQL query loop on DuckDB (a local, structured-decoding model,
   no external API), spike/anomaly detection, and **case-mix-adjusted** comparisons
-  rather than naive office rankings. A **semantic/unstructured** track (on-box
+  rather than naive office rankings. It ships as trusted increments (metrics and
+  dashboards, then spikes, then adjusted comparisons, NL query last) and the query
+  path is guarded (allowlisted query plans, small-cell suppression, isolated
+  read-only execution, audit). A **semantic/unstructured** track (on-box
   embeddings, case retrieval, emergent themes via local-LLM semantic operators;
   DuckDB VSS, capacity-gated) comes later, gated on the language normalization
   above. Every model runs on-box; no citizen text or query leaves the box.

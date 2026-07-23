@@ -302,7 +302,9 @@ better multilingual model from a more confident unsafe one.
 - **Gold-set governance.** Immutable versions, annotation guidance, adjudication,
   controlled access. Routing gets its own held-out gold, not only PII /
   categorization / summarization.
-- **Operational safety** (before any real-data endpoint): identity/RBAC on the
+- **Operational safety** (before any *additional* real-data exposure or new Part III
+  endpoint — the system already stores and processes real citizen data):
+  identity/RBAC on the
   real history / correction / intelligence endpoints; tighten the permissive demo
   CORS; **enforce network egress** (today the no-egress rule is policy, not a
   technical boundary — the boxes allow general outbound and some models are public
@@ -377,48 +379,69 @@ Make model swaps and retrains safe and reproducible without over-building.
 
 ### Phase 15 — Governance intelligence I: on-demand structured analytics
 
-The highest-ROI, lowest-risk data-moat capability and the strongest DPI-export
-pitch: a governed natural-language interface to the whole corpus, where an
-official asks an arbitrary question and gets a verified query, a chart, and a
-drilldown. It reads only **structured lake fields** (category, subcategory,
-district, dates, disposal times from `action_history`), which are
-**language-agnostic**, so it does not depend on the Odia model work and can start
-once Phase 13's safety foundation lands, in parallel with Phase 14/16.
+A governed analytics surface over the corpus, delivered as a sequence of trusted
+increments rather than one deliverable. It reads only **structured lake fields**
+(category, subcategory, district, dates, disposal times from `action_history`), so
+it **does not depend on text-language processing** and can start once Phase 13's
+safety foundation lands, in parallel with Phase 14/16. "Does not read text" is not
+"clean", though: the structured fields still carry missingness, historic policy
+choices, and language-related classification error, so **profile and reconcile them
+before any comparison is exposed** (step S3).
 
-- **Semantic (metrics) layer.** A thin governed definition of the allowed
-  dimensions and measures over the lake (a small YAML compiled to DuckDB SQL, in
-  the dbt-Semantic-Layer / Cube / Malloy lineage). It is the contract that makes
-  natural-language querying reliable and safe: the model may reference only defined
+Shipped as an explicit sequence, so early value lands first and the query agent is
+never on the critical path:
+
+- **S1 — Metric definitions + freshness + fixed dashboards.** The **semantic
+  (metrics) layer**: a thin governed definition of allowed dimensions and measures
+  over the lake (a small YAML compiled to DuckDB SQL, in the dbt-Semantic-Layer /
+  Cube / Malloy lineage), tested metric-by-metric, with data-quality and
+  lake-freshness reporting, feeding fixed supervisor dashboards. This is the
+  contract everything else builds on: downstream queries reference only defined
   fields, and policy constraints (adjusted comparisons, RBAC scope, redaction) are
   enforced in the layer, not left to model discretion. It slots into the Phase 14
   jurisdiction config contract.
-- **Agentic query, not raw text-to-SQL.** Raw text-to-SQL is still unreliable on
-  real schemas (BIRD / Spider 2.0 execution accuracy sits well below human), so the
-  query surface is an agent loop: plan, emit semantic-layer-constrained SQL, run it
-  on DuckDB, inspect, self-correct, then narrate the answer with a chart.
-  Generation uses **structured / constrained decoding** (grammar- or schema-guided)
-  so a small **local** model produces valid queries. The model is local and on-box;
-  **no citizen data and no query text leaves the box**. The NL layer is an
-  enhancement over deterministic templated metrics, not a hard dependency:
-  capacity-gate the local query model on the CPU box, and if it is not reliable
-  enough, degrade to guided/templated queries or push generation to the on-demand
-  GPU, never to an external API.
-- **Spike / anomaly detection.** Per `(category × district × week)` counts, flagged
-  by EWMA / STL residual / Poisson surprise ("water complaints in District X up
-  300% this week"), with **key-driver / contribution analysis** that decomposes a
-  spike by dimension. Deterministic, no model, the earliest and cheapest slice.
-- **Adjusted comparisons, not a blanket no-ranking rule.** Raw office-vs-office
-  performance ranking carries the same omitted-variable bias as routing (harder
-  cases run longer regardless of office, and office assignment reflects the old
-  policy). Rather than forbid comparison, do it properly: case-mix-adjusted disposal
-  times, risk-adjusted SLAs, and event-study / difference-in-differences on
-  interventions. This is a policy-grade capability no off-the-shelf BI tool offers,
-  and it is encoded as a requirement in the semantic layer (unadjusted cross-office
-  ranking is not an exposable measure).
-- **Serving + UI.** A new `serving/intelligence.py` router (new schemas; the frozen
-  contract is untouched) behind auth and RBAC, with a supervisor screen in the
-  frontend. Read paths respect the same identity/redaction rules as the rest of
-  Part III.
+- **S2 — Deterministic spikes + contribution analysis.** Per
+  `(category × district × week)` counts, flagged by EWMA / STL residual / Poisson
+  surprise ("water complaints in District X up 300% this week"), with **key-driver
+  / contribution analysis** decomposing a spike by dimension. No model; the earliest
+  and cheapest slice.
+- **S3 — Adjusted comparisons (only after statistical and policy review).** Raw
+  office-vs-office ranking carries the same omitted-variable bias as routing (harder
+  cases run longer regardless of office; office assignment reflects the old policy),
+  so it is not an exposable measure. Do it properly instead: case-mix-adjusted
+  disposal times, risk-adjusted SLAs, and event-study / difference-in-differences on
+  interventions, gated on the S1 field reconciliation and a documented statistical
+  and policy review. Adjusted comparison is the answer to the comparative questions
+  government users will ask; whether a given adjustment is trustworthy is an
+  empirical question decided by that review, not asserted here.
+- **S4 — Natural-language querying (last, only after S1–S3 are trusted).** An agent
+  loop over the semantic layer: plan, emit semantic-layer-constrained SQL, run on
+  DuckDB, inspect, self-correct, narrate with a chart. Raw text-to-SQL is still
+  unreliable on real schemas (BIRD / Spider 2.0 execution accuracy sits well below
+  human), so generation uses **structured / constrained decoding** and a **local**
+  model, capacity-gated on the CPU box; if it is not reliable enough it degrades to
+  guided/templated queries or on-demand GPU, never an external API. This technique
+  (and Phase 17's semantic-operator theme route) is a **hypothesis to benchmark and
+  promote only if it wins** on multilingual quality, privacy, cost, and operational
+  reliability, per the evaluation-first posture; it is not assumed superior.
+
+**Query & disclosure controls** (a release gate for S4, and for any exposed
+comparison). Constrained SQL and RBAC are necessary but not sufficient around
+citizen records; before implementation the query path must specify:
+
+- an **allowlisted query plan / AST**, not arbitrary SQL, validated against the
+  semantic layer;
+- a **read-only, isolated execution role/process** with time, memory, and
+  result-size limits (a valid query must not exhaust the shared CPU box);
+- **minimum-group-size suppression** for small cells and restricted drill-down
+  fields, so an aggregate cannot re-identify an individual;
+- **prompt / query / result audit logging**; and
+- visible **data-source and freshness provenance** on every answer.
+
+**Serving + UI.** A new `serving/intelligence.py` router (new schemas; the frozen
+contract is untouched) behind auth and RBAC, with a supervisor screen in the
+frontend. Read paths respect the same identity/redaction rules as the rest of
+Part III.
 
 ### Phase 16 — Odia-first models (gated on Phase 13)
 
@@ -473,16 +496,17 @@ and on a capacity benchmark before any index is committed.
   and disposal times. It feeds the Phase 18 shadow adaptation and the Phase 15 query
   agent: a hybrid question like "what are people saying about water in Puri, and is
   it rising?" joins semantic retrieval to structured aggregation.
-- **Emergent themes via semantic operators, not just clustering.** The SOTA route to
-  "topic modeling without an API": treat a **local** LLM as a batch relational
+- **Emergent themes via semantic operators, not just clustering.** A candidate route
+  to "topic modeling without an API": treat a **local** LLM as a batch relational
   operator over the corpus (semantic aggregate / filter / top-k, in the
   LOTUS / TAG / DocETL lineage) to induce a taxonomy and label grievances, run as an
-  on-demand GPU batch job. A local LLM *reads* broken-English / romanized-Odia far
-  better than any embedder *clusters* it. Embedding clustering (UMAP + HDBSCAN +
-  c-TF-IDF over the normalized text) is the cheap first pass; clusters that do not
-  fit the 62 categories are candidate new issues. Both stay **on-box**; narration
-  into a plain governance brief is the last, deferred step, never a serving
-  dependency.
+  on-demand GPU batch job. The hypothesis is that a local LLM *reads* broken-English
+  / romanized-Odia better than an embedder *clusters* it; benchmark it against the
+  embedding track and promote only if it wins on quality, privacy, cost, and
+  reliability. Embedding clustering (UMAP + HDBSCAN + c-TF-IDF over the normalized
+  text) is the cheap first pass; clusters that do not fit the 62 categories are
+  candidate new issues. Both stay **on-box**; narration into a plain governance
+  brief is the last, deferred step, never a serving dependency.
 
 ### Phase 18 — Governed feedback loop
 
@@ -597,6 +621,12 @@ Terse and dated; the reasoning for choices that aren't obvious from the code.
   Odia model work and pulled earlier (Phase 15, alongside 14/16). The blanket
   "never rank offices" rule becomes an adjusted-analytics requirement. All models
   stay local and on-box; the NL query model is capacity-gated, never external.
+  Phase 15 ships as a sequence (metrics/dashboards → spikes → adjusted comparisons
+  after review → NL query last) so the query agent is off the critical path, with
+  explicit query-disclosure controls (allowlisted plans, small-cell suppression,
+  isolated read-only execution, result-size limits, audit). Confident technology
+  bets (local text-to-SQL, semantic-operator themes) are hypotheses to benchmark,
+  not settled facts.
 
 History freshness is by design: live grievances hit OLTP immediately but appear in
 `GET /history` (which reads the lake) only after the next re-materialization.
