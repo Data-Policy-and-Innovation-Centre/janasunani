@@ -49,9 +49,9 @@ This table is the only place phase status is recorded.
 | 12 | Demo integration & cloud deployment | 🔄 |
 | 13 | Evaluation, gold sets & operational-safety foundation | ⬜ |
 | 14 | Model & pipeline platform (fixed recipe + model registry + MLflow control-plane) | ⬜ |
-| 15 | Governance intelligence I — spike & anomaly detection | ⬜ |
+| 15 | Governance intelligence I — on-demand structured analytics (semantic layer, NL query, spikes, adjusted comparisons) | ⬜ |
 | 16 | Odia-first models (gated on Phase 13) | ⬜ |
-| 17 | Governance intelligence II — semantic index, case retrieval, themes | ⬜ |
+| 17 | Governance intelligence II — semantic/unstructured (retrieval, emergent themes via semantic operators) | ⬜ |
 | 18 | Governed feedback loop | ⬜ |
 | 19 | Jurisdiction pack (DPI portability) | ⬜ |
 
@@ -215,8 +215,8 @@ scorecard reports per-category / per-entity, not just aggregates.
 
 After the demo, the system matures toward two goals: Odia (native **and**
 romanized) as a genuine first-class citizen, and the 1.37M / 6.56M corpus turned
-into governance intelligence — while becoming portable enough to interest other
-governments (the DPI-export goal). It is sequenced **evaluation-first,
+into governance intelligence an official can query on demand, while becoming
+portable enough to interest other governments (the DPI-export goal). It is sequenced **evaluation-first,
 workflow-first, platform-light**: the biggest risk is not whether DuckDB scales or
 another model can be registered, it is whether we can prove multilingual outputs
 are safe and useful, operate safely around real citizen data, and turn officer
@@ -227,8 +227,13 @@ not replace, the tabled Phase 5/6/9 goals.
 ### Decisions (2026-07-22)
 
 - **Local Indic LLM — phased hybrid.** Task-specific Indic models now; a local
-  Indic LLM only later, as an on-demand GPU batch job (cluster narration, hardest
-  cases), never a serving-path dependency and never always-on.
+  Indic LLM only later. Heavy uses (theme induction / semantic operators, cluster
+  narration, hardest cases) run as on-demand GPU batch jobs, never in the
+  grievance-processing serving path and never always-on. The one interactive use,
+  the Phase 15 natural-language query agent, is a **separate, optional,
+  capacity-gated** analytics component: a small local model with structured
+  decoding if the CPU box can serve it reliably, otherwise a degrade to templated
+  queries or on-demand GPU, never an external API.
 - **Multilingual — Indic-native, not cloud-translate.** Respects the no-egress
   boundary. IndicTrans2 is kept only as an optional, deferred fallback.
 - **Modularity — minimal.** The pipeline runs a **fixed canonical stage order
@@ -240,8 +245,12 @@ not replace, the tabled Phase 5/6/9 goals.
   at deploy/startup, pin the artifact in a release manifest, cache locally, expose
   it in health/telemetry, keep one-command rollback. No unreviewed automatic
   production switching.
-- **Intelligence — spike detection first.** Cheap, explainable, immediately
-  useful; embeddings and themes only after normalization and a capacity benchmark.
+- **Intelligence — two tracks, structured first and decoupled.** The layer splits
+  into on-demand **structured** analytics (semantic layer + agentic NL query +
+  spikes + adjusted comparisons), which is language-agnostic and starts early, and
+  **semantic/unstructured** work (retrieval, themes), which reads text and gates on
+  Odia normalization plus a capacity benchmark. Spikes are still the cheapest first
+  slice; the NL query model is local, on-box, and capacity-gated, never external.
 - **Feedback — governed capture, not "online learning".** Officer edits are
   signal, not automatic ground truth; adaptation runs in shadow mode first.
 
@@ -253,12 +262,15 @@ not replace, the tabled Phase 5/6/9 goals.
    processes real citizen data).
 2. **Phase 13** — evaluation, gold sets, operational safety.
 3. **Phase 14** — model & pipeline platform (minimal).
-4. **Phase 15** — spike/anomaly detection (first government-visible value). It uses
-   only structured lake fields, so it can run **alongside Phase 14** once Phase 13
-   lands — don't serialize it behind the model platform.
+4. **Phase 15** — on-demand structured analytics (first and highest-value
+   government-visible outcome): semantic layer, agentic NL query, spikes, adjusted
+   comparisons. It reads only structured, **language-agnostic** lake fields, so it
+   does not wait on the Odia work and can run **alongside Phase 14/16** once Phase
+   13 lands. Do not serialize it behind the model platform or the language work.
 5. **Phase 16** — Odia-first models, gated on Phase 13.
-6. **Phase 17** — semantic index, case retrieval, themes (needs Phase 16
-   normalization; capacity-gated; local-LLM narration last).
+6. **Phase 17** — semantic / unstructured intelligence: retrieval and emergent
+   themes over text (needs Phase 16 normalization; capacity-gated; semantic-operator
+   theme induction and narration are on-demand GPU batch, last).
 7. **Phase 18** — governed feedback loop (shadow-first; needs the Phase 17 index).
 8. **Phase 19** — jurisdiction pack, running alongside as the export throughline.
 
@@ -363,17 +375,50 @@ Make model swaps and retrains safe and reproducible without over-building.
   reproducible and roll-back-able as a unit — more valuable than any generic
   reorderable-pipeline framework.
 
-### Phase 15 — Governance intelligence I: spike & anomaly detection
+### Phase 15 — Governance intelligence I: on-demand structured analytics
 
-The first government-visible outcome and the cheapest. Per
-`(category × district × week)` counts over the lake, flagged by EWMA / STL
-residual / Poisson surprise ("water complaints in District X up 300% this week").
-No ML and no embeddings, only structured fields already in the lake. Served
-read-only through a new `serving/intelligence.py` router (new schemas; the frozen
-contract is untouched) behind auth, with a supervisor screen in the frontend. It
-is descriptive: it reports what, where, and how fast, and does **not** rank
-offices on performance (that comparison carries the same omitted-variable bias as
-routing).
+The highest-ROI, lowest-risk data-moat capability and the strongest DPI-export
+pitch: a governed natural-language interface to the whole corpus, where an
+official asks an arbitrary question and gets a verified query, a chart, and a
+drilldown. It reads only **structured lake fields** (category, subcategory,
+district, dates, disposal times from `action_history`), which are
+**language-agnostic**, so it does not depend on the Odia model work and can start
+once Phase 13's safety foundation lands, in parallel with Phase 14/16.
+
+- **Semantic (metrics) layer.** A thin governed definition of the allowed
+  dimensions and measures over the lake (a small YAML compiled to DuckDB SQL, in
+  the dbt-Semantic-Layer / Cube / Malloy lineage). It is the contract that makes
+  natural-language querying reliable and safe: the model may reference only defined
+  fields, and policy constraints (adjusted comparisons, RBAC scope, redaction) are
+  enforced in the layer, not left to model discretion. It slots into the Phase 14
+  jurisdiction config contract.
+- **Agentic query, not raw text-to-SQL.** Raw text-to-SQL is still unreliable on
+  real schemas (BIRD / Spider 2.0 execution accuracy sits well below human), so the
+  query surface is an agent loop: plan, emit semantic-layer-constrained SQL, run it
+  on DuckDB, inspect, self-correct, then narrate the answer with a chart.
+  Generation uses **structured / constrained decoding** (grammar- or schema-guided)
+  so a small **local** model produces valid queries. The model is local and on-box;
+  **no citizen data and no query text leaves the box**. The NL layer is an
+  enhancement over deterministic templated metrics, not a hard dependency:
+  capacity-gate the local query model on the CPU box, and if it is not reliable
+  enough, degrade to guided/templated queries or push generation to the on-demand
+  GPU, never to an external API.
+- **Spike / anomaly detection.** Per `(category × district × week)` counts, flagged
+  by EWMA / STL residual / Poisson surprise ("water complaints in District X up
+  300% this week"), with **key-driver / contribution analysis** that decomposes a
+  spike by dimension. Deterministic, no model, the earliest and cheapest slice.
+- **Adjusted comparisons, not a blanket no-ranking rule.** Raw office-vs-office
+  performance ranking carries the same omitted-variable bias as routing (harder
+  cases run longer regardless of office, and office assignment reflects the old
+  policy). Rather than forbid comparison, do it properly: case-mix-adjusted disposal
+  times, risk-adjusted SLAs, and event-study / difference-in-differences on
+  interventions. This is a policy-grade capability no off-the-shelf BI tool offers,
+  and it is encoded as a requirement in the semantic layer (unadjusted cross-office
+  ranking is not an exposable measure).
+- **Serving + UI.** A new `serving/intelligence.py` router (new schemas; the frozen
+  contract is untouched) behind auth and RBAC, with a supervisor screen in the
+  frontend. Read paths respect the same identity/redaction rules as the rest of
+  Part III.
 
 ### Phase 16 — Odia-first models (gated on Phase 13)
 
@@ -403,18 +448,20 @@ property that follows the grievance. Ships only when it clears the Phase 13 gate
 - **Land the empirical crosswalk** (Phase 9's tabled first step) as the improved
   routing, gated by the routing gold set.
 
-### Phase 17 — Governance intelligence II: semantic index, retrieval & themes
+### Phase 17 — Governance intelligence II: semantic / unstructured (retrieval & themes)
 
-Needs Phase 16's normalized text (embedding raw romanized/out-of-distribution text
-is what sank the earlier BERTopic attempt) and a capacity benchmark before any
-index is committed.
+The unstructured half of the intelligence layer: retrieval and emergent-theme
+discovery over grievance **text**. Unlike Phase 15's structured analytics, this
+reads the citizen text, so it genuinely gates on Phase 16 normalization (embedding
+raw romanized / out-of-distribution text is what sank the earlier BERTopic attempt)
+and on a capacity benchmark before any index is committed.
 
 - **On-box embeddings.** `olap/embed.py` writes `data/interim/embeddings.parquet`
   with schema `ticket_no, vector, model_version, source, kind, correction_id`, so a
   raw-grievance vector is distinguishable from a correction-derived one (edited
   summary / label / route). The embedder is chosen from **benchmark candidates**
   (e.g. BGE-M3, e5-mistral, gte-Qwen2) by multilingual task quality, licensing,
-  artifact size, build cost, and measured CPU/GPU performance — not a predetermined
+  artifact size, build cost, and measured CPU/GPU performance, not a predetermined
   floor/ceiling.
 - **Capacity gate before VSS/HNSW.** The dense index is the first genuinely new
   scaling regime on the downsized CPU box. Benchmark artifact size, build time,
@@ -422,11 +469,20 @@ index is committed.
   choosing. Brute-force `array_distance` may be fine for offline analysis;
   interactive retrieval is not assumed acceptable without the benchmark. HNSW needs
   a persisted DuckDB table with fixed-size `FLOAT[n]` vectors, not a Parquet view.
-- **Case-based retrieval** (similar past grievances with their actual resolutions
-  and disposal times) and **emergent-theme** clustering (clusters that do not fit
-  the 62 categories are new issues). **Local-LLM narration comes last**: a
-  deferred, on-demand GPU batch job that labels clusters and writes a plain brief,
-  never a serving dependency.
+- **Case-based retrieval.** Similar past grievances with their actual resolutions
+  and disposal times. It feeds the Phase 18 shadow adaptation and the Phase 15 query
+  agent: a hybrid question like "what are people saying about water in Puri, and is
+  it rising?" joins semantic retrieval to structured aggregation.
+- **Emergent themes via semantic operators, not just clustering.** The SOTA route to
+  "topic modeling without an API": treat a **local** LLM as a batch relational
+  operator over the corpus (semantic aggregate / filter / top-k, in the
+  LOTUS / TAG / DocETL lineage) to induce a taxonomy and label grievances, run as an
+  on-demand GPU batch job. A local LLM *reads* broken-English / romanized-Odia far
+  better than any embedder *clusters* it. Embedding clustering (UMAP + HDBSCAN +
+  c-TF-IDF over the normalized text) is the cheap first pass; clusters that do not
+  fit the 62 categories are candidate new issues. Both stay **on-box**; narration
+  into a plain governance brief is the last, deferred step, never a serving
+  dependency.
 
 ### Phase 18 — Governed feedback loop
 
@@ -473,10 +529,12 @@ it as committed until four gates exist:
 4. governed correction curation with shadow evaluation before any adaptive
    behavior.
 
-Explicitly deferred for the next milestone: local-LLM narration, autonomous fast
-adaptation from individual corrections, learned routing optimized on disposal
-time, any fully-generic reorderable pipeline, and HNSW unless a measured
-interactive-retrieval need appears.
+Explicitly deferred for the next milestone: local-LLM narration, semantic-operator
+theme induction, autonomous fast adaptation from individual corrections, learned
+routing optimized on disposal time, any fully-generic reorderable pipeline, HNSW
+unless a measured interactive-retrieval need appears, and a CPU-box-resident
+interactive NL-query model unless it clears a capacity benchmark (otherwise query
+generation degrades to templated/guided queries or on-demand GPU batch).
 
 ## 6. Cross-cutting
 
@@ -531,6 +589,14 @@ Terse and dated; the reasoning for choices that aren't obvious from the code.
   with a release manifest, not a runtime dependency. Feedback governed and
   shadow-first, not autonomous online learning. Jurisdiction pack as the
   DPI-export throughline.
+- **2026-07-23** — Analytics layer re-scoped for ambition. Split into on-demand
+  **structured** analytics (semantic/metrics layer + agentic natural-language query
+  over DuckDB + spikes + key-driver analysis + case-mix-**adjusted** comparisons)
+  and **semantic/unstructured** work (retrieval, emergent themes via LLM semantic
+  operators). The structured track is language-agnostic, so it is decoupled from the
+  Odia model work and pulled earlier (Phase 15, alongside 14/16). The blanket
+  "never rank offices" rule becomes an adjusted-analytics requirement. All models
+  stay local and on-box; the NL query model is capacity-gated, never external.
 
 History freshness is by design: live grievances hit OLTP immediately but appear in
 `GET /history` (which reads the lake) only after the next re-materialization.

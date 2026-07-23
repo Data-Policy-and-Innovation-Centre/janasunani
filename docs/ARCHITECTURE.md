@@ -176,11 +176,15 @@ reader should know is coming:
   is a **control-plane** (resolve at deploy/startup, pin in a release manifest,
   one-command rollback), not a runtime dependency. This is the Phase 6 trigger; the
   `mlflow` service lands here, not in the demo.
-- **Governance intelligence, spike-first.** Cheap statistical spike/anomaly
-  detection over structured lake fields ships first; on-box embeddings + case
-  retrieval + emergent themes (DuckDB VSS, capacity-gated) and local-LLM narration
-  come later, gated on the language normalization above. Descriptive by design; no
-  new datastore, no external API.
+- **Governance intelligence, on-demand and two-track.** The corpus becomes a
+  governed natural-language analytics surface. A **structured** track ships first
+  and is language-agnostic: a semantic/metrics layer over the lake, an agentic
+  natural-language-to-SQL query loop on DuckDB (a local, structured-decoding model,
+  no external API), spike/anomaly detection, and **case-mix-adjusted** comparisons
+  rather than naive office rankings. A **semantic/unstructured** track (on-box
+  embeddings, case retrieval, emergent themes via local-LLM semantic operators;
+  DuckDB VSS, capacity-gated) comes later, gated on the language normalization
+  above. Every model runs on-box; no citizen text or query leaves the box.
 - **Governed feedback + jurisdiction pack.** Officer corrections are captured,
   curated, and learned from in shadow mode first (not autonomous online learning);
   and the taxonomy/mappings/languages/thresholds/RBAC become portable config+data
