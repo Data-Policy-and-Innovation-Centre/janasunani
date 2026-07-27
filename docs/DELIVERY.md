@@ -8,75 +8,59 @@ partnership: Government of Odisha and the University of Chicago Trust
 status: Internal
 ---
 
-## Where we stand
+## What is built
 
-All five components you asked for will be in the demonstration on 14 August. Three of them will be working software that you can click through. The other two will be a design and a measurement, and I would rather explain now than on the day why that is the right answer for those two.
+The full grievance history is loaded and verified: 1,371,288 complaints and 6,556,171 action records, in a database and in an analytics copy that the demonstration reads from.
 
-There are fifteen working days left and one engineer building this. The system is also not yet switched on at our own cloud server, which was already outstanding before this conversation. Those two facts govern everything below. There is no version of this plan where all five components become polished software by the middle of August, so the useful question is which three, and what the other two should be instead.
+The document pipeline is complete. All six stages work: page classification, text extraction from scanned documents, removal of personal information, page-type filtering, summarisation, and categorisation. It has not yet been run start to finish in a single pass.
 
-One point of clarification, since it affects how the demonstration should be read. Everything runs on DPIC's own AWS machines in Mumbai. Nothing is deployed to government infrastructure and nothing will be unless the demonstration is approved, at which point a vendor takes it over and builds the production system. What we are showing is a working prototype and the evidence that the approach is sound, not a system waiting to be switched on for the state. That distinction matters for the two components below that are a design and a measurement rather than software, because a prototype's job is to establish whether something is worth building properly.
+Live processing works. A grievance submitted through the web interface is processed by the real models and returned with its redacted text, category, summary and routing. The web interface is built and connected. Routing uses fixed rules for now; the learned version is later work.
 
-## What you will see
+The deployment automation is written and reviewed but has not been run. The system is not yet switched on at our AWS server.
 
-**Table 1. The five components on 14 August**
+Privacy measurement is in progress. Eighty-five pages are prepared for manual correction, which is the step that tells us how often redaction misses something.
 
-| Component | What we demonstrate |
+## What we deliver on 14 August
+
+**Table 1. The five components**
+
+| Component | On the day |
 |---|---|
-| The DSI pipeline, rebuilt | A scanned grievance goes in. A redacted, categorised, routed grievance comes out. Live, start to finish, with a table showing how often the privacy step misses something |
-| Spam and duplicates | The system flags likely junk, links repeat submissions from the same citizen, and groups mass campaigns as a single issue. Plus a count of how much of the 1.37 million backlog is duplicated work |
-| The intelligence layer | A supervisor screen with a handful of management numbers we can defend, and an alert when complaints spike in a district |
-| A/B testing of the automation | The experiment design, a calculation of how large an effect we could actually detect, and a first look at where the AI already agrees with officers |
-| Sarvam benchmark | Sarvam against our current models on Odia, romanised Odia and English, side by side, with a switch that lets us move between them |
+| The DSI pipeline, rebuilt | A scanned grievance processed live, start to finish, with a table of how often redaction misses personal information, by data type and by language |
+| Spam and duplicates | Junk flagged, repeat submissions linked, mass campaigns grouped as one issue, and a count of how much of the 1.37 million backlog is duplicated work |
+| The intelligence layer | A supervisor screen with three to five management metrics, and an alert when complaints spike in a district |
+| A/B testing of the automation | The experiment design, the size of effect we could detect, and where the AI already agrees with officers today |
+| Sarvam benchmark | Sarvam against our models on Odia, romanised Odia and English, with a switch between them |
 
-The fourth item is a design rather than a running trial for a straightforward reason. A real experiment needs officers using the system and a department that has agreed which of its offices go first. Neither can be arranged in three weeks, and a demonstration of a fake experiment would be worth less than an honest design. The design is also the part that takes judgement. Building the software to log an experiment is a week's work; deciding what we are measuring, on whom, and how we would know we were wrong is the part worth showing you.
+The fourth is a design rather than a running trial. A live trial needs officers on the system and a department that has agreed which offices go first, neither of which exists yet.
 
-The fifth is a measurement by its nature. Sarvam is not a feature we are adding, it is a question we are answering: is their Odia document reading better than ours, and by how much. The scorecard is the deliverable. If it says yes, adopting it is the next phase of work and not this one.
+The fifth is a measurement. The question is whether Sarvam reads Odia documents better than we do. The scorecard is the deliverable and adoption follows the result. The state's MoU and Vishal Dev's sign-off already cover this use, so the benchmark runs on real grievances rather than synthetic ones.
 
-## The plan
+## Schedule
 
 **Table 2. Three weeks**
 
-| Week | What lands | How we know it worked |
+| Week | Delivered | Verified by |
 |---|---|---|
-| 27 to 31 July | Manual privacy labelling begins. The system goes live on our AWS server. The pipeline runs end to end once | A grievance submitted in a browser, on the server, returns a result. Counts reconcile at every step of the pipeline |
-| 3 to 7 August | Spam and duplicate detection. The backlog duplication count. Three to five management metrics and one spike view | Known repeat submissions are found in a held-out sample. Each metric reconciles against the source data. One real spike found and explained |
-| 10 to 14 August | Privacy scorecard. Sarvam scorecard. Experiment design and power calculation | Missed-PII rate reported by data type and by language. Sarvam and our models compared on the same test data |
+| 27 to 31 July | Manual privacy labelling begins. System live on AWS. Pipeline run end to end | A grievance submitted in a browser returns a result. Counts reconcile at every pipeline step |
+| 3 to 7 August | Spam and duplicate detection. Backlog duplication count. Management metrics and spike view | Known repeat submissions found in a held-out sample. Each metric reconciles against source data. One real spike found and explained |
+| 10 to 14 August | Privacy scorecard. Sarvam scorecard. Experiment design and power calculation | Missed-PII rate by data type and language. Sarvam and our models compared on the same test data |
 
-Work stops on Thursday 13 August. Friday is a rehearsal with no code changes. I would ask you to hold that line even if something looks nearly finished on the Thursday, because the failure mode for a demonstration is not an incomplete feature, it is a broken one.
+Work stops Thursday 13 August. Friday is rehearsal, with no code changes.
 
-The privacy labelling in week one is the item I want to flag. It is a person reading grievance pages and correcting what the system marked as personal information, and it cannot be automated, because automating it would mean the system grades its own homework. It gates two of the five components: we cannot report how well redaction works without it, and we cannot judge Sarvam against us without it. It is also the only task on the list that more effort in the final week cannot rescue. It starts this week.
+Two dependencies set this order. Manual privacy labelling gates both the privacy scorecard and the Sarvam benchmark and cannot be compressed later, so it starts this week. Duplicate detection has to precede the spike alerts, because a campaign of four hundred citizens writing about the same road would otherwise register as a surge in road complaints.
 
-One dependency is worth knowing about because it is not obvious. Duplicate detection has to come before the spike alerts. If it does not, a campaign of four hundred citizens writing about the same road looks identical to a genuine surge in road complaints, and the first alert we show you would be wrong.
+If an item slips, the fallbacks are: demonstrate from a laptop rather than the server, report privacy results for English only, ship duplicate detection without spam scoring, and show the Sarvam comparison for document reading alone.
 
-## What we are leaving out
+## Not in scope for August
 
-We are not running Sarvam's large model on our own hardware in August. We use their hosted service for the benchmark and keep self-hosting as a proven fallback, which matters because their models are openly licensed and we can therefore always walk back from sending data to a third party.
+Running Sarvam's large model on our own hardware. Natural-language querying of the data. Comparing offices against each other, which needs statistical adjustment for the fact that harder cases take longer wherever they land. Replacing our models with Odia ones, which follows the benchmark rather than preceding it.
 
-We are not building natural-language querying of the data. It is the most impressive-sounding thing on the roadmap and the least trustworthy, and it belongs after the basic numbers are ones we would defend in a meeting.
+## Decisions needed
 
-We are not comparing offices against each other. Doing that fairly requires adjusting for the fact that harder cases take longer wherever they land, and doing it unfairly would be worse than not doing it at all. It is a real capability and it needs a statistical review first.
+**Table 3. From you**
 
-We are also not putting Odia models through the whole pipeline. The Sarvam benchmark is what tells us which ones are worth adopting. Adoption follows the evidence rather than preceding it.
-
-## What I need from you
-
-**Table 3. Decisions**
-
-| Decision | Needed by | What happens without it |
-|---|---|---|
-| Written terms from Sarvam on whether our data trains their models, how long they hold it, and how it is deleted | 5 August | The benchmark runs on synthetic data only, which is a much weaker result |
-| Who formally records that this evaluation does not require ethics review | Before the experiment design is circulated | Almost certainly exempt, but it should be a named authority's decision rather than an engineering assumption |
-| Whether the demonstration audience may see real citizen data, and under whose login | 7 August | Determines whether we demonstrate on real or synthetic grievances |
-| Whether any department has agreed in principle to an A/B trial later | Useful by 14 August | A design with a willing partner is a far stronger story than a design alone |
-
-## What could go wrong
-
-The labelling takes longer than I expect. This is the likeliest problem and it weakens two components at once. The mitigation is to start immediately and to report partial results by language rather than waiting for a complete set, so we can say what we know about English even if Odia is still in progress.
-
-The first deployment to our AWS server goes badly. First deployments usually do. If it comes to it we demonstrate from a laptop running exactly the same code, which is a weaker story but not a broken one.
-
-Sarvam's terms do not arrive in time. I am preparing the benchmark on synthetic documents in parallel so that a comparison exists either way.
-
-The Odia results come back poor. This is a real possibility and I want to say in advance that it is a finding rather than a failure. Our current models were built and measured on English by a team that has since disbanded, and nobody has ever measured how they perform on Odia. If the answer is that they perform badly, that is the argument for the next phase of investment, and it is better to learn it from a benchmark in August than from a district officer in November.
-
-Finally, one engineer means there is no slack anywhere in this schedule. Every item above has something we would show instead if it slips. Where that trade has to be made I will make it in favour of the date, and I will tell you which one I made.
+| Decision | By |
+|---|---|
+| Whether the demonstration audience may see real citizen data, and under whose login | 7 August |
+| Whether any department has agreed in principle to an A/B trial later, which would let us present the design with a named partner | 14 August |

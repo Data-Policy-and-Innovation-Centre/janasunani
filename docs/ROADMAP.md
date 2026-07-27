@@ -209,9 +209,12 @@ Two honest notes:
   allow general outbound and BART downloads from a public hub at startup. Building
   an allowlist that permits Sarvam and nothing else is the egress enforcement
   Phase 18 wanted, delivered earlier because there is finally a reason to build it.
-- **Authorization is not the whole question.** We still need Sarvam's written terms
-  on training use, retention, and deletion, plus a DPDP position. §5.5 lists these
-  as release gates.
+- **The authorization is settled, and it is not ours to revisit.** The Government
+  of Odisha holds an MoU with Sarvam, and Principal / Additional Chief Secretary
+  Vishal Dev (IT Department) has signed off on its use for this data. No further
+  permission, review, or sign-off is required before we call Sarvam on real
+  grievances. Record the reference in-repo so a future reader knows why the
+  boundary is drawn where it is; that is documentation, not a gate.
 
 Unchanged: PII detection and redaction run in-process by default, and PII
 `start`/`end` offsets stay defined over the original text.
@@ -640,20 +643,12 @@ office assignment reflects the old policy. Retrospective agreement cannot separa
 those. Only the experiment can.
 
 **Governance.** This is a **program evaluation of a government service**, not
-human-subjects research intended to produce generalizable knowledge. The project
-position is that no ethics review applies.
+human-subjects research, and no ethics review applies. Settled; do not re-open it.
+The one thing worth remembering is that the exemption rests on this not being
+research for publication, so if that ever changes, the question has to be asked
+before data collection rather than after.
 
-Record that as a **determination, not an assumption.** ICMR guidance treats
-programme evaluation as potentially exempt while evaluation aimed at generalizable
-knowledge is not, so the exemption turns on intent, and intent can change quietly
-if someone later decides to publish. Cheap insurance:
-
-- [ ] Name who made the determination (department, legal, or ethics authority),
-      on what date, on what stated scope.
-- [ ] Re-open it if the intent to publish ever appears. An ethics determination
-      cannot be applied retroactively to data already collected.
-
-What actually governs the trial:
+What governs the trial:
 
 - **Departmental sign-off** on the rollout design and the order of offices. The
   sequence is an administrative decision, not ours.
@@ -756,13 +751,21 @@ single highest-sensitivity call in the system. Adopt it last, not first.
 limits, failure modes, drift, privacy cost. Same posture as every technology bet
 here: a hypothesis to measure and promote only if it wins.
 
-**Release gates before any production Sarvam call.**
+**Authorization: already in place.** The Government of Odisha holds an MoU with
+Sarvam, and Principal / Additional Chief Secretary Vishal Dev (IT Department) has
+approved its use on this data including PII. Nothing further is needed to start.
+The benchmark can run on real grievances from day one, which is why component (e)
+is one of the less risky items in the August plan rather than one of the more
+risky ones.
 
-- Written terms from Sarvam on training use, retention, deletion.
-- A documented DPDP position.
-- The government authorization recorded in-repo, scoped to data classes.
+**Engineering gates before wiring Sarvam into the live path.** These are not
+permission checks. They are the controls that keep the choice reversible:
+
 - Audit logging live and verified.
 - The kill switch tested, not just implemented.
+- A maintained lower-tier counterpart for every `authorized-external` entry.
+- The MoU and sign-off reference recorded alongside the route declaration, so the
+  basis for the egress is legible in the repo rather than in someone's memory.
 
 ## 6. Part III: post-demo maturity (Phases 18–24)
 
