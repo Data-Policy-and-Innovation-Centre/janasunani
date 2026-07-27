@@ -12,7 +12,9 @@ status: Internal
 
 All five components you asked for will be in the demonstration on 14 August. Three of them will be working software that you can click through. The other two will be a design and a measurement, and I would rather explain now than on the day why that is the right answer for those two.
 
-There are fifteen working days left and one engineer building this. The system also is not yet switched on at the government cloud box, which was already outstanding before this conversation. Those two facts govern everything below. There is no version of this plan where all five components become polished software by the middle of August, so the useful question is which three, and what the other two should be instead.
+There are fifteen working days left and one engineer building this. The system is also not yet switched on at our own cloud server, which was already outstanding before this conversation. Those two facts govern everything below. There is no version of this plan where all five components become polished software by the middle of August, so the useful question is which three, and what the other two should be instead.
+
+One point of clarification, since it affects how the demonstration should be read. Everything runs on DPIC's own AWS machines in Mumbai. Nothing is deployed to government infrastructure and nothing will be unless the demonstration is approved, at which point a vendor takes it over and builds the production system. What we are showing is a working prototype and the evidence that the approach is sound, not a system waiting to be switched on for the state. That distinction matters for the two components below that are a design and a measurement rather than software, because a prototype's job is to establish whether something is worth building properly.
 
 ## What you will see
 
@@ -36,7 +38,7 @@ The fifth is a measurement by its nature. Sarvam is not a feature we are adding,
 
 | Week | What lands | How we know it worked |
 |---|---|---|
-| 27 to 31 July | Manual privacy labelling begins. The system goes live on the government box. The pipeline runs end to end once | A grievance submitted in a browser, on the box, returns a result. Counts reconcile at every step of the pipeline |
+| 27 to 31 July | Manual privacy labelling begins. The system goes live on our AWS server. The pipeline runs end to end once | A grievance submitted in a browser, on the server, returns a result. Counts reconcile at every step of the pipeline |
 | 3 to 7 August | Spam and duplicate detection. The backlog duplication count. Three to five management metrics and one spike view | Known repeat submissions are found in a held-out sample. Each metric reconciles against the source data. One real spike found and explained |
 | 10 to 14 August | Privacy scorecard. Sarvam scorecard. Experiment design and power calculation | Missed-PII rate reported by data type and by language. Sarvam and our models compared on the same test data |
 
@@ -71,7 +73,7 @@ We are also not putting Odia models through the whole pipeline. The Sarvam bench
 
 The labelling takes longer than I expect. This is the likeliest problem and it weakens two components at once. The mitigation is to start immediately and to report partial results by language rather than waiting for a complete set, so we can say what we know about English even if Odia is still in progress.
 
-The first deployment to the government box goes badly. Cloud deployments usually do go badly the first time. If it comes to it we demonstrate from a laptop running exactly the same code, which is a weaker story but not a broken one.
+The first deployment to our AWS server goes badly. First deployments usually do. If it comes to it we demonstrate from a laptop running exactly the same code, which is a weaker story but not a broken one.
 
 Sarvam's terms do not arrive in time. I am preparing the benchmark on synthetic documents in parallel so that a comparison exists either way.
 

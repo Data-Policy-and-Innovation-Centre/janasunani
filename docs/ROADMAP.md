@@ -1039,6 +1039,13 @@ unless it clears a capacity benchmark.
 
 ### Infrastructure (two boxes)
 
+**Whose machines these are.** Both boxes are **DPIC's own AWS account**,
+ap-south-1. Nothing runs on Government of Odisha infrastructure, and nothing
+will unless the demo is approved, at which point a vendor takes over and builds
+the production system. Everything in this document is a prototype on DPIC
+hardware. That is what `dpic-infra` means in the §3.1 trust tiers, and it is why
+the tier exists as a category separate from `same-host`.
+
 Self-host on Docker. S3 is the only stateful AWS dependency. Terraform
 (`deploy/terraform/`), IAM instance roles only, region ap-south-1.
 

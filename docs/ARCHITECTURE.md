@@ -129,8 +129,11 @@ the inherited estimators.
 
 ## Infrastructure (two boxes)
 
-Managed by [Terraform](../deploy/terraform/README.md), state local, region
-ap-south-1, IAM instance roles only (no static keys):
+Both boxes live in **DPIC's own AWS account**, not on Government of Odisha
+infrastructure. Production deployment is a post-approval vendor handover, not
+something this repo targets. Managed by
+[Terraform](../deploy/terraform/README.md), state local, region ap-south-1, IAM
+instance roles only (no static keys):
 
 - **CPU box** (always on, t3.large, Elastic IP 52.66.116.80): Postgres OLTP in
   Docker ([compose](../deploy/README.md)), migration/materialization one-offs,
