@@ -48,6 +48,7 @@ help:
 	@echo "  make run             Run the analytics pipeline"
 	@echo "  make exhibits        Regenerate all figures and tables"
 	@echo "  make deliver         Copy exhibits to Box without deleting remote files"
+	@echo "  make docs            Render docs/*.md to DPIC-branded Word files"
 	@echo "  make box-paths       Show resolved local and Box paths"
 	@echo "  make status          Show what has changed"
 	@echo ""
@@ -119,6 +120,22 @@ deliver:
 	@echo "Delivering exhibits to Box..."
 	rclone copy $(EXHIBITS_LOCAL) $(EXHIBITS_REMOTE) --progress
 	@echo "Exhibits delivered. Existing Box files were not deleted."
+
+.PHONY: docs docs-clean
+
+# Word renders of the planning docs, for circulation outside the repo.
+# Outputs are gitignored (docs/*.docx): the Markdown is the source of truth.
+DOC_SOURCES ?= docs/DELIVERY.md docs/ROADMAP.md
+DOC_TARGETS := $(DOC_SOURCES:.md=.docx)
+
+docs: $(DOC_TARGETS)
+	@echo "Rendered: $(DOC_TARGETS)"
+
+docs/%.docx: docs/%.md scripts/md_to_docx.py
+	uv run python scripts/md_to_docx.py $< $@
+
+docs-clean:
+	rm -f $(DOC_TARGETS)
 
 box-paths:
 	@echo "BOX_REMOTE=$(BOX_REMOTE)"
