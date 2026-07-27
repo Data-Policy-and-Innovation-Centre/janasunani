@@ -11,9 +11,6 @@
 >
 > Phase status lives in exactly one place: the table in §2.
 >
-> **Re-scoped 2026-07-27** to the Executive Director's five demo components.
-> §1.1 maps them, §5 details them, §8 records the decisions. Phases 13–19 were
-> renumbered to 18–24; see the crosswalk in §2.
 
 ## 1. What we're building
 
