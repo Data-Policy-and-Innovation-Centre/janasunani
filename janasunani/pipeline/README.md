@@ -26,12 +26,20 @@ subsets/resume).
 |---|---|---|
 | `format_classifier` | `pages` rows (discovery + page split + format label) | XGBoost/OpenCV; pickle at `models/format_classifier/`. Must run first — it populates `pages`. |
 | `ocr_extraction` | `pages.extracted_text` | Backends: `pytesseract` (CPU; needs the `tesseract` binary + `tesseract-lang` for Odia `ori`) or `deepseek` (GPU-only, fails fast without CUDA). Resumable: only NULL-text pages, known-bad pages skipped. |
-| `pii_tagger` | `pages.redacted_text` | **Presidio-based rebuild** (the legacy CRF weights died with the DSI Box). Custom Indian recognizers (mobile/Aadhaar/PAN), typed tokens `[NAME]`/`[PHONE]`/…, whole-page analysis (no 512-token window), covers mixed `English, Odia` pages, Indic-digit normalization. Fully in-process — citizen text never leaves the box. |
+| `pii_tagger` | `pages.redacted_text` | **Presidio-based rebuild** (the legacy CRF weights died with the DSI Box). Custom Indian recognizers (mobile/Aadhaar/PAN), typed tokens `[NAME]`/`[PHONE]`/…, whole-page analysis (no 512-token window), covers mixed `English, Odia` pages, Indic-digit normalization. Fully in-process. Untuned against gold: Phase 13 scores it per entity and per language. |
 | `page_type_classifier` | `pages.page_type` | ViT from the DVC mirror (`models/page_type_classifier/`), HF fallback. The **signal/noise gate**: letters/forms are substance, IDs/bills are noise. |
 | `summarizer` | document summaries | BART (`facebook/bart-large-cnn`, public). Only summarizes target page types — gated on the page-type stage. |
 | `categorizer` | `documents.grievance_category` | MuRIL from the DVC mirror (`models/categorizer/`). Feature = grievance text + joined **redacted** page text, mirroring training. English-only. |
 
 Stages run in canonical order regardless of the order given to `--stages`.
+
+**Planned (Phase 14):** a seventh stage, `spam_duplicate`, inserted between
+`pii_tagger` and `page_type_classifier`. It reads **redacted** text (typed tokens
+preserve near-duplicate similarity), writes `spam_score` / `duplicate_group_id` /
+`duplicate_kind`, and gates the summarizer and categorizer the way page-type
+already gates the summarizer. It is the first stage needing corpus-level state (a
+MinHash/LSH index built from the lake), which the per-run artifact DB does not
+provide. See [ROADMAP.md](../../docs/ROADMAP.md) §5.2.
 
 ## The dependency split (why `--stages` and lazy imports exist)
 

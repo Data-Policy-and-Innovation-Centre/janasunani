@@ -2,7 +2,9 @@
 
 **Start here: [docs/ROADMAP.md](docs/ROADMAP.md)** — current state, phase
 status, and sequencing (the source of truth, incl. the project snapshot for a
-fresh reviewer; keep it in sync as you land work). The hard safety rules
+fresh reviewer; keep it in sync as you land work).
+[docs/DELIVERY.md](docs/DELIVERY.md) is the dated commitment for the **14 August
+2026** demo — check it before assuming a phase is in scope for the demo. The hard safety rules
 (data-loss and citizen-PII hazards are real; read them before touching anything
 operational) live in this file below and in [docs/DEPLOY.md](docs/DEPLOY.md).
 Then [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the system overview.
