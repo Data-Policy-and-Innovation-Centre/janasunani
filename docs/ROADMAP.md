@@ -674,18 +674,50 @@ Sarvam is the most promising single quality lever available, because our weakest
 stage and their strongest capability are the same thing: Odia document
 understanding.
 
-**What Sarvam offers** (verified 2026-07-27; re-check before building, this moves
-fast).
+**What Sarvam offers** (checked 2026-07-27 against their docs; re-check before
+building, this moves fast).
 
-- **Sarvam Vision**, a 3B state-space vision-language model for document
-  digitisation, 22 Indian languages plus English. Direct replacement candidate for
-  pytesseract-`ori` and DeepSeek-OCR.
-- **Sarvam-30B** (MoE) and **Sarvam-105B** (~9B active, 128k context), both
-  **open-weight under Apache 2.0** since February 2026.
-- **Sarvam Translate** for the 22 scheduled languages; **Mayura** for colloquial
-  and code-mixed text. Romanized Odia is exactly a code-mixed problem.
-- **Saaras v3** ASR with a transliterate output mode. Relevant if voice grievances
-  enter scope, and to romanized-Odia normalization now.
+| Model / API | ID | What it does | Price | Limits |
+|---|---|---|---|---|
+| Sarvam Vision | `sarvam-vision` | 3B vision-language model for document digitisation. Text extraction, **table structure**, layout preservation. Out: HTML / Markdown / JSON. In: PDF, PNG, JPG, ZIP | **₹0.50 / page** | 10 pages per PDF, 200 MB, **10 req/min** |
+| Sarvam-30B | `sarvam-30b` | MoE, 30B total / 2.4B active, 128 experts, **64K context**. Native tool calling. OpenAI-compatible | ₹2.5 / ₹1.5 cached / ₹10 per 1M tokens (in / cached / out) | Tiered, below |
+| Sarvam-105B | `sarvam-105b` | Flagship, ~9B active, 128K context | ₹4 / ₹2.5 / ₹16 per 1M tokens | Tiered, below |
+| Transliteration | text API | Roman ↔ native script, bidirectional. **Odia is `od-IN`** | Text pricing | 1,000 chars per request |
+| Sarvam Translate / Mayura | translate API | 22 scheduled languages (Translate); colloquial and code-mixed (Mayura) | Text pricing | Tiered |
+| Saaras v3 / Saarika v2.5 | speech APIs | ASR with transcribe / translate / **transliterate** / codemix output modes | ₹30 per hour (₹45 diarised) | Tiered |
+
+Tiers: Starter is pay-as-you-go at 60 req/min, Pro ₹10,000/month at 200 req/min,
+Business ₹50,000/month at 1,000 req/min.
+
+**Language coverage is not the constraint.** Sarvam Vision lists all 22 scheduled
+languages plus English, Odia among them explicitly, which is more than our current
+OCR can honestly claim.
+
+**Cost is not the constraint either.** A 500-page benchmark is **₹250**. Running
+Sarvam-30B over all 1.37M grievance subjects is roughly 275M input tokens, on the
+order of **₹700**. These numbers are small enough that cost should not shape the
+benchmark design; latency, rate limits, and quality should.
+
+Four things to check before relying on any of it:
+
+- ⚠️ **Handwriting is not mentioned anywhere in the Vision documentation.** Tables,
+  layout, and printed Indic script are the advertised strengths. A large share of
+  our corpus is handwritten grievance letters, which is exactly the hardest case
+  and the one we most need solved. **Put handwritten pages in the benchmark
+  sample deliberately, stratified, and report them separately.** If Sarvam Vision
+  only wins on printed forms, that is a much smaller result than the headline
+  suggests.
+- ⚠️ **Sarvam-30B runs with reasoning enabled by default, and reasoning tokens bill
+  as completion tokens** at 4x the input rate. Disable it for classification or
+  the cost model above is wrong.
+- **Vision is capped at 10 pages per PDF and 10 requests per minute.** Our pipeline
+  is already page-level so the page cap is harmless, but 10 req/min is the binding
+  constraint on any full-corpus run: at 10 pages per request that is 6,000 pages an
+  hour on the starter tier.
+- **Transliteration does not do Indic to Indic** and caps at 1,000 characters per
+  request, so it chunks. It is a direct candidate to replace IndicXlit for
+  romanized Odia, and the same derived-field rule applies: it never becomes the
+  string redaction offsets are computed against.
 
 **The open weights are the architectural point.** Sarvam is a *provider with two
 backends*, not an external dependency:

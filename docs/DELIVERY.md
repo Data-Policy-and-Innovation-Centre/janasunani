@@ -36,6 +36,10 @@ The fourth is a design rather than a running trial, since no department has yet 
 
 The fifth is a measurement. The question is whether Sarvam reads Odia documents better than we do. The scorecard is the deliverable and adoption follows the result. The benchmark runs on real grievances.
 
+Three of their models are relevant. Sarvam Vision reads scanned documents in all 22 Indian languages including Odia, at 50 paise per page, which is the direct comparison against our current text extraction. Sarvam-30B is a general model we would test on categorisation and summarisation. Their transliteration service converts Odia written in Roman letters into Odia script, which is a problem our current pipeline does not solve at all. Cost is negligible at benchmark scale: the entire comparison is a few hundred rupees.
+
+One caveat worth stating now. Sarvam's documentation describes their document model as strong on printed text, tables and layout, and does not mention handwriting. Much of our corpus is handwritten. The benchmark will report handwritten and printed pages separately, because a result that only holds for printed forms is a much smaller result than it first appears.
+
 ## Schedule
 
 **Table 2. Three weeks**
