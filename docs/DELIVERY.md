@@ -32,9 +32,9 @@ Privacy measurement is in progress. Eighty-five pages are prepared for manual co
 | A/B testing of the automation | The experiment design, the size of effect we could detect, and where the AI already agrees with officers today |
 | Sarvam benchmark | Sarvam against our models on Odia, romanised Odia and English, with a switch between them |
 
-The fourth is a design rather than a running trial. A live trial needs officers on the system and a department that has agreed which offices go first, neither of which exists yet.
+The fourth is a design rather than a running trial, since no department has yet agreed which of its offices would go first.
 
-The fifth is a measurement. The question is whether Sarvam reads Odia documents better than we do. The scorecard is the deliverable and adoption follows the result. The state's MoU and Vishal Dev's sign-off already cover this use, so the benchmark runs on real grievances rather than synthetic ones.
+The fifth is a measurement. The question is whether Sarvam reads Odia documents better than we do. The scorecard is the deliverable and adoption follows the result. The benchmark runs on real grievances.
 
 ## Schedule
 
@@ -54,7 +54,7 @@ If an item slips, the fallbacks are: demonstrate from a laptop rather than the s
 
 ## Not in scope for August
 
-Running Sarvam's large model on our own hardware. Natural-language querying of the data. Comparing offices against each other, which needs statistical adjustment for the fact that harder cases take longer wherever they land. Replacing our models with Odia ones, which follows the benchmark rather than preceding it.
+Running Sarvam's large model on our own hardware. Natural-language querying of the data. Comparing offices against each other, which needs case-mix adjustment first. Replacing our models with Odia ones, which follows the benchmark.
 
 ## Decisions needed
 
