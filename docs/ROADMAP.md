@@ -42,7 +42,7 @@ the phase numbering.
 |---|---|---|---|---|
 | a | DSI pipeline replication | 13 | End-to-end run, document in to routed grievance out, with a per-entity PII scorecard | Ships working |
 | b | Spam & duplicate detection | 14 | Triage stage and UI treatment: spam flag, duplicate link, campaign cluster. Plus corpus prevalence | Ships working |
-| c | Intelligence layer | 15 | Metrics layer, supervisor dashboards, deterministic spike detection | Ships working |
+| c | Intelligence layer | 15 | Metrics layer, supervisor dashboards, deterministic spike detection, and three headline metrics no SQL dashboard can produce | Ships working |
 | d | A/B testing of AI automation | 16 | Assignment / exposure / shadow instrumentation, a locked analysis plan, a power calculation, retrospective evidence | Ships as framework + evidence |
 | e | Sarvam benchmark | 17 | Head-to-head scorecard against our local models on Odia, romanized Odia, English. Provider-switchable via the registry | Ships as benchmark + switch |
 
@@ -123,8 +123,6 @@ in execution order.
 
 ### Tracking issues
 
-Retitled and re-scoped 2026-07-27 to match this document.
-
 | Phase | Issue | Phase | Issue |
 |---|---|---|---|
 | 13 Pipeline completion | #49 (+ #15 gold set) | 19 Model & pipeline platform | #42 |
@@ -160,15 +158,15 @@ persist to OLTP → view.
 grievance appears in history only after the next re-materialization. That
 freshness gap is by design.
 
-### 3.1 The trust boundary (rewritten 2026-07-27)
+### 3.1 The trust boundary
 
 The old invariant was **citizen text never leaves the box**. Two things broke it.
 
 - The Government of Odisha authorized Sarvam for this data, including PII.
 - More basically, **"the box" was never the real boundary.** Scanned documents
   already live in S3. The GPU box is a second machine. A self-hosted Sarvam model
-  on the GPU box is not "on-box" in any literal sense, and calling it that (as an
-  earlier draft did) hides a real network hop behind a reassuring word.
+  on the GPU box is not "on-box" in any literal sense, and calling it that hides a
+  real network hop behind a reassuring word.
 
 So the boundary is defined by **who controls the destination**, not by which
 process the code runs in. Three tiers:
@@ -218,11 +216,10 @@ Unchanged: PII detection and redaction run in-process by default, and PII
 
 ### 3.2 What is actually PII-free, and where
 
-An earlier draft claimed "no un-redacted PII reaches the lake". That is **false as
-written**, and the Phase 14 dedup design proves it: the index keys off
-`petitioner_mobile` and `petitioner_email`, which it reads from the lake.
-
-The precise position:
+**The lake is not PII-free.** The Phase 14 dedup index keys off
+`petitioner_mobile` and `petitioner_email`, which it reads from the lake, so any
+blanket "no un-redacted PII reaches the lake" claim is false. The precise
+position:
 
 | Data | Contains PII? | Notes |
 |---|---|---|
@@ -434,11 +431,41 @@ Two different problems. Conflating them is the main design risk.
 **Spam / non-actionable.** Content that is not a workable grievance: test entries,
 abuse, blank or garbage OCR, out-of-jurisdiction requests.
 
-- Weak labels are minable: rejected / invalid dispositions in `status` and
-  `complaint_status_id`, plus `action_history.action_taken_remark`.
-- Those labels are **not ground truth**. A rejection conflates spam with "resolved
-  elsewhere" and with officer discretion, and inherits whatever bias the old
-  process had. Audit a gold sample before training on them.
+- **A bare "discarded" flag is not a usable label, but the discard *reasons* are.**
+  Training on the disposition repeats the routing OVB trap: officers discard for at
+  least six different reasons, and acting on the prediction is self-fulfilling. The
+  fix is decomposition, and the reasons are already written into
+  `action_taken_remark` at volume:
+
+  | Discard reason (template family) | Rows | Reads as |
+  |---|---|---|
+  | details inadequate | 39,943 | low-signal, closest to spam |
+  | documents not attached | 29,029 | incomplete filing, not spam |
+  | case already taken up / taken up earlier | 19,904 | **duplicate** |
+  | no specific grievance | 16,340 | low-signal, closest to spam |
+  | duplicate copy | 14,767 | **duplicate** |
+  | needs a policy decision first | 9,090 | out of scope, valid grievance |
+  | not within purview of this grievance cell | 8,455 | **routing failure**, not junk |
+  | address not given | 4,110 | incomplete filing |
+
+  Roughly 161,000 reasoned discards in the top 100 templates alone. One noisy binary
+  becomes several clean labels, and only two of the eight families resemble spam.
+  "Not within purview" is a *routing* failure and must never be scored as junk.
+- Those labels are still **not ground truth**. They inherit whatever bias the old
+  process had, and discard rates should be checked for variance by office before
+  training, or the model learns office identity rather than content. Audit a gold
+  sample first.
+- ⚠️ **Extracting these reasons is itself a string lookup, not a capability.** Anyone
+  with SQL access can write the `CASE WHEN`. Treat the reason breakdown as an
+  *insight* (§5.3), useful for training labels and for the demo narrative, but not as
+  evidence the pipeline is needed.
+- **Free validation set, and the right way to state the value.** The two
+  duplicate-reason families give roughly **34,700 officer-confirmed duplicates**.
+  These are the **baseline, not the deliverable**: they are exactly the duplicates
+  the existing manual process already caught, and they are queryable today. The
+  capability claim is the *increment* — duplicates MinHash finds that carry no such
+  remark — and the confirmed set is what makes that increment measurable rather than
+  asserted. Report recall against it and report the increment separately.
 - Start with cheap calibrated features, not a model: text length, the existing OCR
   quality gates (word count, alpha ratio, repeated-trigram share, already a garbage
   detector), language ID, category-confidence entropy, repeat-filer rate.
@@ -453,11 +480,16 @@ abuse, blank or garbage OCR, out-of-jurisdiction requests.
    collective grievance and should surface in Phase 15 as one issue with N
    signatories. Treating campaigns as spam would suppress exactly the signal
    government most needs.
-3. **Semantic duplicate.** Same issue, different words. Needs embeddings, gates on
-   Phase 22, out of demo scope. Say so rather than implying the demo covers it.
+3. **Semantic duplicate.** Same issue, different words. **Not handled here, and
+   deliberately not treated as deduplication at all.** It surfaces in Phase 15 as
+   thematic clustering, which groups without collapsing counts. See "Why dedup
+   stays lexical" below.
 
 **Technique for 1 and 2.**
 
+- **Normalize script before hashing.** Transliterate romanized Odia to Odia script
+  (Phase 17 provider, §5.5) so one grievance filed twice in two scripts lands in
+  one index. Character n-grams alone will miss that pair entirely.
 - MinHash / LSH over **character** n-grams, not word tokens. Character grams
   survive OCR noise and script variation; word tokenization does not work across
   Odia, romanized Odia, and English in one index.
@@ -471,6 +503,29 @@ abuse, blank or garbage OCR, out-of-jurisdiction requests.
   than they are. Redaction helps similarity for *matched* text and hurts it here.
   Same-citizen resubmission is detected by the separately salted identity keys,
   not by placeholder overlap.
+
+**Why dedup stays lexical, and clustering stays semantic.**
+
+The two run on the same normalized text and then branch. They are not the same
+operation and must not share one similarity function.
+
+| | Dedup (Phase 14) | Thematic clustering (Phase 15) |
+|---|---|---|
+| Similarity | Lexical, MinHash over char n-grams | Semantic, MuRIL embeddings |
+| Question | Is this the same filing? | Is this the same kind of problem? |
+| Effect on counts | Collapses them | Adds a grouping column, removes nothing |
+
+- **Deduplication is destructive to the numbers management sees, so it carries a
+  higher evidence bar.** Merging on semantic similarity would fold two pothole
+  complaints from different villages into one, undercounting real citizen demand
+  while reporting it as efficiency. That error would be invisible in the output.
+- **The embedding we have is the wrong tool for this by construction.** It is a
+  MuRIL encoder fine-tuned to predict `category` (§5.3), so it deliberately
+  collapses within-category variation, which is exactly what dedup must preserve.
+  Two unrelated water complaints sit close together in that space on purpose.
+- Clustering consumes dedup output: one vector per near-identical group, not one
+  per filing. Otherwise a 400-signature campaign becomes its own "theme" and the
+  finding is circular.
 
 **Two placement decisions that matter.**
 
@@ -509,14 +564,64 @@ All advisory, none blocking.
 
 ### 5.3 Phase 15 — Structured analytics I (component c)
 
-A governed analytics surface over the corpus. It reads only **structured lake
-fields** (category, subcategory, district, dates, disposal times from
-`action_history`), so it does not depend on text-language processing and can run in
-parallel with the rest of the demo work.
+A governed analytics surface over the corpus, plus a scoped slice of text-derived
+intelligence.
 
-"Does not read text" is not "clean". The structured fields still carry missingness,
-historic policy choices, and language-related classification error. Profile and
-reconcile them before exposing any comparison.
+**The value-add test.** Basic dashboards already exist on the portal, and they are
+SQL over `complaints` and `action_history`. So every headline metric must pass one
+check: **could a competent analyst with SQL access and knowledge of the data build
+this in a day?** If yes, it is not our contribution. Pendency by district, disposal
+time by department, reopen rate and volume trend all fail on existing columns.
+
+Note what the test has to catch. Exact-match string lookup over a text field is a
+`CASE WHEN`, so a metric can depend on a column that does not exist and still be a
+view definition rather than a capability.
+
+**Insight versus capability.** An *insight* is something they could have computed and
+did not. A *capability* is something they could not compute at all. Both are worth
+shipping and they are different products. An insight is cheap, one-time, and hands
+over as a SQL view; it does not justify a pipeline. A capability is what a pipeline,
+a GPU and an ML workstream are for. Label every deliverable as one or the other, out
+loud. If someone asks "couldn't our DBA have found that?", the answer for an insight
+is yes, and that is a fine answer given first and a bad one heard as a correction.
+
+Two qualifications. It applies to *headline* metrics, not to supports: structured
+measures are still built as denominators and reconciliation checks, and S1 below
+deliberately re-implements them with tested definitions and freshness reporting.
+And it is a filter, not a target. A metric can pass and still be useless. Novel and
+ignored is worse than duplicative and used.
+
+**What the portal structurally cannot do.** Two things, and everything here follows
+from them.
+
+1. **It has never read a grievance.** `grievance` carries the citizen's own account
+   (median 19 words, p75 458 characters, 61% of rows unique), `document_url` points
+   at the scanned attachment, and `action_taken_remark` holds 6.5M free-text records
+   of what officers actually did. All three are opaque strings to SQL. The portal
+   describes the metadata envelope of 1.37M grievances and nothing about their
+   contents. Note that `grievance` is normally full complaint text despite the
+   dump's `grievanceSubject` column name, so **the intelligence layer has no OCR
+   dependency**.
+2. **Every row is an island.** There is no citizen key. `petitioner_mobile` is the
+   only near-identifier, nullable and unnormalized. SQL can group on it and get
+   naive repeat filers; it cannot do same-issue-different-person (the campaign
+   case) or same-person-different-contact. Converting *filings* into *distinct
+   problems* needs Phase 14.
+
+**The base layer is three derived tables, not three charts.** Every management view
+is a `GROUP BY` over these. The value add is not the chart, it is that the chart has
+columns to group by that the portal does not have. This also lets our output feed
+their existing dashboard rather than argue for replacing it.
+
+| Derived table | Produced by | New grouping columns |
+|---|---|---|
+| Per-complaint record | Phases 13, 17 | model category, summary, language, handwritten vs printed |
+| Cluster id | Phase 14 | `duplicate_group_id`, `duplicate_kind`, theme id |
+| Action type | Phase 15 S3 | what the remark says the officer actually did |
+
+"Does not read text" is not "clean" either. The structured fields still carry
+missingness, historic policy choices, and language-related classification error.
+Profile and reconcile them before exposing any comparison.
 
 - **S1, metric definitions + freshness + dashboards.** The **semantic layer**: a
   thin governed definition of allowed dimensions and measures over the lake, a
@@ -531,14 +636,137 @@ reconcile them before exposing any comparison.
   surprise ("water complaints in District X up 300% this week"), with key-driver
   analysis decomposing a spike by dimension. No model. The cheapest slice.
 
+- **S3, action type from officer remarks.** Classify `action_taken_remark` into what
+  the officer actually did. Pendency and disposal time are computed off
+  `resolved_on`; if a meaningful share of "resolved" rows carry remarks amounting to
+  "forwarded" or "no action possible", then disposal time measures closure speed,
+  not resolution. This splits "resolved" into resolved-with-action and
+  closed-without, and re-reports the existing headline metric on an honest
+  denominator. It audits the dashboard rather than competing with it.
+  - Cheapest item here by a wide margin: no OCR, no document ingest, no GPU.
+  - **Field profile.** Populated on 99.87% of the 6,556,171 action rows, with
+    1,395,867 distinct normalized values.
+
+    | Measure | Value |
+    |---|---|
+    | Rows covered by top 1 / 10 / 100 / 500 distinct values | 10.9% / 45.1% / 56.8% / 62.4% |
+    | Rows in templates used 1000+ times | 59.7% |
+    | Distinct values used exactly once | 1,164,410 (83% of distinct, 17.8% of rows) |
+    | Length p50 / p90 / p99 / max (chars) | 46 / 282 / 1,000 / 50,980 |
+
+  - **Templating is the easy case, not the failure case.** Ten distinct strings cover
+    45% of 6.5M action records, so hand-labelling them yields action type for nearly
+    half the corpus deterministically, with no model and no training set. A dropdown
+    is a structured signal wearing a text costume.
+  - **Method follows the shape of the field.** A lookup table over the top few
+    hundred templates (top 500 buys 62% of rows for roughly a day of labelling, and
+    the curve flattens hard after top 10, so there is a natural stopping point),
+    plus a classifier for the free-text tail. The tail is where a model earns its
+    keep, and at p90 = 282 characters there is real content in it.
+  - **Not redundant with `action_status`.** Status has 15
+    values; the largest (25% of rows) contains 430,253 distinct remarks and the
+    second (20% of rows) contains 839,480. Within the largest status the remarks
+    stay spread (top 1 = 7.6%, top 20 = 28.3%). Decisively, **301 of the top 500
+    templates appear under more than one status**, one spanning 12 of the 15. The
+    two fields are crossing classifications, not a hierarchy, so the remark encodes
+    a dimension the status column does not. S3 passes the value-add test.
+  - Statuses differ in kind: some are dropdown-driven (status #3, 1.18M rows but
+    only 15,390 distinct remarks), others near free text (status #2). Build the
+    lookup per status rather than corpus-wide.
+  - **Officers pick from a graded disposal ladder** that encodes exactly the
+    distinction this metric needs:
+
+    | Template | Rows |
+    |---|---|
+    | "the grievance has been disposed." | 634,235 |
+    | "the grievance has been resolved." | 222,326 |
+    | "…disposed with appropriate action." | 335,630 |
+    | "…resolved with appropriate action." | 178,819 |
+    | "…disposed & beneficiary benefited." | 22,886 |
+    | "…resolved & beneficiary benefited." | 20,681 |
+
+    **About 61% of explicit disposals use a rung that claims no action**, while the
+    more specific rung was available and chosen 514,449 times. Caveat to carry into
+    the reporting: a bare "disposed" does not *prove* inaction, an officer may have
+    acted and picked the shorter phrase. Declining a more specific template that sits
+    right beside it is evidence, not proof. Check overlap with the existing
+    `complaints.benefitted` column before claiming the third rung is novel.
+  - Working taxonomy, seven classes, all reachable by lookup: forwarded/delegated,
+    reported back (the large ATR / compliance-report vocabulary), disposed-no-claim,
+    disposed-with-action, benefit-delivered, discarded-with-reason, and
+    reopened/escalated. Plus an administrative-noise bucket (".", "ok", "other", and
+    scheme names like "pmay" typed into the remark field, which look like category
+    tags in the wrong box and are a data-quality finding in their own right).
+  - The tail classifier must be multilingual: at least one high-volume template is
+    entirely in Odia script. The lookup table is unaffected, since it matches exactly.
+
+- **S4, thematic clustering in location and time.** The scoped semantic slice; the
+  rest of the semantic track stays in Phase 22.
+  - **Reuse the existing encoder.** The categorizer is a MuRIL sequence classifier
+    fine-tuned on `grievance_and_docs` text to `category`
+    (`pipeline/stages/categorizer/model.py`). Its pooled representation is a
+    category-aware embedding obtained from a forward pass we already make. No new
+    model, no new entry into the `transformers` version conflict, no extra GPU pass.
+    This is what makes the slice affordable inside the August window.
+  - **Embed subject lines only** for the demo, so this carries no OCR dependency and
+    runs over all 1.37M rows.
+  - **Cluster within category, never globally.** Compute stays tractable, every
+    cluster is nested inside a label officers already use, and it avoids presenting
+    "people complain about water" as a discovery. Global clustering over 1.37M
+    grievances mostly recovers the categories we already have.
+  - **Space × time is the product.** Concentration by block crossed with recency
+    gives four cells: diffuse-persistent is background, concentrated-persistent is a
+    chronic local failure, diffuse-new is a policy or seasonal shift, and
+    **concentrated-new is the alert**. That last cell is the one thing here no
+    existing dashboard can produce.
+  - **Stable cluster identity is the hard part.** "Emerging" requires a cluster to be
+    the same cluster next month, and re-clustering monthly makes ids drift and kills
+    the time series. Fit once on history, assign new grievances to nearest centroid,
+    and keep a residual bucket past a distance threshold. The residual bucket *is*
+    the novelty detector, which is cheaper and more honest than online discovery.
+  - **Baseline against the same period last year**, not last month. Monsoon drainage
+    and summer water will fire a naive spike alert every year on schedule. The
+    multi-year history is an asset most systems doing this do not have.
+  - **The field supports this.** `grievance` is populated on 99.98% of rows, 915,639
+    distinct values, 61.3% of rows unique, median 19 words and p75 of 458 characters,
+    with top-100 distinct values covering only 6.7% of rows. Effectively untemplated,
+    unlike the remarks.
+    - It is **bimodal**: 27.0% of rows are five words or fewer while 53.8% run to
+      fifteen or more. Treat the short tail separately rather than assuming a uniform
+      field.
+  - **Concentration works at district level, with block on drill-down.**
+
+    | Grouping | Cells | Median | Cells ≥30 | Rows in cells ≥30 |
+    |---|---|---|---|---|
+    | district × year × category | 4,452 | 29 | 49.6% | 98.3% |
+    | block × year × category | 32,776 | 4 | 14.5% | 81.9% |
+
+    District is well powered. Block is sparse per cell but the mass concentrates:
+    half the cells are tiny and hold only 18% of rows, so the S1 small-cell
+    suppression threshold handles it. Corpus shape: 30 districts, 427 blocks, 35
+    categories, 5 years.
+    - ⚠️ `block` is null on 17.3% of rows and `category` on 16.9%. Both need a stated
+      missingness treatment before they anchor a published metric.
+    - ⚠️ Only **35 distinct categories appear in the data** against the 62 in the
+      masters. Resolve before clustering within category; it changes what "within
+      category" means.
+    - Five years of history is enough for same-period-last-year baselines, but not
+      deep. Do not over-claim seasonal confidence.
+  - ⚠️ **The live risk is script.** If the encoder does not align romanized Odia with
+    Odia script, clusters split by *script* rather than theme and it will look like a
+    finding rather than a bug. This is what sank the earlier BERTopic attempt
+    (Phase 22), so it is a known failure mode here, not a hypothetical one.
+    Transliterate first, then embed, and verify on transliterated pairs before
+    trusting any cluster.
+
 Phase 14 adds inputs, and forces a decision about what a count means.
 
 - Input: spam and duplicate prevalence as governed measures.
-- **A campaign is not a false spike.** An earlier draft said spike detection must
-  run on de-duplicated counts, which is wrong: 500 citizens filing about the same
-  thing is a real and important signal, and collapsing them to 1 destroys it.
-- The fix is to stop pretending one number answers the question. The metrics layer
-  defines **three** counts, and every spike view carries all three:
+- **A campaign is not a false spike.** Spike detection must *not* run on
+  de-duplicated counts: 500 citizens filing about the same thing is a real and
+  important signal, and collapsing them to 1 destroys it.
+- So one number cannot answer the question. The metrics layer defines **three**
+  counts, and every spike view carries all three:
 
   | Measure | Answers |
   |---|---|
@@ -551,6 +779,58 @@ Phase 14 adds inputs, and forces a decision about what a count means.
   are different facts, and an official needs to tell them apart.
 - Deduplication still matters for the *workload* reading. It just cannot be the
   only reading.
+
+**The three headline metrics, each labelled.**
+
+| Metric | Needs | Source | Kind |
+|---|---|---|---|
+| Share of "resolved" that was closed without action | action type | S3 | **Insight**. Ships as a SQL view |
+| Distinct problems vs total filings | cluster id | Phase 14 | **Capability** |
+| A theme concentrated in one block and rising | theme id + block + time | S4 | **Capability** |
+
+**Metric 1 is an insight and must be presented as one.** 86.65% of resolved
+complaints close on a templated remark (used 1000+ times), against 6.82% bespoke.
+The closing remark is the only one this metric reads, so it is an exact string match
+for roughly seven cases in eight. Its deliverable is the view definition itself,
+handed over, not a model.
+
+There is no capability version hiding in the free-text tail, on the hypothesis that
+an officer typing something original signals a non-standard case. The raw split
+looks strong (reopen 8.42% vs 4.38%, median resolution 45 days vs 29) but is
+confounded: longer cases mechanically accumulate rare remarks *and* take longer.
+Stratified by action-step count the gap shrinks sharply and turns non-monotonic
+(median days 17 vs 33 at three steps, 37 vs 44 at four, 35 vs 39 at five; reopen
+rates swing from 0.24% to 5.5% across strata for reasons not currently understood).
+Direction is consistent, magnitude is modest, none of it is load-bearing. Do not
+build on it.
+
+**So the ML-dependent core of this phase is two items, not three.** Weight the demo
+accordingly. Metric 1 is the most striking number and should lead, but it leads as a
+finding, not as evidence that the system is necessary.
+
+⚠️ **The first one carries political risk, not technical risk.** It does not expose
+our flaws, it exposes the redressal process closing cases without fixing them. That
+is either the finding that proves the system's worth or the finding that gets it
+shut down, depending on framing. Report it **at state level as an observation about
+the closure workflow, never as an office league table**, and lead with the point
+that no existing dashboard could see it at all. It goes to the Executive Director
+before it goes anywhere near the government side.
+
+**Deliberately tabled, and why.** Both pass the value-add test and are still wrong
+for this audience. Demo metrics should be about the grievances and how they are
+handled; anything about how well *our models* perform belongs in the evaluation
+appendix. Different audiences, different documents.
+
+- **Citizen-vs-model category disagreement.** Audits the clerks and the model at
+  once, which is the worst of both. Retained as an internal diagnostic: it is a free
+  validation signal for the categorizer and cheap candidate generation for the
+  Phase 20 routing work.
+- **PII exposure rate as a supervisor metric.** Not to be confused with the Phase 13
+  privacy scorecard, which is a different artifact with a different purpose and
+  **stays**. The scorecard is a safety credential, the thing that makes running this
+  on real citizen data defensible, and DELIVERY.md commits to it under component
+  (a). A PII exposure number on a management screen is the meta-analytical one, and
+  it goes.
 
 **Serving + UI.** A `serving/intelligence.py` router with new schemas, the frozen
 contract untouched, behind auth, plus a supervisor screen in the frontend.
@@ -808,8 +1088,6 @@ the gates at the end.
 
 ### Standing decisions
 
-Dated 2026-07-22, amended 2026-07-27.
-
 - **Local Indic LLM, phased hybrid.** Task-specific Indic models now; a local Indic
   LLM later. Heavy uses (theme induction, cluster narration, hardest cases) run as
   on-demand GPU batch jobs, never in the serving path and never always-on.
@@ -984,10 +1262,17 @@ property that follows the grievance. Ships only when it clears the Phase 18 gate
 
 ### Phase 22 — Semantic / unstructured intelligence
 
-Retrieval and emergent-theme discovery over grievance **text**. Unlike Phase 15 this
-reads citizen text, so it gates on Phase 21 normalization (embedding raw romanized
-or out-of-distribution text is what sank the earlier BERTopic attempt) and on a
-capacity benchmark before any index is committed.
+Retrieval and emergent-theme discovery over grievance **text**. Gates on Phase 21
+normalization (embedding raw romanized or out-of-distribution text is what sank the
+earlier BERTopic attempt) and on a capacity benchmark before any index is committed.
+
+**Boundary with Phase 15 S4.** The demo ships the cheap slice: subject-line
+embeddings from the existing fine-tuned categorizer encoder, clustered within
+category, for location-and-time themes. It needs no new model, no OCR and no dense
+index. This phase is everything that does need those: a purpose-built multilingual
+embedder, the vector index and its capacity gate, retrieval over full document text,
+and LLM-as-operator taxonomy induction. S4's results tell us how much of the rest is
+worth building.
 
 - **On-box embeddings.** `olap/embed.py` writes `data/interim/embeddings.parquet`
   with schema `ticket_no, vector, model_version, source, kind, correction_id`, so a
@@ -1135,44 +1420,73 @@ Terse and dated. The reasoning for choices that are not obvious from the code.
   increments so the query agent is off the critical path, with explicit disclosure
   controls.
 - **2026-07-27.** Demo re-scoped by the Executive Director to five components
-  (§1.1). Old Phases 13–19 renumbered to 18–24 to put the list in execution order
-  and remove the overlap between demo scope and Part III. Five consequences:
+  (§1.1). Old Phases 13-19 renumbered to 18-24 to put the list in execution order and
+  remove the overlap between demo scope and Part III.
   - **The no-egress invariant is retired and replaced** (§3.1). Sarvam is authorized
     by the Government of Odisha for this data including PII, so the absolute rule
-    becomes a declared, audited, revocable channel with a kill switch. Enforcement
-    improves: an allowlist permitting Sarvam and nothing else is stricter than
-    today's policy-only posture.
+    becomes a declared, audited, revocable channel with a kill switch. An allowlist
+    permitting Sarvam and nothing else is stricter than today's policy-only posture.
+    "On the box" was never a coherent boundary anyway: documents already live in S3
+    and the GPU box is a second machine. Hence three trust tiers, not two.
   - **Sarvam is a provider with two backends, not an external dependency.**
     Sarvam-30B and 105B are Apache 2.0, so self-hosting on the GPU box is the
     standing exit ramp behind the same registry entry. Egress stays reversible.
-  - **Spam and duplicates are separate problems, and campaigns are neither.**
-    Duplicate detection runs on redacted text, after `pii_tagger` and before the
-    expensive stages, keeping the redaction-first edge intact. Spam never
-    auto-rejects. Spike detection must run on de-duplicated counts.
-  - **Offline accuracy is not impact evidence.** Phase 16 builds assignment,
-    exposure, and shadow instrumentation and an office-level staggered rollout with a
-    locked analysis plan. The demo ships a power calculation and a retrospective
-    agreement study, labelled suggestive rather than causal, because the models were
-    trained on the same human labels they are compared against. This is a program
-    evaluation, not human-subjects research: no IRB applies.
-  - **Correction to the record.** Earlier versions said the MLflow slim registry was
-    "on branch `feat/mlflow-slim-registry`". It merged to `main` in PR #20 on
-    2026-07-08 and the branch was deleted. The helpers exist and are tested; nothing
-    calls them.
-- **2026-07-27 (Codex CTO review, second pass).** Five corrections to the re-scope
-  draft, four of them factual errors rather than refinements:
-  - **"On the box" was never the boundary.** Documents already live in S3 and the
-    GPU box is a second machine, so classifying self-hosted Sarvam as `on-box` was
-    wrong. Replaced by three trust tiers plus per-route declarations (§3.1).
-  - **The lake is not PII-free.** The claim contradicted our own dedup design,
-    which keys off `petitioner_mobile` / `petitioner_email` read from the lake.
-    §3.2 now states exactly what holds PII and what the real guarantee is.
-  - **A campaign is not a false spike.** Requiring de-duplicated counts would have
-    destroyed the signal we said we wanted to surface. Replaced by three counts
-    (filings, clusters, signatories) with spikes labelled, not suppressed.
-  - **Redacted text is not strictly better for near-duplicate matching.** Uniform
-    `[PHONE]` / `[NAME]` placeholders inflate similarity between unrelated
-    documents. Placeholders are stripped or down-weighted before hashing.
-  - **"No IRB applies" is a determination, not an assumption**, and "no arm may
-    leave a citizen worse off" needed mechanisms (retained service path, monitored
-    harm indicators, named escalation owner, predetermined pause conditions).
+  - **The lake is not PII-free**, and claiming otherwise contradicted our own dedup
+    design, which keys off `petitioner_mobile` / `petitioner_email` read from the
+    lake. §3.2 states what actually holds PII and what the real guarantee is.
+  - **Spam and duplicates are separate problems, and campaigns are neither.** Dedup
+    runs on redacted text, after `pii_tagger` and before the expensive stages. Spam
+    never auto-rejects. Placeholders are stripped before hashing, since uniform
+    `[PHONE]` / `[NAME]` tokens inflate similarity between unrelated documents.
+  - **Offline accuracy is not impact evidence.** Phase 16 builds assignment, exposure
+    and shadow instrumentation plus an office-level staggered rollout with a locked
+    analysis plan. The demo ships a power calculation and a retrospective agreement
+    study, labelled suggestive rather than causal, because the models were trained on
+    the same human labels they are compared against. This is program evaluation, not
+    human-subjects research: no IRB applies. "No arm may leave a citizen worse off"
+    is backed by mechanisms (retained service path, monitored harm indicators, named
+    escalation owner, predetermined pause conditions), not by intent.
+- **2026-07-27 (intelligence layer).** Phase 15 grounded on what the existing portal
+  dashboards structurally cannot do, since they are SQL over `complaints` and
+  `action_history`.
+  - **Value-add test:** could a competent analyst with SQL access build this in a
+    day? If yes it is not our contribution. Exact-match string lookup over a text
+    field counts as yes, so a metric can depend on a column that does not exist and
+    still be only a view definition.
+  - **Insight vs capability must be labelled explicitly** (§5.3). Both ship. An
+    insight hands over as a SQL view and does not justify a pipeline.
+  - **The base layer is three derived tables, not three charts** (per-complaint
+    record, cluster id, action type). Management views are `GROUP BY`s over them, and
+    they can feed the existing dashboard rather than replace it.
+  - **Semantic work moved forward, narrowly**, as Phase 15 S4: the existing
+    fine-tuned categorizer encoder, subject lines only, clustered within category.
+    Fit once and assign forward so cluster ids stay stable; the residual bucket is
+    the novelty detector. Seasonal baselines are same-period-last-year.
+  - **Dedup and clustering stay separate operations.** Dedup is lexical and collapses
+    counts; clustering is semantic and only adds a column, so dedup carries the
+    higher evidence bar. Merging on semantic similarity would fold two pothole
+    complaints from different villages into one and undercount real citizen demand
+    while reporting it as efficiency. Independently, the encoder is fine-tuned on
+    `category` and so collapses exactly the within-category variation dedup needs.
+    Cross-script duplicates are handled by transliterating before hashing.
+  - **"Discarded" is not a usable spam label, but its reasons are.** The bare
+    disposition conflates at least six things and repeats the routing OVB trap. The
+    reasons are written into the remarks at volume (~161,000 in the top 100
+    templates), giving eight families of which only two resemble spam. "Not within
+    purview" is a routing failure and must never be scored as junk.
+  - **Two metrics excluded as meta-analytical.** Citizen-vs-model category
+    disagreement and PII exposure rate audit our own models rather than the grievance
+    process. Both retained as internal diagnostics. The Phase 13 privacy scorecard is
+    a distinct artifact and is unaffected.
+  - **Metric 1 (closed-without-action) is an insight, not a capability.** 86.65% of
+    resolved complaints close on a templated remark, so it is a string match for
+    seven cases in eight, and its deliverable is the view definition. No capability
+    version hides in the free-text tail: the bespoke-vs-template gap is confounded by
+    case length and does not survive stratification. It also carries political rather
+    than technical risk, so it is reported at state level as a closure-workflow
+    observation, never as an office league table, and goes to the ED first.
+  - **The ~34,700 officer-confirmed duplicates are a baseline, not a deliverable.**
+    They are what the manual process already catches. The claim is the increment
+    MinHash finds beyond them, which this makes measurable rather than asserted.
+  - **Net: the ML-dependent core of Phase 15 is two items, not three.** Demo weight
+    sits on duplicate detection and thematic clustering.
