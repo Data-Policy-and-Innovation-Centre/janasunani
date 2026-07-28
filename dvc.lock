@@ -9,8 +9,8 @@ stages:
       size: 7071113216
     - path: janasunani/olap/materialize.py
       hash: md5
-      md5: ea29e1c583a082cf9bc669f98396f72b
-      size: 3356
+      md5: 9bb2ff8dbbbcc3c9502f5d080c0fbc11
+      size: 5273
     outs:
     - path: data/interim/action_history.parquet
       hash: md5
@@ -26,8 +26,8 @@ stages:
       size: 198
     - path: data/interim/pages.parquet
       hash: md5
-      md5: 816be322183d304d67c042f27ae55d9a
-      size: 10361
+      md5: 4ad7a17893cb22a396f572b899e68c25
+      size: 3925
   pipeline-sample:
     cmd: uv run --extra pipeline-core janasunani-pipeline run --input 
       data/raw/documents-sample --db data/processed/pipeline-sample.sqlite 
