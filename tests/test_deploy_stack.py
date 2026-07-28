@@ -19,7 +19,9 @@ import shutil
 import stat
 import subprocess
 
+import pytest
 import yaml
+from packaging.markers import Marker
 
 from janasunani.config import ROOT_DIR
 
@@ -992,3 +994,160 @@ def test_rollback_restores_a_diverged_caddyfile(tmp_path):
     assert result.returncode == 1, combined
     assert "Restoring the last known-good Caddyfile" in combined
     assert (deploy_dir / "proxy" / "Caddyfile").read_text() == deployed_content
+
+
+# --- CPU-only torch for the api image (issue #48) ----------------------------
+#
+# The always-on box is CPU-only and hosts the production Postgres, so the api
+# image must not carry the CUDA runtime. This is a resolution property, not a
+# runtime one, so it is asserted against the real pyproject.toml and uv.lock —
+# and it cannot be caught by running the tests, because on darwin the `demo`
+# extra still resolves the ordinary PyPI wheel.
+
+PYPROJECT_PATH = ROOT_DIR / "pyproject.toml"
+UV_LOCK_PATH = ROOT_DIR / "uv.lock"
+
+def _pyproject() -> dict:
+    import tomllib
+
+    return tomllib.loads(PYPROJECT_PATH.read_text())
+
+
+def test_demo_extra_sources_torch_from_the_cpu_index():
+    """`deploy/api.Dockerfile` builds `--extra demo`; that extra must pin torch
+    to PyTorch's CPU wheel index."""
+    pyproject = _pyproject()
+    indexes = {i["name"]: i for i in pyproject["tool"]["uv"].get("index", [])}
+    assert "pytorch-cpu" in indexes, "the CPU wheel index is not declared"
+    assert indexes["pytorch-cpu"]["url"] == "https://download.pytorch.org/whl/cpu"
+    # explicit: nothing resolves from this index unless a source sends it there
+    assert indexes["pytorch-cpu"]["explicit"] is True
+
+    sources = pyproject["tool"]["uv"]["sources"]["torch"]
+    assert [s["extra"] for s in sources] == ["demo"], (
+        "torch's CPU source must apply to `demo` only — categorizer and "
+        "ocr-deepseek need CUDA wheels for the GPU-box batch jobs"
+    )
+    assert all(s["index"] == "pytorch-cpu" for s in sources)
+
+
+def test_gpu_extras_keep_cuda_torch():
+    """The counterpart: pinning the GPU extras to CPU wheels would silently
+    remove GPU acceleration from the DeepSeek OCR run and the MuRIL embedding
+    backfill (ROADMAP §5.3 S4)."""
+    torch_sources = _pyproject()["tool"]["uv"]["sources"]["torch"]
+    pinned = {s["extra"] for s in torch_sources}
+    for extra in ("categorizer", "pipeline-core", "ocr-deepseek"):
+        assert extra not in pinned, f"{extra} must keep the default CUDA torch"
+
+
+def _demo_requirements_for_linux() -> dict[str, str]:
+    """The real resolved requirement set for `--extra demo` on linux.
+
+    Exports the actual lock via uv and evaluates each marker for the box's
+    platform, rather than inferring reachability from individual edges. An
+    edge's own marker is not enough: a CUDA package can be pulled by an
+    unconditional edge from a parent that `demo` selects, and inspecting
+    markers in isolation cannot see that (xgboost -> nvidia-nccl-cu12 is
+    exactly this shape).
+    """
+    proc = subprocess.run(
+        ["uv", "export", "--frozen", "--extra", "demo", "--no-dev",
+         "--no-hashes", "--no-emit-project"],
+        cwd=ROOT_DIR, capture_output=True, text=True, check=True,
+    )
+    resolved: dict[str, str] = {}
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line or line.startswith(("#", "-")):
+            continue
+        requirement, _, marker = line.partition(";")
+        if marker.strip():
+            env = {
+                "sys_platform": "linux",
+                "platform_system": "Linux",
+                "os_name": "posix",
+                "platform_machine": "x86_64",
+                "python_version": "3.13",
+                "implementation_name": "cpython",
+                "platform_python_implementation": "CPython",
+            }
+            if not Marker(marker.strip()).evaluate(env):
+                continue
+        name, _, version = requirement.strip().partition("==")
+        resolved[re.split(r"[\[ ]", name)[0].lower()] = version.strip()
+    return resolved
+
+
+def test_only_torch_is_sourced_from_the_pytorch_index():
+    """`explicit = true` must actually hold across the whole lock.
+
+    download.pytorch.org is not a torch-only mirror — it also carries old
+    copies of common packages (certifi, requests, urllib3 among them). Without
+    `explicit`, uv treats it as a general index and will happily resolve those
+    from it, silently downgrading the TLS stack. That is not hypothetical: it
+    happened to this branch while mutation-testing the `explicit` assertion
+    itself, and shipped certifi 2022.12.7 before review caught it.
+
+    Asserted on the lock rather than on the pyproject flag, because the flag
+    being right does not prove the lock was generated with it right.
+    """
+    leaked = []
+    for block in UV_LOCK_PATH.read_text().split("[[package]]"):
+        name = re.search(r'^name = "([^"]+)"', block, re.M)
+        pytorch_sourced = re.search(
+            r'^source = \{ registry = "https://download\.pytorch\.org[^"]*" \}',
+            block,
+            re.M,
+        )
+        if name and pytorch_sourced and name.group(1) != "torch":
+            leaked.append(name.group(1))
+    assert not leaked, (
+        "packages resolved from the PyTorch index that should come from PyPI: "
+        f"{sorted(leaked)} — is `explicit = true` set on the index?"
+    )
+
+
+@pytest.mark.skipif(shutil.which("uv") is None, reason="uv not on PATH")
+def test_demo_resolves_cpu_torch_on_linux():
+    """The api image gets the CPU build, not the CUDA one."""
+    resolved = _demo_requirements_for_linux()
+    assert resolved.get("torch") == "2.12.1+cpu", (
+        f"expected the CPU torch build on linux, got {resolved.get('torch')!r}"
+    )
+
+
+@pytest.mark.skipif(shutil.which("uv") is None, reason="uv not on PATH")
+def test_demo_carries_no_cuda_payload_beyond_xgboosts_nccl():
+    """The property that shrinks the image, checked against a real resolution.
+
+    torch's CUDA payload (cuda-toolkit, cuda-bindings, nvidia-cublas, cudnn,
+    cusparselt, nccl-cu13, nvshmem, triton) must be gone entirely.
+
+    `nvidia-nccl-cu12` is the one documented exception: `xgboost` declares it
+    unconditionally on linux, and `demo` pulls xgboost via `pipeline-core`.
+    The live processor never uses the format classifier, so it is dead weight
+    in this image — tracked separately. Asserted explicitly rather than
+    excluded, so this fails if the CUDA surface grows again.
+    """
+    resolved = _demo_requirements_for_linux()
+    cuda = {
+        name for name in resolved
+        if name.startswith(("nvidia-", "cuda-")) or name == "triton"
+    }
+    assert cuda == {"nvidia-nccl-cu12"}, (
+        "CUDA packages in the linux demo resolution changed; expected only "
+        f"xgboost's nvidia-nccl-cu12, got {sorted(cuda)}"
+    )
+    # and the specific thing this change removed really is absent
+    assert "nvidia-nccl-cu12" in resolved and "nvidia-nccl-cu13" not in resolved
+
+
+def test_locked_torch_resolves_to_a_cpu_wheel_for_linux():
+    """A `+cpu` build must actually be locked, with a linux x86_64 wheel —
+    the box's platform."""
+    lock = UV_LOCK_PATH.read_text()
+    assert 'version = "2.12.1+cpu"' in lock, "no CPU torch build in the lock"
+    assert "torch-2.12.1%2Bcpu-cp313-cp313-manylinux_2_28_x86_64.whl" in lock, (
+        "the locked CPU torch has no linux x86_64 wheel"
+    )

@@ -356,12 +356,26 @@ reaches OLTP through the exporter.
 
   Remaining: `terraform apply` of `ci.tf`, one-time box setup (GHCR login,
   `deploy/.env`), first real amd64 build + a live `workflow_dispatch` run, on-box
-  browser E2E (issue #30). Three hardening items before Phase 12 is done: a
-  **CPU-only Torch** API image (issue #48; the current 8–12 GB image bundles CUDA
-  Torch though the box is CPU-only), and two rollout gaps (issue #32): the workflow
-  can time out and kill the SSH session before the box script finishes its
-  health-wait/rollback, and a rollback run can ship the current compose/proxy
-  beside an old image SHA.
+  browser E2E (issue #30).
+
+  ✅ **CPU-only Torch image** (issue #48). The `demo` extra now resolves torch
+  from PyTorch's CPU index, dropping ~2.5 GB of wheels: torch's whole
+  cuda-toolkit / cuda-bindings / nvidia-\* / triton payload, plus the torch
+  wheel itself going 532 MB → 192 MB. The box is CPU-only and DeepSeek is
+  excluded from `demo`, so none of it was ever reachable. Scoped to `demo`
+  alone — `categorizer` and `ocr-deepseek` keep CUDA wheels for the GPU-box
+  batch jobs. The size drop is only observable in the amd64 CI build; on darwin
+  `demo` still resolves the ordinary PyPI wheel.
+
+  One CUDA wheel survives, and the torch source cannot remove it: `xgboost`
+  declares `nvidia-nccl-cu12` unconditionally on linux, and `demo` pulls
+  xgboost through `pipeline-core`. The live processor never loads the format
+  classifier, so it is ~300 MB of dead weight in the api image (issue #63).
+
+  Remaining hardening before Phase 12 is done: two rollout gaps (issue #32).
+  The workflow can time out and kill the SSH session before the box script
+  finishes its health-wait/rollback, and a rollback run can ship the current
+  compose/proxy beside an old image SHA.
 
 ### Model provenance & DSI baselines (hard rule)
 

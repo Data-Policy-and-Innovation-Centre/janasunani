@@ -372,7 +372,10 @@ policy itself prevents it.
   Parquet lake, the HF cache, and the nightly `pg_dump` target — a
   disk-full here risks all of those, not just the deploy. `deploy.sh`
   refuses to even start pulling images if free space drops below ~20 GiB
-  (a few multiples of one ~8-12 GB api image), and after a successful
+  (deliberately several multiples of one api image; the threshold is kept
+  where it was after the CPU-torch switch shrank the image, since the point
+  is headroom for prod Postgres and the lake, not a tight fit), and after a
+  successful
   deploy prunes every SHA-tagged `janasunani-api`/`janasunani-frontend`
   image except the current and previous (the rollback target) — plus the
   usual `docker image prune -f` for dangling layers. If disk pressure still
@@ -381,10 +384,17 @@ policy itself prevents it.
 
 ### Known gaps — what this repo's automation does NOT verify for you
 
-- **The `linux/amd64` `api` build itself** — it resolves ~8–12 GB of CUDA
-  torch and can only be built for real on an amd64 runner (GitHub Actions),
-  never on an arm64 dev Mac. Review the Dockerfile carefully; the first real
-  signal is the CI build log / GHCR push.
+- **The `linux/amd64` `api` build itself** — it can only be built for real on
+  an amd64 runner (GitHub Actions), never on an arm64 dev Mac. Review the
+  Dockerfile carefully; the first real signal is the CI build log / GHCR push.
+  This is also where the CPU-torch switch (#48) gets confirmed: on darwin the
+  `demo` extra still resolves the ordinary PyPI wheel, so the image-size drop
+  is not observable locally. In the build log, expect
+  `torch-2.12.1+cpu-...manylinux_2_28_x86_64.whl`, and **exactly one**
+  `nvidia-*` download — `nvidia-nccl-cu12`, which xgboost declares
+  unconditionally on linux (~300 MB, tracked separately). Any other `nvidia-*`
+  or `cuda-*` wheel means the CPU source did not take effect and the image is
+  still carrying the CUDA runtime.
 - **On-box browser E2E** — submit a grievance → real pipeline output renders
   and persists to `live_grievances` → `/history` shows it → `basic_auth`
   actually gates access. Do this once after the first automated deploy.
