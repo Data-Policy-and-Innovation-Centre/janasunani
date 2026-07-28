@@ -173,12 +173,20 @@ def diff(draft: list[Record], gold: list[Record]) -> dict[str, Any]:
     added_by_entity: Counter = Counter()
     removed_by_entity: Counter = Counter()
     touched_records = 0
+    text_mismatches: list[str] = []
 
     for record_id in shared:
+        # Offsets index into the text. If the annotator edited the text itself,
+        # every span in that record is silently misaligned and the diff below is
+        # meaningless, so this is an error rather than a warning.
+        if draft_by_id[record_id].text != gold_by_id[record_id].text:
+            text_mismatches.append(record_id)
+
         before = {s.key() for s in draft_by_id[record_id].spans}
         after = {s.key() for s in gold_by_id[record_id].spans}
         new, gone = after - before, before - after
         kept += len(after & before)
+        rebounded_here = relabelled_here = 0
 
         # A span whose offsets moved but whose label stayed, and vice versa, are
         # corrections rather than an add plus a delete. Match them up so the
@@ -195,6 +203,7 @@ def diff(draft: list[Record], gold: list[Record]) -> dict[str, Any]:
             if overlap is not None:
                 candidates.remove(overlap)
                 rebounded += 1
+                rebounded_here += 1
                 new = new - {key}
                 gone = gone - {overlap}
 
@@ -202,6 +211,7 @@ def diff(draft: list[Record], gold: list[Record]) -> dict[str, Any]:
         for key in sorted(new):
             if (key[0], key[1]) in spans_before and spans_before[(key[0], key[1])] != key[2]:
                 relabelled += 1
+                relabelled_here += 1
                 new = new - {key}
                 gone = gone - {(key[0], key[1], spans_before[(key[0], key[1])])}
 
@@ -211,13 +221,16 @@ def diff(draft: list[Record], gold: list[Record]) -> dict[str, Any]:
             added_by_entity[key[2]] += 1
         for key in gone:
             removed_by_entity[key[2]] += 1
-        if new or gone:
+        # A record fixed only by re-bounding or relabelling was still worked on:
+        # those matches were removed from `new`/`gone` above, so count them too.
+        if new or gone or rebounded_here or relabelled_here:
             touched_records += 1
 
     return {
         "records_compared": len(shared),
         "records_only_in_draft": sorted(set(draft_by_id) - set(gold_by_id)),
         "records_only_in_gold": sorted(set(gold_by_id) - set(draft_by_id)),
+        "text_mismatches": text_mismatches,
         "records_touched": touched_records,
         "spans_added": added,
         "spans_removed": removed,
@@ -250,7 +263,10 @@ def main() -> None:
     parser.add_argument(
         "--show-samples",
         action="store_true",
-        help="Print a few truncated entity surface forms (reveals citizen text)",
+        help=(
+            "Print a few truncated entity surface forms. REVEALS CITIZEN PII: "
+            "interactive use only, never in CI, a hook, or any shared/logged workflow"
+        ),
     )
     args = parser.parse_args()
 
@@ -267,7 +283,31 @@ def main() -> None:
     }
 
     if args.draft:
-        payload["human_pass"] = diff(load(args.draft), gold)
+        human = diff(load(args.draft), gold)
+        payload["human_pass"] = human
+        # Completeness is part of correctness: a gold file missing pages, or whose
+        # text was edited out from under its offsets, scores wrong rather than
+        # failing. Both are hard errors so a pre-merge gate catches them.
+        if human["records_only_in_draft"]:
+            missing = human["records_only_in_draft"]
+            report.fail(
+                f"{len(missing)} draft record(s) absent from gold "
+                f"(first: {missing[:3]}). Every drafted page must be adjudicated."
+            )
+        if human["records_only_in_gold"]:
+            extra = human["records_only_in_gold"]
+            report.fail(
+                f"{len(extra)} gold record(s) not present in the draft "
+                f"(first: {extra[:3]}). Ids must match the drafted set."
+            )
+        if human["text_mismatches"]:
+            bad = human["text_mismatches"]
+            report.fail(
+                f"{len(bad)} record(s) whose text differs between draft and gold "
+                f"(first: {bad[:3]}). Offsets index into the text, so editing it "
+                f"silently invalidates every span in that record."
+            )
+        payload["errors"] = report.errors
 
     if args.show_samples:
         payload["samples"] = _samples(gold)

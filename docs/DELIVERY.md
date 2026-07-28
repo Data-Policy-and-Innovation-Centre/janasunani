@@ -12,9 +12,9 @@ status: Internal
 
 The full grievance history is loaded and verified: 1,371,288 complaints and 6,556,171 action records.
 
-The document pipeline is complete. All six stages work: page classification, text extraction, removal of personal information, page-type filtering, summarisation, categorisation. Not yet run start to finish in one pass.
+All six pipeline stages are implemented: page classification, text extraction, removal of personal information, page-type filtering, summarisation, categorisation. End-to-end integration is unverified, since it has not yet been run start to finish in one pass.
 
-Live processing works. A grievance submitted through the web interface comes back with its redacted text, category, summary and routing. The interface is built and connected. Routing uses fixed rules; the learned version is later work.
+Live processing works. A grievance submitted through the web interface comes back with its redacted text, category, summary and routing. The interface is built; wiring it to the live models rather than to test responses is still in progress. Routing uses fixed rules; the learned version is later work.
 
 Deployment automation is written and reviewed but not yet run. The system is not switched on at our AWS server.
 
@@ -24,32 +24,36 @@ Manual privacy correction of eighty-five pages finishes this week. That is the s
 
 **Table 1. The five components**
 
-| Component | On the day |
-|---|---|
-| The DSI pipeline, rebuilt | A scanned grievance processed live, start to finish, with a table of how often redaction misses personal information, by data type and by language |
-| Spam and duplicates | Junk flagged, repeat submissions linked, mass campaigns grouped as one issue, and a count of how much of the 1.37 million backlog is duplicated work |
-| The intelligence layer | A supervisor screen with three things the existing dashboards cannot produce: how much of the workload is one problem arriving repeatedly, which local issues are new and growing, and whether a spike is one campaign or many separate problems. Plus one finding on how cases are closed |
-| A/B testing of the automation | The experiment design, the size of effect we could detect, and where the AI already agrees with officers today |
-| Sarvam benchmark | Sarvam against our models on Odia, romanised Odia and English, with a switch between them |
+| Component | On the day | Commitment | If it slips |
+|---|---|---|---|
+| The DSI pipeline, rebuilt | A scanned grievance processed live, start to finish, with a table of how often redaction misses personal information, by data type and by language | **Committed** | Demonstrate from a laptop rather than the server. Report redaction results for English only |
+| Spam and duplicates | Repeat submissions linked and mass campaigns grouped as one issue, across a defined portion of the backlog, with a count of how much of it is duplicated work. Complaints written in Odia script and in Roman letters are matched separately, not against each other | **Bounded** | Duplicates without spam scoring. A smaller portion of the backlog |
+| The intelligence layer | Duplicate-adjusted workload. One worked example of a spike separated into filings, distinct problems and distinct citizens. Local issue themes for one category. The closure finding | **Bounded** | Themes drop first. If duplicate detection slips, only the closure finding survives, since it is the one item needing no new processing |
+| A/B testing of the automation | The experiment design, the size of effect we could detect, and where the AI already agrees with officers today | **Framework only** | None needed. Nothing here depends on new engineering |
+| Sarvam benchmark | Sarvam Vision against our text extraction on a transcribed sample, with handwritten and printed pages reported separately | **Bounded** | Document reading only. Comparing Sarvam on categorisation and summarisation, and the switch between providers, are stretch |
+
+**Committed** means we will demonstrate it. **Bounded** means we will demonstrate it on a defined slice rather than the full 1.37 million. **Framework only** means a design and a calculation, not running software.
+
+The portion of the backlog is not yet fixed. We will settle it after a brainstorming session and name it here, whether that is one district, one year or one category. Vague now is honest; vague on 14 August would not be.
 
 ### Benchmark record
 
-Every stage is scored against the DSI clinic's numbers, so the demonstration leaves a comparable record rather than a claim.
+**Table 2. Historical reference and current measurement**
 
-**Table 2. Before and after**
-
-| Stage | DSI clinic | 14 August |
+| Stage | Earlier figure, and what it was measured on | 14 August |
 |---|---|---|
-| Text extraction from scans | 77.9% of pages passed all three quality checks, English only | Same checks on Odia and English, plus Sarvam head to head |
-| Personal information removal | 80.6% of items found | Re-measured on our own labelled set, by data type and by language |
-| Page type | 67% accurate | Re-measured, per page type |
-| Category assignment | 71% accurate | Re-measured, per category |
-| Summarisation | 1.9 of 3 for usefulness on text pages | Re-measured on the same scale |
-| Duplicate detection | not attempted | Recall against 34,000 duplicates officers already identified |
+| Personal information removal | 80.6% of items found, on a 106-sentence English validation split | Re-measured on our corrected 85-page set, by data type and by language |
+| Text extraction from scans | 77.9% of pages passed three plausibility checks, on 96,469 English pages. Not transcription accuracy: there was no ground truth | Measured against a deliberately transcribed sample, handwritten and printed separately, against Sarvam Vision |
+| Duplicate detection | Not attempted | Recall against the 34,000 duplicates officers have already identified |
+| Page type | 67% accurate, on the earlier team's own 1,500-page sample | Historical context only. No labelled set exists for August |
+| Category assignment | 71% accurate, on the earlier team's train/test split | Historical context only, unless a held-out labelled set is identified in week 1 |
+| Summarisation | 1.9 of 3 for usefulness, scored by one reviewer over 500 pages | Historical context only. Re-scoring needs a blinded human review we have not scheduled |
 
-The DSI figures were measured on their own samples and almost entirely on English. They are a starting point, not a target. Where we come in lower we will say so and say why, since the earlier numbers do not cover Odia at all.
+The first three rows are measurements we will produce. The last three are the earlier team's numbers, reported so the record is complete, and we are not claiming to have re-measured them. Committing otherwise would be promising evidence the plan contains no step to produce.
 
-Per-class results matter more than the averages here. Category accuracy of 71% spans 0.85 for police cases and 0.51 for social welfare. We report the spread, not the headline.
+The earlier figures come from different samples, different splits and almost entirely English text. They are historical reference, not a target, and several are not like-for-like with anything we will measure. Where we come in lower we will say so and say why.
+
+Per-class results matter more than the averages. Category accuracy of 71% spans 0.85 for police cases and 0.51 for social welfare. We report the spread, not the headline.
 
 ### On the intelligence layer
 
@@ -57,21 +61,23 @@ The existing dashboards read the complaint record: district, department, categor
 
 We hold to one rule. If an analyst with database access could produce a number in a day, we do not present it as something the system enables.
 
-**1. Duplicate-adjusted workload.** How much of the 1.37 million backlog is one problem arriving more than once. The portal counts filings. This counts problems. It requires matching complaints written in different words across three scripts, which no query does.
+**1. Duplicate-adjusted workload.** How much of the backlog is one problem arriving more than once. The portal counts filings. This counts problems. It requires matching complaints with the same or near-identical wording across a corpus of 1.37 million, which no query does. Matching two complaints that describe the same problem in genuinely different words is a harder task and is not part of August.
 
 **2. Local issue themes.** Which problems are growing in one place rather than everywhere. We group complaints by what they are about rather than by the category assigned at intake, then look for themes that are both concentrated in one area and rising. Concentrated and new is the alert worth acting on.
 
 **3. Spikes with the cause attached.** A rise in complaints can mean four hundred citizens about one road, or two hundred unrelated problems. Those need opposite responses and are identical in a count. Every spike carries three numbers: filings, distinct problems, distinct citizens. Detecting the spike is ordinary. Telling the two cases apart is not.
 
-**4. How cases are closed.** Officers close using a graded set of standard phrases: disposed, disposed with appropriate action, or disposed with the beneficiary benefited. **Roughly 60% use the wording that claims no action**, while the more specific wording was available and used half a million times.
+**4. How cases are closed.** Officers close using a graded set of standard phrases: disposed, disposed with appropriate action, or disposed with the beneficiary benefited. Of the roughly 792,000 complaints closed with one of those standard phrases, **61% use the wording that claims no action**, while the more specific wording was available and used 311,000 times.
 
-This one needs care, for two reasons.
+The denominator matters. That 61% is of complaints closed on a standard disposal phrase, which is about two thirds of all resolved complaints. Measured against every resolved complaint the figure is 39%, because a third close on some other wording entirely.
 
-Sometimes no action is the correct outcome. An information request answered, an ineligible claim properly refused, a matter already settled elsewhere. A correct closure and a premature one look identical in the record, so the 60% is a description and not a verdict.
+This one needs care for a second reason too. Sometimes no action is the correct outcome: an information request answered, an ineligible claim properly refused, a matter already settled elsewhere. A correct closure and a premature one look identical in the record, so the figure is a description and not a verdict.
 
-What separates them is whether the citizen returns. If nothing was owed, they stop. If something was owed and refused, they reopen or file again. Linking a new filing to an earlier closure needs the same-issue matching from point 1, so that figure is a real capability and it is the one we will lead with. It understates the problem, because people also give up, so it should be read as a floor rather than a rate.
+Whether the citizen returns is a useful signal here, and it needs the same-issue matching from point 1, so it is a real capability. But it identifies cases worth reviewing rather than cases decided wrongly. Citizens sometimes return after a correct refusal, and often do not return after a bad one. It narrows where to look. It does not settle what happened.
 
-The 60% itself needs no machine learning. We hand it over as a query the department can run for itself.
+Establishing what share of no-action closures were genuinely premature needs a few hundred cases read and adjudicated by hand. That is not August work, and we will not present the figure as though it were.
+
+The 61% itself needs no machine learning. We hand it over as a query the department can run for itself.
 
 The same field yields 34,000 duplicates officers have already identified. We use those to measure ourselves. The number that matters is how many more we find, not how many we find in total.
 
@@ -105,11 +111,9 @@ One caveat. Sarvam documents their vision model as strong on printed text, table
 
 Work stops Thursday 13 August. Friday is rehearsal, no code changes.
 
-Two dependencies set this order. Privacy labelling gates both the privacy scorecard and the Sarvam benchmark, which is why it finishes this week rather than running alongside. Duplicate detection must precede the spike alerts, or a campaign of four hundred citizens about one road registers as a surge in road complaints.
+Two dependencies set this order. Privacy labelling gates both the privacy scorecard and the Sarvam benchmark, which is why it finishes this week rather than running alongside. Duplicate detection must precede the spike view, because a campaign of four hundred citizens about one road is a genuine surge and should be reported as one. What duplicate detection adds is the ability to say whether a surge is four hundred people on one issue or four hundred separate problems, which are different facts requiring different responses.
 
 Labelling finishing this week lets the privacy scorecard move to week two, which takes the final week down to two items. That matters, because the last week also carries rehearsal.
-
-If an item slips: demonstrate from a laptop rather than the server, report privacy results for English only, ship duplicate detection without spam scoring, show the Sarvam comparison for document reading alone.
 
 ## Not in scope for August
 

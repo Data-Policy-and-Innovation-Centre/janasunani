@@ -216,24 +216,40 @@ Unchanged: PII detection and redaction run in-process by default, and PII
 
 ### 3.2 What is actually PII-free, and where
 
-**The lake is not PII-free.** The Phase 14 dedup index keys off
-`petitioner_mobile` and `petitioner_email`, which it reads from the lake, so any
-blanket "no un-redacted PII reaches the lake" claim is false. The precise
-position:
+**The lake is not PII-free, and it holds raw citizen prose, not only contact
+fields.** `olap/materialize.py` runs `COPY (SELECT * FROM oltp.<table>)`, so every
+`complaints` column lands in Parquet, including **`grievance`, which is the
+citizen's own account of their problem** (§5.3: median 19 words, p75 458
+characters). Phase 15 S4 then reads that field over the full corpus by design.
 
 | Data | Contains PII? | Notes |
 |---|---|---|
 | `complaints` structured columns, OLTP **and** lake | **Yes** | `petitioner_name`, `petitioner_mobile`, `petitioner_email`, `address`. Faithful to the dump, by design |
+| **`complaints.grievance`, OLTP and lake** | **Yes, raw prose** | Citizen-authored, never passed through `pii_tagger`. Materialized verbatim by `SELECT *` |
 | `pages.extracted_text` (raw OCR) | **Yes** | Never leaves the pipeline artifact DB |
 | `pages.redacted_text` | No, by construction | Typed tokens. This is what the exporter carries onward |
-| Parquet lake, text fields | No | Only redacted text is exported |
-| Dedup index | **Yes, derived** | Salted hashes of contact fields. A hash of a mobile number is still personal data under DPDP |
-| API responses, summaries, analytics | No | Built only from redacted text |
+| Parquet lake, *pipeline-derived* text fields | No | Only redacted page text is exported by the pipeline |
+| Dedup index, MinHash signatures | **Yes, derived** | Salted contact hashes, plus signatures over raw `grievance`. A hash is not anonymous |
+| Embeddings over `grievance` (S4) | **Yes, derived** | A vector is not anonymous merely because it is unreadable |
+| API responses, summaries | No | Built only from redacted text |
 
-The guarantee we can actually make: **no un-redacted grievance or page text
-reaches any downstream output.** The structured contact columns are a different
-matter. They are personal data, they are in the lake, and the control on them is
-access, not redaction. Phase 18 owns the role and audit rules for reading them.
+**The guarantee, stated precisely.** No un-redacted *page* text (the OCR output of
+scanned documents) reaches any downstream output. That guarantee does **not** extend
+to `complaints.grievance`, which is raw personal data sitting in the lake, and it
+does not extend to artifacts derived from it.
+
+Three consequences, all binding on Phases 14 and 15:
+
+- **Redact `grievance` before MinHash or embedding**, or accept and document that the
+  resulting index is a personal-data artifact. Phase 14 already runs after
+  `pii_tagger` for *page* text; the `grievance` column bypasses that path entirely
+  and needs its own pass.
+- **Derived indexes are not downstream-safe by construction.** Signatures and vectors
+  built from raw prose inherit its classification. Neither phase may claim otherwise.
+- The control on all of this is **access, not redaction**. Phase 18 owns the role and
+  audit rules. A future option is to materialize a separately redacted analytics
+  column and exclude the raw field from analytics-facing Parquet, which would let the
+  guarantee widen; it is not what the code does today.
 
 ## 4. Built: Phases 0–12
 
@@ -487,9 +503,18 @@ abuse, blank or garbage OCR, out-of-jurisdiction requests.
 
 **Technique for 1 and 2.**
 
-- **Normalize script before hashing.** Transliterate romanized Odia to Odia script
-  (Phase 17 provider, §5.5) so one grievance filed twice in two scripts lands in
-  one index. Character n-grams alone will miss that pair entirely.
+- ⚠️ **Script normalization is a Phase 17 dependency, and Phase 17 runs after this
+  one.** Transliterating romanized Odia to Odia script before hashing is what lets
+  one grievance filed twice in two scripts land in one index. The transliteration
+  provider is Phase 17 (§5.5), and the execution order is `13 → 14 → 15 → 17 → 16`,
+  so that capability does not exist when this phase is built.
+  - **August contract: ship script-specific matching.** Odia-script and
+    romanized-Odia filings are indexed and matched separately, not against each
+    other. Cross-script recall is **explicitly unsupported** and reported as such,
+    not quietly assumed.
+  - Cross-script matching becomes available once Phase 17 lands, as a re-index rather
+    than a redesign. Nothing else in the design changes.
+  - Do not silently rely on character n-grams to bridge scripts. They will not.
 - MinHash / LSH over **character** n-grams, not word tokens. Character grams
   survive OCR noise and script variation; word tokenization does not work across
   Odia, romanized Odia, and English in one index.
@@ -710,12 +735,21 @@ Profile and reconcile them before exposing any comparison.
   rest of the semantic track stays in Phase 22.
   - **Reuse the existing encoder.** The categorizer is a MuRIL sequence classifier
     fine-tuned on `grievance_and_docs` text to `category`
-    (`pipeline/stages/categorizer/model.py`). Its pooled representation is a
-    category-aware embedding obtained from a forward pass we already make. No new
-    model, no new entry into the `transformers` version conflict, no extra GPU pass.
-    This is what makes the slice affordable inside the August window.
-  - **Embed subject lines only** for the demo, so this carries no OCR dependency and
-    runs over all 1.37M rows.
+    (`pipeline/stages/categorizer/model.py`), and its pooled representation is a
+    category-aware embedding. **No new model** and no new entry into the
+    `transformers` version conflict, which is what makes the slice affordable.
+  - ⚠️ **It is not free, and an earlier draft said it was.** "A forward pass we
+    already make" is true only for grievances flowing through the live pipeline. The
+    1.37M historical records have never been through the categorizer, so this is a
+    **new corpus-scale batch inference job** plus a clustering job, on the GPU box.
+    Hours, not minutes, and it needs scheduling like any other backfill.
+  - **Bound it for August.** Run over one priority category and time window, with the
+    result precomputed as a demo artifact, rather than the full corpus live.
+    Full-corpus S4 is a stretch goal. DELIVERY Table 1 marks the component *Bounded*
+    for this reason.
+  - **Embed `grievance` only** for the demo, so this carries no OCR dependency.
+    See §3.2: that field is raw citizen prose, so it needs a redaction pass of its
+    own before embedding, and the resulting vectors are governed artifacts.
   - **Cluster within category, never globally.** Compute stays tractable, every
     cluster is nested inside a label officers already use, and it avoids presenting
     "people complain about water" as a discovery. Global clustering over 1.37M
@@ -807,18 +841,25 @@ whole point.
 - **The insight.** 86.65% of resolved complaints close on a templated remark, so
   "share of closures recording no action" is an exact string match for roughly seven
   cases in eight. Deliverable is the view definition, handed over.
+- **State the denominator explicitly; it moves the number by half.** Of the 792,038
+  complaints whose closing remark is one of the disposal templates, **60.8%** are on
+  the bare rung (481,268 bare vs 310,770 claiming action). Measured against *all*
+  1,209,138 resolved complaints it is **39.1%**, because 35.8% close on neither
+  template. Quote the 792,038 base whenever the 61% figure is used.
 - ⚠️ **A bare disposal does not mean the case was mishandled.** Sometimes no action
   is correct: an information request answered, an ineligible claim properly refused,
   a matter already settled elsewhere. Correct closure and premature closure are
   identical in the record. **The 61% is descriptive and must never be reported as a
   failure rate.**
-- **The capability is the disambiguator: does the citizen come back?** If nothing was
-  owed they stop; if something was owed and refused they reopen or refile. Reopening
-  is already a column, but refiling requires recognising a new grievance as the same
+- **The capability is the return signal: does the citizen come back?** Reopening is
+  already a column, but refiling requires recognising a new grievance as the same
   issue as a closed one, which is exactly Phase 14. This is the number that leads.
-- It is a **lower bound, not a rate.** Non-return conflates satisfaction with giving
-  up, and the two almost certainly differ by literacy, connection and district. State
-  it as a floor. That is also the stronger claim rhetorically.
+- ⚠️ **Return identifies cases worth reviewing. It does not determine that a closure
+  was wrong.** It errs in both directions: citizens return after correct refusals
+  they disagree with, and fail to return after bad ones because they gave up.
+  Non-return in particular conflates satisfaction with abandonment, and the two
+  almost certainly differ by literacy, connection and district. Report it as a
+  review-triage signal, never as a rate of wrongful closure.
 - **Trajectory is a required control.** A case that goes created → forwarded → ATR →
   disposed had work done whatever the closing phrase says; one that goes created →
   disposed in two days did not. Median resolution at two action steps is 2 days,
@@ -963,7 +1004,16 @@ office assignment reflects the old policy. Retrospective agreement cannot separa
 those. Only the experiment can.
 
 **Governance.** This is a **program evaluation of a government service**, not
-human-subjects research, and no ethics review applies. Settled; do not re-open it.
+human-subjects research, and no ethics review applies.
+
+> **Decision record.** Determination made by the Executive Director, DPIC,
+> 2026-07-27, covering the 14 August demonstration and the Phase 16 evaluation
+> design. It rests on this being deployment of a government service rather than
+> research for publication. **What would invalidate it:** publishing results as
+> research, extending to interventions that alter a citizen's service entitlement,
+> or any partner institution requiring its own review. Engineers should treat it as
+> settled and route changes of scope back to the decision owner rather than
+> reinterpreting it.
 The one thing worth remembering is that the exemption rests on this not being
 research for publication, so if that ever changes, the question has to be asked
 before data collection rather than after.
@@ -1006,8 +1056,17 @@ building, this moves fast).
 | Sarvam Translate / Mayura | translate API | 22 scheduled languages (Translate); colloquial and code-mixed (Mayura) | Text pricing | Tiered |
 | Saaras v3 / Saarika v2.5 | speech APIs | ASR with transcribe / translate / **transliterate** / codemix output modes | ₹30 per hour (₹45 diarised) | Tiered |
 
-Tiers: Starter is pay-as-you-go at 60 req/min, Pro ₹10,000/month at 200 req/min,
-Business ₹50,000/month at 1,000 req/min.
+Tiers: Starter is pay-as-you-go, Pro ₹10,000/month, Business ₹50,000/month. Rate
+limits differ by model class, and **the limit that binds us is the lower one**:
+
+| Model class | Starter | Pro | Business |
+|---|---|---|---|
+| Default chat models | 60 | 200 | 1,000 |
+| **Sarvam-30B / 105B** (our candidates) | **40** | **60** | **120** |
+| Vision, document intelligence | 10 | 10 | 10 |
+
+Vision limits do not rise with the plan. Verified against Sarvam's published rate
+limits, 2026-07-28.
 
 **Language coverage is not the constraint.** Sarvam Vision lists all 22 scheduled
 languages plus English, Odia among them explicitly, which is more than our current
@@ -1679,6 +1738,23 @@ Terse and dated. The reasoning for choices that are not obvious from the code.
     Training data comes from inverting the problem: sample a legal query form, render
     it to a sentence, labels are correct by construction. One consequence lands in
     August: S1's definitions must be written as a standalone query target.
+  - **The lake holds raw citizen prose, not only structured contact fields.**
+    `materialize.py` copies `SELECT *`, so `complaints.grievance` is in Parquet
+    verbatim and never passed through `pii_tagger`. §3.2 rewritten. Consequences:
+    `grievance` needs its own redaction pass before MinHash or embedding, and the
+    resulting signatures and vectors are governed personal-data artifacts rather
+    than downstream-safe by construction.
+  - **Cross-script duplicate matching is out of August.** Transliteration belongs to
+    Phase 17, which runs after Phases 14 and 15, so August ships script-specific
+    matching with cross-script recall reported as unsupported. It becomes a re-index
+    once Phase 17 lands, not a redesign.
+  - **S4 is a new corpus-scale batch job, not a free forward pass.** The 1.37M
+    historical records have never been through the categorizer. Bounded to one
+    category and time window for August, precomputed.
+  - **Benchmark table restated as historical reference plus current measurement.**
+    Only PII, OCR/Sarvam Vision and duplicate recall have labelled sets for August.
+    Page type, categorization and summarization are reported as the earlier team's
+    numbers, not re-measured, because no evidence-production step exists for them.
   - **Net: everything capability-side routes through Phase 14.** Dedup is not one
     deliverable among several, it is the dependency under the duplicate-adjusted
     workload, the spike decomposition and the return-rate metric. If it slips, the

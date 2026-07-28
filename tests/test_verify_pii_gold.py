@@ -213,6 +213,50 @@ class TestHumanPassDiff:
         assert result["spans_added"] == 0
         assert result["spans_removed"] == 0
 
+    def test_rebound_only_record_counts_as_touched(self, tmp_path):
+        """A record fixed solely by moving a boundary was still worked on."""
+        draft = self._draft(tmp_path)
+        gold = write_jsonl(
+            tmp_path / "gold.jsonl",
+            [{"id": "a", "text": TEXT, "entities": [{"start": 0, "end": 4, "entity": "NAME"}]}],
+        )
+        result = verify.diff(verify.load(draft), verify.load(gold))
+        assert result["spans_rebounded"] == 1
+        assert result["spans_added"] == 0 and result["spans_removed"] == 0
+        assert result["records_touched"] == 1
+
+    def test_relabel_only_record_counts_as_touched(self, tmp_path):
+        draft = self._draft(tmp_path)
+        gold = write_jsonl(
+            tmp_path / "gold.jsonl",
+            [{"id": "a", "text": TEXT, "entities": [{"start": 0, "end": 10, "entity": "PAN"}]}],
+        )
+        result = verify.diff(verify.load(draft), verify.load(gold))
+        assert result["spans_relabelled"] == 1
+        assert result["records_touched"] == 1
+
+    def test_edited_text_is_detected(self, tmp_path):
+        """Offsets index into the text, so an edit invalidates every span."""
+        draft = self._draft(tmp_path)
+        gold = write_jsonl(
+            tmp_path / "gold.jsonl",
+            [
+                {
+                    "id": "a",
+                    "text": "Ravi  Patra called 9876543210",  # extra space shifts offsets
+                    "entities": [{"start": 0, "end": 10, "entity": "NAME"}],
+                }
+            ],
+        )
+        result = verify.diff(verify.load(draft), verify.load(gold))
+        assert result["text_mismatches"] == ["a"]
+
+    def test_identical_text_reports_no_mismatch(self, tmp_path):
+        draft = self._draft(tmp_path)
+        gold = write_jsonl(tmp_path / "gold.jsonl", json_lines(draft))
+        result = verify.diff(verify.load(draft), verify.load(gold))
+        assert result["text_mismatches"] == []
+
     def test_records_missing_from_gold_are_reported(self, tmp_path):
         draft = write_jsonl(
             tmp_path / "draft.jsonl",
@@ -242,6 +286,56 @@ def test_samples_are_truncated_and_capped(tmp_path):
     samples = verify._samples(verify.load(path), limit=3, width=4)
     assert len(samples) == 3
     assert all(len(s.split(": ", 1)[1]) <= 6 for s in samples)  # 4 chars + quotes
+
+
+class TestCLIExitStatus:
+    """Reporting a completeness problem is not enough; the command must fail so a
+    pre-merge gate catches it."""
+
+    def _run(self, monkeypatch, gold: Path, draft: Path) -> int:
+        monkeypatch.setattr(
+            sys, "argv", ["verify_pii_gold.py", "--gold", str(gold), "--draft", str(draft)]
+        )
+        try:
+            verify.main()
+        except SystemExit as exc:
+            return int(exc.code or 0)
+        return 0
+
+    def _pair(self, tmp_path, gold_rows, draft_rows):
+        return (
+            write_jsonl(tmp_path / "gold.jsonl", gold_rows),
+            write_jsonl(tmp_path / "draft.jsonl", draft_rows),
+        )
+
+    def test_clean_pair_exits_zero(self, tmp_path, monkeypatch):
+        rows = [{"id": "a", "text": TEXT, "entities": [{"start": 0, "end": 10, "entity": "NAME"}]}]
+        gold, draft = self._pair(tmp_path, rows, [{"id": "a", "text": TEXT, "entities": []}])
+        assert self._run(monkeypatch, gold, draft) == 0
+
+    def test_page_dropped_from_gold_fails(self, tmp_path, monkeypatch):
+        gold, draft = self._pair(
+            tmp_path,
+            [{"id": "a", "text": TEXT, "entities": []}],
+            [{"id": "a", "text": TEXT, "entities": []}, {"id": "b", "text": TEXT, "entities": []}],
+        )
+        assert self._run(monkeypatch, gold, draft) == 1
+
+    def test_extra_gold_record_fails(self, tmp_path, monkeypatch):
+        gold, draft = self._pair(
+            tmp_path,
+            [{"id": "a", "text": TEXT, "entities": []}, {"id": "b", "text": TEXT, "entities": []}],
+            [{"id": "a", "text": TEXT, "entities": []}],
+        )
+        assert self._run(monkeypatch, gold, draft) == 1
+
+    def test_edited_text_fails(self, tmp_path, monkeypatch):
+        gold, draft = self._pair(
+            tmp_path,
+            [{"id": "a", "text": "Ravi  Patra called 9876543210", "entities": []}],
+            [{"id": "a", "text": TEXT, "entities": []}],
+        )
+        assert self._run(monkeypatch, gold, draft) == 1
 
 
 def json_lines(path: Path) -> list[dict]:

@@ -34,8 +34,10 @@ subsets/resume).
 Stages run in canonical order regardless of the order given to `--stages`.
 
 **Planned (Phase 14):** a seventh stage, `spam_duplicate`, inserted between
-`pii_tagger` and `page_type_classifier`. It reads **redacted** text (typed tokens
-preserve near-duplicate similarity), writes `spam_score` / `duplicate_group_id` /
+`pii_tagger` and `page_type_classifier`. It reads **redacted** text, stripping or
+down-weighting the typed tokens first (every phone becomes the same `[PHONE]`, so
+leaving them in inflates similarity between unrelated documents), writes
+`spam_score` / `duplicate_group_id` /
 `duplicate_kind`, and gates the summarizer and categorizer the way page-type
 already gates the summarizer. It is the first stage needing corpus-level state (a
 MinHash/LSH index built from the lake), which the per-run artifact DB does not
