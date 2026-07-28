@@ -227,9 +227,9 @@ characters). Phase 15 S4 then reads that field over the full corpus by design.
 |---|---|---|
 | `complaints` structured columns, OLTP **and** lake | **Yes** | `petitioner_name`, `petitioner_mobile`, `petitioner_email`, `address`. Faithful to the dump, by design |
 | **`complaints.grievance`, OLTP and lake** | **Yes, raw prose** | Citizen-authored, never passed through `pii_tagger`. Materialized verbatim by `SELECT *` |
-| `pages.extracted_text` (raw OCR) | **Yes** | Never leaves the pipeline artifact DB |
-| `pages.redacted_text` | No, by construction | Typed tokens. This is what the exporter carries onward |
-| Parquet lake, *pipeline-derived* text fields | No | Only redacted page text is exported by the pipeline |
+| `pages.extracted_text` (raw OCR) | **Yes** | Artifact DB **and OLTP** — the exporter copies every column. Held back from the lake by `LAKE_COLUMN_DENYLIST` (`olap/materialize.py`); access-controlled, not redacted |
+| `pages.redacted_text` | No, by construction | Typed tokens. This is what reaches the lake |
+| Parquet lake, *pipeline-derived* text fields | No | Only redacted page text. Enforced by the denylist above and asserted in `tests/test_e2e_synthetic.py`, not merely intended |
 | Dedup index, MinHash signatures | **Yes, derived** | Salted contact hashes, plus signatures over raw `grievance`. A hash is not anonymous |
 | Embeddings over `grievance` (S4) | **Yes, derived** | A vector is not anonymous merely because it is unreadable |
 | API responses, summaries | No | Built only from redacted text |
@@ -442,12 +442,28 @@ pytest.
 - `scripts/e2e_pipeline.sh`: a scripted multi-environment run over a fixed sample.
   Document → S3 → artifact DB → exporter → OLTP → materialize → lake → API
   read-back.
-- Asserts row counts at each hop, and that no un-redacted PII reaches the lake or
-  any API response.
+- Asserts row counts at each hop, and that no un-redacted *page* text reaches the
+  lake. **Not** "no un-redacted PII reaches the lake": §3.2 explains why that is
+  false and cannot be an acceptance criterion.
 - A **non-PII synthetic variant** that runs in CI. This doubles as the readiness
   canary: it proves real history is queryable, the DB result store is selected,
   routing mappings loaded rather than silently `fallback`, and submit→persist→fetch
   succeeds.
+
+✅ **The synthetic variant is built** (`tests/test_e2e_synthetic.py`, PR #59).
+Artifact DB → OLTP → lake → API over invented fixtures, row counts asserted at
+each hop, with only the models replaced by a canned stand-in. History and store
+selection are asserted through `inference.serve.create_live_app`, so a
+deployment that silently keeps `MockHistory` or `InMemoryResultStore` fails the
+canary. Two caveats it records honestly: routing is exercised via `MappingRouter`
+directly, because the router is wired inside `build_processor`, which needs the
+models; and the pipeline's own stages are not run. Both belong to the real-data
+variant, which is still outstanding.
+
+Building it found the leak §3.2 now describes: `materialize.py` was copying
+`pages.extracted_text` into Parquet verbatim. The lake was re-materialized and
+`dvc.lock` updated, because the code fix alone left the pre-fix artifact in
+circulation through `dvc pull`.
 
 **Exit criteria.** Per-entity, per-language PII scorecard published. E2E green on
 real data and synthetic in CI. DSI baselines reproduced or the gap explained.

@@ -20,6 +20,25 @@ from janasunani.config import directories, settings
 # document pipeline's outputs (empty until the exporter has run).
 LAKE_TABLES = ("complaints", "action_history", "pages", "documents")
 
+# Columns held back from the lake.
+#
+# ``pages.extracted_text`` is the raw OCR of a scanned document, un-redacted by
+# construction: ``pii_tagger`` reads it and writes its output to
+# ``redacted_text``, leaving this column untouched. It stays in the pipeline's
+# artifact DB and in the access-controlled OLTP store, but it must not reach
+# Parquet, which is the input to every downstream analytical consumer and is
+# not access-controlled per-column. Nothing downstream reads it: the summarizer
+# and categorizer take ``redacted_text`` off the artifact DB, and the OCR
+# benchmark reads the artifact DB directly.
+#
+# This is the page-text half of the guarantee. The other half — the historical
+# ``complaints.grievance``, which has never met ``pii_tagger`` — is controlled
+# by access rather than redaction, and gets its own redaction pass. See
+# ROADMAP §3.2.
+LAKE_COLUMN_DENYLIST: dict[str, frozenset[str]] = {
+    "pages": frozenset({"extracted_text"}),
+}
+
 
 def _attach_oltp(
     con: duckdb.DuckDBPyConnection, oltp_url: str, alias: str = "oltp"
@@ -45,6 +64,26 @@ def _attach_oltp(
         )
 
 
+def _select_list(con: duckdb.DuckDBPyConnection, table: str, alias: str = "oltp") -> str:
+    """Column list for ``table``, minus anything on the denylist.
+
+    Returns ``*`` when nothing is held back, so the emitted SQL stays readable
+    and the common tables keep their existing behaviour exactly.
+    """
+    denied = LAKE_COLUMN_DENYLIST.get(table)
+    if not denied:
+        return "*"
+    cursor = con.execute(f"SELECT * FROM {alias}.{table} LIMIT 0")  # noqa: S608
+    columns = [c[0] for c in cursor.description]
+    kept = [c for c in columns if c not in denied]
+    if not kept:
+        raise ValueError(f"denylist would drop every column of {table!r}")
+    dropped = sorted(set(columns) & denied)
+    if dropped:
+        logger.info(f"{table}: holding back {', '.join(dropped)} from the lake")
+    return ", ".join(f'"{c}"' for c in kept)
+
+
 def materialize(
     oltp_url: Optional[str] = None,
     out_dir: Optional[Path] = None,
@@ -62,7 +101,10 @@ def materialize(
         for table in tables:
             path = out / f"{table}.parquet"
             logger.info(f"Materializing {table} -> {path}")
-            con.execute(f"COPY (SELECT * FROM oltp.{table}) TO '{path}' (FORMAT parquet)")
+            columns = _select_list(con, table)
+            con.execute(
+                f"COPY (SELECT {columns} FROM oltp.{table}) TO '{path}' (FORMAT parquet)"  # noqa: S608
+            )
             counts[table] = con.execute(
                 f"SELECT count(*) FROM read_parquet('{path.as_posix()}')"
             ).fetchone()[0]

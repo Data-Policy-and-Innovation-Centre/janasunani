@@ -5,7 +5,7 @@ import os
 import pytest
 from sqlalchemy import create_engine, insert
 
-from janasunani.db.models import ActionHistory, Base, Complaint
+from janasunani.db.models import ActionHistory, Base, Complaint, PipelinePage
 from janasunani.olap import lake
 from janasunani.olap.materialize import materialize
 
@@ -51,6 +51,51 @@ def test_materialize_sqlite_and_read_back(tmp_path):
         "SELECT count(*) AS n FROM complaints WHERE govt_ticket", lake_dir=out
     )
     assert res["n"][0] == 1
+
+
+def test_raw_ocr_text_never_reaches_the_lake(tmp_path):
+    """``pages.extracted_text`` is un-redacted OCR and must not be materialized.
+
+    ``pii_tagger`` writes ``redacted_text`` and leaves ``extracted_text`` as the
+    raw page text. Parquet is not access-controlled per-column, so the raw
+    column stays behind in OLTP while everything else rides along.
+    """
+    oltp = tmp_path / "oltp.db"
+    engine = create_engine(f"sqlite:///{oltp}")
+    Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(
+            insert(PipelinePage),
+            [
+                {
+                    "page_id": "D1-p1",
+                    "doc_id": "D1",
+                    "page_number": 1,
+                    "full_path": "/x/D1.pdf",
+                    "ticket_number": "T1",
+                    "language": "English",
+                    "extracted_text": "Ramesh Kumar, 9876543210, needs water",
+                    "redacted_text": "<NAME>, <PHONE>, needs water",
+                }
+            ],
+        )
+    engine.dispose()
+
+    out = tmp_path / "interim"
+    counts = materialize(oltp_url=f"sqlite+aiosqlite:///{oltp}", out_dir=out)
+    assert counts["pages"] == 1
+
+    df = lake.read("pages", lake_dir=out)
+    assert "extracted_text" not in df.columns
+    # everything else still rides along, redaction included
+    assert "redacted_text" in df.columns
+    assert df["redacted_text"][0] == "<NAME>, <PHONE>, needs water"
+    assert df["ticket_number"][0] == "T1"
+
+    # and the raw text is nowhere in the file, under any column
+    raw = (out / "pages.parquet").read_bytes()
+    assert b"Ramesh Kumar" not in raw
+    assert b"9876543210" not in raw
 
 
 PG_URL = os.getenv(
