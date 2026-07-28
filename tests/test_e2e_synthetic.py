@@ -17,8 +17,25 @@ silently degraded at least once, and degrades quietly rather than loudly:
 * routing resolves off the real master tables rather than reporting
   ``method="fallback"`` because the CSVs were never materialized.
 
+**Where the wiring is asserted.** The store and history tests below go through
+``inference.serve.create_live_app`` — the function the deployed API actually
+calls — with only ``build_processor`` substituted, because that is the one
+piece that loads models. Injecting ``LakeHistory``/``DatabaseResultStore``
+directly would prove the components work while saying nothing about whether
+production selects them, which is the failure worth catching.
+
+Routing is the exception, and deliberately so: the router is wired inside
+``build_processor`` (``router=DEFAULT_ROUTER``), which cannot run here. The
+test below exercises ``MappingRouter`` directly and therefore covers the
+loader, not the wire-up. Confirming the deployed processor routes off the
+master tables is the real-data E2E's job.
+
 Everything here is invented. No fixture in this file may carry real citizen
 text: that is what makes it runnable in CI.
+
+⚠️ Every test that reaches ``Settings`` sets ``OLTP_DB_URL`` explicitly. An
+ambient value from the project ``.env`` could point at the production Postgres,
+and these tests write. Never let one resolve OLTP by default.
 """
 
 from __future__ import annotations
@@ -31,7 +48,9 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, insert
 
+from janasunani.config import DEFAULT_OLTP_DB_URL, directories
 from janasunani.db.models import Base, Complaint
+from janasunani.inference import serve
 from janasunani.olap import lake
 from janasunani.olap.materialize import materialize
 from janasunani.pipeline.db import initialize_database
@@ -131,7 +150,7 @@ _MAPPING_CSVS = {
 
 def _write_mapping_dir(tmp_path: Path) -> Path:
     mapping_dir = tmp_path / "janasunani-mappings"
-    mapping_dir.mkdir()
+    mapping_dir.mkdir(exist_ok=True)  # a restart test builds the app twice
     for name, body in _MAPPING_CSVS.items():
         (mapping_dir / name).write_text(body, encoding="utf-8")
     return mapping_dir
@@ -323,13 +342,96 @@ def test_routing_resolves_off_master_tables_not_fallback(tmp_path):
     assert not degraded.mapping_loaded
 
 
-def test_submit_persists_and_fetches_through_the_db_store(tmp_path):
-    """submit -> persist -> fetch, across two app instances.
+def _live_app(monkeypatch, tmp_path, *, oltp_url: str, lake_dir: Path):
+    """Build the app through the real ``create_live_app``.
 
-    The in-memory default would pass a single-process submit/fetch and lose
-    everything on restart. Fetching through a *second* app over the same OLTP
-    is what proves the DB store is the one selected.
+    Only ``build_processor`` is replaced — it is the piece that loads models.
+    Store selection, history selection and the ``Settings`` lookup all run for
+    real, which is the point.
     """
+    processor = _CanaryProcessor(MappingRouter(mapping_dir=_write_mapping_dir(tmp_path)))
+    monkeypatch.setattr(serve, "build_processor", lambda: processor)
+    # LakeHistory() takes no lake_dir, so it resolves directories.INTERIM —
+    # which is the real data/interim/. Redirecting it is what keeps this test
+    # off real citizen data, not just a convenience.
+    monkeypatch.setattr(directories, "INTERIM", lake_dir)
+    monkeypatch.setenv("OLTP_DB_URL", oltp_url)
+    return serve.create_live_app()
+
+
+def test_live_app_wiring_selects_lake_history_and_db_store(monkeypatch, tmp_path):
+    """submit -> persist -> fetch and /history, through ``create_live_app``.
+
+    Two failures this catches that injecting the components could not: the
+    deployed app silently keeping ``InMemoryResultStore`` because OLTP was
+    never explicitly configured, and it serving ``MockHistory``'s fake rows.
+    """
+    oltp_url = _make_oltp(tmp_path)
+    lake_dir = tmp_path / "interim"
+    materialize(oltp_url=oltp_url, out_dir=lake_dir)
+
+    app = _live_app(monkeypatch, tmp_path, oltp_url=oltp_url, lake_dir=lake_dir)
+    with TestClient(app) as client:
+        assert client.get("/health").json()["processor"] == "canary"
+
+        history = client.get("/history", params={"limit": 50}).json()
+        assert {item["ticket_no"] for item in history["items"]} == {
+            "SYN0000001",
+            "SYN0000002",
+        }
+
+        submitted = client.post(
+            "/grievance", data={"text": "Street light out.", "district": "Khordha"}
+        )
+    assert submitted.status_code == 201
+    result = submitted.json()
+    assert result["routing"]["method"] == "rules"
+    assert result["routing"]["dept"] == "Energy"
+
+    # a restart rebuilds the app from scratch; the submission must survive it
+    second = _live_app(monkeypatch, tmp_path, oltp_url=oltp_url, lake_dir=lake_dir)
+    with TestClient(second) as client:
+        fetched = client.get(f"/grievance/{result['id']}")
+        missing = client.get("/grievance/deadbeefdead")
+
+    assert fetched.status_code == 200
+    assert fetched.json()["ticket_no"] == result["ticket_no"]
+    assert missing.status_code == 404
+
+
+def test_live_app_loses_submissions_when_oltp_is_not_explicitly_configured(
+    monkeypatch, tmp_path
+):
+    """The silent fallback, pinned as behaviour rather than left as a surprise.
+
+    ``_resolve_explicit_oltp_url`` treats the built-in SQLite default as "not
+    configured" and hands back ``InMemoryResultStore``. The API stays healthy
+    and submissions still return 201; they just do not survive a restart. If
+    the box's ``deploy/.env`` is missing ``OLTP_DB_URL``, this is what the demo
+    does.
+    """
+    lake_dir = tmp_path / "interim"
+    lake_dir.mkdir()
+    processor = _CanaryProcessor(MappingRouter(mapping_dir=_write_mapping_dir(tmp_path)))
+    monkeypatch.setattr(serve, "build_processor", lambda: processor)
+    monkeypatch.setattr(directories, "INTERIM", lake_dir)
+    # set explicitly to the built-in default: "unset" would let a real .env
+    # through, and this test must never resolve the production database
+    monkeypatch.setenv("OLTP_DB_URL", DEFAULT_OLTP_DB_URL)
+
+    with TestClient(serve.create_live_app()) as client:
+        submitted = client.post("/grievance", data={"text": "Street light out."})
+        assert submitted.status_code == 201
+        grievance_id = submitted.json()["id"]
+        # same process, same store: still there
+        assert client.get(f"/grievance/{grievance_id}").status_code == 200
+
+    with TestClient(serve.create_live_app()) as client:
+        assert client.get(f"/grievance/{grievance_id}").status_code == 404
+
+
+def test_submit_persists_and_fetches_through_the_db_store(tmp_path):
+    """The store itself, isolated from how the live app selects it."""
     oltp_url = _make_oltp(tmp_path)
     mapping_dir = _write_mapping_dir(tmp_path)
     processor = _CanaryProcessor(MappingRouter(mapping_dir=mapping_dir))
@@ -338,32 +440,25 @@ def test_submit_persists_and_fetches_through_the_db_store(tmp_path):
     app = create_app(processor=processor, result_store=store)
     try:
         with TestClient(app) as client:
-            assert client.get("/health").json()["processor"] == "canary"
             submitted = client.post(
                 "/grievance",
                 data={"text": "Street light out.", "district": "Khordha"},
             )
         assert submitted.status_code == 201
         result = submitted.json()
-        assert result["routing"]["method"] == "rules"
-        assert result["routing"]["dept"] == "Energy"
     finally:
         asyncio.run(store.dispose())
 
-    # a fresh process would build a fresh app and a fresh store
     second_store = DatabaseResultStore(oltp_url)
     second_app = create_app(processor=processor, result_store=second_store)
     try:
         with TestClient(second_app) as client:
             fetched = client.get(f"/grievance/{result['id']}")
-            missing = client.get("/grievance/deadbeefdead")
     finally:
         asyncio.run(second_store.dispose())
 
     assert fetched.status_code == 200
     assert fetched.json()["ticket_no"] == result["ticket_no"]
-    assert fetched.json()["routing"]["dept"] == "Energy"
-    assert missing.status_code == 404
 
 
 @pytest.mark.parametrize("table", ["complaints", "action_history", "pages", "documents"])
