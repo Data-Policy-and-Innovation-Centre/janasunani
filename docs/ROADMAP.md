@@ -249,8 +249,11 @@ start GPU box → health check → demo → stop GPU box; latency pass; stakehol
     OLAP-history crosswalk remains follow-up work.
   - **Phase 10** ✅ serving — frozen mock API, live persistence, lake-backed history, and opt-in real
     processor wiring are built. The module-level API remains mock by design.
-  - **Phase 11** 🔄 frontend — first cut on `feat/frontend-demo` (DPIC-branded, against the mock).
-  - **Phase 12** ⬜ demo integration & deployment.
+  - **Phase 11** 🔄 frontend — first cut on `feat/frontend-demo` (DPIC-branded, against the mock);
+    live-wired to `janasunani-api-live` on `feat/demo-frontend-live`.
+  - **Phase 12** 🔄 demo integration & deployment — local runbook (`docs/DEMO.md`), `Makefile`
+    live-demo targets (`preflight`/`db`/`api`/`frontend`/`up`/`down`), and preflight in place;
+    cloud compose deployment still to come.
   - Docs: `chore/handoff-doc-links` (ongoing). *(Dead: `backend-plan-unsplit` — an ancestor of main, no diff.)*
 
 ## Package structure
@@ -454,13 +457,25 @@ deploy/                           # docker-compose (api, frontend, mlflow, oltp-
   + concentration as real confidence** (not a stubbed number), with a **fallback ladder**
   (cat+subcat+district → cat+subcat → cat → generic) that naturally covers the ~27/62 master categories with
   little/no history. This **replaces the name-match hack** and becomes the rules layer.
-- `routing/model.py`: learned router trained on the OLAP history (features → handling office); MLflow-
-  registered — layered **above** the empirical crosswalk. `routing/router.py`: combine + confidence/fallback.
+- **Learned router — reframed to a purely learned scorer (TABLED post-demo; direction set 2026-07-10).**
+  Supersede the hybrid rules+learned split with a single **learned scorer** that ranks
+  `(category[/subcategory/district]) → (dept, office)` candidate routes on more than historical incidence:
+  1. **Incidence** of the routing pair in the OLAP history — the empirical crosswalk above (argmax +
+     support/concentration) is the incidence-only baseline.
+  2. **Resolution / disposal time** for that pair (how fast the office actually closes such grievances).
+  3. **Citizen benefit** of the outcome.
+  So the router optimizes for where grievances get *resolved well*, not merely where they were historically
+  *sent* (plain argmax replicates past routing, misroutes and all). ⚠️ **Known omitted-variable-bias risk:**
+  disposal time and benefit are confounded — harder cases run longer regardless of office, and selection
+  into offices isn't random — so the scored objective needs causal care (controls/instruments) before it
+  drives real routing. Left as an open modeling problem for now. `routing/model.py` / `routing/router.py`.
 - **Live wiring complete for the deterministic layer** — `janasunani-api-live`
   routes through `DEFAULT_ROUTER`; only the default mock command returns
   `method:"mock"`.
-- **Sequencing:** the empirical crosswalk ships **first** (demo-sufficient, real data-derived confidence);
-  the learned router lands only after the E2E demo path works, so the demo never blocks on training.
+- **Sequencing (revised 2026-07-10):** the demo ships on **`method:"fallback"`** — both the empirical
+  crosswalk AND the learned scorer are **deferred until after the demo**, so the E2E demo path never blocks
+  on routing modeling. (Earlier plan shipped the empirical crosswalk first; deprioritized to unblock the
+  demo.)
 - **Tests**: crosswalk lookups + fallback ladder; learned-router top-k on held-out; combiner fallback.
 
 ## Phase 10 — Serving API + live wiring  ✅ *(default mock + opt-in live)*
@@ -479,7 +494,7 @@ deploy/                           # docker-compose (api, frontend, mlflow, oltp-
 - **Tests**: API tests (TestClient) with mocked processor against a temp OLTP DB — submit→persist→fetch;
   history endpoint returns lake rows.
 
-## Phase 11 — Demo frontend (Next.js)  🔄 *(first cut built 2026-07-08 — ONGOING on branch `feat/frontend-demo`)*
+## Phase 11 — Demo frontend (Next.js)  🔄 *(first cut built 2026-07-08; live-wired 2026-07-10)*
 - 🔄 **First cut built** (branch `feat/frontend-demo`, DPIC-branded): Next.js 16 App Router + TypeScript +
   Tailwind v4. Submit route (text/upload → staged result cards: extracted/redacted text + typed PII token
   badges, classification, summary, routing w/ escalation + confidence) + History browse/search route. Types
@@ -487,6 +502,13 @@ deploy/                           # docker-compose (api, frontend, mlflow, oltp-
   Calibri) read from the installed `dpic` package. `npm run lint`/`build` green; endpoints verified live
   against the mock API. Not merged. **Still mock end-to-end** (mock processor + `MockHistory` on `main`) —
   the UI shape is real; classification/redaction/history become real at the Phase 8/10 wire-up.
+- ✅ **Live-wired** (branch `feat/demo-frontend-live` → `feat/demo-integration`): pointed
+  `NEXT_PUBLIC_API_URL` at `janasunani-api-live` and verified real responses render — real `fallback` and
+  `rules` routing (not just mock's canned value), null `subcategory`, real Presidio PII spans, and the
+  document/OCR path (`source:"document"`, `ocr_model:"pytesseract"`, `pages`). No contract drift found
+  (`lib/types.ts` already matched `serving/schemas.py` exactly); removed stale "results are mocked" copy
+  from the submit/history/layout chrome and added an explanatory note for `fallback`-routed results.
+  `npm run lint`/`build` green.
 - Scaffolded right after the Phase 10 skeleton and built against the mocked contract, so it gets
   Weeks 3–4 of iteration instead of a cramped tail. Submit (text + upload) → staged view
   (extracted/redacted text, category/subcategory/dept, summary, routing + escalation + confidence) +
@@ -495,7 +517,15 @@ deploy/                           # docker-compose (api, frontend, mlflow, oltp-
 - **Tests**: manual verification against the demo checklist (Playwright deferred post-demo; the
   pytest policy for the Python side is unchanged).
 
-## Phase 12 — Demo integration & deployment  ⬜ *(integration only — compose grows incrementally)*
+## Phase 12 — Demo integration & deployment  🔄 *(integration only — compose grows incrementally)*
+- 🔄 **Local live bring-up validated** (branch `feat/demo-live-api` → `feat/demo-integration`): added the
+  conflict-free `demo` extra + `janasunani-demo-preflight`; ran `janasunani-api-live` against a throwaway
+  Postgres 17 with `live_grievances` migrated — `/health` reports `pipeline`, a real typed grievance **and**
+  a real PDF (OCR → page-type gate → redaction → MuRIL → BART → routing) both round-trip through
+  `GET /grievance/{id}` and persist to `live_grievances`. Runbook: [docs/DEMO.md](DEMO.md). Findings logged
+  there: routing degrades to `fallback` without the DVC mappings; PII recall is weak on Indian names
+  (feeds the eval work); BART is hub-downloaded at boot (darwin `hf_xet` hang guarded). Frontend now
+  wired to this live API (Phase 11). **Next: repeat on the CPU box; load routing mappings.**
 - `deploy/docker-compose.yml` starts in **Week 2** with just `oltp` (replacing the ad-hoc `docker run`)
   and gains each service as it's born (`mlflow` → `api` → `frontend` → `proxy`), so this phase is
   integration + runbook + latency — not the first time the runtime composition exists in the repo.

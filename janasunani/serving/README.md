@@ -12,7 +12,9 @@ uv run --extra serving janasunani-api
 uv run --extra serving --extra pipeline-core --extra categorizer janasunani-api-live
 ```
 
-Both serve `http://127.0.0.1:8000` by default, with OpenAPI at `/docs`.
+Both serve `http://127.0.0.1:8000` by default, with OpenAPI at `/docs`. The
+live command's warm processor, strict fail-closed startup, and preflight live in
+[`janasunani/inference`](../inference/README.md).
 The live command requires the DVC-mirrored categorizer and page-type artifacts
 under `models/` (override with `JANASUNANI_MODELS_DIR`) and fails startup rather
 than substituting the mock if an artifact, dependency, or model load is missing.

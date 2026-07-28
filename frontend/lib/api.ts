@@ -1,6 +1,6 @@
 // Client-side fetch layer for the Janasunani serving API. No auth, no SSR — the
 // browser calls the API directly. Base URL is env-configurable.
-import type { GrievanceResult, HistoryPage } from "@/lib/types";
+import type { GrievanceResult, HealthResponse, HistoryPage } from "@/lib/types";
 
 const API_BASE = (
   process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000"
@@ -42,6 +42,19 @@ export async function submitGrievance(input: {
   });
   if (!res.ok) throw new Error(await errorMessage(res));
   return (await res.json()) as GrievanceResult;
+}
+
+/** GET /health — which processor the API is running.
+ *
+ * `processor` is `"mock"` for the default `janasunani-api` skeleton and the
+ * real processor's name for `janasunani-api-live`. The history table uses it
+ * to mark rows that came from `MockHistory`, whose fabricated grievances are
+ * otherwise indistinguishable from real ones in the columns shown.
+ */
+export async function fetchHealth(): Promise<HealthResponse> {
+  const res = await fetch(`${API_BASE}/health`);
+  if (!res.ok) throw new Error(await errorMessage(res));
+  return (await res.json()) as HealthResponse;
 }
 
 /** GET /history — browse/search historical complaints from the lake. */

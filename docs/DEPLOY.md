@@ -1,5 +1,10 @@
 # Deployment runbook — Janasunani 2.0 (cloud)
 
+> **Bringing up the real-inference API?** For the step-by-step live-demo
+> bring-up (preflight → Postgres/migrations → `janasunani-api-live` → health →
+> submit), see [DEMO.md](DEMO.md). This document covers the surrounding cloud
+> deployment (CPU box, compose, backups).
+
 > ## ⚠️ The CPU box already exists and is always-on — do **not** blindly `terraform apply`
 >
 > The production CPU box (`i-0ef24e15a80ba7128`, EIP `52.66.116.80`) is **already

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { fetchHistory } from "@/lib/api";
+import { fetchHealth, fetchHistory } from "@/lib/api";
 import type { HistoryItem, HistoryPage } from "@/lib/types";
 import { Badge } from "./ui";
 
@@ -25,6 +25,32 @@ export function HistoryView() {
   const [page, setPage] = useState<HistoryPage | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Which backend is answering. `null` = not yet known.
+  //
+  // Against the mock API, /history serves MockHistory's fabricated rows, and
+  // none of the columns below render `grievance` — the only field carrying its
+  // "[fake row N]" marker. Unmarked, they read as genuine historical records.
+  //
+  // So rows are marked unless the pipeline is *confirmed* live. Labelling real
+  // history "mock" for a moment is a cosmetic error; showing invented
+  // grievances to a government audience as real is not.
+  const [liveProcessor, setLiveProcessor] = useState<boolean | null>(null);
+  const showMockMark = liveProcessor !== true;
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchHealth()
+      .then((h) => {
+        if (!cancelled) setLiveProcessor(h.processor !== "mock");
+      })
+      .catch(() => {
+        if (!cancelled) setLiveProcessor(false); // unreachable is not "live"
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Fetch whenever the applied filters or pagination offset change.
   useEffect(() => {
@@ -103,6 +129,15 @@ export function HistoryView() {
         </p>
       )}
 
+      {showMockMark && items.length > 0 && (
+        <p className="rounded-sm border border-maroon/40 bg-maroon/5 px-3 py-2 text-sm text-text-body">
+          <Badge tone="maroon">mock data</Badge>{" "}
+          These rows are illustrative, not real grievance history. Run{" "}
+          <code className="font-mono text-xs">janasunani-api-live</code> against
+          the materialized lake to browse actual records.
+        </p>
+      )}
+
       <div className="overflow-x-auto rounded-md border border-hair">
         <table className="w-full border-collapse text-sm">
           <thead>
@@ -133,6 +168,11 @@ export function HistoryView() {
               >
                 <td className="px-3 py-2 font-mono text-text-dark">
                   {it.ticket_no}
+                  {showMockMark && (
+                    <span className="ml-2 align-middle">
+                      <Badge tone="maroon">mock</Badge>
+                    </span>
+                  )}
                 </td>
                 <td className="px-3 py-2 text-text-body">
                   {fmtDate(it.created_on)}

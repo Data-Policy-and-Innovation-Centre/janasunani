@@ -278,10 +278,11 @@ def _detect_language(text: str) -> str:
         return "unknown"
 
 
-def _require_file(path: Path, component: str) -> None:
-    if not path.is_file():
+def _require_model_artifact(candidates: tuple[Path, ...], component: str) -> None:
+    if not any(path.is_file() for path in candidates):
+        shown = " | ".join(str(path) for path in candidates)
         raise RuntimeError(
-            f"missing local {component} artifact: {path}. Run `dvc pull` "
+            f"missing local {component} artifact: {shown}. Run `dvc pull` "
             "for the mirrored models before starting the live API."
         )
 
@@ -370,6 +371,116 @@ def _require_ocr_dependencies() -> None:
     )
 
 
+def _resolve_models_root(models_dir: str | Path | None) -> Path:
+    """Resolve the models root the same way for preflight and build."""
+    configured_dir = models_dir or os.environ.get("JANASUNANI_MODELS_DIR")
+    return Path(configured_dir).expanduser() if configured_dir else MODELS_DIR
+
+
+def _required_model_files(root: Path) -> list[tuple[tuple[Path, ...], str]]:
+    """The mandatory local model artifacts, as (candidate-paths, component).
+
+    Single source of truth shared by `build_processor` (which hard-requires
+    each) and `preflight` (which reports on each), so a fast pre-check can
+    never disagree with what the real startup actually loads.
+
+    Each entry lists one-or-more candidate paths; the requirement is satisfied
+    when *any* candidate exists (e.g. HF weights may be `model.safetensors`
+    *or* `pytorch_model.bin`). This covers not just the config/label encoder
+    but the actual tokenizer/weight files the HF `from_pretrained` calls load
+    during warm-up -- a partial DVC mirror (config present, weights missing)
+    must fail the check, not sail through to a mid-warm-up crash.
+
+    The tokenizer candidates are the files that actually carry the vocabulary
+    -- `tokenizer.json` (a self-contained fast tokenizer) *or* `vocab.txt`
+    (the MuRIL/BERT vocab loaded alongside `tokenizer_config.json`).
+    `tokenizer_config.json` is deliberately NOT accepted on its own: it only
+    holds tokenizer *settings*, so a mirror with just the config still crashes
+    in `AutoTokenizer.from_pretrained`.
+    """
+    categorizer_dir = root / "categorizer"
+    page_type_dir = root / "page_type_classifier" / "vit_type_classifier"
+    return [
+        ((categorizer_dir / "config.json",), "categorizer config"),
+        (
+            (
+                categorizer_dir / "model.safetensors",
+                categorizer_dir / "pytorch_model.bin",
+            ),
+            "categorizer weights",
+        ),
+        (
+            (
+                categorizer_dir / "tokenizer.json",
+                categorizer_dir / "vocab.txt",
+            ),
+            "categorizer tokenizer",
+        ),
+        (
+            (categorizer_dir / "label_encoder_ROS_wDOCS_english.pkl",),
+            "categorizer label encoder",
+        ),
+        ((page_type_dir / "config.json",), "page-type config"),
+        (
+            (
+                page_type_dir / "model.safetensors",
+                page_type_dir / "pytorch_model.bin",
+            ),
+            "page-type weights",
+        ),
+        (
+            (page_type_dir / "preprocessor_config.json",),
+            "page-type image processor",
+        ),
+    ]
+
+
+class DependencyCheck:
+    """One demo-readiness dependency and whether it is satisfied."""
+
+    def __init__(self, name: str, ok: bool, detail: str) -> None:
+        self.name = name
+        self.ok = ok
+        self.detail = detail
+
+    def __repr__(self) -> str:  # pragma: no cover - debug aid
+        return f"DependencyCheck(name={self.name!r}, ok={self.ok!r})"
+
+
+def preflight(models_dir: str | Path | None = None) -> list[DependencyCheck]:
+    """Report demo readiness without loading any model weights.
+
+    Mirrors exactly what `build_processor` hard-requires -- the mandatory
+    local artifacts (via `_required_model_files`) and the OCR system binaries
+    -- so an operator can verify a box is demo-ready in milliseconds instead
+    of discovering a missing file minutes into the model warm-up. Never raises
+    for a missing dependency; each check is reported as `ok=False` instead.
+    """
+    root = _resolve_models_root(models_dir)
+    checks = [
+        DependencyCheck(
+            component,
+            any(path.is_file() for path in candidates),
+            " | ".join(str(path) for path in candidates),
+        )
+        for candidates, component in _required_model_files(root)
+    ]
+
+    def _binary_check(name: str, probe: Callable[[], bool], detail: str) -> None:
+        try:
+            ok = probe()
+        except Exception as exc:  # pipeline-core extra absent, etc.
+            checks.append(DependencyCheck(name, False, f"unavailable: {exc}"))
+        else:
+            checks.append(DependencyCheck(name, ok, detail))
+
+    _binary_check("tesseract", _tesseract_available, "OCR text-extraction binary")
+    _binary_check(
+        "pdfinfo/pdftoppm", _poppler_available, "PDF page renderer (poppler)"
+    )
+    return checks
+
+
 def build_processor(models_dir: str | Path | None = None) -> PipelineGrievanceProcessor:
     """Strictly construct and warm the production processor.
 
@@ -377,17 +488,12 @@ def build_processor(models_dir: str | Path | None = None) -> PipelineGrievancePr
     dependency, artifact, public BART load, or Presidio initialization error
     propagates and aborts startup; this function never substitutes the mock.
     """
-    configured_dir = models_dir or os.environ.get("JANASUNANI_MODELS_DIR")
-    root = Path(configured_dir).expanduser() if configured_dir else MODELS_DIR
+    root = _resolve_models_root(models_dir)
     categorizer_dir = root / "categorizer"
     page_type_dir = root / "page_type_classifier" / "vit_type_classifier"
 
-    _require_file(categorizer_dir / "config.json", "categorizer")
-    _require_file(
-        categorizer_dir / "label_encoder_ROS_wDOCS_english.pkl",
-        "categorizer label encoder",
-    )
-    _require_file(page_type_dir / "config.json", "page-type model")
+    for candidates, component in _required_model_files(root):
+        _require_model_artifact(candidates, component)
     _require_ocr_dependencies()
 
     # Import and construct in pipeline order. This also keeps the module-level
