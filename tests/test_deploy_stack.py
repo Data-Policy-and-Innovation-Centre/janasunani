@@ -19,7 +19,9 @@ import shutil
 import stat
 import subprocess
 
+import pytest
 import yaml
+from packaging.markers import Marker
 
 from janasunani.config import ROOT_DIR
 
@@ -1005,9 +1007,6 @@ def test_rollback_restores_a_diverged_caddyfile(tmp_path):
 PYPROJECT_PATH = ROOT_DIR / "pyproject.toml"
 UV_LOCK_PATH = ROOT_DIR / "uv.lock"
 
-_CUDA_PACKAGE = re.compile(r"^name = \"((?:nvidia-|cuda-)[^\"]+|triton)\"", re.M)
-
-
 def _pyproject() -> dict:
     import tomllib
 
@@ -1042,35 +1041,77 @@ def test_gpu_extras_keep_cuda_torch():
         assert extra not in pinned, f"{extra} must keep the default CUDA torch"
 
 
-def test_no_cuda_payload_reaches_the_demo_extra_on_linux():
-    """The property that actually shrinks the image.
+def _demo_requirements_for_linux() -> dict[str, str]:
+    """The real resolved requirement set for `--extra demo` on linux.
 
-    Walks every dependency edge in the lock that points at an nvidia-*/cuda-*/
-    triton package and asserts none is reachable with `demo` enabled,
-    DeepSeek disabled, off darwin — i.e. the box.
+    Exports the actual lock via uv and evaluates each marker for the box's
+    platform, rather than inferring reachability from individual edges. An
+    edge's own marker is not enough: a CUDA package can be pulled by an
+    unconditional edge from a parent that `demo` selects, and inspecting
+    markers in isolation cannot see that (xgboost -> nvidia-nccl-cu12 is
+    exactly this shape).
     """
-    lock = UV_LOCK_PATH.read_text()
-    assert _CUDA_PACKAGE.search(lock), "no CUDA packages in the lock at all — "\
-        "the GPU extras should still pull them; this assertion is miscalibrated"
+    proc = subprocess.run(
+        ["uv", "export", "--frozen", "--extra", "demo", "--no-dev",
+         "--no-hashes", "--no-emit-project"],
+        cwd=ROOT_DIR, capture_output=True, text=True, check=True,
+    )
+    resolved: dict[str, str] = {}
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line or line.startswith(("#", "-")):
+            continue
+        requirement, _, marker = line.partition(";")
+        if marker.strip():
+            env = {
+                "sys_platform": "linux",
+                "platform_system": "Linux",
+                "os_name": "posix",
+                "platform_machine": "x86_64",
+                "python_version": "3.13",
+                "implementation_name": "cpython",
+                "platform_python_implementation": "CPython",
+            }
+            if not Marker(marker.strip()).evaluate(env):
+                continue
+        name, _, version = requirement.strip().partition("==")
+        resolved[re.split(r"[\[ ]", name)[0].lower()] = version.strip()
+    return resolved
 
-    edges = re.finditer(
-        r'\{ name = "((?:nvidia-|cuda-)[^"]+|triton)"[^}]*?marker = "([^"]*)"', lock
+
+@pytest.mark.skipif(shutil.which("uv") is None, reason="uv not on PATH")
+def test_demo_resolves_cpu_torch_on_linux():
+    """The api image gets the CPU build, not the CUDA one."""
+    resolved = _demo_requirements_for_linux()
+    assert resolved.get("torch") == "2.12.1+cpu", (
+        f"expected the CPU torch build on linux, got {resolved.get('torch')!r}"
     )
-    reachable = []
-    for edge in edges:
-        package, marker = edge.group(1), edge.group(2)
-        for clause in marker.split(" or "):
-            clause = clause.strip("() ")
-            if (
-                "extra == 'extra-10-janasunani-demo'" in clause
-                and "extra == 'extra-10-janasunani-ocr-deepseek'" not in clause
-                and "sys_platform == 'darwin'" not in clause
-            ):
-                reachable.append((package, clause))
-    assert not reachable, (
-        "CUDA packages reachable from the demo extra on linux: "
-        + ", ".join(sorted({p for p, _ in reachable}))
+
+
+@pytest.mark.skipif(shutil.which("uv") is None, reason="uv not on PATH")
+def test_demo_carries_no_cuda_payload_beyond_xgboosts_nccl():
+    """The property that shrinks the image, checked against a real resolution.
+
+    torch's CUDA payload (cuda-toolkit, cuda-bindings, nvidia-cublas, cudnn,
+    cusparselt, nccl-cu13, nvshmem, triton) must be gone entirely.
+
+    `nvidia-nccl-cu12` is the one documented exception: `xgboost` declares it
+    unconditionally on linux, and `demo` pulls xgboost via `pipeline-core`.
+    The live processor never uses the format classifier, so it is dead weight
+    in this image — tracked separately. Asserted explicitly rather than
+    excluded, so this fails if the CUDA surface grows again.
+    """
+    resolved = _demo_requirements_for_linux()
+    cuda = {
+        name for name in resolved
+        if name.startswith(("nvidia-", "cuda-")) or name == "triton"
+    }
+    assert cuda == {"nvidia-nccl-cu12"}, (
+        "CUDA packages in the linux demo resolution changed; expected only "
+        f"xgboost's nvidia-nccl-cu12, got {sorted(cuda)}"
     )
+    # and the specific thing this change removed really is absent
+    assert "nvidia-nccl-cu12" in resolved and "nvidia-nccl-cu13" not in resolved
 
 
 def test_locked_torch_resolves_to_a_cpu_wheel_for_linux():

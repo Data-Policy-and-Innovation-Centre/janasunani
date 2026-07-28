@@ -389,8 +389,12 @@ policy itself prevents it.
   Dockerfile carefully; the first real signal is the CI build log / GHCR push.
   This is also where the CPU-torch switch (#48) gets confirmed: on darwin the
   `demo` extra still resolves the ordinary PyPI wheel, so the image-size drop
-  is not observable locally. Check the build log for
-  `torch-2.12.1+cpu-...manylinux_2_28_x86_64.whl` and no `nvidia-*` downloads.
+  is not observable locally. In the build log, expect
+  `torch-2.12.1+cpu-...manylinux_2_28_x86_64.whl`, and **exactly one**
+  `nvidia-*` download — `nvidia-nccl-cu12`, which xgboost declares
+  unconditionally on linux (~300 MB, tracked separately). Any other `nvidia-*`
+  or `cuda-*` wheel means the CPU source did not take effect and the image is
+  still carrying the CUDA runtime.
 - **On-box browser E2E** — submit a grievance → real pipeline output renders
   and persists to `live_grievances` → `/history` shows it → `basic_auth`
   actually gates access. Do this once after the first automated deploy.

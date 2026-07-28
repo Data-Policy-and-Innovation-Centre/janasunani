@@ -36,8 +36,13 @@ COPY pyproject.toml uv.lock ./
 #
 # `demo` resolves torch from PyTorch's CPU-only index (see [tool.uv.sources] in
 # pyproject.toml) — this box has no GPU. That drops ~2.5 GB of wheels versus the
-# default CUDA build: the nvidia-*/cuda-toolkit/triton payload entirely, plus
-# the torch wheel itself going 532 MB -> 192 MB.
+# default CUDA build: torch's whole cuda-toolkit/cuda-bindings/nvidia-*/triton
+# payload, plus the torch wheel itself going 532 MB -> 192 MB.
+#
+# One CUDA wheel survives: xgboost declares nvidia-nccl-cu12 unconditionally on
+# linux, and `demo` pulls xgboost via pipeline-core. The live processor never
+# loads the format classifier, so it is ~300 MB of dead weight here — tracked
+# separately, not fixed by the torch source.
 RUN --mount=type=ssh uv sync --locked --extra demo --no-dev --no-install-project
 COPY README.md alembic.ini ./
 COPY janasunani ./janasunani
