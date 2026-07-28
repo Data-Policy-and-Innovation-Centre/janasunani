@@ -1178,6 +1178,87 @@ permission checks. They are the controls that keep the choice reversible:
 - The MoU and sign-off reference recorded alongside the route declaration, so the
   basis for the egress is legible in the repo rather than in someone's memory.
 
+### 5.6 Execution plan to 14 August
+
+One engineer, plus subagents, plus an intern on labelling. Fourteen working days.
+What follows separates the three kinds of work, because they scale differently and
+conflating them is how the schedule quietly fails.
+
+#### A. Human bottlenecks
+
+These consume calendar time and cannot be parallelized, delegated to an agent, or
+compressed by working harder. They are the schedule.
+
+| Work | Who | Why it cannot be compressed | Status |
+|---|---|---|---|
+| Adjudicate 85 PII pages | Intern | Reading citizen text and judging span boundaries. Gates the privacy scorecard *and* the Sarvam PII comparison | Finishing wk 1 |
+| **Transcribe an OCR ground-truth sample** | **Unassigned** | Someone must hand-transcribe scanned Odia and English pages, printed and handwritten. The earlier 77.9% is a plausibility rate, not accuracy, so there is no existing ground truth to reuse | ⚠️ **Not started** |
+| Label the disposal templates into the 7-class action taxonomy | Engineer | ~500 strings. LLM-assisted drafting, human adjudication. Half a day, but it gates the closure view | Not started |
+| Choose the backlog slice for Phase 14 | ED + engineer | A judgement call about what is defensible to demonstrate. Brainstorming session | Not scheduled |
+| Lock the A/B analysis plan | Engineer, statistical judgement | Estimator choice and the power calculation are not mechanical | Not started |
+| Rehearsal | Engineer | 14 Aug, code frozen 13 Aug | Fixed |
+
+⚠️ **The transcription set is the largest unmanaged risk in the plan.** It sits on
+the week-3 critical path, has no owner, and cannot be produced by an agent because it
+is the ground truth an agent would be measured against. Fifty pages is probably the
+floor for reporting handwritten and printed separately. Assign it in week 1 or drop
+the OCR accuracy row and report Sarvam Vision comparatively only.
+
+#### B. The serial chain
+
+Ordering forced by real dependencies, not preference.
+
+```
+deploy to AWS ──► end-to-end pipeline run ──► live demo path
+PII gold complete ──► privacy scorecard ──► Sarvam PII/OCR comparison
+pii_tagger ──► spam_duplicate stage ──► dedup index backfill ──┬──► duplicate-adjusted workload
+                                                               ├──► spike three-count
+                                                               └──► S4 clustering (runs on dedup'd units)
+semantic layer definitions ──► metrics ──► supervisor screen
+transcription set ──► OCR benchmark ──► Sarvam Vision scorecard
+```
+
+- **The two backfills are long-running and belong on the calendar, not in a sprint
+  list.** The dedup index over the chosen slice and the MuRIL embedding pass are
+  multi-hour GPU/CPU jobs. Write the stage early, kick the backfill, work on
+  something else while it runs. Starting either late in week 3 is a plan to fail.
+- **S4 cannot precede dedup.** Clustering over un-deduplicated filings makes a
+  400-signature campaign its own theme, which is circular.
+- Everything capability-side converges on the dedup index. It is the single point of
+  failure for the intelligence layer (§5.3).
+
+#### C. Parallel with subagents
+
+Agent-suitable work is code that is self-contained, testable against synthetic or
+fixture data, and touching a disjoint file set. Each of these can run while the
+serial chain proceeds.
+
+| Workstream | Agent | Why it is independent | Merges into |
+|---|---|---|---|
+| MinHash/LSH implementation + tests | `executor-sonnet` | Pure algorithm, testable on synthetic strings before any real index exists | Phase 14 stage |
+| Spam feature extraction | `executor-sonnet` | Reuses existing OCR quality gates (word count, alpha ratio, trigram share). No new data | Phase 14 stage |
+| Closure SQL view + action-type lookup | `executor-sonnet` | Depends only on the template labels, not on dedup | Phase 15 S3 |
+| Semantic layer YAML, compiler, per-metric tests | `executor-sonnet` | Definitions and compilation are testable against fixtures | Phase 15 S1 |
+| Supervisor screen | `frontend-dpic` | Builds against the frozen API contract with mocked responses | Phase 15 UI |
+| Sarvam provider adapter + registry entry | `executor-sonnet` | Testable with recorded responses, no live calls needed | Phase 17 |
+| Power calculation + analysis plan draft | `planner-opus` | Analytical, no code dependency | Phase 16 |
+| Per-entity / per-language scorecard harness | `executor-sonnet` | Extends the existing verifier, runs on the gold set when it lands | Phase 13 |
+
+Review the security-sensitive merges (dedup index, anything touching `grievance`)
+with `reviewer-fable`; routine merges with `reviewer-opus`.
+
+#### D. What actually limits parallelism
+
+Not ideas. **Shared mutable state.**
+
+- One CPU box, one GPU box, one Postgres, one lake. Two agents cannot both run a
+  backfill, and pytest against the production Postgres drops tables.
+- Agents editing overlapping files conflict. Use `isolation: worktree` and keep
+  file sets disjoint, or serialize the merge.
+- **Agents parallelize writing code. They do not parallelize validating it against
+  real data**, which needs the box and is therefore serial. Budget for that
+  separately: the validation queue is the hidden constraint, not the authoring.
+
 ## 6. Part III: post-demo maturity (Phases 18–24)
 
 After the demo, the system matures toward two goals: Odia (native and romanized) as

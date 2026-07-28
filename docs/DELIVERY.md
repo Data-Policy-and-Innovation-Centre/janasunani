@@ -115,6 +115,25 @@ Two dependencies set this order. Privacy labelling gates both the privacy scorec
 
 Labelling finishing this week lets the privacy scorecard move to week two, which takes the final week down to two items. That matters, because the last week also carries rehearsal.
 
+## How the three weeks are worked
+
+Three kinds of work, and they scale differently.
+
+**Building runs in parallel.** Most of the code is self-contained enough to be written alongside itself rather than one piece after another: the duplicate-matching logic, the spam checks, the closure query, the metric definitions, the supervisor screen, the Sarvam connector. Each is tested on its own before it touches real data. This is where the single-engineer constraint is least binding.
+
+**Processing the full history runs overnight.** Building the duplicate index and computing the themes are hours-long jobs over more than a million records. They are scheduled early and left to run rather than squeezed into the final days.
+
+**Judgement cannot be parallelised, and that is what sets the schedule.** Four things need a person:
+
+| Work | Why it takes the time it takes |
+|---|---|
+| Correcting the 85 privacy pages | Reading and judging each one. Finishing this week |
+| Transcribing a sample of scanned pages by hand | The only way to know whether Sarvam reads Odia better than we do is to have a correct transcription to compare both against. No such record exists |
+| Choosing which portion of the backlog to demonstrate on | A judgement about what is defensible, not a technical choice |
+| Fixing the A/B analysis plan | The estimator and the power calculation need statistical judgement |
+
+**One request.** The transcription sample has no owner yet, and it sits on the final week's path. It needs perhaps fifty pages, printed and handwritten, transcribed by someone who reads Odia. If we can identify that person in the coming week, the Sarvam comparison reports accuracy. If not, it reports a narrower result: how the two systems differ from each other, without a verdict on which is right.
+
 ## Not in scope for August
 
 Running Sarvam's large model on our own hardware. Natural-language querying. Comparing offices against each other, which needs case-mix adjustment first. Replacing our models with Odia ones, which follows the benchmark.
@@ -128,3 +147,4 @@ Running Sarvam's large model on our own hardware. Natural-language querying. Com
 | Whether the demonstration audience may see real citizen data, and under whose login | 7 August |
 | Whether the closed-without-action finding is shown on 14 August or brought to you first. It reflects on the redressal process, not the software. We would report it at state level only, never office by office | 7 August |
 | Whether any department has agreed in principle to an A/B trial later, which would let us present the design with a named partner | 14 August |
+| Who can hand-transcribe roughly fifty scanned pages in Odia and English. Without it the Sarvam comparison has no correct answer to measure against | 31 July |
