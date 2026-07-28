@@ -631,6 +631,12 @@ Profile and reconcile them before exposing any comparison.
   downstream queries reference only defined fields, and policy constraints (RBAC
   scope, redaction, small-cell suppression) are enforced in the layer, not left to
   model discretion.
+  - **Write the definitions to stand alone as a query target, not as backing for
+    three fixed dashboards.** Phase 20's natural-language querying parses *into* this
+    schema, so every measure needs a name, a description and declared legal
+    dimension pairings whether or not a August dashboard uses them. This adds no
+    August scope, it constrains how S1 is written. Retrofitting it later is
+    expensive; doing it now is nearly free.
 - **S2, deterministic spikes + contribution analysis.** Per
   `(category × district × week)` counts, flagged by EWMA / STL residual / Poisson
   surprise ("water complaints in District X up 300% this week"), with key-driver
@@ -780,33 +786,70 @@ Phase 14 adds inputs, and forces a decision about what a count means.
 - Deduplication still matters for the *workload* reading. It just cannot be the
   only reading.
 
-**The three headline metrics, each labelled.**
+**The headline metrics, each labelled.**
 
 | Metric | Needs | Source | Kind |
 |---|---|---|---|
-| Share of "resolved" that was closed without action | action type | S3 | **Insight**. Ships as a SQL view |
 | Distinct problems vs total filings | cluster id | Phase 14 | **Capability** |
 | A theme concentrated in one block and rising | theme id + block + time | S4 | **Capability** |
+| Spike decomposed into filings / clusters / signatories | cluster id + identity keys | S2 + Phase 14 | **Capability** |
+| Return rate after a no-action closure | action type + cluster id | S3 + Phase 14 | **Capability** |
+| Share of closures recording no action | action type | S3 | **Insight**. Ships as a SQL view |
 
-**Metric 1 is an insight and must be presented as one.** 86.65% of resolved
-complaints close on a templated remark (used 1000+ times), against 6.82% bespoke.
-The closing remark is the only one this metric reads, so it is an exact string match
-for roughly seven cases in eight. Its deliverable is the view definition itself,
-handed over, not a model.
+Note on the third: EWMA over `(category × district × week)` counts is something an
+analyst builds in a day, so bare spike detection is *not* a capability. Decomposing
+the spike into three counts is, because two of them need dedup. Ship the
+decomposition, not the alert.
 
-There is no capability version hiding in the free-text tail, on the hypothesis that
-an officer typing something original signals a non-standard case. The raw split
-looks strong (reopen 8.42% vs 4.38%, median resolution 45 days vs 29) but is
-confounded: longer cases mechanically accumulate rare remarks *and* take longer.
-Stratified by action-step count the gap shrinks sharply and turns non-monotonic
-(median days 17 vs 33 at three steps, 37 vs 44 at four, 35 vs 39 at five; reopen
-rates swing from 0.24% to 5.5% across strata for reasons not currently understood).
-Direction is consistent, magnitude is modest, none of it is load-bearing. Do not
-build on it.
+**The closure metric splits into an insight and a capability**, and the split is the
+whole point.
 
-**So the ML-dependent core of this phase is two items, not three.** Weight the demo
-accordingly. Metric 1 is the most striking number and should lead, but it leads as a
-finding, not as evidence that the system is necessary.
+- **The insight.** 86.65% of resolved complaints close on a templated remark, so
+  "share of closures recording no action" is an exact string match for roughly seven
+  cases in eight. Deliverable is the view definition, handed over.
+- ⚠️ **A bare disposal does not mean the case was mishandled.** Sometimes no action
+  is correct: an information request answered, an ineligible claim properly refused,
+  a matter already settled elsewhere. Correct closure and premature closure are
+  identical in the record. **The 61% is descriptive and must never be reported as a
+  failure rate.**
+- **The capability is the disambiguator: does the citizen come back?** If nothing was
+  owed they stop; if something was owed and refused they reopen or refile. Reopening
+  is already a column, but refiling requires recognising a new grievance as the same
+  issue as a closed one, which is exactly Phase 14. This is the number that leads.
+- It is a **lower bound, not a rate.** Non-return conflates satisfaction with giving
+  up, and the two almost certainly differ by literacy, connection and district. State
+  it as a floor. That is also the stronger claim rhetorically.
+- **Trajectory is a required control.** A case that goes created → forwarded → ATR →
+  disposed had work done whatever the closing phrase says; one that goes created →
+  disposed in two days did not. Median resolution at two action steps is 2 days,
+  which is where the suspicious mass likely sits. Condition on step count and elapsed
+  time before reporting anything.
+- **Validate by variance decomposition, not by ranking.** If bare-disposal rates are
+  fully explained by case mix (category, request type, district, year), there is
+  nothing here. A large surviving residual is the finding. This tests practice
+  against composition without ever publishing an office league table. Usual omitted
+  variables caveat: case mix is never fully observed.
+- Supporting but not decisive: officers already have non-disposal vocabulary for "no
+  action warranted" ("not within purview", "can be considered only after a policy
+  decision", "will be considered as per rule in due course"), all discard templates
+  at volume. Correct closures have somewhere else to go, so they are unlikely to be
+  the bulk of bare disposals.
+- **Calibration needs humans.** 300 to 500 closures hand-adjudicated, stratified by
+  template, request type and trajectory, is the only thing that turns 61% into a
+  claim. Not August work; name it so nobody treats the number as settled.
+
+There is no capability hiding in the free-text tail, on the hypothesis that an
+officer typing something original signals a non-standard case. The raw split looks
+strong (reopen 8.42% vs 4.38%, median resolution 45 days vs 29) but is confounded:
+longer cases mechanically accumulate rare remarks *and* take longer. Stratified by
+action-step count the gap shrinks sharply and turns non-monotonic (median days 17 vs
+33 at three steps, 37 vs 44 at four, 35 vs 39 at five; reopen rates swing from 0.24%
+to 5.5% across strata for reasons not currently understood). Direction is consistent,
+magnitude is modest, none of it is load-bearing. Do not build on it.
+
+**Everything capability-side routes through Phase 14.** Dedup is not one of four
+deliverables, it is the dependency under three of them. Slipping it takes the
+intelligence layer down to a SQL view.
 
 ⚠️ **The first one carries political risk, not technical risk.** It does not expose
 our flaws, it exposes the redressal process closing cases without fixing them. That
@@ -1206,13 +1249,140 @@ The two increments Phase 15 deliberately deferred.
   Adjusted comparison is the answer to the comparative questions government users
   will ask; whether a given adjustment is trustworthy is an empirical question
   decided by that review, not asserted here.
-- **Natural-language querying, last.** An agent loop over the semantic layer: plan,
-  emit semantic-layer-constrained SQL, run on DuckDB, inspect, self-correct, narrate
-  with a chart. Raw text-to-SQL is still unreliable on real schemas (BIRD /
-  Spider 2.0 execution accuracy sits well below human), so generation uses
-  **structured/constrained decoding** and a **local** model, capacity-gated on the
-  CPU box. If it is not reliable enough it degrades to guided/templated queries or
-  on-demand GPU. A hypothesis to benchmark and promote only if it wins.
+- **Natural-language querying, last.** **Explicitly not a 14 August deliverable.**
+  DELIVERY.md lists it as out of scope and it stays there. What follows is the
+  build spec for when it is taken up.
+
+#### Architecture: semantic parsing, not text-to-SQL
+
+The model never writes SQL. It fills in a structured form, and a hand-written,
+tested compiler turns that form into SQL. The form's schema **is** the semantic
+layer, which is why S1 has to exist first: you cannot parse into a representation
+that does not exist.
+
+```json
+{
+  "intent":     "ranking",
+  "measure":    "filings",
+  "dimensions": ["district"],
+  "filters":    [{"dim": "category", "op": "in", "values": ["Water Supply"]}],
+  "time":       {"field": "created_on", "from": "2026-04-28", "to": "2026-07-28"},
+  "order":      {"by": "measure", "dir": "desc"},
+  "limit":      5
+}
+```
+
+Two predictions produce it, from one shared encoder:
+
+| | Predicts | Granularity | Head |
+|---|---|---|---|
+| **Intent** | Which of ~20 request shapes (count, ranking, trend, comparison, share, breakdown) | One per question | Sequence classification, as in the categorizer |
+| **Slots** | Which words name a dimension, a filter value, a time range, a direction | One per token, BIO tagged | Token classification, as in the PII tagger |
+
+Both architectures already exist in this repo with different label sets. MuRIL is
+the encoder: multilingual, handles Odia, already fine-tuned here, CPU-viable at
+inference.
+
+⚠️ **Do not implement this as embedding similarity between the question and a bank
+of canned queries.** Two reasons it fails. The query space is combinatorial, not
+enumerable, once filters over 30 districts and 35 categories are allowed. And
+sentence embeddings encode topic, so "water complaints rising in Puri" and "water
+complaints falling in Puri" are near-identical in that space while requiring
+opposite answers. Direction, negation and comparison are exactly what pooled
+embeddings blur, and they are exactly what determines the result. Similarity *is*
+the right tool for one sub-problem only: resolving a mention like "water" against
+the closed list of category names.
+
+#### Build order
+
+Three milestones. Each is independently useful and each covers the failures of the
+one below it.
+
+1. **Guided query builder.** Dropdowns over the semantic layer. No language model,
+   no hallucination surface, answers most real questions. **Build this first, not as
+   a fallback**, for a reason beyond risk: it is the instrument that produces the
+   training distribution. Every assembled query is logged as a form, so after a few
+   weeks there is a real record of what people ask, which is otherwise unobtainable
+   before a system exists.
+2. **Intent + slot parser.** Trained on generated data (below) plus the logged
+   demand from milestone 1.
+3. **LLM fallback for the compositional tail.** Multi-clause comparisons with
+   exclusions, follow-up questions carrying dialogue state. Emits the same IR under
+   schema-constrained decoding. Degrades to "could not parse, here is the builder"
+   without taking anything else down.
+
+#### Training data by inversion
+
+Do not annotate questions. Generate them backwards: sample a legal IR, render it to
+a sentence through a template, and the labels are correct by construction because
+the slot values were inserted rather than found. Templates crossed with legal
+combinations give tens of thousands of examples cheaply.
+
+- Add phrasing variety by hand-writing several renderings per intent, or with an LLM
+  **offline at build time**, checking that slot values survive verbatim so alignment
+  holds. The served model stays small and local.
+- Add 200-300 real hand-labelled questions. This is the only manual annotation. Its
+  job is idiom, not grammar: synthetic data teaches the template, real data teaches
+  how people actually type.
+- Odia-language questions roughly double the generation work. MuRIL covers the
+  language; the generator needs the renderings.
+
+#### Gaps in the earlier spec, all required
+
+- **Value linking**, which is where these systems fail in production more often than
+  on SQL syntax. "Puri" to a district id, "water" to some subset of 35 categories,
+  "PMAY" to either a category or a scheme name in free text. Needs a dimension-value
+  index with fuzzy and multilingual matching. Small closed vocabularies, so a lookup
+  table plus curated synonyms beats a model here.
+- **Mandatory disambiguation.** "Resolved" has at least three defensible readings in
+  this schema (the `status` field, `resolved_on` non-null, the §5.3 disposal ladder)
+  and "complaints" means filings or distinct problems. §5.3 established that these
+  give different numbers. A parser that silently picks one is dangerous *because*
+  the choice is known to matter. It must ask.
+- **Echo the interpretation before executing.** "Showing filings, by district, where
+  category is Water Supply, 28 Apr to 28 Jul, top 5." This converts the dangerous
+  failure mode, a valid-but-wrong query returning a plausible number, into a visible
+  one, at near-zero cost.
+- **Evaluation set.** 100-200 question-to-expected-result pairs graded on
+  **execution match**, not string match, against hand-written correct SQL. Held-out
+  real questions only, never synthetic. Without this there is no way to know it
+  works. Writing it is domain work, not engineering.
+- ⚠️ Most interesting questions need window functions over `action_history` (latest
+  action per ticket, elapsed time between steps) over 6.5M rows. Generated SQL is
+  weakest exactly there, which is another argument for a compiler rather than a
+  model emitting SQL.
+
+#### Egress, and a constraint that is now stale
+
+The earlier spec required a **local** model capacity-gated on the CPU box. That
+predates the Sarvam authorization and is stricter than necessary here, because
+**the model never sees citizen data**. It receives the question and the metric
+catalogue, and returns a form. Rows are fetched and rendered locally. That is a
+completely different egress profile from OCR or summarization, where grievance text
+itself leaves.
+
+⚠️ One real exposure: questions can themselves contain PII ("what happened to
+X's complaint, mobile 98765..."). Run the existing PII tagger over the question and
+redact or refuse before it goes anywhere.
+
+Local remains the standing exit ramp, as elsewhere, since the candidate weights are
+Apache 2.0.
+
+#### Effort
+
+One engineer, after Phase 15 S1 lands.
+
+| Item | Estimate |
+|---|---|
+| S1 built to queryable standard rather than dashboard-minimum | +1-2 weeks |
+| Guided builder + query logging | 2 weeks |
+| Value-linking index | 1 week |
+| Generation pipeline, training, disambiguation | 2 weeks |
+| Evaluation set and iteration | 2 weeks |
+| Query & disclosure controls (below) | 1-2 weeks |
+
+Roughly 9-11 weeks. The guided builder alone is about a third of that and delivers
+most of the practical value, which is why it leads.
 
 **Query & disclosure controls**, a release gate for the query path and for any
 exposed comparison. Constrained SQL and RBAC are necessary but not sufficient
@@ -1478,15 +1648,38 @@ Terse and dated. The reasoning for choices that are not obvious from the code.
     disagreement and PII exposure rate audit our own models rather than the grievance
     process. Both retained as internal diagnostics. The Phase 13 privacy scorecard is
     a distinct artifact and is unaffected.
-  - **Metric 1 (closed-without-action) is an insight, not a capability.** 86.65% of
-    resolved complaints close on a templated remark, so it is a string match for
-    seven cases in eight, and its deliverable is the view definition. No capability
-    version hides in the free-text tail: the bespoke-vs-template gap is confounded by
-    case length and does not survive stratification. It also carries political rather
-    than technical risk, so it is reported at state level as a closure-workflow
-    observation, never as an office league table, and goes to the ED first.
+  - **The closure metric splits in two.** "Share of closures recording no action" is
+    an insight: 86.65% of resolved complaints close on a templated remark, so it is a
+    string match for seven cases in eight and ships as a view definition. It is
+    descriptive only, because sometimes no action is the correct outcome and a
+    correct closure is identical in the record to a premature one. The capability is
+    the disambiguator: **does the citizen return?** Reopening is a column, but
+    refiling needs same-issue matching, so it depends on Phase 14. Report it as a
+    lower bound, since non-return conflates satisfaction with giving up. Condition on
+    trajectory (step count, elapsed time) and validate by variance decomposition
+    against case mix rather than by ranking offices. Calibrating the 61% properly
+    needs 300-500 hand-adjudicated closures, which is post-August.
+  - **Political rather than technical risk** on this metric: it is reported at state
+    level as a closure-workflow observation, never as an office league table, and
+    goes to the ED first.
+  - **Bare spike detection is not a capability.** EWMA over `(category × district ×
+    week)` counts is a day of analyst work. The three-count decomposition is a
+    capability because two of the counts need dedup. Ship the decomposition, not the
+    alert.
+  - **No capability hides in the free-text tail.** The bespoke-vs-template gap is
+    confounded by case length and does not survive stratification by step count.
   - **The ~34,700 officer-confirmed duplicates are a baseline, not a deliverable.**
     They are what the manual process already catches. The claim is the increment
     MinHash finds beyond them, which this makes measurable rather than asserted.
-  - **Net: the ML-dependent core of Phase 15 is two items, not three.** Demo weight
-    sits on duplicate detection and thematic clustering.
+  - **Natural-language querying specced properly in Phase 20, and still not August
+    work.** Semantic parsing into the semantic layer's schema (intent classification
+    plus slot tagging, both architectures already in this repo), never text-to-SQL
+    and never embedding retrieval over canned queries. Guided dropdown builder leads
+    rather than acting as a fallback, because it generates the training distribution.
+    Training data comes from inverting the problem: sample a legal query form, render
+    it to a sentence, labels are correct by construction. One consequence lands in
+    August: S1's definitions must be written as a standalone query target.
+  - **Net: everything capability-side routes through Phase 14.** Dedup is not one
+    deliverable among several, it is the dependency under the duplicate-adjusted
+    workload, the spike decomposition and the return-rate metric. If it slips, the
+    intelligence layer degrades to a SQL view.
