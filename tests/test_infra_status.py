@@ -248,13 +248,15 @@ def test_render_never_says_all_clear_when_nothing_was_checked():
     assert "NOTHING CHECKED" in text
 
 
-def test_render_counts_skips_alongside_real_results():
+def test_render_qualifies_all_clear_when_some_checks_did_not_run():
+    """A partial pass is not a pass. "all clear" alone would invite reading an
+    unreachable box as a healthy one."""
     report = infra_status.Report()
     report.add("compute", "cpu box", OK, "running")
     report.add("box", "ssh", INFO, "unreachable")
     text = infra_status.render(report)
-    assert "all clear (1 checks)" in text
-    assert "1 not checked" in text
+    assert "were not run" in text
+    assert "all clear on 1 checks" in text
 
 
 # --- the read-only guarantee --------------------------------------------------

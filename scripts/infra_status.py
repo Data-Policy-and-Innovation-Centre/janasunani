@@ -384,10 +384,17 @@ def render(report: Report) -> str:
     elif counts[WARN]:
         lines.append(f"no critical issues, {counts[WARN]} warning{skipped}")
     elif checked == 0:
-        # Never say "all clear" when nothing ran. Unreachable AWS, an
-        # unreachable box and --no-aws --no-ssh all land here, and reading that
-        # as healthy is the exact mistake this tool exists to prevent.
+        # Must precede the partial-pass branch below: with nothing checked,
+        # every finding is INFO and this would otherwise read "all clear on 0
+        # checks". Unreachable AWS, an unreachable box and --no-aws --no-ssh
+        # all land here, and reading that as healthy is the exact mistake this
+        # tool exists to prevent.
         lines.append("NOTHING CHECKED — this is not a clean bill of health")
+    elif counts[INFO]:
+        lines.append(
+            f"all clear on {checked} checks, but {counts[INFO]} were not run — "
+            "see the '--' lines above"
+        )
     else:
         lines.append(f"all clear ({checked} checks){skipped}")
     return "\n".join(lines)
