@@ -51,6 +51,7 @@ help:
 	@echo "  make docs            Render docs/*.md to DPIC-branded Word files"
 	@echo "  make box-paths       Show resolved local and Box paths"
 	@echo "  make status          Show what has changed"
+	@echo "  make infra           Read-only health pass over the cloud infra"
 	@echo ""
 	@echo "  Live demo (real-inference API — see docs/DEMO.md):"
 	@echo "  make models          DVC-pull ONLY the demo model artifacts"
@@ -121,7 +122,7 @@ deliver:
 	rclone copy $(EXHIBITS_LOCAL) $(EXHIBITS_REMOTE) --progress
 	@echo "Exhibits delivered. Existing Box files were not deleted."
 
-.PHONY: docs docs-clean
+.PHONY: docs docs-clean infra status
 
 # Word renders of the planning docs, for circulation outside the repo.
 # Outputs are gitignored (docs/*.docx): the Markdown is the source of truth.
@@ -144,6 +145,24 @@ box-paths:
 	@echo "EXHIBITS_LOCAL=$(EXHIBITS_LOCAL)"
 	@echo "INCOMING_REMOTE=$(INCOMING_REMOTE)"
 	@echo "EXHIBITS_REMOTE=$(EXHIBITS_REMOTE)"
+
+
+# Read-only pass over the cloud infra (EC2 boxes, SSH exposure, disk,
+# containers, backups, demo health). Nothing here mutates; see
+# scripts/infra_status.py.
+#
+# CPU_BOX_SSH is the EC2 instance, NOT `BOX_REMOTE` above — that one is the
+# rclone Box.com remote. Two unrelated things both called "box"; do not wire
+# one to the other.
+#
+#   make infra
+#   make infra SITE=52-66-116-80.nip.io SG_ID=sg-0abc123
+#   make infra ARGS="--no-ssh"
+CPU_BOX_SSH    ?= ubuntu@52.66.116.80
+
+infra:
+	@uv run python scripts/infra_status.py --host "$(CPU_BOX_SSH)" \
+	  $(if $(SITE),--site "$(SITE)") $(if $(SG_ID),--sg-id "$(SG_ID)") $(ARGS)
 
 status:
 	@echo "=== Git ==="
