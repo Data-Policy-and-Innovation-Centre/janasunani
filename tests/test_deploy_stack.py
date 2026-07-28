@@ -1079,6 +1079,35 @@ def _demo_requirements_for_linux() -> dict[str, str]:
     return resolved
 
 
+def test_only_torch_is_sourced_from_the_pytorch_index():
+    """`explicit = true` must actually hold across the whole lock.
+
+    download.pytorch.org is not a torch-only mirror — it also carries old
+    copies of common packages (certifi, requests, urllib3 among them). Without
+    `explicit`, uv treats it as a general index and will happily resolve those
+    from it, silently downgrading the TLS stack. That is not hypothetical: it
+    happened to this branch while mutation-testing the `explicit` assertion
+    itself, and shipped certifi 2022.12.7 before review caught it.
+
+    Asserted on the lock rather than on the pyproject flag, because the flag
+    being right does not prove the lock was generated with it right.
+    """
+    leaked = []
+    for block in UV_LOCK_PATH.read_text().split("[[package]]"):
+        name = re.search(r'^name = "([^"]+)"', block, re.M)
+        pytorch_sourced = re.search(
+            r'^source = \{ registry = "https://download\.pytorch\.org[^"]*" \}',
+            block,
+            re.M,
+        )
+        if name and pytorch_sourced and name.group(1) != "torch":
+            leaked.append(name.group(1))
+    assert not leaked, (
+        "packages resolved from the PyTorch index that should come from PyPI: "
+        f"{sorted(leaked)} — is `explicit = true` set on the index?"
+    )
+
+
 @pytest.mark.skipif(shutil.which("uv") is None, reason="uv not on PATH")
 def test_demo_resolves_cpu_torch_on_linux():
     """The api image gets the CPU build, not the CUDA one."""
