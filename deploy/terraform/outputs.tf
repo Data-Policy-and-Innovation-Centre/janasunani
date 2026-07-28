@@ -26,3 +26,15 @@ output "gpu_ssh_command" {
     : null
   )
 }
+
+# --- CI deploy (ci.tf) -------------------------------------------------------
+
+output "ci_deploy_role_arn" {
+  description = "IAM role the deploy.yml workflow assumes via GitHub OIDC (CI_DEPLOY_ROLE_ARN -- set on the 'box-deploy' GitHub Actions environment, not as a repo-level var; see docs/DEPLOY.md)."
+  value       = aws_iam_role.ci_deploy.arn
+}
+
+output "cpu_box_security_group_id" {
+  description = "CPU box security group ID (BOX_SG_ID -- set on the 'box-deploy' GitHub Actions environment, not as a repo-level var; see docs/DEPLOY.md) — deploy.yml temporarily authorizes/revokes port 22 for the runner's IP here."
+  value       = aws_security_group.cpu_box.id
+}

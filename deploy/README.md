@@ -26,24 +26,62 @@ Two halves: [`terraform/`](terraform/README.md) creates the EC2 boxes;
 
 ## docker-compose.yml (CPU box)
 
-Grows service-by-service as Part II lands (`oltp` today; `mlflow` → `api` →
-`frontend` → `proxy` to come). Config from `deploy/.env` (gitignored — holds
-`POSTGRES_PASSWORD`; the box's copy is chmod 600).
+Four services today: `oltp` (Postgres, since Week 1) plus `api` / `frontend` /
+`proxy`, which landed with the automated CI→GHCR→box deploy. `mlflow` is not
+needed for the demo and is intentionally still absent (see
+[docs/ROADMAP.md](../docs/ROADMAP.md) Phase 12). Config from `deploy/.env`
+(gitignored — holds `POSTGRES_PASSWORD`, `IMAGE_TAG`, `SITE_ADDRESS`; the
+box's copy is chmod 600 — see [.env.example](.env.example)) plus a
+*separate* `deploy/proxy.env` (gitignored — holds `DEMO_USER`/
+`DEMO_PASSWORD_HASH`; see [proxy.env.example](proxy.env.example)). The two
+files are split on purpose: Compose interpolates `$` in `deploy/.env`
+values, which would mangle a bcrypt hash; `env_file` injects `proxy.env`
+verbatim with no interpolation.
 
 The `oltp` service (postgres:17, container `janasunani-oltp`) **adopts the
 already-running production volume by name** (`janasunani-oltp`, declared
 `external`). It binds to `127.0.0.1:5432` only — nothing on the public
-interface; future app services reach it over the compose network.
+interface; app services reach it over the compose network.
+
+`api` (`deploy/api.Dockerfile` → `janasunani-api-live`) and `frontend`
+(`frontend/Dockerfile`) publish **no ports** — they're only reachable through
+`proxy`. `api` bind-mounts `../models`, `../data/interim`, and
+`../data/raw/janasunani-mappings` read-only (models/data are never baked into
+the image); `proxy` (`caddy:2-alpine`) is the sole public service, terminating
+TLS via nip.io + automatic Let's Encrypt and gating the whole site behind
+HTTP Basic Auth (`deploy/proxy/Caddyfile`) — production grievance data must
+not be openly public.
+
+**`deploy/deploy.sh` is the only sanctioned up-path.** It preflights the
+Compose version and free disk, fails closed if `deploy/proxy.env`'s
+`DEMO_PASSWORD_HASH` isn't set to a real-looking value, pulls the tagged
+images, brings the stack up, reloads Caddy if the proxy container was
+already running (the Caddyfile is bind-mounted — `up -d` alone won't push a
+changed one into an already-running container), and blocks until **both**
+`api` and `frontend` report healthy before exiting 0 — run it by hand
+(`IMAGE_TAG=<sha> bash deploy/deploy.sh`) or let CI run it
+(`.github/workflows/deploy.yml`, `workflow_dispatch`-only). Don't
+`docker compose up` directly on the box; you'll skip the health gate, the
+Caddy reload, and the disk/version preflights. If anything fails after the
+stack starts changing, it **automatically rolls back** (image *and*
+Caddyfile) and re-verifies the rollback is actually healthy before saying
+so — see [docs/DEPLOY.md §4](../docs/DEPLOY.md#4--automated-demo-deploy-ci--ghcr--box)
+("Automatic rollback" and "Migration policy" — a rollback can't undo a
+non-backward-compatible schema migration, only detect and report that it
+can't).
 
 Rules that protect the data:
 
 - **NEVER `docker compose down -v`** — the external volume holds the migrated
-  1.37M/6.56M-row production data.
+  1.37M/6.56M-row production data. `deploy/deploy.sh` never runs `down`.
 - Nightly `pg_dump | aws s3 cp` cron on the box is the backup path (bucket
   `grievance-database-backups-main`); the re-runnable migration is the deeper
   backstop.
 - Never point pytest at this container (fixtures drop tables — see
   [tests/README](../tests/README.md)).
+
+**Full automated-deploy runbook** (one-time box setup, secrets/vars,
+rollback): [docs/DEPLOY.md](../docs/DEPLOY.md) §"Automated demo deploy".
 
 ## Terraform (summary — details in [terraform/README.md](terraform/README.md))
 

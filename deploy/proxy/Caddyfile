@@ -1,0 +1,38 @@
+# Single-origin reverse proxy for the Janasunani demo (see deploy/docker-compose.yml
+# service `proxy`). SITE_ADDRESS/DEMO_USER/DEMO_PASSWORD_HASH come from
+# deploy/.env (compose applies bootable defaults if unset — see the `proxy`
+# service's `environment:` block) — never hard-code the domain or credentials
+# here.
+#
+# TLS: SITE_ADDRESS is a nip.io hostname (e.g. 52-66-116-80.nip.io), so Caddy
+# obtains a real Let's Encrypt cert automatically (no manual cert management).
+#
+# The whole site sits behind HTTP Basic Auth: production grievance data
+# (browsable at /history, and directly at /api/history and /api/grievance/{id})
+# must not be openly public. Generate a real hash with:
+#   docker run --rm caddy:2-alpine caddy hash-password --plaintext '<password>'
+#
+# Exception: /api/health is exempt from basic_auth. It leaks nothing (just
+# `{"status":"ok","processor":"pipeline"}`) and deploy/deploy.sh's own
+# end-to-end health check curls it unauthenticated — without this exemption
+# EVERY deploy would 401 on that curl and be reported as failed. Scoping via
+# a `not path` matcher on `basic_auth` (rather than a separate handle block)
+# keeps the single `handle_path /api/*` block as the one place that proxies
+# to `api:8000` with the `/api` prefix stripped — `basic_auth` still applies
+# to every other route reached through it. Verified against a real
+# `caddy:2-alpine` container: unauthenticated `/api/health` -> 200 (routed
+# to the api's `/health`, prefix stripped); unauthenticated `/` and
+# `/api/other` -> 401.
+{$SITE_ADDRESS}
+
+@protected not path /api/health
+basic_auth @protected {
+	{$DEMO_USER} {$DEMO_PASSWORD_HASH}
+}
+
+handle_path /api/* {
+	reverse_proxy api:8000
+}
+handle {
+	reverse_proxy frontend:3000
+}

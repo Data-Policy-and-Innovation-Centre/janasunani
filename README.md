@@ -2,9 +2,14 @@
 
 **Janasunani 2.0** — Odisha's unified, AI-powered grievance redressal system.
 A raw grievance (typed text or a scanned document) is **extracted** (OCR),
-**redacted** (PII, in-process — citizen text never leaves the box),
+**redacted** (PII, in-process by default), **triaged** (spam / duplicate),
 **classified** (category/department), **summarized**, and **routed** to the
 responsible office, ending in a Next.js demo UI.
+
+Citizen text leaves the box only through a declared, audited, revocable channel
+(see [ARCHITECTURE.md](docs/ARCHITECTURE.md) "Security invariants"). That replaced
+a strict no-egress rule on 2026-07-27, when the Government of Odisha authorized
+Sarvam for this data.
 
 The repo is one Python package (`janasunani/`) built **phase by phase** (see
 [docs/ROADMAP.md](docs/ROADMAP.md)):
@@ -14,15 +19,21 @@ The repo is one Python package (`janasunani/`) built **phase by phase** (see
   materialization for analytics, document ingestion → S3, the six-stage
   document-processing pipeline, and the AWS infrastructure (an always-on CPU
   box + an on-demand GPU box).
-- **Automation prototype — in progress:** single-grievance inference, hybrid
+- **The demo — in progress:** single-grievance inference, hybrid
   routing, FastAPI serving, and the Next.js demo. The serving API skeleton is on
   `main`; the routing engine, live persistence, lake-backed history, MLflow
   registry, and a first-cut DPIC-branded Next.js frontend are ongoing on feature
   branches. Phase 8 now provides an opt-in real local-model server behind the
   same contract; the default API remains mocked for frontend development.
 
+  Re-scoped 2026-07-27 to five components: pipeline replication, spam & duplicate
+  detection, the intelligence layer, A/B testing of AI automation, and a Sarvam
+  benchmark. See [docs/ROADMAP.md](docs/ROADMAP.md) §1.1.
+
 New here? Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) first;
 [docs/ROADMAP.md](docs/ROADMAP.md) is the plan and current status.
+[docs/DELIVERY.md](docs/DELIVERY.md) is the dated plan for the 14 August demo,
+in plain language.
 
 ## Running the components (today)
 
