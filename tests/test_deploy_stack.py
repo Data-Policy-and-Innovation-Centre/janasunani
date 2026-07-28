@@ -992,3 +992,92 @@ def test_rollback_restores_a_diverged_caddyfile(tmp_path):
     assert result.returncode == 1, combined
     assert "Restoring the last known-good Caddyfile" in combined
     assert (deploy_dir / "proxy" / "Caddyfile").read_text() == deployed_content
+
+
+# --- CPU-only torch for the api image (issue #48) ----------------------------
+#
+# The always-on box is CPU-only and hosts the production Postgres, so the api
+# image must not carry the CUDA runtime. This is a resolution property, not a
+# runtime one, so it is asserted against the real pyproject.toml and uv.lock —
+# and it cannot be caught by running the tests, because on darwin the `demo`
+# extra still resolves the ordinary PyPI wheel.
+
+PYPROJECT_PATH = ROOT_DIR / "pyproject.toml"
+UV_LOCK_PATH = ROOT_DIR / "uv.lock"
+
+_CUDA_PACKAGE = re.compile(r"^name = \"((?:nvidia-|cuda-)[^\"]+|triton)\"", re.M)
+
+
+def _pyproject() -> dict:
+    import tomllib
+
+    return tomllib.loads(PYPROJECT_PATH.read_text())
+
+
+def test_demo_extra_sources_torch_from_the_cpu_index():
+    """`deploy/api.Dockerfile` builds `--extra demo`; that extra must pin torch
+    to PyTorch's CPU wheel index."""
+    pyproject = _pyproject()
+    indexes = {i["name"]: i for i in pyproject["tool"]["uv"].get("index", [])}
+    assert "pytorch-cpu" in indexes, "the CPU wheel index is not declared"
+    assert indexes["pytorch-cpu"]["url"] == "https://download.pytorch.org/whl/cpu"
+    # explicit: nothing resolves from this index unless a source sends it there
+    assert indexes["pytorch-cpu"]["explicit"] is True
+
+    sources = pyproject["tool"]["uv"]["sources"]["torch"]
+    assert [s["extra"] for s in sources] == ["demo"], (
+        "torch's CPU source must apply to `demo` only — categorizer and "
+        "ocr-deepseek need CUDA wheels for the GPU-box batch jobs"
+    )
+    assert all(s["index"] == "pytorch-cpu" for s in sources)
+
+
+def test_gpu_extras_keep_cuda_torch():
+    """The counterpart: pinning the GPU extras to CPU wheels would silently
+    remove GPU acceleration from the DeepSeek OCR run and the MuRIL embedding
+    backfill (ROADMAP §5.3 S4)."""
+    torch_sources = _pyproject()["tool"]["uv"]["sources"]["torch"]
+    pinned = {s["extra"] for s in torch_sources}
+    for extra in ("categorizer", "pipeline-core", "ocr-deepseek"):
+        assert extra not in pinned, f"{extra} must keep the default CUDA torch"
+
+
+def test_no_cuda_payload_reaches_the_demo_extra_on_linux():
+    """The property that actually shrinks the image.
+
+    Walks every dependency edge in the lock that points at an nvidia-*/cuda-*/
+    triton package and asserts none is reachable with `demo` enabled,
+    DeepSeek disabled, off darwin — i.e. the box.
+    """
+    lock = UV_LOCK_PATH.read_text()
+    assert _CUDA_PACKAGE.search(lock), "no CUDA packages in the lock at all — "\
+        "the GPU extras should still pull them; this assertion is miscalibrated"
+
+    edges = re.finditer(
+        r'\{ name = "((?:nvidia-|cuda-)[^"]+|triton)"[^}]*?marker = "([^"]*)"', lock
+    )
+    reachable = []
+    for edge in edges:
+        package, marker = edge.group(1), edge.group(2)
+        for clause in marker.split(" or "):
+            clause = clause.strip("() ")
+            if (
+                "extra == 'extra-10-janasunani-demo'" in clause
+                and "extra == 'extra-10-janasunani-ocr-deepseek'" not in clause
+                and "sys_platform == 'darwin'" not in clause
+            ):
+                reachable.append((package, clause))
+    assert not reachable, (
+        "CUDA packages reachable from the demo extra on linux: "
+        + ", ".join(sorted({p for p, _ in reachable}))
+    )
+
+
+def test_locked_torch_resolves_to_a_cpu_wheel_for_linux():
+    """A `+cpu` build must actually be locked, with a linux x86_64 wheel —
+    the box's platform."""
+    lock = UV_LOCK_PATH.read_text()
+    assert 'version = "2.12.1+cpu"' in lock, "no CPU torch build in the lock"
+    assert "torch-2.12.1%2Bcpu-cp313-cp313-manylinux_2_28_x86_64.whl" in lock, (
+        "the locked CPU torch has no linux x86_64 wheel"
+    )

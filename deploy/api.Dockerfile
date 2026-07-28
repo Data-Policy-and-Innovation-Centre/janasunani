@@ -32,8 +32,12 @@ RUN mkdir -p -m 0700 /root/.ssh && ssh-keyscan github.com >> /root/.ssh/known_ho
 COPY pyproject.toml uv.lock ./
 # Dependency-only sync first (no project code yet) so this layer caches across
 # source-only changes; the registry cache (build-push-action cache-from/to
-# type=registry) makes this fast even on a cold CI runner given the ~8-12 GB
-# CUDA-torch resolve for `demo`.
+# type=registry) keeps this fast on a cold CI runner.
+#
+# `demo` resolves torch from PyTorch's CPU-only index (see [tool.uv.sources] in
+# pyproject.toml) — this box has no GPU. That drops ~2.5 GB of wheels versus the
+# default CUDA build: the nvidia-*/cuda-toolkit/triton payload entirely, plus
+# the torch wheel itself going 532 MB -> 192 MB.
 RUN --mount=type=ssh uv sync --locked --extra demo --no-dev --no-install-project
 COPY README.md alembic.ini ./
 COPY janasunani ./janasunani

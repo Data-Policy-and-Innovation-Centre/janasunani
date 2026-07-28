@@ -67,8 +67,8 @@ jobs:
           # commits. The SHA tag is always both-or-neither (this job's push
           # either succeeds or the whole job — and thus the deploy — fails).
           tags: ${{ env.API_IMAGE }}:${{ github.sha }}
-          # Registry cache, not GHA cache: the `demo` extra resolves CUDA
-          # torch (~8-12 GB image) — well past the GHA cache size budget.
+          # Registry cache, not GHA cache: even on CPU-only torch the `demo`
+          # extra's layers run past the GHA cache size budget.
           # (This `buildcache` tag is BuildKit's layer cache, unrelated to
           # image tagging above — it's never pulled/deployed.)
           cache-from: type=registry,ref=${{ env.API_IMAGE }}:buildcache

@@ -101,10 +101,20 @@ categorizer = [
 # with pipeline-core/categorizer, and it is deliberately excluded — DeepSeek OCR
 # runs out-of-process on the GPU box). Launch with:
 #   uv run --extra demo janasunani-api-live
+#
+# Torch resolves from the CPU-only index for this extra alone — see
+# [tool.uv.sources] below. The always-on box has no GPU.
 demo = [
     "janasunani[serving]",
     "janasunani[pipeline-core]",
     "janasunani[categorizer]",
+    # Listed directly, not just inherited, because uv binds a source's
+    # `extra = "demo"` marker only to packages declared on that extra.
+    # Pinned to the version already locked: this change is about *where* torch
+    # comes from, not which torch. Without the pin, adding the direct
+    # requirement re-resolves and drags torch 2.12.1 -> 2.13.0 and torchvision
+    # 0.27.1 -> 0.28.0 into the GPU path, which nothing here tests.
+    "torch==2.12.1",
 ]
 
 [project.scripts]
@@ -142,8 +152,27 @@ conflicts = [
     [{ extra = "ocr-deepseek" }, { extra = "demo" }],
 ]
 
+# PyTorch's CPU-only wheel index. `explicit = true` means nothing resolves from
+# here unless [tool.uv.sources] sends it — every other package still comes from
+# PyPI.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
 [tool.uv.sources]
 dpic = { git = "ssh://git@github.com/Data-Policy-and-Innovation-Centre/dpic-org.git", rev = "main" }
+# CPU torch for the `demo` extra ONLY — the extra `deploy/api.Dockerfile`
+# builds. The always-on box is CPU-only and DeepSeek is deliberately excluded
+# from `demo`, so the CUDA runtime it was shipping (the linux x86_64 torch wheel
+# is 532 MB before the nvidia-* and cuda-toolkit deps) was pure weight on a
+# machine that also hosts the production Postgres.
+#
+# Deliberately NOT applied to `categorizer` or `pipeline-core`: the MuRIL
+# embedding pass is a corpus-scale GPU batch job on the GPU box (ROADMAP §5.3
+# S4), and `ocr-deepseek` is GPU-only by nature. Pinning those to CPU wheels
+# would quietly remove GPU acceleration from the backfills.
+torch = [{ index = "pytorch-cpu", extra = "demo" }]
 
 [dependency-groups]
 dev = [
