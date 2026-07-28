@@ -230,6 +230,28 @@ cp proxy.env.example proxy.env && chmod 600 proxy.env
 docker run --rm caddy:2-alpine caddy hash-password --plaintext '<a real password>'
 ```
 
+**Verify the box before the first deploy**, with `--strict`:
+
+```bash
+cd ~/janasunani
+OLTP_DB_URL="<the same URL compose gives the api>" \
+  uv run --extra demo janasunani-demo-preflight --strict
+```
+
+Loads no model weights, so it answers in milliseconds. Without `--strict`
+three checks report `WARN` rather than failing, because each one leaves the
+demo *running* — which is exactly why they are easy to miss:
+
+| Check | What you get if it is not OK |
+|---|---|
+| `routing mappings` | every response carries `method:"fallback"`; departments are illustrative, not real |
+| `history lake` | `/history` returns an empty page, indistinguishable from "no results" |
+| `oltp store` | `InMemoryResultStore`: submissions return 201 and vanish on restart |
+
+`--strict` makes all three fatal. Use it here and after any `dvc pull`, so a
+box that is merely *up* is not mistaken for a box that is *ready*. Local
+`make up` deliberately runs without it.
+
 Then the maintainer (not CI, not this file's author) creates a GitHub
 Actions **environment** and provisions CI's AWS access and repo
 secrets/vars — **run each of these yourself; nothing here does it for you:**

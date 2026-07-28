@@ -232,7 +232,10 @@ def test_preflight_all_ok_when_dependencies_present(tmp_path, monkeypatch):
     checks = preflight(tmp_path)
 
     assert checks, "preflight must report at least one dependency"
-    assert all(check.ok for check in checks)
+    # Only the required checks: the advisory ones (routing mappings, history
+    # lake, OLTP store) depend on DVC data and environment, not on this
+    # fixture, and are exercised separately below.
+    assert all(check.ok for check in checks if check.required)
 
 
 def test_preflight_reports_missing_artifacts_without_raising(tmp_path, monkeypatch):
@@ -244,7 +247,11 @@ def test_preflight_reports_missing_artifacts_without_raising(tmp_path, monkeypat
 
     checks = preflight(tmp_path)  # empty models dir -> artifacts absent
 
-    model_checks = [c for c in checks if c.name != "tesseract" and "pdf" not in c.name]
+    model_checks = [
+        c
+        for c in checks
+        if c.required and c.name != "tesseract" and "pdf" not in c.name
+    ]
     assert model_checks and all(not c.ok for c in model_checks)
 
 
@@ -288,10 +295,11 @@ def test_preflight_reports_every_shared_required_model_file(tmp_path):
     guards preflight's *use* of the shared list; the companion test below
     guards `build_processor`'s use of it -- together they close the
     green-preflight-then-failed-startup drift gap."""
-    reported = {c.detail for c in preflight(tmp_path) if c.name not in {
-        "tesseract",
-        "pdfinfo/pdftoppm",
-    }}
+    reported = {
+        c.detail
+        for c in preflight(tmp_path)
+        if c.required and c.name not in {"tesseract", "pdfinfo/pdftoppm"}
+    }
     required = {
         " | ".join(str(path) for path in candidates)
         for candidates, _ in _required_model_files(Path(tmp_path))
@@ -433,7 +441,9 @@ def test_live_app_uses_database_store_for_dotenv_only_oltp(tmp_path, monkeypatch
     env_file.write_text("OLTP_DB_URL=postgresql+asyncpg://user:pass@db/janasunani\n")
 
     monkeypatch.delenv("OLTP_DB_URL", raising=False)  # never exported in the shell
-    monkeypatch.setattr(serve, "Settings", lambda: Settings(_env_file=env_file))
+    # `create_live_app` resolves the URL through `service.resolve_explicit_oltp_url`,
+    # which is also what preflight reports — one definition, so the two cannot drift.
+    monkeypatch.setattr(service, "Settings", lambda: Settings(_env_file=env_file))
     monkeypatch.setattr(serve, "build_processor", object)
     monkeypatch.setattr(serve, "LakeHistory", object)
     monkeypatch.setattr(
@@ -480,3 +490,117 @@ def test_live_app_always_uses_lake_history_regardless_of_real_history_flag(
     monkeypatch.setenv("JANASUNANI_REAL_HISTORY", "0")
     serve.create_live_app()
     assert captured["history"] is history
+
+
+# --- advisory readiness checks (#30 bring-up) --------------------------------
+#
+# These three fail in ways the running demo does not surface: routing quietly
+# on method:"fallback", /history empty rather than erroring, submissions kept
+# in memory and lost on restart. They are advisory by default so local
+# `make up` still works, and fatal under --strict for a box bring-up.
+#
+# Each is exercised in both directions with the environment stubbed, so the
+# result does not depend on whether this machine has run `dvc pull`.
+
+
+def _advisory(checks, name):
+    by_name = {c.name: c for c in checks}
+    assert name in by_name, f"{name} missing from preflight; got {sorted(by_name)}"
+    check = by_name[name]
+    assert not check.required, f"{name} must be advisory, not required"
+    return check
+
+
+def test_preflight_flags_absent_routing_mappings(tmp_path, monkeypatch):
+    """Without the master CSVs the router silently answers `method:"fallback"`
+    while the API stays healthy — the exact state #30 warns about for a box
+    that skipped the scoped `dvc pull`."""
+    monkeypatch.setattr(
+        service, "_routing_mappings_check", service._routing_mappings_check
+    )
+    monkeypatch.setattr(
+        "janasunani.routing.mappings.load_mapping_tables", lambda *a, **k: None
+    )
+    check = _advisory(preflight(tmp_path), "routing mappings")
+    assert check.ok is False
+    assert "fallback" in check.detail
+
+
+def test_preflight_passes_when_routing_mappings_load(tmp_path, monkeypatch):
+    class _Tables:
+        categories = ("a", "b", "c")
+        category_to_department = {"1": "5"}
+
+    monkeypatch.setattr(
+        "janasunani.routing.mappings.load_mapping_tables", lambda *a, **k: _Tables()
+    )
+    check = _advisory(preflight(tmp_path), "routing mappings")
+    assert check.ok is True
+    assert "3 categories" in check.detail
+
+
+def test_preflight_flags_unmaterialized_lake(tmp_path, monkeypatch):
+    """`LakeHistory` returns an empty page for a missing lake, so the UI shows
+    'no results' rather than an error. Preflight must say which it is."""
+    monkeypatch.setattr(
+        "janasunani.olap.lake.lake_path",
+        lambda table, lake_dir=None: tmp_path / f"{table}.parquet",
+    )
+    check = _advisory(preflight(tmp_path), "history lake")
+    assert check.ok is False
+    assert "empty page" in check.detail
+
+
+def test_preflight_reports_lake_row_count(tmp_path, monkeypatch):
+    """A materialized lake reports its size, so an operator can tell a real
+    lake from an empty-but-present Parquet."""
+    pytest.importorskip("duckdb")
+    import duckdb
+
+    parquet = tmp_path / "complaints.parquet"
+    duckdb.connect().execute(
+        f"COPY (SELECT 'T1' AS ticket_no UNION ALL SELECT 'T2') "
+        f"TO '{parquet.as_posix()}' (FORMAT parquet)"
+    )
+    monkeypatch.setattr(
+        "janasunani.olap.lake.lake_path", lambda table, lake_dir=None: parquet
+    )
+    check = _advisory(preflight(tmp_path), "history lake")
+    assert check.ok is True
+    assert "2 complaints" in check.detail
+
+
+def test_preflight_flags_unconfigured_oltp(tmp_path, monkeypatch):
+    """No explicit OLTP_DB_URL means InMemoryResultStore: the demo accepts
+    submissions, returns 201, and loses them on restart."""
+    monkeypatch.setattr(service, "resolve_explicit_oltp_url", lambda: None)
+    check = _advisory(preflight(tmp_path), "oltp store")
+    assert check.ok is False
+    assert "lost on restart" in check.detail
+
+
+def test_preflight_never_leaks_the_oltp_url(tmp_path, monkeypatch):
+    """The URL carries a DB password; the report must never print it."""
+    secret = "postgresql+asyncpg://user:hunter2@db.internal/janasunani"
+    monkeypatch.setattr(service, "resolve_explicit_oltp_url", lambda: secret)
+    check = _advisory(preflight(tmp_path), "oltp store")
+    assert check.ok is True
+    assert "hunter2" not in check.detail
+    assert secret not in check.detail
+
+
+def test_advisory_failures_do_not_fail_preflight_by_default(tmp_path, monkeypatch):
+    """`make up` must keep working on a dev box with no DVC data."""
+    _write_dummy_model_artifacts(tmp_path)
+    monkeypatch.setattr(service.shutil, "which", lambda _binary: "/usr/bin/fake")
+    monkeypatch.setattr(page_renderer, "POPPLER_PATH", None)
+    monkeypatch.setattr(service, "resolve_explicit_oltp_url", lambda: None)
+    monkeypatch.setattr(
+        "janasunani.routing.mappings.load_mapping_tables", lambda *a, **k: None
+    )
+
+    checks = preflight(tmp_path)
+    assert any(not c.ok for c in checks), "test setup should produce advisory failures"
+    assert all(c.ok for c in checks if c.required), (
+        "no required check may fail here — only advisory ones"
+    )

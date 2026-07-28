@@ -54,7 +54,7 @@ help:
 	@echo ""
 	@echo "  Live demo (real-inference API — see docs/DEMO.md):"
 	@echo "  make models          DVC-pull ONLY the demo model artifacts"
-	@echo "  make preflight       Fast readiness check (models + OCR binaries)"
+	@echo "  make preflight       Fast readiness check (models, OCR binaries, mappings/lake/OLTP)"
 	@echo "  make db              Start throwaway Postgres + run migrations"
 	@echo "  make api             Run the live real-inference API"
 	@echo "  make frontend        Run the Next.js UI against the live API"

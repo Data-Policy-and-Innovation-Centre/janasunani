@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Optional, Protocol
 
-from janasunani.config import MODELS_DIR
+from janasunani.config import DEFAULT_OLTP_DB_URL, MODELS_DIR, Settings
 from janasunani.inference.ocr import OcrQualityError, OcrResult
 from janasunani.pipeline.stages.page_type_classifier import PAGE_TYPE_CLASS_BY_LABEL
 from janasunani.serving.schemas import (
@@ -436,15 +436,132 @@ def _required_model_files(root: Path) -> list[tuple[tuple[Path, ...], str]]:
 
 
 class DependencyCheck:
-    """One demo-readiness dependency and whether it is satisfied."""
+    """One demo-readiness dependency and whether it is satisfied.
 
-    def __init__(self, name: str, ok: bool, detail: str) -> None:
+    ``required`` separates "the processor cannot start" from "the demo will
+    start and quietly show you less than you think". A missing model artifact
+    is the first kind; an unmaterialized lake is the second — `/history`
+    returns an empty page rather than an error, so nothing surfaces it. The
+    second kind is advisory by default and fatal under ``--strict``, which is
+    what the box runbook uses.
+    """
+
+    def __init__(
+        self, name: str, ok: bool, detail: str, *, required: bool = True
+    ) -> None:
         self.name = name
         self.ok = ok
         self.detail = detail
+        self.required = required
 
     def __repr__(self) -> str:  # pragma: no cover - debug aid
         return f"DependencyCheck(name={self.name!r}, ok={self.ok!r})"
+
+
+def resolve_explicit_oltp_url() -> Optional[str]:
+    """Resolve ``OLTP_DB_URL`` through the same ``Settings`` layer the rest of
+    the app uses, so a value set in the project ``.env`` (not just a
+    shell-exported env var) is honored -- a raw ``os.environ`` read misses it
+    and store selection silently falls back to ``InMemoryResultStore``.
+
+    Re-instantiates ``Settings()`` (rather than importing the module-level
+    singleton) so this always reflects the current process environment and
+    ``.env`` file at call time.
+
+    Returns None unless OLTP is *explicitly* configured: a value equal to
+    ``DEFAULT_OLTP_DB_URL`` (the built-in local-SQLite fallback ``Settings``
+    itself falls back to) is treated as "not configured", matching Phase 8C's
+    contract of using ``DatabaseResultStore`` only for an explicit OLTP URL.
+
+    Lives here rather than in ``serve`` so ``preflight`` can report the same
+    answer ``create_live_app`` will act on, without importing the serving
+    stack (which needs the ``serving`` extra).
+    """
+    resolved = Settings().OLTP_DB_URL
+    return resolved if resolved != DEFAULT_OLTP_DB_URL else None
+
+
+def _routing_mappings_check() -> DependencyCheck:
+    """The ORTPSA master tables the router needs to produce real departments.
+
+    ``load_mapping_tables`` returns None rather than raising when the CSVs are
+    absent, and ``MappingRouter`` then falls back to the illustrative rule set.
+    The API stays healthy and every response carries ``method:"fallback"``.
+    On a box that has not run the scoped ``dvc pull``, that is the default.
+    """
+    try:
+        from janasunani.routing.mappings import DEFAULT_MAPPING_DIR, load_mapping_tables
+
+        tables = load_mapping_tables()
+    except Exception as exc:  # pragma: no cover - defensive; never raise
+        return DependencyCheck(
+            "routing mappings", False, f"unavailable: {exc}", required=False
+        )
+    if tables is None:
+        return DependencyCheck(
+            "routing mappings",
+            False,
+            f"absent at {DEFAULT_MAPPING_DIR} -> routing degrades to "
+            'method:"fallback" (run the scoped dvc pull)',
+            required=False,
+        )
+    return DependencyCheck(
+        "routing mappings",
+        True,
+        f"{len(tables.categories)} categories, "
+        f"{len(tables.category_to_department)} with a derivable department",
+        required=False,
+    )
+
+
+def _lake_check() -> DependencyCheck:
+    """The Parquet lake behind ``GET /history``.
+
+    ``LakeHistory`` returns an empty page when ``complaints.parquet`` is
+    missing, so an unmaterialized lake looks identical to "no results" in the
+    UI.
+    """
+    try:
+        from janasunani.olap import lake
+
+        path = lake.lake_path("complaints")
+        if not path.is_file():
+            return DependencyCheck(
+                "history lake",
+                False,
+                f"{path} absent -> /history returns an empty page, not an error",
+                required=False,
+            )
+        import duckdb
+
+        rows = duckdb.connect().execute(
+            f"SELECT count(*) FROM read_parquet('{path.as_posix()}')"
+        ).fetchone()[0]
+    except Exception as exc:  # pragma: no cover - defensive; never raise
+        return DependencyCheck("history lake", False, f"unreadable: {exc}", required=False)
+    return DependencyCheck(
+        "history lake", rows > 0, f"{rows:,} complaints in {path}", required=False
+    )
+
+
+def _oltp_check() -> DependencyCheck:
+    """Whether live submissions will survive a restart."""
+    # Never include the URL itself: it can carry a DB password.
+    # `required` is a property of the check, not of this run's outcome, so it
+    # stays False on the passing branch too.
+    if resolve_explicit_oltp_url():
+        return DependencyCheck(
+            "oltp store",
+            True,
+            "explicit OLTP_DB_URL -> DatabaseResultStore",
+            required=False,
+        )
+    return DependencyCheck(
+        "oltp store",
+        False,
+        "OLTP_DB_URL not set -> InMemoryResultStore, submissions lost on restart",
+        required=False,
+    )
 
 
 def preflight(models_dir: str | Path | None = None) -> list[DependencyCheck]:
@@ -478,6 +595,12 @@ def preflight(models_dir: str | Path | None = None) -> list[DependencyCheck]:
     _binary_check(
         "pdfinfo/pdftoppm", _poppler_available, "PDF page renderer (poppler)"
     )
+
+    # Advisory checks: none of these stop `build_processor`, and all three fail
+    # in ways the running demo does not surface. See DependencyCheck.required.
+    checks.append(_routing_mappings_check())
+    checks.append(_lake_check())
+    checks.append(_oltp_check())
     return checks
 
 

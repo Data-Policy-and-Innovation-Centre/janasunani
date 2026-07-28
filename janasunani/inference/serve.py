@@ -20,33 +20,16 @@ if sys.platform == "darwin":
     # to plain HTTPS locally; the Linux CPU box (where Xet works) is untouched.
     os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
-from janasunani.config import DEFAULT_OLTP_DB_URL, Settings  # noqa: E402
-from janasunani.inference.service import build_processor  # noqa: E402
+from janasunani.inference.service import (  # noqa: E402
+    build_processor,
+    resolve_explicit_oltp_url as _resolve_explicit_oltp_url,
+)
 from janasunani.serving.api import create_app  # noqa: E402
 from janasunani.serving.history import LakeHistory  # noqa: E402
 from janasunani.serving.store import (  # noqa: E402
     DatabaseResultStore,
     InMemoryResultStore,
 )
-
-
-def _resolve_explicit_oltp_url() -> str | None:
-    """Resolve `OLTP_DB_URL` through the same `Settings` layer the rest of the
-    app uses, so a value set in the project `.env` (not just a shell-exported
-    env var) is honored -- a raw `os.environ` read misses it and store
-    selection silently falls back to `InMemoryResultStore`.
-
-    Re-instantiates `Settings()` (rather than importing the module-level
-    singleton) so this always reflects the current process environment and
-    `.env` file at call time.
-
-    Returns None unless OLTP is *explicitly* configured: a value equal to
-    `DEFAULT_OLTP_DB_URL` (the built-in local-SQLite fallback `Settings`
-    itself falls back to) is treated as "not configured", matching Phase 8C's
-    contract of using `DatabaseResultStore` only for an explicit OLTP URL.
-    """
-    resolved = Settings().OLTP_DB_URL
-    return resolved if resolved != DEFAULT_OLTP_DB_URL else None
 
 
 def create_live_app():
@@ -68,26 +51,55 @@ def preflight_main() -> None:
 
     A fast, weight-free pre-check to run before the multi-minute warm start:
     it surfaces a missing model artifact or OCR binary in milliseconds instead
-    of minutes into `build_processor`. Also reports which OLTP store `main`
-    would select, so an operator can confirm the DB URL is wired before boot.
+    of minutes into `build_processor`.
+
+    Two severities. Required checks are things `build_processor` cannot start
+    without, and always fail the run. Advisory checks (`WARN`) are the ones
+    that let the demo start and then quietly show less than expected: routing
+    silently on `method:"fallback"`, `/history` empty because the lake was
+    never materialized, submissions dropped because OLTP was never configured.
+
+    `--strict` promotes advisory failures to fatal. That is the mode for a
+    box bring-up, where "starts but shows nothing" is not success.
     """
+    import argparse
+
     from janasunani.inference.service import preflight
 
+    parser = argparse.ArgumentParser(
+        description="Report demo readiness without loading model weights."
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "Treat advisory checks as failures. Use for a box bring-up: "
+            "routing mappings, the history lake and the OLTP store all fail "
+            "silently at runtime."
+        ),
+    )
+    args = parser.parse_args()
+
     checks = preflight()
-    all_ok = True
+    fatal = False
+    degraded = False
     for check in checks:
-        mark = "OK  " if check.ok else "FAIL"
+        if check.ok:
+            mark = "OK  "
+        elif check.required or args.strict:
+            mark = "FAIL"
+            fatal = True
+        else:
+            mark = "WARN"
+            degraded = True
         print(f"[{mark}] {check.name}: {check.detail}")
-        all_ok = all_ok and check.ok
 
-    oltp_url = _resolve_explicit_oltp_url()
-    if oltp_url:
-        # Do not print the URL: it can carry a DB password.
-        print("[INFO] OLTP: explicit URL set -> DatabaseResultStore (persistent)")
-    else:
-        print("[INFO] OLTP: not set -> InMemoryResultStore (results lost on restart)")
-
-    raise SystemExit(0 if all_ok else 1)
+    if degraded and not args.strict:
+        print(
+            "[INFO] WARN items do not stop startup; the demo will run degraded. "
+            "Re-run with --strict to treat them as failures."
+        )
+    raise SystemExit(1 if fatal else 0)
 
 
 def main() -> None:
