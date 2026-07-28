@@ -758,8 +758,8 @@ Profile and reconcile them before exposing any comparison.
     (`pipeline/stages/categorizer/model.py`), and its pooled representation is a
     category-aware embedding. **No new model** and no new entry into the
     `transformers` version conflict, which is what makes the slice affordable.
-  - ⚠️ **It is not free, and an earlier draft said it was.** "A forward pass we
-    already make" is true only for grievances flowing through the live pipeline. The
+  - ⚠️ **It is not free.** "A forward pass we already make" is true only for
+    grievances flowing through the live pipeline. The
     1.37M historical records have never been through the categorizer, so this is a
     **new corpus-scale batch inference job** plus a clustering job, on the GPU box.
     Hours, not minutes, and it needs scheduling like any other backfill.
@@ -817,7 +817,9 @@ Profile and reconcile them before exposing any comparison.
     finding rather than a bug. This is what sank the earlier BERTopic attempt
     (Phase 22), so it is a known failure mode here, not a hypothetical one.
     Transliterate first, then embed, and verify on transliterated pairs before
-    trusting any cluster.
+    trusting any cluster. Transliteration is Phase 17, which runs after this, so the
+    August contract matches Phase 14's: **cluster within one script**, and treat the
+    cross-script alignment check as work that follows Phase 17.
 
 Phase 14 adds inputs, and forces a decision about what a count means.
 
@@ -1219,7 +1221,7 @@ compressed by working harder. They are the schedule.
 | Work | Who | Why it cannot be compressed | Status |
 |---|---|---|---|
 | Adjudicate 85 PII pages | Intern | Reading citizen text and judging span boundaries. Gates the privacy scorecard *and* the Sarvam PII comparison | Finishing wk 1 |
-| **Transcribe an OCR ground-truth sample** | **Unassigned** | Someone must hand-transcribe scanned Odia and English pages, printed and handwritten. The earlier 77.9% is a plausibility rate, not accuracy, so there is no existing ground truth to reuse | ⚠️ **Not started** |
+| **Transcribe an OCR ground-truth sample** | **Unassigned** | Someone must hand-transcribe scanned Odia and English pages, printed and handwritten. The earlier 77.9% is a plausibility rate, not accuracy, so there is no existing ground truth to reuse | ⚠️ **Owner to be named at the ED meeting** |
 | Label the disposal templates into the 7-class action taxonomy | Engineer | ~500 strings. LLM-assisted drafting, human adjudication. Half a day, but it gates the closure view | Not started |
 | Choose the backlog slice for Phase 14 | ED + engineer | A judgement call about what is defensible to demonstrate. Brainstorming session. Also a technical gate: the redaction pass and both backfills cannot start until it is fixed | Not scheduled |
 | Lock the A/B analysis plan | Engineer, statistical judgement | Estimator choice and the power calculation are not mechanical | Not started |
@@ -1228,8 +1230,9 @@ compressed by working harder. They are the schedule.
 ⚠️ **The transcription set is the largest unmanaged risk in the plan.** It sits on
 the week-3 critical path, has no owner, and cannot be produced by an agent because it
 is the ground truth an agent would be measured against. Fifty pages is probably the
-floor for reporting handwritten and printed separately. Assign it in week 1 or drop
-the OCR accuracy row and report Sarvam Vision comparatively only.
+floor for reporting handwritten and printed separately. It goes to the ED meeting as a
+named decision; if no owner comes out of it, drop the OCR accuracy row and report
+Sarvam Vision comparatively only.
 
 #### B. The serial chain
 

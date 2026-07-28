@@ -148,7 +148,9 @@ Below that, three kinds of work, and they scale differently.
 | Choosing which portion of the backlog to demonstrate on | A judgement about what is defensible. It is also the starting gun for the overnight processing, which cannot begin until the portion is fixed |
 | Fixing the A/B analysis plan | The estimator and the power calculation need statistical judgement |
 
-**One request.** The transcription sample has no owner yet, and it sits on the final week's path. It needs perhaps fifty pages, printed and handwritten, transcribed by someone who reads Odia. If we can identify that person in the coming week, the Sarvam comparison reports accuracy. If not, it reports a narrower result: how the two systems differ from each other, without a verdict on which is right.
+**One request, and it is the main one.** The transcription sample has no owner, and it sits on the final week's path. It needs perhaps fifty pages, printed and handwritten, transcribed by someone who reads Odia. Naming that person is on the agenda for our next meeting.
+
+If we have an owner, the Sarvam comparison reports accuracy. If not, it reports a narrower result: how the two systems differ from each other, without a verdict on which is right.
 
 ## Not in scope for August
 
@@ -163,4 +165,4 @@ Running Sarvam's large model on our own hardware. Natural-language querying. Com
 | Whether the demonstration audience may see real citizen data, and under whose login | 7 August |
 | Whether the closed-without-action finding is shown on 14 August or brought to you first. It reflects on the redressal process, not the software. We would report it at state level only, never office by office | 7 August |
 | Whether any department has agreed in principle to an A/B trial later, which would let us present the design with a named partner | 14 August |
-| Who can hand-transcribe roughly fifty scanned pages in Odia and English. Without it the Sarvam comparison has no correct answer to measure against | 31 July |
+| Who can hand-transcribe roughly fifty scanned pages in Odia and English. Without it the Sarvam comparison has no correct answer to measure against. **The one item on the final week's path with nobody assigned** | Next meeting, and no later than 31 July |
