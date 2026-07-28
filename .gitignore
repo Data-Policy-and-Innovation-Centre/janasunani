@@ -239,3 +239,6 @@ mlruns/
 # (shared .claude/settings.json stays tracked)
 .claude/settings.local.json
 .claude/worktrees/
+
+# Generated Word docs (management/technical briefs rendered from docs/*.md)
+docs/*.docx
