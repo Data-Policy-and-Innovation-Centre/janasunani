@@ -10,7 +10,7 @@ Nothing here prints gold text unless `--show-samples` is passed explicitly, and
 even then only entity surface forms, capped and truncated. Default output is
 counts only.
 
-Two checks matter most:
+Three checks matter most:
 
 1. **Structural validity.** Offsets in range, non-empty, non-overlapping, labels
    recognised. A malformed gold file silently scores wrong rather than failing.
@@ -19,14 +19,25 @@ Two checks matter most:
    construction (see `scripts/bootstrap_pii_gold.py`). Comparing corrected
    against draft turns "was this labelled?" into a number: spans added, deleted,
    re-bounded, relabelled. Near-zero changes means the measurement is void.
+3. **Is the pair actually a pair.** Every drafted record must appear in the gold,
+   and the text of each shared record must be identical. Spans are character
+   offsets into that text, so a gold diffed against a *different* bootstrap run
+   reads as thousands of spans added and removed when nothing was labelled.
+   Bootstrap is not reproducible across machines (#57), which is why the draft is
+   tracked alongside its gold rather than regenerated.
 
 Usage:
-    uv run --extra pipeline-core python scripts/verify_pii_gold.py \
-        --gold data/external/pii_gold.jsonl \
-        [--draft data/output/pii_gold_draft_n50.jsonl] [--json] [--show-samples]
+    python scripts/verify_pii_gold.py \
+        --gold data/external/pii_gold_n50.jsonl \
+        [--draft data/external/pii_gold_n50.draft.jsonl] [--json] [--show-samples]
 
-Exit status is non-zero if any structural check fails, so CI or a pre-merge hook
-can gate on it.
+Standard library only, deliberately: this has to run before a gold file is
+trusted, on any machine, without resolving the mutually conflicting pipeline
+extras. No `uv run --extra ...` needed.
+
+Exit status is non-zero if any check above fails, so a pre-merge gate can use it.
+Note it is a *local* gate: the gold file is DVC-tracked and CI has no access to
+the data remote, so run it yourself and paste the output into the PR.
 """
 
 from __future__ import annotations
