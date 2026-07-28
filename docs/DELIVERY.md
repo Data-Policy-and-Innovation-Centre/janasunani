@@ -18,7 +18,9 @@ Live processing works. A grievance submitted through the web interface comes bac
 
 Deployment automation is written and reviewed but not yet run. The system is not switched on at our AWS server.
 
-Manual privacy correction of eighty-five pages finishes this week. That is the step that tells us how often redaction misses something, and it gates both the privacy scorecard and the Sarvam benchmark.
+Manual privacy correction of eighty-five pages finishes this week. That is the step that tells us how often redaction misses something. It gates the privacy scorecard, and the privacy half of the Sarvam comparison.
+
+The document-reading half of that comparison is gated by something else entirely: a hand-transcribed sample of scanned pages, which nobody has been asked to produce yet. Two different bottlenecks, two different people.
 
 ## What we deliver on 14 August
 
@@ -83,6 +85,10 @@ The same field yields 34,000 duplicates officers have already identified. We use
 
 None of this waits on document scanning.
 
+**On the citizen text itself.** All four items read what people wrote, and what people write contains names, phone numbers and addresses. Historical complaint text is passed through the same redaction step the scanned documents use, before any matching or grouping runs over it. That runs first, not afterwards.
+
+Redaction is not the whole answer. What the matching produces is still built from citizen writing, so those files stay on our own machines, are never sent to an outside provider, and sit under the same access rules as the original records.
+
 ### On the last two
 
 The fourth is a design, not a running trial. No department has yet agreed which of its offices would go first.
@@ -106,22 +112,32 @@ One caveat. Sarvam documents their vision model as strong on printed text, table
 | Week | Delivered | Verified by |
 |---|---|---|
 | 27 to 31 July | Manual privacy labelling complete. System live on AWS. Pipeline run end to end | A grievance submitted in a browser returns a result. Counts reconcile at every pipeline step |
-| 3 to 7 August | Privacy scorecard. Spam and duplicate detection. Backlog duplication count. Management metrics, local issue themes, and spike view | Missed-PII rate by data type and language. Known repeat submissions found in a held-out sample. Each metric reconciles against source data. One real spike found and explained |
+| 3 to 7 August | Privacy scorecard. Historical complaint text redacted. Spam and duplicate detection. Backlog duplication count. Management metrics, local issue themes, and spike view | Missed-PII rate by data type and language. Redaction pass completes over the chosen portion before any matching runs. Known repeat submissions found in a held-out sample. Each metric reconciles against source data. One real spike found and explained |
 | 10 to 14 August | Sarvam scorecard. Experiment design and power calculation. Full benchmark table | Sarvam and our models compared on the same test data. Every stage in Table 2 has a number |
 
 Work stops Thursday 13 August. Friday is rehearsal, no code changes.
 
-Two dependencies set this order. Privacy labelling gates both the privacy scorecard and the Sarvam benchmark, which is why it finishes this week rather than running alongside. Duplicate detection must precede the spike view, because a campaign of four hundred citizens about one road is a genuine surge and should be reported as one. What duplicate detection adds is the ability to say whether a surge is four hundred people on one issue or four hundred separate problems, which are different facts requiring different responses.
+Three dependencies set this order.
+
+Privacy labelling gates the privacy scorecard, which is why it finishes this week rather than running alongside.
+
+The hand-transcribed sample gates the Sarvam document-reading comparison. It is the one item on the final week's path with no owner.
+
+Duplicate detection must precede the spike view. A campaign of four hundred citizens about one road is a genuine surge and should be reported as one. What duplicate detection adds is the ability to say whether a surge is four hundred people on one issue or four hundred separate problems, which are different facts requiring different responses.
 
 Labelling finishing this week lets the privacy scorecard move to week two, which takes the final week down to two items. That matters, because the last week also carries rehearsal.
 
 ## How the three weeks are worked
 
-Three kinds of work, and they scale differently.
+One engineer is accountable for the whole of it. The engineering is heavily assisted by AI agents, which write code, draft analysis and review each other's work. That is what makes three weeks plausible for this much scope.
 
-**Building runs in parallel.** Most of the code is self-contained enough to be written alongside itself rather than one piece after another: the duplicate-matching logic, the spam checks, the closure query, the metric definitions, the supervisor screen, the Sarvam connector. Each is tested on its own before it touches real data. This is where the single-engineer constraint is least binding.
+It does not move responsibility. Integration, checking results against real data, and final sign-off on anything touching citizen data, security or the live server are done by the engineer. The assistance speeds up how fast work is produced, not who answers for it.
 
-**Processing the full history runs overnight.** Building the duplicate index and computing the themes are hours-long jobs over more than a million records. They are scheduled early and left to run rather than squeezed into the final days.
+Below that, three kinds of work, and they scale differently.
+
+**Building runs in parallel.** Most of the code is self-contained enough to be written alongside itself rather than one piece after another: the duplicate-matching logic, the spam checks, the closure query, the metric definitions, the supervisor screen, the Sarvam connector. Each is tested on its own before it touches real data. This is where being one engineer is least binding.
+
+**Processing the full history runs overnight.** Redacting the complaint text, building the duplicate index and computing the themes are hours-long jobs over more than a million records. They run in that order, and they are scheduled early and left running rather than squeezed into the final days.
 
 **Judgement cannot be parallelised, and that is what sets the schedule.** Four things need a person:
 
@@ -129,7 +145,7 @@ Three kinds of work, and they scale differently.
 |---|---|
 | Correcting the 85 privacy pages | Reading and judging each one. Finishing this week |
 | Transcribing a sample of scanned pages by hand | The only way to know whether Sarvam reads Odia better than we do is to have a correct transcription to compare both against. No such record exists |
-| Choosing which portion of the backlog to demonstrate on | A judgement about what is defensible, not a technical choice |
+| Choosing which portion of the backlog to demonstrate on | A judgement about what is defensible. It is also the starting gun for the overnight processing, which cannot begin until the portion is fixed |
 | Fixing the A/B analysis plan | The estimator and the power calculation need statistical judgement |
 
 **One request.** The transcription sample has no owner yet, and it sits on the final week's path. It needs perhaps fifty pages, printed and handwritten, transcribed by someone who reads Odia. If we can identify that person in the coming week, the Sarvam comparison reports accuracy. If not, it reports a narrower result: how the two systems differ from each other, without a verdict on which is right.

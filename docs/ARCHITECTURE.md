@@ -199,14 +199,18 @@ release gates.
   Unchanged: PII detection and redaction run in-process (Presidio + local spaCy)
   by default, and PII `start`/`end` offsets stay defined over the original text.
 
-- **The lake is not PII-free, and an earlier draft wrongly implied it was.** The
-  `complaints` structured columns (`petitioner_name`, `petitioner_mobile`,
-  `petitioner_email`, `address`) are carried faithfully from the dump into both
-  OLTP and the lake; the Phase 14 dedup index keys off them. The guarantee that
-  does hold is narrower: **no un-redacted grievance or page text reaches any
-  downstream output.** Raw OCR text stays in the pipeline artifact DB; only
-  `redacted_text` is exported. Control on the structured contact columns is
-  access, not redaction. Full breakdown in [ROADMAP.md](ROADMAP.md) §3.2.
+- **The lake is not PII-free, and it holds raw citizen prose.** The `complaints`
+  structured columns (`petitioner_name`, `petitioner_mobile`, `petitioner_email`,
+  `address`) are carried faithfully from the dump into both OLTP and the lake, and
+  the Phase 14 dedup index keys off them. So is `complaints.grievance`, the
+  citizen's own account of the problem: `materialize.py` copies it verbatim and it
+  never meets `pii_tagger`. The guarantee that holds is narrower than it sounds:
+  **no un-redacted *page* text reaches any downstream output.** Raw OCR text stays
+  in the pipeline artifact DB; only `redacted_text` is exported. Historical
+  `grievance` is redacted by its own batch pass before Phase 14 or 15 index it, and
+  the resulting signatures and vectors stay `dpic-infra`. Control on the structured
+  contact columns is access, not redaction. Full breakdown in
+  [ROADMAP.md](ROADMAP.md) §3.2.
   Sending un-redacted text to an external PII detector is permitted by the
   authorization but is the highest-sensitivity call in the system; it is the last
   candidate to adopt, not the first. See [ROADMAP.md](ROADMAP.md) §3.1, §3.2, and §5.5.

@@ -51,7 +51,8 @@ evidence (d, e). Both of those make claims that need data we do not have yet, an
 neither is honest as a live feature on the demo date.
 
 **The August cut is narrower than the full phase scope below.** The demo is
-**14 August 2026**, built by **one engineer**, so §5 describes each phase in full
+**14 August 2026**, built by **one accountable engineer with agent augmentation**
+(§5.6 states the operating model), so §5 describes each phase in full
 while [DELIVERY.md](DELIVERY.md) states what is actually promised for the demo and
 what the fallback is if it slips. Where the two differ, DELIVERY.md governs the
 demo and this document governs the eventual shape.
@@ -238,18 +239,29 @@ scanned documents) reaches any downstream output. That guarantee does **not** ex
 to `complaints.grievance`, which is raw personal data sitting in the lake, and it
 does not extend to artifacts derived from it.
 
-Three consequences, all binding on Phases 14 and 15:
+Three consequences bind Phases 14 and 15. The first is a scheduled build step, not a
+principle.
 
-- **Redact `grievance` before MinHash or embedding**, or accept and document that the
-  resulting index is a personal-data artifact. Phase 14 already runs after
-  `pii_tagger` for *page* text; the `grievance` column bypasses that path entirely
-  and needs its own pass.
-- **Derived indexes are not downstream-safe by construction.** Signatures and vectors
-  built from raw prose inherit its classification. Neither phase may claim otherwise.
-- The control on all of this is **access, not redaction**. Phase 18 owns the role and
-  audit rules. A future option is to materialize a separately redacted analytics
-  column and exclude the raw field from analytics-facing Parquet, which would let the
-  guarantee widen; it is not what the code does today.
+- **A `grievance` redaction pass is step 0 of Phase 14, and nothing indexes raw
+  prose.** `janasunani-redact-grievance` runs the same Presidio analyzer `pii_tagger`
+  uses over the `grievance` column for the chosen backlog slice, and writes
+  `grievance_redacted` to its own governed table. MinHash signatures and S4 embeddings
+  read that column only. The job is CPU-only over short text (median 19 words), so it
+  contends with neither GPU backfill and can start the moment the slice is chosen. The
+  live path is unaffected: `pii_tagger` already covers page text there.
+- **Redaction lowers exposure; it does not declassify what is derived.** A signature or
+  vector built from citizen prose inherits its classification even after contact
+  details are stripped, because distinctive phrasing re-identifies where a phone number
+  no longer does. So the dedup index, the MinHash signatures and the S4 embeddings are
+  **`dpic-infra` artifacts**: DPIC-controlled machines only, never an
+  `authorized-external` route, and inside Phase 18's RBAC and audit scope alongside the
+  raw lake. Neither Phase 14 nor Phase 15 may call them downstream-safe by
+  construction.
+- **The raw column stays off the analytics surface.** The semantic layer, the metrics
+  and the supervisor screen read `grievance_redacted`. Dropping
+  `complaints.grievance` from the analytics-facing Parquet altogether is the cleaner
+  end state and belongs to Phase 18; for August the control is that no query in the
+  metrics path selects it, plus access control on the lake itself.
 
 ## 4. Built: Phases 0–12
 
@@ -552,7 +564,7 @@ operation and must not share one similarity function.
   per filing. Otherwise a 400-signature campaign becomes its own "theme" and the
   finding is circular.
 
-**Two placement decisions that matter.**
+**Three placement decisions that matter.**
 
 - The stage runs **after `pii_tagger`, on redacted text**, so the
   redaction-first safety edge stays intact. Note this is a trade, not a free win:
@@ -560,10 +572,18 @@ operation and must not share one similarity function.
 - It runs **before `summarizer` and `categorizer`** and gates them, the way
   page-type already gates the summarizer. Obvious spam and exact duplicates should
   not consume the expensive stages.
+- **The historical corpus does not enter through this stage at all**, and that is the
+  placement decision most easily missed. The 1.37M records already sit in the lake;
+  they were never scanned documents and never met `pii_tagger`. Their redaction edge
+  is the step-0 pass in §3.2, and the index is built from `grievance_redacted`. Two
+  entry points, one index.
 
-New stage order:
+New stage order for documents:
 `format_classifier → ocr_extraction → pii_tagger → spam_duplicate →
 page_type_classifier → summarizer → categorizer`.
+
+Backfill order for history:
+`janasunani-redact-grievance → dedup index build → spam_duplicate scoring`.
 
 **Three firsts this stage introduces**, worth flagging:
 
@@ -578,10 +598,10 @@ page_type_classifier → summarizer → categorizer`.
 **Outputs:** `spam_score`, `spam_reason`, `duplicate_group_id`, `duplicate_kind`
 (`resubmission` | `campaign` | `none`).
 
-**Corpus study.** Run the detector over the 1.37M history; report prevalence by
-district, category, mode, year. What share of officer load is duplicate handling is
-the number that makes the case. It feeds Phase 15 and is a candidate outcome for
-Phase 16.
+**Corpus study.** Run the detector over the chosen slice of the 1.37M history, on
+`grievance_redacted`; report prevalence by district, category, mode, year. What share
+of officer load is duplicate handling is the number that makes the case. It feeds
+Phase 15 and is a candidate outcome for Phase 16.
 
 **UI.** A triage banner on the result screen: "possible duplicate of ticket NNN"
 with a link, "part of a campaign, N related filings", "flagged low-signal, review".
@@ -747,9 +767,9 @@ Profile and reconcile them before exposing any comparison.
     result precomputed as a demo artifact, rather than the full corpus live.
     Full-corpus S4 is a stretch goal. DELIVERY Table 1 marks the component *Bounded*
     for this reason.
-  - **Embed `grievance` only** for the demo, so this carries no OCR dependency.
-    See §3.2: that field is raw citizen prose, so it needs a redaction pass of its
-    own before embedding, and the resulting vectors are governed artifacts.
+  - **Embed `grievance_redacted` only** for the demo, so this carries no OCR
+    dependency. It reads the output of the Phase 14 step-0 pass (§3.2), never the raw
+    column, and the resulting vectors are `dpic-infra` artifacts regardless.
   - **Cluster within category, never globally.** Compute stays tractable, every
     cluster is nested inside a label officers already use, and it avoids presenting
     "people complain about water" as a discovery. Global clustering over 1.37M
@@ -1180,9 +1200,16 @@ permission checks. They are the controls that keep the choice reversible:
 
 ### 5.6 Execution plan to 14 August
 
-One engineer, plus subagents, plus an intern on labelling. Fourteen working days.
-What follows separates the three kinds of work, because they scale differently and
-conflating them is how the schedule quietly fails.
+Fourteen working days. What follows separates the three kinds of work, because they
+scale differently and conflating them is how the schedule quietly fails.
+
+**The operating model.** One accountable engineer, augmented across implementation,
+testing, analysis, documentation and independent review by frontier-model agents, plus
+an intern on labelling. That augmentation changes throughput, not accountability. The
+engineer owns integration, validation against real data, and final acceptance on
+anything touching PII, the trust boundary, or deployment. Agent review runs before
+that acceptance and strengthens it; it never substitutes for it. Where this plan says
+work is parallel, it means authoring is parallel.
 
 #### A. Human bottlenecks
 
@@ -1194,7 +1221,7 @@ compressed by working harder. They are the schedule.
 | Adjudicate 85 PII pages | Intern | Reading citizen text and judging span boundaries. Gates the privacy scorecard *and* the Sarvam PII comparison | Finishing wk 1 |
 | **Transcribe an OCR ground-truth sample** | **Unassigned** | Someone must hand-transcribe scanned Odia and English pages, printed and handwritten. The earlier 77.9% is a plausibility rate, not accuracy, so there is no existing ground truth to reuse | ⚠️ **Not started** |
 | Label the disposal templates into the 7-class action taxonomy | Engineer | ~500 strings. LLM-assisted drafting, human adjudication. Half a day, but it gates the closure view | Not started |
-| Choose the backlog slice for Phase 14 | ED + engineer | A judgement call about what is defensible to demonstrate. Brainstorming session | Not scheduled |
+| Choose the backlog slice for Phase 14 | ED + engineer | A judgement call about what is defensible to demonstrate. Brainstorming session. Also a technical gate: the redaction pass and both backfills cannot start until it is fixed | Not scheduled |
 | Lock the A/B analysis plan | Engineer, statistical judgement | Estimator choice and the power calculation are not mechanical | Not started |
 | Rehearsal | Engineer | 14 Aug, code frozen 13 Aug | Fixed |
 
@@ -1210,18 +1237,30 @@ Ordering forced by real dependencies, not preference.
 
 ```
 deploy to AWS ──► end-to-end pipeline run ──► live demo path
-PII gold complete ──► privacy scorecard ──► Sarvam PII/OCR comparison
-pii_tagger ──► spam_duplicate stage ──► dedup index backfill ──┬──► duplicate-adjusted workload
-                                                               ├──► spike three-count
-                                                               └──► S4 clustering (runs on dedup'd units)
+
+PII gold complete ──► privacy scorecard ──► Sarvam PII comparison
+transcription set ──► OCR ground truth ──► Sarvam Vision scorecard
+
+backlog slice chosen ──► grievance redaction pass ──► dedup index backfill ──┬──► duplicate-adjusted workload
+                                                                            ├──► spike three-count
+                                                                            └──► S4 clustering (on dedup'd units)
+
 semantic layer definitions ──► metrics ──► supervisor screen
-transcription set ──► OCR benchmark ──► Sarvam Vision scorecard
 ```
+
+Note what the third chain does *not* contain. The historical corpus never passes
+through `pii_tagger`, so the redaction pass of §3.2 is its safety edge and the
+gate on everything downstream of it. Nothing indexes `complaints.grievance`
+directly.
 
 - **The two backfills are long-running and belong on the calendar, not in a sprint
   list.** The dedup index over the chosen slice and the MuRIL embedding pass are
   multi-hour GPU/CPU jobs. Write the stage early, kick the backfill, work on
   something else while it runs. Starting either late in week 3 is a plan to fail.
+- **The redaction pass is short but strictly first.** CPU-only over short text, so it
+  is cheap, but it gates both backfills. It cannot start until the backlog slice is
+  chosen, which makes that ED decision a technical dependency rather than a
+  presentational one.
 - **S4 cannot precede dedup.** Clustering over un-deduplicated filings makes a
   400-signature campaign its own theme, which is circular.
 - Everything capability-side converges on the dedup index. It is the single point of
@@ -1235,6 +1274,7 @@ serial chain proceeds.
 
 | Workstream | Agent | Why it is independent | Merges into |
 |---|---|---|---|
+| `janasunani-redact-grievance` batch job + tests | `executor-sonnet` | Wraps the existing Presidio analyzer over one column. Testable on synthetic strings; the real run needs the slice | Phase 14 step 0 |
 | MinHash/LSH implementation + tests | `executor-sonnet` | Pure algorithm, testable on synthetic strings before any real index exists | Phase 14 stage |
 | Spam feature extraction | `executor-sonnet` | Reuses existing OCR quality gates (word count, alpha ratio, trigram share). No new data | Phase 14 stage |
 | Closure SQL view + action-type lookup | `executor-sonnet` | Depends only on the template labels, not on dedup | Phase 15 S3 |
@@ -1245,7 +1285,9 @@ serial chain proceeds.
 | Per-entity / per-language scorecard harness | `executor-sonnet` | Extends the existing verifier, runs on the gold set when it lands | Phase 13 |
 
 Review the security-sensitive merges (dedup index, anything touching `grievance`)
-with `reviewer-fable`; routine merges with `reviewer-opus`.
+with `reviewer-fable`; routine merges with `reviewer-opus`. Agent review is a gate
+before the engineer's acceptance, not the acceptance itself: the redaction pass, the
+dedup index and the deploy are signed off by a person who has read the diff.
 
 #### D. What actually limits parallelism
 
@@ -1821,10 +1863,15 @@ Terse and dated. The reasoning for choices that are not obvious from the code.
     August: S1's definitions must be written as a standalone query target.
   - **The lake holds raw citizen prose, not only structured contact fields.**
     `materialize.py` copies `SELECT *`, so `complaints.grievance` is in Parquet
-    verbatim and never passed through `pii_tagger`. §3.2 rewritten. Consequences:
-    `grievance` needs its own redaction pass before MinHash or embedding, and the
-    resulting signatures and vectors are governed personal-data artifacts rather
-    than downstream-safe by construction.
+    verbatim and never passed through `pii_tagger`. §3.2 rewritten.
+  - **The remedy is a scheduled step, not a stated principle.**
+    `janasunani-redact-grievance` is step 0 of Phase 14: it runs the existing
+    Presidio analyzer over the `grievance` column for the chosen slice and writes
+    `grievance_redacted`, which is the only thing MinHash and S4 read. It gates both
+    backfills, so the ED's choice of backlog slice is a technical dependency and not
+    just a presentational one. Redaction does not declassify what is derived: the
+    signatures and vectors are `dpic-infra` artifacts under Phase 18's access and
+    audit rules, and neither phase may call them downstream-safe by construction.
   - **Cross-script duplicate matching is out of August.** Transliteration belongs to
     Phase 17, which runs after Phases 14 and 15, so August ships script-specific
     matching with cross-script recall reported as unsupported. It becomes a re-index
@@ -1836,6 +1883,15 @@ Terse and dated. The reasoning for choices that are not obvious from the code.
     Only PII, OCR/Sarvam Vision and duplicate recall have labelled sets for August.
     Page type, categorization and summarization are reported as the earlier team's
     numbers, not re-measured, because no evidence-production step exists for them.
+  - **The two Sarvam comparisons have different gates, and conflating them hid a
+    risk.** The 85-page PII set gates the privacy comparison. The document-reading
+    comparison is gated by the hand-transcribed sample, which has no owner. Naming
+    them separately is what makes the unassigned one visible.
+  - **The operating model is one accountable engineer with frontier-model agents,
+    stated explicitly.** Agents parallelize authoring, testing, analysis and review.
+    They do not parallelize integration, validation against real data, or acceptance
+    of PII-, security- and deployment-sensitive changes, all of which stay with the
+    engineer. §5.6 says so rather than leaving "plus subagents" to be read either way.
   - **Net: everything capability-side routes through Phase 14.** Dedup is not one
     deliverable among several, it is the dependency under the duplicate-adjusted
     workload, the spike decomposition and the return-rate metric. If it slips, the
