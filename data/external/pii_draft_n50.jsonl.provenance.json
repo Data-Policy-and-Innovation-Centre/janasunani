@@ -1,0 +1,27 @@
+{
+  "kind": "rederived_draft",
+  "note": "Analyzer output on the gold's own text, NOT the original bootstrap draft. Cannot prove the human pass happened, cannot detect an edited text, cannot detect pages dropped from the drafted sample. See scripts/rederive_pii_draft.py.",
+  "created_utc": "2026-08-05T19:34:31+00:00",
+  "out": "pii_draft_n50.jsonl",
+  "source_gold": "pii_gold_draft_n50.jsonl",
+  "source_gold_md5": "efeca59dd6b45a88b74dab19c1ab27af",
+  "records": 89,
+  "spans": 618,
+  "spans_by_entity": {
+    "AADHAAR": 14,
+    "EMAIL": 34,
+    "NAME": 497,
+    "PHONE": 73
+  },
+  "analyzer": {
+    "git_commit": "b66211b",
+    "presidio_analyzer": "2.2.363",
+    "spacy": "3.8.13",
+    "en_core_web_sm": "3.8.0"
+  },
+  "environment": {
+    "python": "3.13.0",
+    "system": "Darwin",
+    "machine": "arm64"
+  }
+}
