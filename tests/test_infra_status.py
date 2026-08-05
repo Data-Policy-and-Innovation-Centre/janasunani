@@ -88,7 +88,9 @@ def test_no_ssh_ingress_is_ok():
 
 
 def test_world_open_ssh_is_critical():
-    permissions = [{"FromPort": 22, "IpRanges": [{"CidrIp": "0.0.0.0/0"}]}]
+    permissions = [
+        {"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22, "IpRanges": [{"CidrIp": "0.0.0.0/0"}]}
+    ]
     findings = infra_status.evaluate_ssh_exposure(permissions)
     assert findings[0].status == CRIT
     assert "production PII" in findings[0].detail
@@ -99,7 +101,9 @@ def test_leftover_runner_rule_warns_and_cites_the_issue():
     revoke — the leak half of #32."""
     permissions = [
         {
+            "IpProtocol": "tcp",
             "FromPort": 22,
+            "ToPort": 22,
             "IpRanges": [{"CidrIp": "10.1.2.3/32", "Description": "ci-deploy"}],
         }
     ]
@@ -110,9 +114,71 @@ def test_leftover_runner_rule_warns_and_cites_the_issue():
 
 
 def test_non_ssh_ports_are_ignored():
-    permissions = [{"FromPort": 443, "IpRanges": [{"CidrIp": "0.0.0.0/0"}]}]
+    permissions = [
+        {"IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "IpRanges": [{"CidrIp": "0.0.0.0/0"}]}
+    ]
     findings = infra_status.evaluate_ssh_exposure(permissions)
     assert [f.status for f in findings] == [OK], "443 open to the world is the proxy, by design"
+
+
+def test_all_protocols_wildcard_is_seen_as_ssh_exposure():
+    """IpProtocol="-1" is AWS's all-protocols-all-ports rule. It has no
+    meaningful FromPort/ToPort, and a guard keyed on FromPort==22 misses it
+    entirely — the exact P1 Codex flagged on #88."""
+    permissions = [{"IpProtocol": "-1", "IpRanges": [{"CidrIp": "0.0.0.0/0"}]}]
+    findings = infra_status.evaluate_ssh_exposure(permissions)
+    assert findings[0].status == CRIT
+    assert "production PII" in findings[0].detail
+
+
+def test_wide_tcp_port_range_covering_22_is_seen_as_ssh_exposure():
+    """FromPort=0, ToPort=65535 covers 22 exactly as much as FromPort=22,
+    ToPort=22 — a range, not a single port, per AWS's IpPermission."""
+    permissions = [
+        {
+            "IpProtocol": "tcp",
+            "FromPort": 0,
+            "ToPort": 65535,
+            "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
+        }
+    ]
+    findings = infra_status.evaluate_ssh_exposure(permissions)
+    assert findings[0].status == CRIT
+
+
+def test_ipv6_ssh_source_is_checked_too():
+    permissions = [
+        {
+            "IpProtocol": "tcp",
+            "FromPort": 22,
+            "ToPort": 22,
+            "Ipv6Ranges": [{"CidrIpv6": "::/0"}],
+        }
+    ]
+    findings = infra_status.evaluate_ssh_exposure(permissions)
+    assert findings[0].status == CRIT
+    assert "::/0" in findings[0].detail
+
+
+def test_maintainer_rule_reads_ok_not_as_a_leftover():
+    """deploy/terraform/main.tf's standing admin rule must let a healthy box
+    render all clear, distinct from a leftover deploy-runner /32 (#32)."""
+    permissions = [
+        {
+            "IpProtocol": "tcp",
+            "FromPort": 22,
+            "ToPort": 22,
+            "IpRanges": [
+                {
+                    "CidrIp": "203.0.113.4/32",
+                    "Description": infra_status.MAINTAINER_SSH_DESCRIPTION,
+                }
+            ],
+        }
+    ]
+    findings = infra_status.evaluate_ssh_exposure(permissions)
+    assert findings[0].status == OK
+    assert "maintainer" in findings[0].detail
 
 
 # --- disk ---------------------------------------------------------------------
@@ -154,6 +220,26 @@ def test_no_containers_reads_as_not_deployed_not_as_broken():
     findings = infra_status.evaluate_containers([])
     assert [f.status for f in findings] == [INFO]
     assert "not deployed" in findings[0].detail
+
+
+def test_oltp_only_reads_as_pre_deploy_not_as_three_missing_containers():
+    """docs/DEPLOY.md's documented first-time state (`up -d oltp` only,
+    before the app images are deployed) must not CRIT api/frontend/proxy --
+    they were never asked to start. Codex review on #88."""
+    findings = infra_status.evaluate_containers(["janasunani-oltp"])
+    assert [f.status for f in findings] == [INFO]
+    assert "not deployed" in findings[0].detail
+
+
+def test_oltp_plus_one_more_is_a_real_partial_deploy():
+    """Once more than just oltp is up, a missing container is a genuine gap,
+    not the documented pre-deploy state."""
+    findings = infra_status.evaluate_containers(["janasunani-oltp", "janasunani-api"])
+    by_name = {f.name: f for f in findings}
+    assert by_name["janasunani-oltp"].status == OK
+    assert by_name["janasunani-api"].status == OK
+    assert by_name["janasunani-frontend"].status == CRIT
+    assert by_name["janasunani-proxy"].status == CRIT
 
 
 # --- backups (issue #31) ------------------------------------------------------
@@ -221,6 +307,25 @@ def test_worst_ignores_info():
     assert report.exit_code() == 0
 
 
+def test_nothing_checked_true_only_when_every_finding_is_info():
+    """`worst` reads OK on a pure-INFO report by design (see its docstring);
+    `nothing_checked` is the separate signal `--json` needs so a monitor
+    cannot mistake a fully-skipped run for a healthy one. Codex review on
+    #88 flagged `--json` emitting `"worst": "OK"` for exactly this case."""
+    report = infra_status.Report()
+    report.add("compute", "aws", INFO, "skipped (--no-aws)")
+    report.add("box", "ssh", INFO, "skipped (--no-ssh)")
+    assert report.nothing_checked is True
+    assert report.checked_count == 0
+    assert report.skipped_count == 2
+    assert report.worst == OK  # unchanged, deliberate -- see docstring
+
+    report.add("compute", "cpu box", OK, "running")
+    assert report.nothing_checked is False
+    assert report.checked_count == 1
+    assert report.skipped_count == 2
+
+
 def test_render_groups_by_section_and_summarizes():
     report = infra_status.Report()
     report.add("compute", "cpu box", OK, "running")
@@ -257,6 +362,54 @@ def test_render_qualifies_all_clear_when_some_checks_did_not_run():
     text = infra_status.render(report)
     assert "were not run" in text
     assert "all clear on 1 checks" in text
+
+
+# --- collection: a failed AWS call is not the same as an empty result ---------
+#
+# Codex review on #88: a failed `describe-instances`/`list-objects-v2` call
+# (bad credentials, wrong region, IAM, network) collapsed into the same "not
+# found"/"no objects" result as a *successful* call that legitimately found
+# nothing, raising a false production alarm instead of degrading to "not
+# checked". These monkeypatch `_aws_json` (the one seam between the collectors
+# and the actual `aws` subprocess) rather than shelling out for real, keeping
+# with the file's collection-is-thin-collectors-are-dumb split.
+
+
+def test_collect_instances_returns_none_when_the_aws_call_fails(monkeypatch):
+    monkeypatch.setattr(infra_status, "_aws_json", lambda args, region: None)
+    assert infra_status.collect_instances({"cpu box": "cpu"}, "ap-south-1") is None
+
+
+def test_collect_instances_returns_not_found_when_the_call_succeeds_empty(monkeypatch):
+    monkeypatch.setattr(infra_status, "_aws_json", lambda args, region: {"Reservations": []})
+    found = infra_status.collect_instances({"cpu box": "cpu"}, "ap-south-1")
+    assert found == {"cpu box": None}
+
+
+def test_collect_backup_returns_none_when_the_aws_call_fails(monkeypatch):
+    monkeypatch.setattr(infra_status, "_aws_json", lambda args, region: None)
+    assert infra_status.collect_backup("ap-south-1") is None
+
+
+def test_collect_backup_returns_no_objects_when_the_call_succeeds_empty(monkeypatch):
+    monkeypatch.setattr(infra_status, "_aws_json", lambda args, region: {})
+    assert infra_status.collect_backup("ap-south-1") == (None, None)
+
+
+def test_aws_json_pins_the_region(monkeypatch):
+    """An operator whose default CLI profile points at another region gets a
+    *successful, empty* response, not an error -- indistinguishable from the
+    box actually being gone unless the region is pinned explicitly."""
+    captured: dict = {}
+
+    def fake_run(command, timeout=30):
+        captured["command"] = command
+        return "{}"
+
+    monkeypatch.setattr(infra_status, "_run", fake_run)
+    infra_status._aws_json(["ec2", "describe-instances"], "ap-south-1")
+    assert "--region" in captured["command"]
+    assert "ap-south-1" in captured["command"]
 
 
 # --- the read-only guarantee --------------------------------------------------

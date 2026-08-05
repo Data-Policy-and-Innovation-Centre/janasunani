@@ -50,6 +50,12 @@ from typing import Any, Optional
 
 BACKUP_BUCKET = "grievance-database-backups-main"
 BACKUP_PREFIX = "janasunani/"
+# deploy/terraform/variables.tf's aws_region default, also config.py's
+# Settings.AWS_REGION default. Pinned explicitly on every `aws` call rather
+# than left to the caller's default CLI profile/region: a profile pointed
+# elsewhere gets a successful, empty response, not an error, and that reads
+# as "the box is gone" (see collect_instances).
+AWS_REGION_DEFAULT = "ap-south-1"
 # deploy.sh: min_free_kib="${MIN_FREE_KIB:-$((20 * 1024 * 1024))}"
 DISK_CRIT_GIB = 20
 DISK_WARN_GIB = 40
@@ -62,6 +68,17 @@ STACK_CONTAINERS = (
     "janasunani-frontend",
     "janasunani-proxy",
 )
+# docs/DEPLOY.md's documented first-time state: only the oltp container up
+# (`up -d oltp`, deploy/docker-compose.yml: container_name janasunani-oltp),
+# before the app images are deployed at all.
+PRE_DEPLOY_CONTAINERS = frozenset({"janasunani-oltp"})
+# deploy/terraform/main.tf: the cpu_box security group's standing ingress
+# rule, `description = "SSH from the maintainer IP only"`. Terraform attaches
+# an ingress block's `description` to that CIDR's entry in the resulting
+# IpPermission, so a rule carrying this exact text is the intended permanent
+# access, not a leftover deploy-runner /32 (issue #32) -- distinguished here
+# so a healthy box can still render all clear.
+MAINTAINER_SSH_DESCRIPTION = "SSH from the maintainer IP only"
 
 OK, WARN, CRIT, INFO = "OK", "WARN", "CRIT", "INFO"
 _RANK = {OK: 0, INFO: 0, WARN: 1, CRIT: 2}
@@ -85,12 +102,33 @@ class Report:
     @property
     def worst(self) -> str:
         """Highest severity present. INFO ranks with OK: "not checked" is not a
-        problem, it is an absence of one, and must not read as degraded."""
+        problem, it is an absence of one, and must not read as degraded.
+
+        This is deliberately blind to *how many* checks ran (a cron job must
+        not fail just because some checks were skipped) -- `nothing_checked`
+        below is the separate signal for "no real check happened here"."""
         rank = max((_RANK[f.status] for f in self.findings), default=0)
         return {0: OK, 1: WARN, 2: CRIT}[rank]
 
     def exit_code(self) -> int:
         return 1 if self.worst == CRIT else 0
+
+    @property
+    def checked_count(self) -> int:
+        return sum(1 for f in self.findings if f.status != INFO)
+
+    @property
+    def skipped_count(self) -> int:
+        return sum(1 for f in self.findings if f.status == INFO)
+
+    @property
+    def nothing_checked(self) -> bool:
+        """True iff every finding is INFO -- `--no-aws --no-ssh`, an
+        unreachable box, or unreachable AWS all land here. `worst` alone
+        reads `OK` in this case (by design, see above), so a machine
+        consumer of `--json` needs this to avoid the exact false-all-clear
+        the text renderer's `NOTHING CHECKED` line exists to prevent."""
+        return self.checked_count == 0
 
 
 # --- evaluation (pure; this is what the tests drive) -------------------------
@@ -128,19 +166,51 @@ def evaluate_instance(name: str, instance: Optional[dict], *, always_on: bool) -
     return Finding(section, name, OK, f"{state} ({itype})")
 
 
+def _rule_covers_ssh(rule: dict) -> bool:
+    """Whether an IpPermission's protocol/port coverage includes TCP/22.
+
+    Two ways a rule can expose 22 without literally saying `FromPort: 22`:
+    `IpProtocol: "-1"` is AWS's "all protocols, all ports" wildcard (no
+    meaningful FromPort/ToPort), and a real TCP rule specifies an *inclusive
+    range* -- `FromPort=0, ToPort=65535` covers 22 exactly as much as
+    `FromPort=22, ToPort=22` does. Missing either means a wide-open box scores
+    the same as a locked-down one.
+    """
+    protocol = rule.get("IpProtocol")
+    if protocol in ("-1", -1):
+        return True
+    if protocol not in ("tcp", 6, "6"):
+        return False
+    from_port = rule.get("FromPort")
+    to_port = rule.get("ToPort")
+    if from_port is None or to_port is None:
+        return False
+    return from_port <= 22 <= to_port
+
+
 def evaluate_ssh_exposure(permissions: list[dict]) -> list[Finding]:
     """Port 22 ingress. See issue #32.
 
-    A deploy authorizes 22 to the runner's /32 and revokes it afterwards. A
-    leftover rule means a runner died mid-deploy; an open-to-the-world rule
-    means something is badly wrong.
+    Checks both `IpRanges` (IPv4) and `Ipv6Ranges` (IPv6) — an IPv6-only
+    source is exposure this tool would otherwise never see. The standing
+    maintainer rule (`MAINTAINER_SSH_DESCRIPTION`) is recognized as intended
+    access, not a leftover; anything else is either a deploy authorizing 22 to
+    the runner's /32 (expected only for the duration of that deploy, revoked
+    after — a leftover means a runner died mid-deploy) or, open to the world,
+    something badly wrong.
     """
     findings: list[Finding] = []
     for rule in permissions:
-        if rule.get("FromPort") != 22:
+        if not _rule_covers_ssh(rule):
             continue
-        for cidr in rule.get("IpRanges", []):
-            block = cidr.get("CidrIp", "?")
+        sources = [
+            (cidr.get("CidrIp", "?"), cidr.get("Description"))
+            for cidr in rule.get("IpRanges", [])
+        ] + [
+            (cidr.get("CidrIpv6", "?"), cidr.get("Description"))
+            for cidr in rule.get("Ipv6Ranges", [])
+        ]
+        for block, description in sources:
             if block in ("0.0.0.0/0", "::/0"):
                 findings.append(
                     Finding(
@@ -150,6 +220,15 @@ def evaluate_ssh_exposure(permissions: list[dict]) -> list[Finding]:
                         f"port 22 open to {block} — the box holds production PII",
                     )
                 )
+            elif description == MAINTAINER_SSH_DESCRIPTION:
+                findings.append(
+                    Finding(
+                        "network",
+                        "ssh exposure",
+                        OK,
+                        f"port 22 open to {block} ({description}) — standing maintainer access",
+                    )
+                )
             else:
                 findings.append(
                     Finding(
@@ -157,7 +236,7 @@ def evaluate_ssh_exposure(permissions: list[dict]) -> list[Finding]:
                         "ssh exposure",
                         WARN,
                         f"port 22 open to {block}"
-                        f"{' (' + cidr['Description'] + ')' if cidr.get('Description') else ''}"
+                        f"{f' ({description})' if description else ''}"
                         " — expected only during a deploy; a leftover rule is issue #32",
                     )
                 )
@@ -195,6 +274,19 @@ def evaluate_containers(running: Optional[list[str]]) -> list[Finding]:
         return [
             Finding(
                 "box", "stack", INFO, "no janasunani containers — stack not deployed yet"
+            )
+        ]
+    if set(running) == PRE_DEPLOY_CONTAINERS:
+        # docs/DEPLOY.md's documented first-time bring-up: oltp only, up
+        # before the app images are ever deployed. Scoring that against the
+        # full STACK_CONTAINERS list below would CRIT three containers
+        # nothing has tried to start yet, on every fresh box.
+        return [
+            Finding(
+                "box",
+                "stack",
+                INFO,
+                "only oltp up — app stack (api/frontend/proxy) not deployed yet",
             )
         ]
     findings = []
@@ -273,8 +365,12 @@ def _run(command: list[str], timeout: int = 30) -> Optional[str]:
     return proc.stdout if proc.returncode == 0 else None
 
 
-def _aws_json(args: list[str]) -> Optional[dict]:
-    raw = _run(["aws", *args, "--output", "json"], timeout=60)
+def _aws_json(args: list[str], region: str) -> Optional[dict]:
+    # Pinned rather than left to the caller's default profile/region
+    # (AWS_REGION_DEFAULT below): an operator whose default profile points
+    # elsewhere gets a *successful, empty* describe-instances response, which
+    # is indistinguishable from the box actually being gone.
+    raw = _run(["aws", *args, "--region", region, "--output", "json"], timeout=60)
     if raw is None:
         return None
     try:
@@ -283,11 +379,18 @@ def _aws_json(args: list[str]) -> Optional[dict]:
         return None
 
 
-def collect_instances(tag_names: dict[str, str]) -> dict[str, Optional[dict]]:
-    found: dict[str, Optional[dict]] = {label: None for label in tag_names}
-    payload = _aws_json(["ec2", "describe-instances"])
+def collect_instances(
+    tag_names: dict[str, str], region: str
+) -> Optional[dict[str, Optional[dict]]]:
+    """None means the `describe-instances` call itself failed (credentials,
+    region, IAM, network) -- distinct from a successful call that simply found
+    no matching instance. Conflating the two turns "AWS is unreachable" into
+    "the box is gone", which is a false production alarm, not a status check.
+    """
+    payload = _aws_json(["ec2", "describe-instances"], region)
     if payload is None:
-        return found
+        return None
+    found: dict[str, Optional[dict]] = {label: None for label in tag_names}
     for reservation in payload.get("Reservations", []):
         for instance in reservation.get("Instances", []):
             if instance.get("State", {}).get("Name") == "terminated":
@@ -300,16 +403,19 @@ def collect_instances(tag_names: dict[str, str]) -> dict[str, Optional[dict]]:
     return found
 
 
-def collect_security_group(group_id: Optional[str]) -> Optional[list[dict]]:
+def collect_security_group(group_id: Optional[str], region: str) -> Optional[list[dict]]:
     if not group_id:
         return None
-    payload = _aws_json(["ec2", "describe-security-groups", "--group-ids", group_id])
+    payload = _aws_json(["ec2", "describe-security-groups", "--group-ids", group_id], region)
     if not payload or not payload.get("SecurityGroups"):
         return None
     return payload["SecurityGroups"][0].get("IpPermissions", [])
 
 
-def collect_backup() -> tuple[Optional[str], Optional[int]]:
+def collect_backup(region: str) -> Optional[tuple[Optional[str], Optional[int]]]:
+    """Outer None means `list-objects-v2` itself failed; ``(None, None)``
+    means it succeeded and found nothing under the backup prefix -- the two
+    read very differently (see `collect_instances`)."""
     payload = _aws_json(
         [
             "s3api",
@@ -318,9 +424,12 @@ def collect_backup() -> tuple[Optional[str], Optional[int]]:
             BACKUP_BUCKET,
             "--prefix",
             BACKUP_PREFIX,
-        ]
+        ],
+        region,
     )
-    if not payload or not payload.get("Contents"):
+    if payload is None:
+        return None
+    if not payload.get("Contents"):
         return None, None
     newest = max(payload["Contents"], key=lambda o: o["LastModified"])
     return newest["LastModified"], newest.get("Size")
@@ -376,14 +485,14 @@ def render(report: Report) -> str:
         level: sum(1 for f in report.findings if f.status == level)
         for level in (CRIT, WARN, INFO)
     }
-    checked = len(report.findings) - counts[INFO]
+    checked = report.checked_count
     skipped = f" ({counts[INFO]} not checked)" if counts[INFO] else ""
 
     if counts[CRIT]:
         lines.append(f"{counts[CRIT]} critical, {counts[WARN]} warning{skipped}")
     elif counts[WARN]:
         lines.append(f"no critical issues, {counts[WARN]} warning{skipped}")
-    elif checked == 0:
+    elif report.nothing_checked:
         # Must precede the partial-pass branch below: with nothing checked,
         # every finding is INFO and this would otherwise read "all clear on 0
         # checks". Unreachable AWS, an unreachable box and --no-aws --no-ssh
@@ -410,6 +519,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--site", default=None, help="Public site for the health check (e.g. 52-66-116-80.nip.io)."
     )
     parser.add_argument("--sg-id", default=None, help="CPU box security group id.")
+    parser.add_argument(
+        "--region",
+        default=AWS_REGION_DEFAULT,
+        help=f"AWS region for every query (default: {AWS_REGION_DEFAULT}, matching "
+        "deploy/terraform).",
+    )
     parser.add_argument("--no-ssh", action="store_true", help="Skip the box-side checks.")
     parser.add_argument("--no-aws", action="store_true", help="Skip the AWS API checks.")
     parser.add_argument("--json", action="store_true", help="Emit JSON instead of text.")
@@ -425,16 +540,24 @@ def main() -> int:
     elif shutil.which("aws") is None:
         report.add("compute", "aws", INFO, "aws CLI not installed — AWS checks skipped")
     else:
-        instances = collect_instances({"cpu box": "cpu", "gpu box": "gpu"})
-        report.findings.append(
-            evaluate_instance("cpu box", instances["cpu box"], always_on=True)
-        )
-        report.findings.append(
-            evaluate_instance("gpu box", instances["gpu box"], always_on=False)
-        )
+        instances = collect_instances({"cpu box": "cpu", "gpu box": "gpu"}, args.region)
+        if instances is None:
+            report.add(
+                "compute",
+                "aws",
+                INFO,
+                f"describe-instances failed (region={args.region}; check credentials/IAM/"
+                "network) — not checked",
+            )
+        else:
+            report.findings.append(
+                evaluate_instance("cpu box", instances["cpu box"], always_on=True)
+            )
+            report.findings.append(
+                evaluate_instance("gpu box", instances["gpu box"], always_on=False)
+            )
 
-        permissions = collect_security_group(args.sg_id)
-        if permissions is None:
+        if not args.sg_id:
             report.add(
                 "network",
                 "ssh exposure",
@@ -442,10 +565,30 @@ def main() -> int:
                 "not checked (pass --sg-id, from `terraform output cpu_box_security_group_id`)",
             )
         else:
-            report.findings.extend(evaluate_ssh_exposure(permissions))
+            permissions = collect_security_group(args.sg_id, args.region)
+            if permissions is None:
+                report.add(
+                    "network",
+                    "ssh exposure",
+                    INFO,
+                    f"describe-security-groups for {args.sg_id} failed (region={args.region}) "
+                    "— not checked",
+                )
+            else:
+                report.findings.extend(evaluate_ssh_exposure(permissions))
 
-        last_modified, size = collect_backup()
-        report.findings.append(evaluate_backup(last_modified, size))
+        backup = collect_backup(args.region)
+        if backup is None:
+            report.add(
+                "backups",
+                "pg_dump",
+                INFO,
+                f"list-objects-v2 failed (region={args.region}; check credentials/network) "
+                "— not checked",
+            )
+        else:
+            last_modified, size = backup
+            report.findings.append(evaluate_backup(last_modified, size))
 
     if args.no_ssh:
         report.add("box", "ssh", INFO, "skipped (--no-ssh)")
@@ -468,6 +611,13 @@ def main() -> int:
             json.dumps(
                 {
                     "worst": report.worst,
+                    # `worst` alone can read "OK" when nothing was actually
+                    # checked (--no-aws --no-ssh, unreachable AWS/box) --
+                    # deliberately, see Report.worst -- so a machine consumer
+                    # needs this to not treat a fully-skipped run as healthy.
+                    "nothing_checked": report.nothing_checked,
+                    "checked": report.checked_count,
+                    "skipped": report.skipped_count,
                     "findings": [vars(f) for f in report.findings],
                 },
                 indent=2,
