@@ -539,6 +539,39 @@ def test_preflight_passes_when_routing_mappings_load(tmp_path, monkeypatch):
     assert "3 categories" in check.detail
 
 
+def test_preflight_flags_mapping_tables_that_load_empty(tmp_path, monkeypatch):
+    """A header-only or truncated CSV pull parses without error -- `tables` is
+    not None -- but MappingRouter has nothing to route with and falls back
+    exactly as it would with no tables at all. Present-but-empty must not
+    read as a healthy strict preflight (Codex review on #88)."""
+
+    class _EmptyTables:
+        categories = ()
+        category_to_department = {}
+
+    monkeypatch.setattr(
+        "janasunani.routing.mappings.load_mapping_tables", lambda *a, **k: _EmptyTables()
+    )
+    check = _advisory(preflight(tmp_path), "routing mappings")
+    assert check.ok is False
+    assert "fallback" in check.detail
+
+
+def test_preflight_flags_mapping_tables_with_no_derivable_department(tmp_path, monkeypatch):
+    """Categories present but every one lacking a department is the same
+    dead end for routing as no categories at all."""
+
+    class _NoDepartments:
+        categories = ("a", "b", "c")
+        category_to_department = {}
+
+    monkeypatch.setattr(
+        "janasunani.routing.mappings.load_mapping_tables", lambda *a, **k: _NoDepartments()
+    )
+    check = _advisory(preflight(tmp_path), "routing mappings")
+    assert check.ok is False
+
+
 def test_preflight_flags_unmaterialized_lake(tmp_path, monkeypatch):
     """`LakeHistory` returns an empty page for a missing lake, so the UI shows
     'no results' rather than an error. Preflight must say which it is."""

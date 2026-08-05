@@ -505,13 +505,24 @@ def _routing_mappings_check() -> DependencyCheck:
             'method:"fallback" (run the scoped dvc pull)',
             required=False,
         )
-    return DependencyCheck(
-        "routing mappings",
-        True,
+    detail = (
         f"{len(tables.categories)} categories, "
-        f"{len(tables.category_to_department)} with a derivable department",
-        required=False,
+        f"{len(tables.category_to_department)} with a derivable department"
     )
+    if not tables.categories or not tables.category_to_department:
+        # Present but empty is the same runtime failure as absent: a
+        # header-only or truncated CSV pull parses without error, but
+        # MappingRouter has nothing to route with and falls back the same
+        # way it would with no tables at all. A corrupt pull should not read
+        # as a healthy strict preflight just because the files exist.
+        return DependencyCheck(
+            "routing mappings",
+            False,
+            detail + ' -> effectively empty, routing degrades to method:"fallback" '
+            "(mapping pull looks truncated or corrupt)",
+            required=False,
+        )
+    return DependencyCheck("routing mappings", True, detail, required=False)
 
 
 def _lake_check() -> DependencyCheck:
