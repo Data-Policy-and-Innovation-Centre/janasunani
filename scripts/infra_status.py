@@ -62,6 +62,12 @@ DISK_WARN_GIB = 40
 # nightly cadence, so one missed run is a warning and two is a failure
 BACKUP_WARN_HOURS = 26
 BACKUP_CRIT_HOURS = 48
+# Not a target size -- just a floor low enough that only a truly empty or
+# near-empty object (a 0-byte or header-only upload after a failed `pg_dump`)
+# can fail it. The prod DB holds 1.37M complaints / 6.56M action-history rows
+# (docs/ROADMAP.md); a real dump, even compressed, is orders of magnitude
+# above this, so there is no meaningful risk of flagging a genuine backup.
+BACKUP_MIN_SIZE_BYTES = 1024 * 1024  # 1 MiB
 STACK_CONTAINERS = (
     "janasunani-oltp",
     "janasunani-api",
@@ -311,8 +317,19 @@ def evaluate_backup(last_modified: Optional[str], size_bytes: Optional[int]) -> 
     hours = _hours_since(last_modified)
     if hours is None:
         return Finding("backups", "pg_dump", WARN, f"unparseable timestamp {last_modified!r}")
-    size = f", {size_bytes / 1e9:.2f} GB" if size_bytes else ""
+    size = f", {size_bytes / 1e9:.2f} GB" if size_bytes is not None else ""
     detail = f"newest {hours:.1f}h old{size}"
+    if size_bytes is not None and size_bytes < BACKUP_MIN_SIZE_BYTES:
+        # Fresh but empty is worse than stale: a 0-byte object after a failed
+        # dump-and-upload masks the last *good* backup and would otherwise
+        # read as healthy on freshness alone.
+        return Finding(
+            "backups",
+            "pg_dump",
+            CRIT,
+            detail + f" — under {BACKUP_MIN_SIZE_BYTES:,} bytes, looks like a failed "
+            "dump, not a restorable backup",
+        )
     if hours > BACKUP_CRIT_HOURS:
         return Finding("backups", "pg_dump", CRIT, detail + " — two nightly runs missed")
     if hours > BACKUP_WARN_HOURS:
@@ -323,14 +340,22 @@ def evaluate_backup(last_modified: Optional[str], size_bytes: Optional[int]) -> 
 def evaluate_health(payload: Optional[dict], error: Optional[str]) -> Finding:
     """`GET /api/health`, which the Caddyfile exempts from basic_auth.
 
-    A `mock` processor here means the site is serving canned results: healthy,
-    responsive, and not the real pipeline.
+    Only `processor="pipeline"` (`PipelineGrievanceProcessor.name`) is OK --
+    matching `deploy.sh`'s own smoke gate, which greps for that exact string
+    and would still be waiting on anything else. `mock`
+    (`MockGrievanceProcessor.name`) is the one other value the codebase can
+    actually produce: healthy and responsive, but serving canned results.
+    Anything besides those two -- missing, malformed, or a value neither
+    processor uses -- is not something the deploy would ever consider ready,
+    so it is not OK either.
     """
     if error:
         return Finding("demo", "health", CRIT, error)
     if not payload:
         return Finding("demo", "health", INFO, "not checked")
     processor = payload.get("processor", "?")
+    if processor == "pipeline":
+        return Finding("demo", "health", OK, f"up, processor={processor}")
     if processor == "mock":
         return Finding(
             "demo",
@@ -338,7 +363,13 @@ def evaluate_health(payload: Optional[dict], error: Optional[str]) -> Finding:
             WARN,
             "up, but processor=mock — serving canned results, not the real pipeline",
         )
-    return Finding("demo", "health", OK, f"up, processor={processor}")
+    return Finding(
+        "demo",
+        "health",
+        WARN,
+        f"up, but processor={processor!r} — not the expected pipeline "
+        "(deploy.sh's own smoke gate would still be waiting on this)",
+    )
 
 
 def _hours_since(timestamp: Any) -> Optional[float]:

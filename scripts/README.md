@@ -42,7 +42,7 @@ Thresholds come from the repo, not from taste:
 | Backup age | WARN > 26 h, CRIT > 48 h | nightly cadence, §5 of [DEPLOY.md](../docs/DEPLOY.md). The cron lives only on the box (#31), so a rebuilt box loses it silently |
 | Port 22 ingress | WARN on any, CRIT on `0.0.0.0/0`/`::/0` or a rule covering all ports/protocols; OK on the standing maintainer rule | the deploy opens 22 to the runner's /32 and revokes it; a leftover rule is #32. Covers `IpProtocol="-1"`, wide TCP port ranges and IPv6 sources, not just a literal `FromPort==22` |
 | GPU box running | WARN | on-demand and billed hourly |
-| `processor=mock` | WARN | site is up and serving canned results, not the real pipeline |
+| `processor` not `pipeline` | WARN | `mock` is up but serving canned results; anything else isn't a value the app produces at all — deploy.sh's own smoke gate greps for `"processor":"pipeline"` and would still be waiting on either |
 
 Exit code is 0 unless something is CRIT, so it is cron-safe. Two deliberate
 behaviours: skipped or unreachable checks report as `--`, never as healthy, and

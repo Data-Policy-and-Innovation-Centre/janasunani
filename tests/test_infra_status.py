@@ -268,6 +268,27 @@ def test_unparseable_backup_timestamp_warns_rather_than_crashing():
     assert infra_status.evaluate_backup("not-a-date", 1).status == WARN
 
 
+def test_empty_backup_object_is_critical_even_when_fresh():
+    """A 0-byte object after a failed `pg_dump | aws s3 cp` must not read as
+    healthy just because it is recent -- there is nothing restorable in it.
+    Codex review on #88."""
+    finding = infra_status.evaluate_backup(_ago(0.1), 0)
+    assert finding.status == CRIT
+    assert "failed" in finding.detail
+
+
+def test_near_empty_backup_object_is_critical():
+    finding = infra_status.evaluate_backup(_ago(0.1), 512)
+    assert finding.status == CRIT
+
+
+def test_backup_of_unknown_size_is_judged_on_freshness_only():
+    """S3 not reporting a size is not itself evidence of a failed dump --
+    don't invent a size-based CRIT out of missing data."""
+    finding = infra_status.evaluate_backup(_ago(1), None)
+    assert finding.status == OK
+
+
 # --- demo health --------------------------------------------------------------
 
 
@@ -286,6 +307,22 @@ def test_real_processor_is_ok():
 
 def test_unreachable_health_is_critical():
     assert infra_status.evaluate_health(None, "unreachable").status == CRIT
+
+
+def test_unrecognized_processor_warns_not_ok():
+    """Only "pipeline" (PipelineGrievanceProcessor.name) and "mock"
+    (MockGrievanceProcessor.name) are values this codebase can actually
+    produce. Anything else -- a malformed, renamed, or wrong API -- must not
+    read as a healthy demo just because it isn't literally "mock". Codex
+    review on #88."""
+    finding = infra_status.evaluate_health({"status": "ok", "processor": "bogus"}, None)
+    assert finding.status == WARN
+    assert "bogus" in finding.detail
+
+
+def test_missing_processor_field_warns_not_ok():
+    finding = infra_status.evaluate_health({"status": "ok"}, None)
+    assert finding.status == WARN
 
 
 # --- report aggregation -------------------------------------------------------
