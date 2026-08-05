@@ -24,6 +24,7 @@ from typing import Callable, Iterable, Mapping, Sequence
 from janasunani.pipeline.stages.pii_tagger import (
     PIISpan,
     detect_pii_spans,
+    is_government_email,
     normalize_entity,
 )
 
@@ -65,6 +66,11 @@ class EvaluationReport:
     overall: EntityMetrics
     coverage: EntityMetrics
     baseline_overlap_recall: float
+    # Gold EMAIL spans on a government domain (#56): out of scope for
+    # redaction by policy, so they never enter the gold/predicted counts
+    # above. Tracked separately so the denominator change is visible rather
+    # than silently shrinking the scorecard.
+    excluded_by_policy: int = 0
 
     @property
     def passed_baseline(self) -> bool:
@@ -84,6 +90,7 @@ class EvaluationReport:
             },
             "baseline_overlap_recall": self.baseline_overlap_recall,
             "passed_baseline": self.passed_baseline,
+            "excluded_by_policy": self.excluded_by_policy,
         }
 
 
@@ -139,6 +146,7 @@ def score_predictions(
     exact_hits: Counter[str] = Counter()
     coverage_overlap_hits = 0
     coverage_exact_hits = 0
+    excluded_by_policy = 0
 
     for example in examples:
         predicted = tuple(_normalize_span(span) for span in predictions.get(example.id, ()))
@@ -149,6 +157,14 @@ def score_predictions(
 
         for gold in example.entities:
             gold = _normalize_span(gold)
+            # Government email addresses are not PII by policy (#56): drop
+            # them from the denominator instead of scoring the tagger against
+            # spans it is now deliberately built not to redact.
+            if gold.entity == "EMAIL" and is_government_email(
+                example.text[gold.start : gold.end]
+            ):
+                excluded_by_policy += 1
+                continue
             gold_counts[gold.entity] += 1
             candidates = predicted_by_entity.get(gold.entity, ())
             if any(_exact_match(gold, candidate) for candidate in candidates):
@@ -189,6 +205,7 @@ def score_predictions(
         overall=overall,
         coverage=coverage,
         baseline_overlap_recall=baseline_overlap_recall,
+        excluded_by_policy=excluded_by_policy,
     )
 
 
@@ -204,7 +221,8 @@ def format_report(report: EvaluationReport) -> str:
         "baseline_overlap_recall="
         f"{report.baseline_overlap_recall:.4f} "
         f"coverage_overlap_recall={report.coverage.overlap_recall:.4f} "
-        f"passed={str(report.passed_baseline).lower()}"
+        f"passed={str(report.passed_baseline).lower()} "
+        f"excluded_by_policy={report.excluded_by_policy}"
     )
     return "\n".join(lines)
 

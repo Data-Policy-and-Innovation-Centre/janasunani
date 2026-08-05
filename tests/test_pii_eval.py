@@ -127,6 +127,94 @@ def test_coverage_counts_untyped_hits_and_gates():
     assert "COVERAGE 1 1 1 1 1.0000 1.0000" in format_report(report)
 
 
+def test_score_predictions_excludes_government_email_from_denominator():
+    """#56: government email addresses are not PII by policy, so a gold
+    EMAIL span on nic.in/gov.in/mil.in must not enter the gold denominator
+    -- otherwise the tagger is scored against spans it is now deliberately
+    built not to redact."""
+    text = "Contact officer@nic.in or citizen@gmail.com for help."
+    gov_start = text.index("officer@nic.in")
+    gov_end = gov_start + len("officer@nic.in")
+    citizen_start = text.index("citizen@gmail.com")
+    citizen_end = citizen_start + len("citizen@gmail.com")
+
+    examples = [
+        GoldExample(
+            id="p1",
+            text=text,
+            entities=(
+                PIISpan(entity="EMAIL", start=gov_start, end=gov_end),
+                PIISpan(entity="EMAIL", start=citizen_start, end=citizen_end),
+            ),
+        ),
+    ]
+    predictions = {
+        "p1": (PIISpan(entity="EMAIL", start=citizen_start, end=citizen_end),),
+    }
+
+    report = score_predictions(examples, predictions, baseline_overlap_recall=0.0)
+
+    assert report.excluded_by_policy == 1
+    assert report.by_entity["EMAIL"].gold == 1  # only the citizen span counts
+    assert report.by_entity["EMAIL"].overlap_hits == 1
+    assert report.by_entity["EMAIL"].overlap_recall == 1.0
+    assert report.overall.gold == 1
+    assert report.to_dict()["excluded_by_policy"] == 1
+    assert "excluded_by_policy=1" in format_report(report)
+
+
+def _span_for(text: str, substring: str) -> tuple[int, int]:
+    start = text.index(substring)
+    return start, start + len(substring)
+
+
+def test_score_predictions_excluded_count_sums_across_domains_and_examples():
+    """Subdomains and every government suffix count, spread across pages."""
+    text1 = "Reach the BDO at bdo.khordha@nic.in for the update."
+    start1, end1 = _span_for(text1, "bdo.khordha@nic.in")
+
+    text2 = "CC the PMO at officer@pmo.gov.in and the base at officer@station.mil.in."
+    start2, end2 = _span_for(text2, "officer@pmo.gov.in")
+    start3, end3 = _span_for(text2, "officer@station.mil.in")
+
+    examples = [
+        GoldExample(
+            id="p1",
+            text=text1,
+            entities=(PIISpan(entity="EMAIL", start=start1, end=end1),),
+        ),
+        GoldExample(
+            id="p2",
+            text=text2,
+            entities=(
+                PIISpan(entity="EMAIL", start=start2, end=end2),
+                PIISpan(entity="EMAIL", start=start3, end=end3),
+            ),
+        ),
+    ]
+
+    report = score_predictions(examples, {}, baseline_overlap_recall=0.0)
+
+    assert report.excluded_by_policy == 3
+    assert report.by_entity == {}  # every gold span in this fixture was excluded
+    assert report.overall.gold == 0
+
+
+def test_score_predictions_excluded_by_policy_defaults_to_zero_when_no_government_email():
+    examples = [
+        GoldExample(
+            id="p1",
+            text="Ramesh called 9876543210",
+            entities=(PIISpan(entity="PHONE", start=14, end=24),),
+        ),
+    ]
+
+    report = score_predictions(examples, {"p1": ()}, baseline_overlap_recall=0.0)
+
+    assert report.excluded_by_policy == 0
+    assert report.to_dict()["excluded_by_policy"] == 0
+
+
 def test_cli_gate_exits_nonzero_when_below_baseline(tmp_path, capsys, monkeypatch):
     gold = tmp_path / "gold.jsonl"
     gold.write_text(

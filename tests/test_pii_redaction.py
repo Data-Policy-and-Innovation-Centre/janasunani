@@ -13,7 +13,12 @@ pytest.importorskip("en_core_web_sm")
 
 from janasunani.pipeline.config import PipelineConfig  # noqa: E402
 from janasunani.pipeline.db import initialize_database  # noqa: E402
-from janasunani.pipeline.stages.pii_tagger import redact_text, run_pii_tagger  # noqa: E402
+from janasunani.pipeline.stages.pii_tagger import (  # noqa: E402
+    detect_pii_spans,
+    is_government_email,
+    redact_text,
+    run_pii_tagger,
+)
 
 
 def test_indian_pii_patterns_redacted():
@@ -102,3 +107,128 @@ def test_rerun_is_idempotent_and_terminates(tmp_path):
     with sqlite3.connect(db) as con:
         (red,) = con.execute("SELECT redacted_text FROM pages").fetchone()
     assert red == "no pii here at all"
+
+
+# --- #55: dates and file numbers must not be tagged PHONE ------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "The hearing was held on 06.05.2025 at the block office.",
+        "Order dated 06-05-2025 was not implemented.",
+        "Application dated 12/03/2024 was rejected.",
+    ],
+)
+def test_dates_are_not_tagged_phone(text):
+    assert not [s for s in detect_pii_spans(text) if s.entity == "PHONE"]
+    assert redact_text(text) == text
+
+
+def test_bare_file_number_in_letter_context_is_not_tagged_phone():
+    text = "Letter no. 1234567890 dated 12.03.2024 refers."
+    assert not [s for s in detect_pii_spans(text) if s.entity == "PHONE"]
+    assert redact_text(text) == text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "My mobile is 9876543210, please call.",
+        "Reach me at +91 98765 43210 today.",
+        "Call 09876543210 for updates.",
+        "Contact on 98765 43210 anytime.",
+        "Contact on 98765-43210 anytime.",
+    ],
+)
+def test_mobiles_still_detected_across_formats(text):
+    spans = [s for s in detect_pii_spans(text) if s.entity == "PHONE"]
+    assert len(spans) == 1
+    red = redact_text(text)
+    assert "9876543210" not in red and "[PHONE]" in red
+
+
+def test_landline_still_detected():
+    text = "Office 0674 2536789 during hours."
+    spans = [s for s in detect_pii_spans(text) if s.entity == "PHONE"]
+    assert len(spans) == 1
+    red = redact_text(text)
+    assert "0674" not in red and "2536789" not in red and "[PHONE]" in red
+
+
+def test_aadhaar_unaffected_by_phone_changes():
+    text = "Aadhaar number 2345 6789 0123 attached."
+    spans = detect_pii_spans(text)
+    assert any(s.entity == "AADHAAR" for s in spans)
+    assert not [s for s in spans if s.entity == "PHONE"]
+    red = redact_text(text)
+    assert "[AADHAAR]" in red and "6789" not in red
+
+
+# --- #56: government email addresses are not PII ----------------------------
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "officer@nic.in",
+        "bdo.khordha@nic.in",
+        "officer@rb.nic.in",
+        "officer@odisha.gov.in",
+        "officer@pmo.gov.in",
+        "OFFICER@NIC.IN",
+    ],
+)
+def test_government_emails_are_not_redacted(address):
+    assert is_government_email(address)
+    text = f"Please contact {address} for grievance status."
+    assert redact_text(text) == text
+    assert not [s for s in detect_pii_spans(text) if s.entity == "EMAIL"]
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "citizen@gmail.com",
+        "citizen@yahoo.co.in",
+        "citizen@hotmail.com",
+        "citizen@example.in",
+    ],
+)
+def test_citizen_emails_still_redacted(address):
+    assert not is_government_email(address)
+    text = f"Please contact {address} for grievance status."
+    red = redact_text(text)
+    assert address not in red and "[EMAIL]" in red
+    spans = [s for s in detect_pii_spans(text) if s.entity == "EMAIL"]
+    assert len(spans) == 1
+    assert text[spans[0].start : spans[0].end] == address
+
+
+def test_government_email_exclusion_is_not_a_psl_accident():
+    """Regression guard: the old behaviour rode on tldextract parsing a bare
+    "@nic.in"/"@gov.in" address as an empty registrable domain -- an accident
+    that only covered part of the domain space (subdomains like
+    "rb.nic.in" were still redacted, and "mil.in" isn't a PSL suffix at all,
+    so a PSL-driven rule would never protect it). Our predicate must exclude
+    all three uniformly regardless of what tldextract/the PSL says."""
+    assert is_government_email("officer@mil.in")
+    assert is_government_email("officer@station.mil.in")
+    text = "Contact officer@mil.in or officer@rb.nic.in for status."
+    assert redact_text(text) == text
+    assert not [s for s in detect_pii_spans(text) if s.entity == "EMAIL"]
+
+
+def test_redact_text_and_detect_pii_spans_agree_on_government_email():
+    """The two entry points must never diverge (#56): one gates production
+    redaction, the other gates the eval scorecard."""
+    text = "Contact officer@nic.in or citizen@gmail.com for details."
+
+    red = redact_text(text)
+    spans = detect_pii_spans(text)
+    email_spans = [s for s in spans if s.entity == "EMAIL"]
+
+    assert "officer@nic.in" in red  # government address: untouched
+    assert "citizen@gmail.com" not in red and "[EMAIL]" in red  # citizen: redacted
+    assert len(email_spans) == 1
+    assert text[email_spans[0].start : email_spans[0].end] == "citizen@gmail.com"

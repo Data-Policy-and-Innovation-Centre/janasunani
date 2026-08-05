@@ -7,8 +7,8 @@ contract is unchanged:
     pages.extracted_text -> pages.redacted_text
 
 Detection is Presidio's analyzer with pattern recognizers tuned for Indian
-grievances — mobile numbers, Aadhaar, PAN, email — plus spaCy NER for person
-names in English text. Improvements over the legacy model:
+grievances — mobile numbers, landlines, Aadhaar, PAN, email — plus spaCy NER
+for person names in English text. Improvements over the legacy model:
 
   - no token window: whole pages are analyzed, so nothing past the first
     512 tokens silently escapes redaction;
@@ -26,6 +26,7 @@ structure.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,10 +39,16 @@ from janasunani.pipeline.db import connect
 DB_BATCH_SIZE = 200
 
 # entity -> replacement token
+#
+# PHONE_NUMBER (Presidio's built-in PhoneRecognizer, backed by the
+# `phonenumbers` library) is deliberately absent: it treats dotted/hyphenated
+# dates and bare 10-digit file numbers as plausible phone numbers (#55). Our
+# own IN_MOBILE/IN_LANDLINE recognizers below are the sole source of PHONE
+# hits, so detection is entirely ours and testable.
 ENTITY_TOKENS = {
     "PERSON": "[NAME]",
-    "PHONE_NUMBER": "[PHONE]",
     "IN_MOBILE": "[PHONE]",
+    "IN_LANDLINE": "[PHONE]",
     "IN_AADHAAR": "[AADHAAR]",
     "IN_PAN": "[PAN]",
     "EMAIL_ADDRESS": "[EMAIL]",
@@ -52,6 +59,7 @@ ENTITY_ALIASES = {
     "NAME": "NAME",
     "PHONE_NUMBER": "PHONE",
     "IN_MOBILE": "PHONE",
+    "IN_LANDLINE": "PHONE",
     "PHONE": "PHONE",
     "IN_AADHAAR": "AADHAAR",
     "AADHAAR": "AADHAAR",
@@ -60,6 +68,45 @@ ENTITY_ALIASES = {
     "EMAIL_ADDRESS": "EMAIL",
     "EMAIL": "EMAIL",
 }
+
+# Government domains whose addresses are published contact details of public
+# officers, not citizen PII (#56, maintainer decision 2026-07-27). This is
+# our own rule, not the Public Suffix List: `nic.in`/`gov.in`/`ac.in`/`co.in`
+# happen to be PSL entries in their own right, which made tldextract parse a
+# bare "@nic.in" address as an empty registrable domain and made Presidio's
+# EmailRecognizer discard it as invalid -- an accident that only covered part
+# of the domain space (subdomains like `rb.nic.in` were still redacted) and
+# that a PSL/tldextract update could silently flip.
+_GOVERNMENT_EMAIL_SUFFIXES = ("nic.in", "gov.in", "mil.in")
+
+
+def is_government_email(address: str) -> bool:
+    """True if ``address`` is an official government email (#56).
+
+    Matches the domain itself and any subdomain of it (``rb.nic.in``,
+    ``pmo.gov.in``), case-insensitively. Not PII for redaction purposes.
+    """
+    if "@" not in address:
+        return False
+    domain = address.strip().lower().rsplit("@", 1)[-1]
+    if not domain:
+        return False
+    return any(
+        domain == suffix or domain.endswith(f".{suffix}")
+        for suffix in _GOVERNMENT_EMAIL_SUFFIXES
+    )
+
+
+# A dotted/hyphenated/slash date (DD.MM.YYYY and its variants) is shaped
+# enough like a run of phone digits that Presidio's built-in PhoneRecognizer
+# used to tag it PHONE (#55). Applied to every PHONE-normalized candidate
+# regardless of which recognizer produced it, so it stays a guard even if a
+# future recognizer or the built-in is reintroduced.
+_DATE_SHAPE_RE = re.compile(r"^\d{1,2}[.\-/]\d{1,2}[.\-/]\d{2,4}$")
+
+
+def _is_date_shaped(candidate: str) -> bool:
+    return bool(_DATE_SHAPE_RE.match(candidate.strip()))
 
 
 @dataclass(frozen=True)
@@ -151,9 +198,69 @@ def _get_engines():
             context=["pan", "income tax", "permanent account"],
         )
     )
+    # Landline: STD code (2-4 digits after the leading 0) plus a 6-8 digit
+    # subscriber number, one space/hyphen separator, e.g. Bhubaneswar
+    # "0674 2536789". Presidio's built-in PhoneRecognizer used to be the only
+    # thing catching these, at the same low confidence as its date/file-number
+    # false positives (#55); this recognizer is ours so a real landline scores
+    # on a pattern we own and test.
+    analyzer.registry.add_recognizer(
+        PatternRecognizer(
+            supported_entity="IN_LANDLINE",
+            name="in_landline_recognizer",
+            patterns=[
+                Pattern(
+                    "in_landline",
+                    r"(?<!\d)0\d{2,4}[\s-]\d{6,8}(?!\d)",
+                    0.6,
+                )
+            ],
+            context=["landline", "office", "std code", "telephone"],
+        )
+    )
 
     _engines = (analyzer, AnonymizerEngine())
     return _engines
+
+
+def _postfilter(analyzed_text: str, results: list) -> list:
+    """Drop analyzer results that are out of scope for our redaction policy.
+
+    Applied identically inside ``redact_text`` and ``detect_pii_spans`` so
+    the two never disagree about what counts as PII (#55, #56):
+
+    - PHONE-normalized hits whose matched text is date-shaped (dotted,
+      hyphenated, or slash-separated) rather than a real phone number.
+    - Any hit overlapping a government-domain email address, which is
+      published contact information, not citizen PII. Not just the
+      EMAIL_ADDRESS hit itself: spaCy's NER recognizer independently tags
+      the same span PERSON (e.g. "officer@rb.nic.in" reads as a name to
+      en_core_web_sm), and a policy that exempted the email label but left
+      an overlapping NAME hit standing would still redact the address.
+    """
+    government_ranges = [
+        (result.start, result.end)
+        for result in results
+        if normalize_entity(result.entity_type) == "EMAIL"
+        and is_government_email(analyzed_text[result.start : result.end])
+    ]
+
+    def _overlaps_government_email(result) -> bool:
+        return any(
+            max(result.start, start) < min(result.end, end)
+            for start, end in government_ranges
+        )
+
+    filtered = []
+    for result in results:
+        entity = normalize_entity(result.entity_type)
+        candidate = analyzed_text[result.start : result.end]
+        if entity == "PHONE" and _is_date_shaped(candidate):
+            continue
+        if _overlaps_government_email(result):
+            continue
+        filtered.append(result)
+    return filtered
 
 
 def redact_text(text: str) -> str:
@@ -163,9 +270,11 @@ def redact_text(text: str) -> str:
     analyzer, anonymizer = _get_engines()
     # Analyze the digit-normalized copy (Indic numerals -> ASCII, same length),
     # anonymize the original: offsets carry over 1:1.
+    analyzed_text = _ascii_digits(text)
     results = analyzer.analyze(
-        text=_ascii_digits(text), language="en", entities=list(ENTITY_TOKENS)
+        text=analyzed_text, language="en", entities=list(ENTITY_TOKENS)
     )
+    results = _postfilter(analyzed_text, results)
     if not results:
         return text
     operators = {
@@ -190,9 +299,11 @@ def detect_pii_spans(text: str) -> list[PIISpan]:
     recognizers, not a parallel implementation.
     """
     analyzer, _ = _get_engines()
+    analyzed_text = _ascii_digits(text)
     results = analyzer.analyze(
-        text=_ascii_digits(text), language="en", entities=list(ENTITY_TOKENS)
+        text=analyzed_text, language="en", entities=list(ENTITY_TOKENS)
     )
+    results = _postfilter(analyzed_text, results)
     spans: dict[tuple[str, int, int], PIISpan] = {}
     for result in results:
         entity = normalize_entity(result.entity_type)
