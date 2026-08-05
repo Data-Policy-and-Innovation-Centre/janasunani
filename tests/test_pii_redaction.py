@@ -139,6 +139,11 @@ def test_bare_file_number_in_letter_context_is_not_tagged_phone():
         "Call 09876543210 for updates.",
         "Contact on 98765 43210 anytime.",
         "Contact on 98765-43210 anytime.",
+        # Codex review on #91 (P1): removing the built-in PhoneRecognizer
+        # left only the bare/5-5 IN_MOBILE pattern, so these two common
+        # groupings escaped redaction entirely.
+        "My number is 9876 543 210, please call.",  # 4-3-3
+        "My number is 987 654 3210, please call.",  # 3-3-4
     ],
 )
 def test_mobiles_still_detected_across_formats(text):
@@ -148,12 +153,38 @@ def test_mobiles_still_detected_across_formats(text):
     assert "9876543210" not in red and "[PHONE]" in red
 
 
-def test_landline_still_detected():
-    text = "Office 0674 2536789 during hours."
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Office 0674 2536789 during hours.",
+        "Office 0674-2536789 during hours.",
+        # Codex review on #91 (P2): these separator styles escaped every
+        # PHONE recognizer once the built-in was removed.
+        "Office (0674) 2536789 during hours.",
+        "Office 0674/2536789 during hours.",
+        "Office 0674 253 6789 during hours.",
+    ],
+)
+def test_landline_still_detected(text):
     spans = [s for s in detect_pii_spans(text) if s.entity == "PHONE"]
     assert len(spans) == 1
     red = redact_text(text)
-    assert "0674" not in red and "2536789" not in red and "[PHONE]" in red
+    assert "0674" not in red and "6789" not in red and "[PHONE]" in red
+
+
+def test_split_subscriber_landline_also_matches_new_mobile_pattern_harmlessly():
+    """Recognizer interaction found while broadening formats for the Codex
+    review on #91: IN_LANDLINE's split-subscriber pattern and IN_MOBILE's
+    new 3-3-4 pattern (added for '987 654 3210') both match
+    '0674 253 6789' on the exact same span -- the STD code doubles as a
+    valid leading digit + trunk-zero mobile shape. Both normalize to PHONE
+    and land on identical (start, end), so detect_pii_spans's dict-keyed
+    dedup collapses them to one span (keeping the higher score) and
+    redact_text produces a single [PHONE], not a double replacement."""
+    text = "Office 0674 253 6789 during hours."
+    spans = [s for s in detect_pii_spans(text) if s.entity == "PHONE"]
+    assert len(spans) == 1
+    assert redact_text(text) == "Office [PHONE] during hours."
 
 
 def test_aadhaar_unaffected_by_phone_changes():
@@ -163,6 +194,58 @@ def test_aadhaar_unaffected_by_phone_changes():
     assert not [s for s in spans if s.entity == "PHONE"]
     red = redact_text(text)
     assert "[AADHAAR]" in red and "6789" not in red
+
+
+# --- #55 (Codex review on #91, P2): the zero-prefixed STD-code shape is ----
+# structurally identical to a zero-prefixed file/case/order number, and
+# shape alone cannot tell them apart (a real Delhi STD code, 011, starts
+# with the same digit "1" a lot of file-number shapes do -- there is no
+# "implausible leading digit" rule to hang an exclusion on). We deliberately
+# keep matching this shape -- over-redaction is the safe failure direction
+# -- and only suppress it when the text itself names it as a citation via
+# the standard "Letter/Case/File/Order/Reference/Memo No." convention. That
+# is a context check, not a confidence threshold: #55 already established
+# that a genuine landline and these false positives score identically
+# (0.40 against the old built-in), so no score-based cut could do this.
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "The number is 0123-4567890 for reference.",
+        "The number is 0123 4567890 for reference.",
+    ],
+)
+def test_zero_prefixed_reference_shape_without_marker_is_over_redacted(text):
+    """Deliberate trade-off, not a Codex-endorsed fix: without a written
+    citation marker immediately before it, this shape is indistinguishable
+    from a real landline, so it is still redacted."""
+    spans = [s for s in detect_pii_spans(text) if s.entity == "PHONE"]
+    assert len(spans) == 1
+    assert "[PHONE]" in redact_text(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Letter No. 0123-4567890 dated 12.03.2024 refers.",
+        "Letter No. 0123 4567890 dated 12.03.2024 refers.",
+        "Case No. 0674-2536789 refers to the earlier complaint.",
+        "File No: 0674 2536789 is attached.",
+        "Order No. 0674-2536789 was issued yesterday.",
+        "Reference No. 0674-2536789 is cited above.",
+        "Ref. No. 0674-2536789 is cited above.",
+        "Memo No. 0674-2536789 dated last week.",
+    ],
+)
+def test_reference_number_marker_suppresses_phone_tag(text):
+    """The one reliable, non-score signal that a zero-prefixed digit run is
+    a citation rather than a callback number: it is introduced by the
+    standard government-correspondence convention."""
+    assert not [s for s in detect_pii_spans(text) if s.entity == "PHONE"]
+    # spaCy NER may separately (mis)tag the marker phrase itself as a NAME
+    # (unrelated to #55/#56); what matters here is that PHONE never fires.
+    assert "[PHONE]" not in redact_text(text)
 
 
 # --- #56: government email addresses are not PII ----------------------------

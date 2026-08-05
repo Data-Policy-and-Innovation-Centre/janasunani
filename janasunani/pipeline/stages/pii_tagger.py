@@ -109,6 +109,30 @@ def _is_date_shaped(candidate: str) -> bool:
     return bool(_DATE_SHAPE_RE.match(candidate.strip()))
 
 
+# A zero-prefixed, single-separator digit run (STD code + subscriber number)
+# is structurally identical to a zero-prefixed file/case/order/letter/memo
+# number -- see the long comment on the landline recognizer for why shape
+# alone cannot tell them apart (#55 review on #91). The one reliable signal
+# left is the written citation convention itself: government correspondence
+# labels these numbers "Letter No. 0674-2536789", "Case No.", "File No.",
+# "Order No.", "Reference No.", "Memo No." immediately before the digits.
+# This is a context check, not a confidence threshold: it looks at the text,
+# not the recognizer's score.
+_REFERENCE_NUMBER_CONTEXT_RE = re.compile(
+    r"\b(?:letters?|cases?|files?|orders?|references?|refs?|memos?)\.?\s*no\.?\s*[:#-]?\s*$",
+    re.IGNORECASE,
+)
+# Comfortably covers "Reference No: " (14 chars) with room to spare, without
+# reaching back far enough to catch an unrelated marker word earlier in the
+# sentence.
+_REFERENCE_CONTEXT_WINDOW = 30
+
+
+def _preceded_by_reference_marker(analyzed_text: str, start: int) -> bool:
+    window = analyzed_text[max(0, start - _REFERENCE_CONTEXT_WINDOW) : start]
+    return bool(_REFERENCE_NUMBER_CONTEXT_RE.search(window))
+
+
 @dataclass(frozen=True)
 class PIISpan:
     entity: str
@@ -156,19 +180,44 @@ def _get_engines():
         nlp_engine=provider.create_engine(), supported_languages=["en"]
     )
 
-    # Indian mobile: optional +91/0 prefix, then 10 digits starting 6-9,
-    # allowing the common "98765 43210" split. Digit look-arounds keep it
-    # from firing inside longer numbers (e.g. Aadhaar).
+    # Indian mobile: optional +91/0 prefix, then 10 digits starting 6-9.
+    # Three explicit groupings, each with its own named Pattern rather than
+    # one digit-by-digit-permissive regex: bare/5-5 ("9876543210" /
+    # "98765 43210"), 4-3-3 ("9876 543 210"), and 3-3-4 ("987 654 3210") --
+    # all attested real formats (Codex review on #91). A fully permissive
+    # "separator before any digit" version was tried and rejected: it also
+    # matched STD-code-shaped landlines like "0674 2536789" over their
+    # *entire* span (a leading "0" plus a 6-9 digit plus 9 more digits with
+    # one internal split is exactly that shape) for no coverage gain, since
+    # both already redact as PHONE. These three fixed-group patterns are far
+    # more restrictive, but one harmless overlap remains: 3-3-4 and the
+    # landline's split-subscriber pattern both match "0674 253 6789" on the
+    # same span (see test_split_subscriber_landline_also_matches_new_mobile_
+    # pattern_harmlessly) -- normalization plus dict-keyed dedup in
+    # detect_pii_spans, and Presidio's own overlap handling in
+    # redact_text, collapse it to one [PHONE], so this is a documented,
+    # tested non-issue rather than a silent one. Digit look-arounds keep
+    # these patterns from firing inside longer numbers (e.g. Aadhaar).
     analyzer.registry.add_recognizer(
         PatternRecognizer(
             supported_entity="IN_MOBILE",
             name="in_mobile_recognizer",
             patterns=[
                 Pattern(
-                    "in_mobile",
+                    "in_mobile_bare_or_5_5",
                     r"(?<!\d)(?:\+91[\s-]?|0)?[6-9]\d{4}[\s-]?\d{5}(?!\d)",
                     0.6,
-                )
+                ),
+                Pattern(
+                    "in_mobile_4_3_3",
+                    r"(?<!\d)(?:\+91[\s-]?|0)?[6-9]\d{3}[\s-]\d{3}[\s-]\d{3}(?!\d)",
+                    0.6,
+                ),
+                Pattern(
+                    "in_mobile_3_3_4",
+                    r"(?<!\d)(?:\+91[\s-]?|0)?[6-9]\d{2}[\s-]\d{3}[\s-]\d{4}(?!\d)",
+                    0.6,
+                ),
             ],
             context=["mobile", "phone", "contact", "call", "whatsapp"],
         )
@@ -199,21 +248,53 @@ def _get_engines():
         )
     )
     # Landline: STD code (2-4 digits after the leading 0) plus a 6-8 digit
-    # subscriber number, one space/hyphen separator, e.g. Bhubaneswar
-    # "0674 2536789". Presidio's built-in PhoneRecognizer used to be the only
-    # thing catching these, at the same low confidence as its date/file-number
-    # false positives (#55); this recognizer is ours so a real landline scores
-    # on a pattern we own and test.
+    # subscriber number, e.g. Bhubaneswar "0674 2536789". Presidio's built-in
+    # PhoneRecognizer used to be the only thing catching these, at the same
+    # low confidence as its date/file-number false positives (#55); this
+    # recognizer is ours so a real landline scores on a pattern we own and
+    # test. Three named patterns cover the separator styles reported on the
+    # #91 review: bare space/hyphen (original), an optional wrapping
+    # paren pair plus "/" as an additional separator, and a split
+    # subscriber number ("0674 253 6789").
+    #
+    # Known, accepted ambiguity: this shape (0 + STD-length digits + one
+    # separator + subscriber-length digits) is structurally identical to a
+    # zero-prefixed file/order/case number, e.g. "0123-4567890" -- exactly
+    # the false-positive class #55 was filed about, and #55's own evidence
+    # table lists this shape (`9999-9999999`) among the false positives.
+    # We deliberately do NOT try to exclude it by digit-shape, e.g. by
+    # requiring the STD code's first significant digit to be in some
+    # "plausible" range: Delhi's real STD code is 011 (first significant
+    # digit "1"), so any such range would either admit the same file-number
+    # shapes it's meant to reject or reject real metro landlines -- shape
+    # alone cannot decide this case. Redacting is the safe failure direction
+    # (#55's own framing), so we keep matching and erring toward
+    # over-redaction here. What we do add is a context guard, not a
+    # confidence threshold: `_preceded_by_reference_marker` below drops the
+    # match when it is immediately preceded by a written reference-number
+    # convention ("Letter No.", "Case No.", "File No.", "Order No.",
+    # "Reference No.", "Memo No."), which is the common, reliable textual
+    # signal that this is a citation, not a callback number.
     analyzer.registry.add_recognizer(
         PatternRecognizer(
             supported_entity="IN_LANDLINE",
             name="in_landline_recognizer",
             patterns=[
                 Pattern(
-                    "in_landline",
+                    "in_landline_bare",
                     r"(?<!\d)0\d{2,4}[\s-]\d{6,8}(?!\d)",
                     0.6,
-                )
+                ),
+                Pattern(
+                    "in_landline_parens_or_slash",
+                    r"(?<!\d)\(?0\d{2,4}\)?[\s/-]\d{6,8}(?!\d)",
+                    0.6,
+                ),
+                Pattern(
+                    "in_landline_split_subscriber",
+                    r"(?<!\d)0\d{2,4}[\s-]\d{3}[\s-]\d{4}(?!\d)",
+                    0.6,
+                ),
             ],
             context=["landline", "office", "std code", "telephone"],
         )
@@ -231,6 +312,12 @@ def _postfilter(analyzed_text: str, results: list) -> list:
 
     - PHONE-normalized hits whose matched text is date-shaped (dotted,
       hyphenated, or slash-separated) rather than a real phone number.
+    - PHONE-normalized hits immediately preceded by a written
+      reference-number convention ("Letter No.", "Case No.", ...): the
+      zero-prefixed STD-code shape is structurally identical to a
+      zero-prefixed file number and shape alone can't separate them (see
+      the landline recognizer comment), but this textual citation pattern
+      is a reliable signal the digits are being cited, not dialed.
     - Any hit overlapping a government-domain email address, which is
       published contact information, not citizen PII. Not just the
       EMAIL_ADDRESS hit itself: spaCy's NER recognizer independently tags
@@ -255,7 +342,10 @@ def _postfilter(analyzed_text: str, results: list) -> list:
     for result in results:
         entity = normalize_entity(result.entity_type)
         candidate = analyzed_text[result.start : result.end]
-        if entity == "PHONE" and _is_date_shaped(candidate):
+        if entity == "PHONE" and (
+            _is_date_shaped(candidate)
+            or _preceded_by_reference_marker(analyzed_text, result.start)
+        ):
             continue
         if _overlaps_government_email(result):
             continue
