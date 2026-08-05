@@ -63,6 +63,15 @@ ifneq (,$(_DOTENV_OLTP_DB_URL))
 OLTP_DB_URL := $(_DOTENV_OLTP_DB_URL)
 endif
 endif
+# Embeds an arbitrary value (e.g. $(OLTP_DB_URL)) as a single shell word safe
+# from further expansion: single-quoted, with each embedded `'` replaced by
+# `'\''` (close the quote, an escaped literal quote outside it, reopen the
+# quote) -- the standard POSIX idiom for putting a quote inside a quoted
+# string. Plain single-quoting handles `$`/`#` (#60) but a DSN containing a
+# literal `'` would otherwise still break the recipe's shell string; this
+# closes that gap. Use as `$(call sh_quote,$(OLTP_DB_URL))` -- already quoted,
+# so call sites do not wrap it in quotes themselves.
+sh_quote = '$(subst ','\'',$(1))'
 SHELL          := /bin/bash
 .SHELLFLAGS    := -euo pipefail -c
 export PATH    := $(USER_BIN):$(PATH)
@@ -218,12 +227,14 @@ models:
 	uv run dvc pull models/categorizer.dvc models/page_type_classifier/vit_type_classifier.dvc
 
 # `@` so the OLTP DSN (may carry a password) is not echoed into terminal logs.
-# Single-quoted: double quotes would hand a `$` in the password to *this*
-# shell to re-expand (the same class of bug as #60, one layer down, since
-# Make's own textual substitution here does not re-parse the value it pastes
-# in -- only the shell that receives it would).
+# $(call sh_quote,...): double quotes would hand a `$` in the password to
+# *this* shell to re-expand (the same class of bug as #60, one layer down,
+# since Make's own textual substitution here does not re-parse the value it
+# pastes in -- only the shell that receives it would); a bare single-quoted
+# `'$(OLTP_DB_URL)'` fixes that but then breaks on an embedded `'` instead.
+# sh_quote handles both.
 preflight:
-	@OLTP_DB_URL='$(OLTP_DB_URL)' uv run --extra demo janasunani-demo-preflight
+	@OLTP_DB_URL=$(call sh_quote,$(OLTP_DB_URL)) uv run --extra demo janasunani-demo-preflight
 
 # Idempotent: create the throwaway Postgres only if missing, start it if stopped,
 # always (re-)apply migrations (alembic upgrade head is a no-op when current).
@@ -232,7 +243,7 @@ preflight:
 # another, and never provisions/migrates an operator's own (local or off-box) DB.
 db:
 	@set -e; \
-	if [ '$(OLTP_DB_URL)' != '$(DEMO_OLTP_URL)' ]; then \
+	if [ $(call sh_quote,$(OLTP_DB_URL)) != $(call sh_quote,$(DEMO_OLTP_URL)) ]; then \
 	  echo "OLTP_DB_URL is not the throwaway demo default; skipping provisioning — create and migrate that database yourself."; \
 	  exit 0; \
 	fi; \
@@ -251,13 +262,13 @@ db:
 	  docker exec $(PG_CONTAINER) pg_isready -U postgres -d janasunani >/dev/null 2>&1 && break; \
 	  sleep 1; \
 	done; \
-	OLTP_DB_URL='$(OLTP_DB_URL)' uv run alembic upgrade head; \
+	OLTP_DB_URL=$(call sh_quote,$(OLTP_DB_URL)) uv run alembic upgrade head; \
 	echo "Demo DB ready."
 
 # `@` so the OLTP DSN is not echoed. API_HOST=0.0.0.0 to serve off-box.
-# OLTP_DB_URL single-quoted for the same reason as `preflight` above.
+# OLTP_DB_URL quoted via sh_quote for the same reason as `preflight` above.
 api: preflight db
-	@OLTP_DB_URL='$(OLTP_DB_URL)' JANASUNANI_API_HOST="$(API_HOST)" \
+	@OLTP_DB_URL=$(call sh_quote,$(OLTP_DB_URL)) JANASUNANI_API_HOST="$(API_HOST)" \
 	  JANASUNANI_API_PORT="$(API_PORT)" uv run --extra demo janasunani-api-live
 
 frontend:
@@ -273,7 +284,7 @@ frontend:
 up: preflight db
 	@set -e; \
 	echo "Starting live API (:$(API_PORT)) in the background..."; \
-	OLTP_DB_URL='$(OLTP_DB_URL)' JANASUNANI_API_HOST="$(API_HOST)" \
+	OLTP_DB_URL=$(call sh_quote,$(OLTP_DB_URL)) JANASUNANI_API_HOST="$(API_HOST)" \
 	  JANASUNANI_API_PORT="$(API_PORT)" uv run --extra demo janasunani-api-live & \
 	API_PID=$$!; \
 	trap 'pkill -P $$API_PID 2>/dev/null; kill $$API_PID 2>/dev/null || true' EXIT INT TERM; \
