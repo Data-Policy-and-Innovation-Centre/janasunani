@@ -32,7 +32,37 @@ OLTP_DB_URL    ?= $(DEMO_OLTP_URL)
 #   ssh -L $(FRONTEND_PORT):127.0.0.1:$(FRONTEND_PORT) -L $(API_PORT):127.0.0.1:$(API_PORT) <box>
 # API_URL/API_HOST remain overridable for advanced setups.
 API_URL        ?= http://127.0.0.1:$(API_PORT)
--include .env
+# Deliberately NOT `-include .env`: that makes GNU Make parse the file as
+# Makefile syntax, not key=value (#60). `$` starts a variable reference (a
+# password's `pa$word` silently loses `word`) and `#` starts a comment (drops
+# the rest of the line); a stray `$(` with no matching `)` is worse — it is a
+# hard parse error that aborts `make` for every target, not just this one, so
+# a single unlucky character in a generated password can brick the Makefile
+# entirely. `Settings` reads the same file correctly via python-dotenv
+# (janasunani/config.py), so only OLTP_DB_URL needs the safe path here: it is
+# the one dotenv value this Makefile actually consumes (grep confirms no
+# other `?=` variable's name collides with a .env.example key).
+#
+# Extracted by `grep`/`sed`, never by letting Make or a shell evaluate the
+# line -- so a `$` or `#` in the value is just a character, and an unbalanced
+# `$(` cannot blow up the parse. `tail -n1` matches dotenv's own last-key-wins
+# rule for a repeated key; the two `sed` passes strip one layer of matching
+# quotes so a quoted .env value (`OLTP_DB_URL='...'`) parses the same way here
+# as it does for Settings.
+#
+# `:=` (not `?=`), so a value here overrides both this demo default and a
+# shell-exported OLTP_DB_URL, matching the precedence documented above. A
+# `make OLTP_DB_URL=...` command-line value still wins regardless: Make locks
+# in command-line variables before reading any of the makefile, and no plain
+# assignment (only `override`, unused here) can replace them -- verified with
+# `make OLTP_DB_URL=... db` against a conflicting `.env` (see PR description).
+ifneq (,$(wildcard .env))
+_DOTENV_OLTP_DB_URL := $(shell grep '^OLTP_DB_URL=' .env 2>/dev/null | tail -n1 | \
+  sed -e 's/^OLTP_DB_URL=//' -e 's/^"\(.*\)"$$/\1/' -e "s/^'\(.*\)'$$/\1/")
+ifneq (,$(_DOTENV_OLTP_DB_URL))
+OLTP_DB_URL := $(_DOTENV_OLTP_DB_URL)
+endif
+endif
 SHELL          := /bin/bash
 .SHELLFLAGS    := -euo pipefail -c
 export PATH    := $(USER_BIN):$(PATH)
@@ -188,8 +218,12 @@ models:
 	uv run dvc pull models/categorizer.dvc models/page_type_classifier/vit_type_classifier.dvc
 
 # `@` so the OLTP DSN (may carry a password) is not echoed into terminal logs.
+# Single-quoted: double quotes would hand a `$` in the password to *this*
+# shell to re-expand (the same class of bug as #60, one layer down, since
+# Make's own textual substitution here does not re-parse the value it pastes
+# in -- only the shell that receives it would).
 preflight:
-	@OLTP_DB_URL="$(OLTP_DB_URL)" uv run --extra demo janasunani-demo-preflight
+	@OLTP_DB_URL='$(OLTP_DB_URL)' uv run --extra demo janasunani-demo-preflight
 
 # Idempotent: create the throwaway Postgres only if missing, start it if stopped,
 # always (re-)apply migrations (alembic upgrade head is a no-op when current).
@@ -198,7 +232,7 @@ preflight:
 # another, and never provisions/migrates an operator's own (local or off-box) DB.
 db:
 	@set -e; \
-	if [ "$(OLTP_DB_URL)" != "$(DEMO_OLTP_URL)" ]; then \
+	if [ '$(OLTP_DB_URL)' != '$(DEMO_OLTP_URL)' ]; then \
 	  echo "OLTP_DB_URL is not the throwaway demo default; skipping provisioning — create and migrate that database yourself."; \
 	  exit 0; \
 	fi; \
@@ -217,12 +251,13 @@ db:
 	  docker exec $(PG_CONTAINER) pg_isready -U postgres -d janasunani >/dev/null 2>&1 && break; \
 	  sleep 1; \
 	done; \
-	OLTP_DB_URL="$(OLTP_DB_URL)" uv run alembic upgrade head; \
+	OLTP_DB_URL='$(OLTP_DB_URL)' uv run alembic upgrade head; \
 	echo "Demo DB ready."
 
 # `@` so the OLTP DSN is not echoed. API_HOST=0.0.0.0 to serve off-box.
+# OLTP_DB_URL single-quoted for the same reason as `preflight` above.
 api: preflight db
-	@OLTP_DB_URL="$(OLTP_DB_URL)" JANASUNANI_API_HOST="$(API_HOST)" \
+	@OLTP_DB_URL='$(OLTP_DB_URL)' JANASUNANI_API_HOST="$(API_HOST)" \
 	  JANASUNANI_API_PORT="$(API_PORT)" uv run --extra demo janasunani-api-live
 
 frontend:
@@ -238,7 +273,7 @@ frontend:
 up: preflight db
 	@set -e; \
 	echo "Starting live API (:$(API_PORT)) in the background..."; \
-	OLTP_DB_URL="$(OLTP_DB_URL)" JANASUNANI_API_HOST="$(API_HOST)" \
+	OLTP_DB_URL='$(OLTP_DB_URL)' JANASUNANI_API_HOST="$(API_HOST)" \
 	  JANASUNANI_API_PORT="$(API_PORT)" uv run --extra demo janasunani-api-live & \
 	API_PID=$$!; \
 	trap 'pkill -P $$API_PID 2>/dev/null; kill $$API_PID 2>/dev/null || true' EXIT INT TERM; \
