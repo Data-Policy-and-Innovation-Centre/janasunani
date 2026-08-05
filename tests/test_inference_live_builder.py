@@ -584,9 +584,37 @@ def test_preflight_flags_unmaterialized_lake(tmp_path, monkeypatch):
     assert "empty page" in check.detail
 
 
+_HISTORY_ROW_SQL = (
+    "SELECT 'T1' AS ticket_no, DATE '2024-01-01' AS created_on, 'Khordha' AS district, "
+    "'Roads' AS category, 'Pothole' AS subcategory, 'Works' AS dept, 'Pending' AS status, "
+    "'Collector Office' AS office, 'A pothole' AS grievance "
+    "UNION ALL "
+    "SELECT 'T2', DATE '2024-01-02', 'Cuttack', 'Water', 'Leak', 'RWSS', 'Resolved', "
+    "'Collector Office', 'A leak'"
+)
+
+
 def test_preflight_reports_lake_row_count(tmp_path, monkeypatch):
     """A materialized lake reports its size, so an operator can tell a real
     lake from an empty-but-present Parquet."""
+    pytest.importorskip("duckdb")
+    import duckdb
+
+    parquet = tmp_path / "complaints.parquet"
+    duckdb.connect().execute(f"COPY ({_HISTORY_ROW_SQL}) TO '{parquet.as_posix()}' (FORMAT parquet)")
+    monkeypatch.setattr(
+        "janasunani.olap.lake.lake_path", lambda table, lake_dir=None: parquet
+    )
+    check = _advisory(preflight(tmp_path), "history lake")
+    assert check.ok is True
+    assert "2 complaints" in check.detail
+
+
+def test_preflight_flags_lake_missing_a_column_history_selects(tmp_path, monkeypatch):
+    """Rows present but a column `LakeHistory.search()` actually selects is
+    missing -- a stale or malformed lake -- must not pass strict preflight
+    just because the row count is nonzero; it would only surface once a real
+    `/history` request hit the missing column. Codex review on #88."""
     pytest.importorskip("duckdb")
     import duckdb
 
@@ -599,8 +627,8 @@ def test_preflight_reports_lake_row_count(tmp_path, monkeypatch):
         "janasunani.olap.lake.lake_path", lambda table, lake_dir=None: parquet
     )
     check = _advisory(preflight(tmp_path), "history lake")
-    assert check.ok is True
-    assert "2 complaints" in check.detail
+    assert check.ok is False
+    assert "unreadable" in check.detail
 
 
 def test_preflight_flags_unconfigured_oltp(tmp_path, monkeypatch):

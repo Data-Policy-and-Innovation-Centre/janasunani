@@ -525,12 +525,37 @@ def _routing_mappings_check() -> DependencyCheck:
     return DependencyCheck("routing mappings", True, detail, required=False)
 
 
+# The exact columns janasunani/serving/history.py's LakeHistory.search()
+# selects. Duplicated here (not imported) rather than sharing a constant with
+# janasunani.serving.history: preflight lives in this module specifically so
+# it does not need the `serving` extra (see resolve_explicit_oltp_url's
+# docstring), and importing from janasunani.serving would reintroduce exactly
+# that dependency. Keep in sync with history.py's `columns` if either drifts.
+_HISTORY_COLUMNS = (
+    "ticket_no",
+    "created_on",
+    "district",
+    "category",
+    "subcategory",
+    "dept",
+    "status",
+    "office",
+    "grievance",
+)
+
+
 def _lake_check() -> DependencyCheck:
     """The Parquet lake behind ``GET /history``.
 
     ``LakeHistory`` returns an empty page when ``complaints.parquet`` is
     missing, so an unmaterialized lake looks identical to "no results" in the
-    UI.
+    UI. A present-but-malformed lake is a quieter version of the same
+    failure: a row count alone can pass while a column
+    ``LakeHistory.search()`` actually selects is missing, stale, or renamed,
+    which only surfaces once a real ``/history`` request hits it. The
+    ``LIMIT 0`` select below asks DuckDB to bind every one of those columns
+    without materializing any rows, so a schema mismatch fails preflight
+    instead of a request.
     """
     try:
         from janasunani.olap import lake
@@ -545,9 +570,14 @@ def _lake_check() -> DependencyCheck:
             )
         import duckdb
 
-        rows = duckdb.connect().execute(
+        conn = duckdb.connect()
+        rows = conn.execute(
             f"SELECT count(*) FROM read_parquet('{path.as_posix()}')"
         ).fetchone()[0]
+        conn.execute(
+            f"SELECT {', '.join(_HISTORY_COLUMNS)} "
+            f"FROM read_parquet('{path.as_posix()}') LIMIT 0"
+        )
     except Exception as exc:  # pragma: no cover - defensive; never raise
         return DependencyCheck("history lake", False, f"unreadable: {exc}", required=False)
     return DependencyCheck(
