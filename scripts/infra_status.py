@@ -273,7 +273,12 @@ def evaluate_disk(free_gib: Optional[float]) -> Finding:
     return Finding("box", "disk", OK, f"{free_gib:.1f} GiB free")
 
 
-def evaluate_containers(running: Optional[list[str]]) -> list[Finding]:
+def evaluate_containers(
+    running: Optional[list[str]], unhealthy: Optional[frozenset[str]] = None
+) -> list[Finding]:
+    """``unhealthy`` are containers Docker itself has marked failing their
+    HEALTHCHECK (oltp/api/frontend all define one) despite still running --
+    distinct from ``running`` not containing the name at all (stopped)."""
     if running is None:
         return [Finding("box", "stack", INFO, "not checked")]
     if not running:
@@ -295,12 +300,17 @@ def evaluate_containers(running: Optional[list[str]]) -> list[Finding]:
                 "only oltp up — app stack (api/frontend/proxy) not deployed yet",
             )
         ]
+    unhealthy = unhealthy or frozenset()
     findings = []
     for name in STACK_CONTAINERS:
-        up = name in running
-        findings.append(
-            Finding("box", name, OK if up else CRIT, "running" if up else "not running")
-        )
+        if name not in running:
+            findings.append(Finding("box", name, CRIT, "not running"))
+        elif name in unhealthy:
+            findings.append(
+                Finding("box", name, CRIT, "running but failing its HEALTHCHECK")
+            )
+        else:
+            findings.append(Finding("box", name, OK, "running"))
     return findings
 
 
@@ -466,10 +476,21 @@ def collect_backup(region: str) -> Optional[tuple[Optional[str], Optional[int]]]
     return newest["LastModified"], newest.get("Size")
 
 
-def collect_box(host: str) -> tuple[Optional[float], Optional[list[str]]]:
-    """Disk free (GiB) and running janasunani containers, over SSH."""
+def collect_box(
+    host: str,
+) -> tuple[Optional[float], Optional[list[str]], Optional[frozenset[str]]]:
+    """Disk free (GiB), running janasunani containers, and which of those
+    Docker itself considers unhealthy, over SSH.
+
+    `docker ps` (no `-a`) already excludes exited containers, so a stopped
+    container correctly falls out of the `containers` list. The gap this
+    closes is the other direction: a container that is running but whose
+    HEALTHCHECK (oltp/api/frontend all define one, deploy/docker-compose.yml)
+    is failing -- `docker ps --format '{{.Names}}'` alone can't distinguish
+    that from a genuinely healthy one, so a name-only list still says OK.
+    """
     if shutil.which("ssh") is None:
-        return None, None
+        return None, None, None
     ssh = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host]
 
     free_gib = None
@@ -478,12 +499,20 @@ def collect_box(host: str) -> tuple[Optional[float], Optional[list[str]]]:
         free_gib = int(raw.strip()) / (1024 * 1024)
 
     containers = None
-    raw = _run([*ssh, "docker ps --format '{{.Names}}'"], timeout=30)
+    unhealthy = None
+    raw = _run([*ssh, "docker ps --format '{{.Names}}\t{{.Status}}'"], timeout=30)
     if raw is not None:
-        containers = [
-            line.strip() for line in raw.splitlines() if line.strip().startswith("janasunani")
-        ]
-    return free_gib, containers
+        containers = []
+        unhealthy_set = set()
+        for line in raw.splitlines():
+            name, _, status = line.strip().partition("\t")
+            if not name.startswith("janasunani"):
+                continue
+            containers.append(name)
+            if "(unhealthy)" in status:
+                unhealthy_set.add(name)
+        unhealthy = frozenset(unhealthy_set)
+    return free_gib, containers, unhealthy
 
 
 def collect_health(site: Optional[str]) -> tuple[Optional[dict], Optional[str]]:
@@ -624,12 +653,12 @@ def main() -> int:
     if args.no_ssh:
         report.add("box", "ssh", INFO, "skipped (--no-ssh)")
     else:
-        free_gib, containers = collect_box(args.host)
+        free_gib, containers, unhealthy = collect_box(args.host)
         if free_gib is None and containers is None:
             report.add("box", "ssh", INFO, f"{args.host} unreachable — box checks skipped")
         else:
             report.findings.append(evaluate_disk(free_gib))
-            report.findings.extend(evaluate_containers(containers))
+            report.findings.extend(evaluate_containers(containers, unhealthy))
 
     payload, error = collect_health(args.site)
     if args.site:

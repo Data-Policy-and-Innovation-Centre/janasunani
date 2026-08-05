@@ -242,6 +242,33 @@ def test_oltp_plus_one_more_is_a_real_partial_deploy():
     assert by_name["janasunani-proxy"].status == CRIT
 
 
+def test_running_but_unhealthy_container_is_critical():
+    """A container Docker itself has marked failing its HEALTHCHECK
+    (oltp/api/frontend all define one) must not read as OK just because a
+    name-only `docker ps` still lists it. Codex review on #88."""
+    findings = infra_status.evaluate_containers(
+        list(infra_status.STACK_CONTAINERS), unhealthy=frozenset({"janasunani-api"})
+    )
+    by_name = {f.name: f for f in findings}
+    assert by_name["janasunani-api"].status == CRIT
+    assert "HEALTHCHECK" in by_name["janasunani-api"].detail
+    assert by_name["janasunani-oltp"].status == OK
+
+
+def test_running_and_healthy_stays_ok_when_unhealthy_set_is_empty():
+    findings = infra_status.evaluate_containers(
+        list(infra_status.STACK_CONTAINERS), unhealthy=frozenset()
+    )
+    assert all(f.status == OK for f in findings)
+
+
+def test_unhealthy_param_defaults_to_none_and_is_treated_as_no_unhealthy_containers():
+    """Existing callers that don't pass `unhealthy` (e.g. a pre-`docker ps
+    -a`-format collector) must keep working exactly as before."""
+    findings = infra_status.evaluate_containers(list(infra_status.STACK_CONTAINERS))
+    assert all(f.status == OK for f in findings)
+
+
 # --- backups (issue #31) ------------------------------------------------------
 
 
