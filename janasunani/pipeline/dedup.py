@@ -74,10 +74,21 @@ DEFAULT_SHINGLE_SIZE = 5
 # estimate, more compute; 128 is the conventional default (e.g. datasketch).
 DEFAULT_NUM_HASHES = 128
 
-# Default LSH bands. With 128 hashes this is 8 bands of 16 rows each,
-# which puts the "probability of becoming a candidate" S-curve inflection
-# around Jaccard ~0.5 — a reasonable default for near-duplicate detection.
-DEFAULT_NUM_BANDS = 8
+# Default LSH bands. The candidate probability for a pair at true Jaccard
+# similarity s, with b bands of r = num_hashes / b rows each, is
+# P(s) = 1 - (1 - s**r)**b. That function only crosses 0.5 at s ~= 0.86 for
+# 8 bands of 16 rows (128 // 8) — nowhere near the "campaign, but retyped"
+# or "resubmission, reworded" similarity this index exists to catch (a
+# lightly reworded duplicate scores ~0.78 in tests/test_dedup.py, which
+# 8-band LSH surfaces as a candidate only ~14% of the time). 16 bands of 8
+# rows moves the crossover to s ~= 0.67 and gives that same ~0.78-similarity
+# pair a ~90% chance of becoming a candidate, while a genuinely different
+# document that only shares boilerplate ("respected sir", "kindly look
+# into the matter") at s ~= 0.3 still has under a 0.1% chance — narrow
+# enough to keep candidate volume sane, wide enough that a caller does not
+# have to remember to widen it for the primitive to do its job. Verified
+# numerically, not just approximated: see the banding tests.
+DEFAULT_NUM_BANDS = 16
 
 # 2**61 - 1, a Mersenne prime — the modulus for the MinHash permutation
 # family below. Large enough to keep collisions negligible, small enough to
@@ -156,7 +167,7 @@ def _permutations(num_hashes: int) -> list[tuple[int, int]]:
 
 def minhash_signature(
     shingle_set: Iterable[str], num_hashes: int = DEFAULT_NUM_HASHES
-) -> tuple[int, ...]:
+) -> tuple[int, ...] | None:
     """MinHash signature of a shingle set: ``num_hashes`` integers, each the
     minimum of a distinct hash permutation applied to every shingle.
 
@@ -165,15 +176,22 @@ def minhash_signature(
     the standard MinHash property, checked directly in
     ``tests/test_dedup.py``.
 
-    An empty shingle set (e.g. an all-placeholder page, see
-    :func:`shingles`) returns a constant sentinel signature — every hash
-    position at ``_MERSENNE_PRIME`` (a value no real hash reaches, since
-    hashes are reduced mod that prime) — so empty documents match only each
-    other, not arbitrary short real content.
+    Returns ``None`` for an empty shingle set (e.g. an all-placeholder page
+    or genuinely short text below :data:`DEFAULT_SHINGLE_SIZE` characters,
+    see :func:`shingles`) — this is an **abstention, not a signature**. An
+    earlier version of this function returned a constant sentinel tuple
+    here so every such document would compare equal to every other one;
+    that made blank pages and short-but-real filings like "road" or "pump"
+    mutual duplicate candidates of each other and inflated duplicate
+    prevalence on the first index build. There is nothing lexically
+    meaningful to hash, so callers must not feed the result to
+    :func:`lsh_bands` (which raises on ``None``) or treat it as a duplicate
+    match; documents with no signature are low-signal/spam-review
+    candidates for a different stage, not duplicate evidence.
     """
     base_hashes = [_base_hash(s) for s in shingle_set]
     if not base_hashes:
-        return tuple(_MERSENNE_PRIME for _ in range(num_hashes))
+        return None
     return tuple(
         min((a * h + b) % _MERSENNE_PRIME for h in base_hashes)
         for a, b in _permutations(num_hashes)
@@ -181,7 +199,7 @@ def minhash_signature(
 
 
 def lsh_bands(
-    signature: tuple[int, ...], num_bands: int = DEFAULT_NUM_BANDS
+    signature: tuple[int, ...] | None, num_bands: int = DEFAULT_NUM_BANDS
 ) -> tuple[int, ...]:
     """Split a MinHash ``signature`` into ``num_bands`` bands and return one
     hash per band.
@@ -191,15 +209,27 @@ def lsh_bands(
     guaranteed duplicates. Banding trades exact nearest-neighbor search for
     a tunable false-positive/false-negative tradeoff — fewer, wider bands
     catch fewer near-duplicates but generate fewer false candidates; more,
-    narrower bands do the opposite. The blocking by district and time
-    window that ROADMAP §5.2 calls for happens one level up, in the caller
-    that groups documents before ever calling this function — this function
-    only bands one signature.
+    narrower bands do the opposite (see the arithmetic on
+    ``DEFAULT_NUM_BANDS`` above). The blocking by district and time window
+    that ROADMAP §5.2 calls for happens one level up, in the caller that
+    groups documents before ever calling this function — this function only
+    bands one signature.
 
-    Raises ``ValueError`` if ``num_bands`` does not evenly divide the
+    Raises ``ValueError`` if ``signature`` is ``None`` — the abstention
+    :func:`minhash_signature` returns for an empty shingle set. There is no
+    band hash that means "no signature" without accidentally making all
+    such documents band-match each other, so this is a hard error: the
+    caller must branch on ``None`` before banding, not push it through.
+    Also raises ``ValueError`` if ``num_bands`` does not evenly divide the
     signature length, since an uneven last band would silently change the
     banding scheme's guarantees.
     """
+    if signature is None:
+        raise ValueError(
+            "cannot band a None signature — minhash_signature() returned "
+            "None for an empty shingle set; treat that as low-signal/spam, "
+            "not a duplicate candidate, and do not call lsh_bands() on it"
+        )
     if num_bands <= 0 or len(signature) % num_bands != 0:
         raise ValueError(
             f"num_bands ({num_bands}) must evenly divide the signature "
@@ -265,6 +295,39 @@ def union_find_groups(
     return {item: find(item) for item in parent}
 
 
+def _canonical_phone_digits(value: str) -> str | None:
+    """If ``value`` is shaped like an Indian phone number, return its
+    canonical 10-digit form; otherwise ``None``.
+
+    Collapses the common ways the same mobile number shows up across
+    `petitioner_mobile` / OCR / form entry — "+91 98612 34567",
+    "09861234567", "98612-34567", "9861234567" — to one string
+    ("9861234567") by dropping spaces/hyphens/parens, then stripping a
+    recognized leading country code ("91", for a resulting 12-digit
+    string) or trunk prefix ("0", for a resulting 11-digit string) down to
+    the bare 10-digit subscriber number.
+
+    Deliberately narrow rather than "keep the last 10 digits of anything
+    10-15 digits long": that cruder rule would fold an unrelated 11-digit
+    string starting with a stray leading digit (e.g. a typo'd
+    "19861234567") onto the real "9861234567", which is exactly the kind
+    of false resubmission match a dedup index must not manufacture.
+    Anything that isn't a bare 10-digit number, or a 10-digit number behind
+    a recognized 0/91 prefix, returns ``None`` — including email addresses
+    and short non-phone identifiers — so :func:`identity_key` falls back to
+    plain trim+lowercase for those.
+    """
+    condensed = re.sub(r"[\s\-()]", "", value.strip())
+    if not re.fullmatch(r"\+?\d{10,13}", condensed):
+        return None
+    digits = condensed.lstrip("+")
+    if len(digits) == 12 and digits.startswith("91"):
+        digits = digits[2:]
+    elif len(digits) == 11 and digits.startswith("0"):
+        digits = digits[1:]
+    return digits if len(digits) == 10 else None
+
+
 def identity_key(value: str, salt: str) -> str:
     """Salted hash of a citizen identity value (mobile number, email) for
     resubmission linkage ("same citizen, same issue" — ROADMAP §5.2,
@@ -272,11 +335,13 @@ def identity_key(value: str, salt: str) -> str:
 
     This is a **separate path** from the text path above (module docstring
     point 3): it never sees redacted text and its output never enters
-    :func:`shingles`. Callers detect resubmission by comparing
-    ``identity_key`` values directly (equal salted hash => same underlying
-    identity), and detect campaign/near-duplicate text via the
-    MinHash/LSH functions — the two signals are combined by the caller,
-    never by this module.
+    :func:`shingles`. Canonicalization happens here, before hashing —
+    nothing derived from ``value`` or ``salt`` is ever written back into
+    text that could reach the shingling path. Callers detect resubmission
+    by comparing ``identity_key`` values directly (equal salted hash =>
+    same underlying identity), and detect campaign/near-duplicate text via
+    the MinHash/LSH functions — the two signals are combined by the
+    caller, never by this module.
 
     ``salt`` is supplied by the caller (e.g. from deployment config/secrets,
     not hardcoded here) and must be kept outside version control and
@@ -284,12 +349,17 @@ def identity_key(value: str, salt: str) -> str:
     existing identity keys, which is the intended way to revoke a
     compromised salt.
 
-    The value is stripped and lowercased before hashing so that
-    "9861234567", " 9861234567 " and "9861234567" (trailing whitespace from
-    OCR/form entry) all produce the same key; case-folding matters for
-    email addresses.
+    Phone-shaped values are canonicalized via :func:`_canonical_phone_digits`
+    before hashing, so "+91 98612 34567", "09861234567", "98612-34567" and
+    "9861234567" all produce the *same* key — without this, the one job this
+    function exists for (linking same-citizen resubmissions on
+    `petitioner_mobile`) silently fails on real data, since those are all
+    the same subscriber typed differently. Anything else (email addresses)
+    is only stripped and lowercased, so "Citizen@Example.com" and
+    " citizen@example.com " match but distinct addresses stay distinct.
     """
-    normalized = value.strip().lower()
+    canonical_phone = _canonical_phone_digits(value)
+    normalized = canonical_phone if canonical_phone is not None else value.strip().lower()
     digest = hashlib.blake2b(
         f"{salt}\x00{normalized}".encode("utf-8"), digest_size=32
     )

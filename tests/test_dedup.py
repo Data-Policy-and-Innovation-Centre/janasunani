@@ -9,6 +9,8 @@ docs/ROADMAP.md §5.2/§5.6. Do not add a guard here.
 Synthetic strings only — no real grievance text, no `data/` access.
 """
 
+import pytest
+
 from janasunani.pipeline.dedup import (
     DEFAULT_NUM_HASHES,
     identity_key,
@@ -127,13 +129,27 @@ def test_minhash_signature_identical_text_matches_exactly():
     assert sig_a == sig_b
 
 
-def test_minhash_signature_empty_shingle_set_is_sentinel_and_self_consistent():
-    empty_sig = minhash_signature(set())
-    assert empty_sig == minhash_signature(set())
-    assert len(set(empty_sig)) == 1  # constant sentinel value in every slot
-    # A real (non-empty) signature should not collide with the sentinel.
+def test_minhash_signature_empty_shingle_set_abstains():
+    # An earlier version returned a constant sentinel signature here, which
+    # made every blank/all-placeholder/too-short document a mutual
+    # candidate of every other one and inflated duplicate prevalence. It
+    # must abstain (None) instead — low-signal/spam territory, not
+    # duplicate evidence.
+    assert minhash_signature(set()) is None
+    assert minhash_signature(shingles("hi")) is None  # too short to shingle
     real_sig = minhash_signature(shingles(CAMPAIGN_A))
-    assert real_sig != empty_sig
+    assert real_sig is not None
+
+
+def test_minhash_signature_two_empty_documents_do_not_look_like_duplicates():
+    # Both abstain; None == None would make them look like the same
+    # signature if a caller compared naively, so this guards that a caller
+    # branching on "is None" (per the docstring contract) never even gets
+    # to a comparison — there is nothing to band or compare.
+    doc_a = minhash_signature(shingles("[PHONE]"))
+    doc_b = minhash_signature(shingles("[NAME]"))
+    assert doc_a is None
+    assert doc_b is None
 
 
 def test_minhash_signature_approximates_jaccard_similarity():
@@ -173,35 +189,41 @@ def test_lsh_bands_identical_signatures_share_every_band():
     assert lsh_bands(sig_a) == lsh_bands(sig_b)
 
 
-def test_lsh_bands_near_duplicate_shares_at_least_one_band():
+def test_lsh_bands_near_duplicate_shares_at_least_one_band_with_default_bands():
     # CAMPAIGN_A vs CAMPAIGN_C_REWORDED have true Jaccard ~0.78 (two words
-    # changed out of ~25) — not identical, so this needs enough bands (more,
-    # narrower bands lower the similarity threshold for a candidate) to
-    # reliably surface as a candidate; 8 wide bands of 16 rows each is too
-    # strict at this similarity and undersells LSH's purpose.
-    sig_a = minhash_signature(shingles(CAMPAIGN_A), num_hashes=128)
-    sig_c = minhash_signature(shingles(CAMPAIGN_C_REWORDED), num_hashes=128)
-    bands_a = set(lsh_bands(sig_a, num_bands=16))
-    bands_c = set(lsh_bands(sig_c, num_bands=16))
+    # changed out of ~25) — a lightly reworded resubmission/campaign filing,
+    # not a byte-identical one. This must work with *default* banding
+    # (no num_bands override): DEFAULT_NUM_BANDS is chosen so this pair's
+    # candidate probability is ~90% (see the arithmetic on
+    # DEFAULT_NUM_BANDS in dedup.py) — a caller should not have to
+    # remember to widen the bands for the primitive to do its one job.
+    sig_a = minhash_signature(shingles(CAMPAIGN_A))
+    sig_c = minhash_signature(shingles(CAMPAIGN_C_REWORDED))
+    bands_a = set(lsh_bands(sig_a))
+    bands_c = set(lsh_bands(sig_c))
     assert bands_a & bands_c, "near-duplicate campaign text produced no candidate band"
 
 
-def test_lsh_bands_unrelated_text_shares_no_band():
-    sig_a = minhash_signature(shingles(CAMPAIGN_A), num_hashes=128)
-    sig_u = minhash_signature(shingles(UNRELATED_COMPLAINT), num_hashes=128)
-    bands_a = set(lsh_bands(sig_a, num_bands=8))
-    bands_u = set(lsh_bands(sig_u, num_bands=8))
+def test_lsh_bands_unrelated_text_shares_no_band_with_default_bands():
+    sig_a = minhash_signature(shingles(CAMPAIGN_A))
+    sig_u = minhash_signature(shingles(UNRELATED_COMPLAINT))
+    bands_a = set(lsh_bands(sig_a))
+    bands_u = set(lsh_bands(sig_u))
     assert not (bands_a & bands_u)
 
 
 def test_lsh_bands_rejects_num_bands_not_dividing_signature_length():
     sig = minhash_signature(shingles(CAMPAIGN_A), num_hashes=100)
-    try:
+    with pytest.raises(ValueError):
         lsh_bands(sig, num_bands=7)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("expected ValueError for non-dividing num_bands")
+
+
+def test_lsh_bands_rejects_abstained_none_signature():
+    # minhash_signature() abstains (returns None) on an empty shingle set;
+    # lsh_bands() must refuse it outright rather than banding a sentinel,
+    # so an all-placeholder/blank document can never band-match a real one.
+    with pytest.raises(ValueError):
+        lsh_bands(None)
 
 
 # --- union_find_groups ---------------------------------------------------
@@ -291,6 +313,35 @@ def test_identity_key_normalizes_whitespace_and_case():
     assert identity_key(" Citizen@Example.com ", "s") == identity_key(
         "citizen@example.com", "s"
     )
+
+
+def test_identity_key_canonicalizes_equivalent_phone_number_formats():
+    # Same subscriber, four ways petitioner_mobile/OCR/form entry could
+    # spell it — resubmission linkage is the one job identity_key exists
+    # for, and it fails at that job if these don't collapse to one key.
+    variants = [
+        "+91 98612 34567",
+        "09861234567",
+        "98612-34567",
+        "9861234567",
+    ]
+    keys = {identity_key(v, "salt-1") for v in variants}
+    assert len(keys) == 1
+
+
+def test_identity_key_distinct_phone_numbers_still_differ():
+    assert identity_key("9861234567", "s") != identity_key("9861234568", "s")
+    # Canonicalization must not fold distinct subscribers together just
+    # because one is a substring of another after digit-stripping.
+    assert identity_key("9861234567", "s") != identity_key("19861234567", "s")
+
+
+def test_identity_key_non_phone_numeric_id_is_not_treated_as_a_phone_number():
+    # A 6-digit PIN code (or any short numeric identifier) is shorter than
+    # the 10-digit floor _canonical_phone_digits requires, so it must not
+    # be silently reshaped — it falls back to plain trim+lowercase, and
+    # distinct short codes must still produce distinct keys.
+    assert identity_key("751001", "s") != identity_key("751002", "s")
 
 
 def test_identity_key_never_appears_in_or_derives_shingle_text():
