@@ -403,3 +403,41 @@ class TestLandlineShapesFromTheSambalpurScan:
 
     def test_dates_are_still_not_phones(self):
         assert "[PHONE]" not in redact_text("on 06.05.2025 we filed the complaint")
+
+
+class TestIdentifierContextIsAClauseNotAnAdjacency:
+    """Requiring the keyword adjacent to the digits missed 48 of the 304
+    identifiers left after the first Sambalpur pass. Real text separates them,
+    and no adjacency rule survives contact with how people write."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "ration card issued 2019, number 12345678901 blocked",
+            "my account details, the number 123456789012 is wrong",
+            "pension not received, id 12345678901 since March",
+        ],
+    )
+    def test_a_keyword_earlier_in_the_clause_still_anchors(self, text):
+        out = redact_text(text)
+        assert "[ACCOUNT]" in out or "[ID]" in out
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "ration shop complaint, letter no 12345678901 pending",
+            "case no 12345678901 about pension arrears",
+            "file no 123456789012 regarding scholarship",
+        ],
+    )
+    def test_a_cited_number_wins_over_a_keyword_in_the_same_clause(self, text):
+        """A case or letter number can share a clause with a scheme word. The
+        citation convention immediately before the digits means they are being
+        quoted, not identified with."""
+        out = redact_text(text)
+        assert "[ACCOUNT]" not in out and "[ID]" not in out
+
+    def test_the_bare_long_run_rule_is_unaffected_by_citation(self):
+        """14+ digits is an identifier whatever precedes it: no case number is
+        that long, so the citation guard must not suppress this class."""
+        assert "[ACCOUNT]" in redact_text("12345678901234567 credited late")
