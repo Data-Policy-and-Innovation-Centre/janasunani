@@ -51,6 +51,8 @@ ENTITY_TOKENS = {
     "IN_LANDLINE": "[PHONE]",
     "IN_AADHAAR": "[AADHAAR]",
     "IN_PAN": "[PAN]",
+    "IN_BANK_ACCOUNT": "[ACCOUNT]",
+    "IN_SCHEME_ID": "[ID]",
     "EMAIL_ADDRESS": "[EMAIL]",
 }
 
@@ -65,6 +67,10 @@ ENTITY_ALIASES = {
     "AADHAAR": "AADHAAR",
     "IN_PAN": "PAN",
     "PAN": "PAN",
+    "IN_BANK_ACCOUNT": "BANK_ACCOUNT",
+    "BANK_ACCOUNT": "BANK_ACCOUNT",
+    "IN_SCHEME_ID": "SCHEME_ID",
+    "SCHEME_ID": "SCHEME_ID",
     "EMAIL_ADDRESS": "EMAIL",
     "EMAIL": "EMAIL",
 }
@@ -159,6 +165,105 @@ def _ascii_digits(text: str) -> str:
 _engines: tuple | None = None
 
 
+# Identifier classes with no distinctive shape of their own (#139). Each maps
+# a set of context words to the digit lengths that class plausibly takes.
+#
+# Lengths are deliberately generous. Indian bank account numbers run 9-18
+# digits across banks; ration, job-card and registration numbers vary by
+# scheme and district. Over-redaction is the documented safe failure direction
+# here -- an extra [ACCOUNT] where a case number stood is visible and
+# harmless, an un-redacted account number is not.
+_IDENTIFIER_CLASSES = (
+    (
+        "IN_BANK_ACCOUNT",
+        re.compile(
+            r"(?:a/?c|acc(?:oun)?t|account|bank|ifsc|passbook|khata)"
+            # Qualifiers repeat: "account no.", "bank a/c number", "khata no".
+            r"(?:[^0-9A-Za-z]{0,4}(?:a/?c|n[o0]\.?|number|num|is))*"
+            r"[^0-9A-Za-z]{0,4}$",
+            re.IGNORECASE,
+        ),
+        (9, 18),
+    ),
+    (
+        "IN_SCHEME_ID",
+        re.compile(
+            r"(?:ration|job\s*card|jobcard|mgnrega|nrega|registration|regd|"
+            r"epic|voter|udise|pension|scholarship|beneficiary|applicant)"
+            # Qualifiers repeat and stack: "ration card no", "job card number".
+            r"(?:[^0-9A-Za-z]{0,4}(?:i?d|n[o0]\.?|number|num|card|is))*"
+            r"[^0-9A-Za-z]{0,4}$",
+            re.IGNORECASE,
+        ),
+        (8, 18),
+    ),
+)
+
+# A bare run this long is an identifier whatever it is called. Nothing in a
+# grievance subject line is legitimately a 14+ digit number except an account
+# or a scheme id, and requiring a keyword would miss every one written without
+# a label. Below this length the keyword is required, or case numbers would be
+# redacted wholesale.
+_BARE_ACCOUNT_MIN = 14
+_BARE_ACCOUNT_MAX = 18
+
+_DIGIT_RUN_RE = re.compile(r"(?<!\d)\d{8,18}(?!\d)")
+
+# How far back to look for the context word. Long enough to span "bank account
+# number is", short enough that an unrelated earlier mention does not leak in.
+_CONTEXT_WINDOW = 40
+
+
+class _IndianIdentifierRecognizer:
+    """Bank account and scheme-identifier numbers, anchored on context.
+
+    Subclasses Presidio's EntityRecognizer at construction time rather than at
+    import, so this module stays importable without presidio installed (the
+    lazy-import philosophy the rest of the file follows).
+    """
+
+    def __new__(cls):
+        from presidio_analyzer import EntityRecognizer, RecognizerResult
+
+        class _Impl(EntityRecognizer):
+            def __init__(self) -> None:
+                super().__init__(
+                    supported_entities=[name for name, _, _ in _IDENTIFIER_CLASSES],
+                    name="in_identifier_recognizer",
+                    supported_language="en",
+                )
+
+            def load(self) -> None:  # pragma: no cover - presidio hook
+                pass
+
+            def analyze(self, text, entities, nlp_artifacts=None):
+                results = []
+                for match in _DIGIT_RUN_RE.finditer(text):
+                    start, end = match.start(), match.end()
+                    length = end - start
+                    before = text[max(0, start - _CONTEXT_WINDOW) : start]
+
+                    entity = None
+                    score = 0.0
+                    for name, context_re, (low, high) in _IDENTIFIER_CLASSES:
+                        if low <= length <= high and context_re.search(before):
+                            entity, score = name, 0.7
+                            break
+                    if entity is None and _BARE_ACCOUNT_MIN <= length <= _BARE_ACCOUNT_MAX:
+                        entity, score = "IN_BANK_ACCOUNT", 0.6
+
+                    if entity is None or (entities and entity not in entities):
+                        continue
+                    results.append(
+                        RecognizerResult(
+                            entity_type=entity, start=start, end=end, score=score
+                        )
+                    )
+                return results
+
+        return _Impl()
+
+
 def _get_engines():
     """Build (analyzer, anonymizer) once per process. Heavy imports live here
     so importing this module stays light (lazy-import philosophy)."""
@@ -247,6 +352,28 @@ def _get_engines():
             context=["pan", "income tax", "permanent account"],
         )
     )
+    # Bank accounts and government scheme identifiers (#139).
+    #
+    # Found in the Sambalpur 2024 redaction pass: 579 digit runs of 11-18
+    # characters survived, because nothing looked for them. ENTITY_TOKENS
+    # covered NAME/PHONE/EMAIL/AADHAAR/PAN, and Aadhaar is exactly 12 digits,
+    # so every other identifier length passed straight through. In a corpus
+    # about pensions, rations and scholarships, the numbers citizens quote are
+    # account numbers, ration cards and job cards -- removing someone's name
+    # while leaving their bank account is not a redaction.
+    #
+    # These are shape-PLUS-context problems, unlike Aadhaar and PAN which have
+    # a distinctive shape of their own. A bare 11-digit run could be a job card
+    # or a case number and nothing about the digits distinguishes them, so the
+    # context word is load-bearing rather than a confidence nudge -- which is
+    # why this is a custom recognizer instead of a PatternRecognizer with a
+    # `context` list. Presidio's `context` only boosts a score; here its
+    # absence must mean no match at all.
+    #
+    # The returned span covers the DIGITS ONLY. Matching the keyword too would
+    # redact "account no." along with the number and destroy the sentence for
+    # the officer reading it.
+    analyzer.registry.add_recognizer(_IndianIdentifierRecognizer())
     # Landline: STD code (2-4 digits after the leading 0) plus a 6-8 digit
     # subscriber number, e.g. Bhubaneswar "0674 2536789". Presidio's built-in
     # PhoneRecognizer used to be the only thing catching these, at the same
@@ -294,6 +421,23 @@ def _get_engines():
                     "in_landline_split_subscriber",
                     r"(?<!\d)0\d{2,4}[\s-]\d{3}[\s-]\d{4}(?!\d)",
                     0.6,
+                ),
+                # #120: two shapes the Sambalpur scan and the n50 gold both
+                # showed surviving. Written without the leading 0 ("674-2536789"
+                # for Bhubaneswar), and split 6-4 rather than at the STD
+                # boundary ("025612 3456"). Both are separator-bearing, so
+                # they cannot be confused with a bare mobile, and the
+                # citation guard in _postfilter still exempts "Letter No."
+                # style references that happen to take the same shape.
+                Pattern(
+                    "in_landline_no_leading_zero",
+                    r"(?<!\d)[1-9]\d{2,3}[\s-]\d{6,8}(?!\d)",
+                    0.55,
+                ),
+                Pattern(
+                    "in_landline_split_six_four",
+                    r"(?<!\d)0\d{4,5}[\s-]\d{4}(?!\d)",
+                    0.55,
                 ),
             ],
             context=["landline", "office", "std code", "telephone"],

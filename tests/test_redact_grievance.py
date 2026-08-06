@@ -112,13 +112,13 @@ class TestResumability:
     def test_counts_report_the_slice(self, oltp):
         async_url, _ = oltp
         counts = redact_grievances("Khordha", 2024, oltp_url=async_url)
-        assert counts == {"total": 3, "already_redacted": 0, "processed": 3}
+        assert counts == {"total": 3, "already_redacted": 0, "processed": 3, "stale_at_start": 0}
 
     def test_second_run_is_a_no_op(self, oltp):
         async_url, _ = oltp
         redact_grievances("Khordha", 2024, oltp_url=async_url)
         second = redact_grievances("Khordha", 2024, oltp_url=async_url)
-        assert second == {"total": 3, "already_redacted": 3, "processed": 0}
+        assert second == {"total": 3, "already_redacted": 3, "processed": 0, "stale_at_start": 0}
 
     def test_an_interrupted_run_resumes_where_it_stopped(self, oltp):
         async_url, sync_url = oltp
@@ -259,3 +259,64 @@ class TestRealAnalyzer:
         out = redactions(sync_url)["T1"]
         assert "9876543210" not in out
         assert "water supply" in out
+
+
+class TestRefreshStale:
+    """#130. Without this the analyzer_version stamp is write-only: a completed
+    slice is excluded forever, so a better analyzer can never reach the rows it
+    was built to fix. #139 and #120 are exactly that case."""
+
+    def _restamp(self, sync_url: str, version: str) -> None:
+        engine = create_engine(sync_url)
+        with engine.begin() as conn:
+            conn.execute(
+                text("UPDATE grievance_redactions SET analyzer_version = :v"),
+                {"v": version},
+            )
+        engine.dispose()
+
+    def test_stale_rows_are_counted_even_when_not_reprocessed(self, oltp):
+        """Reported by every run, so the need is visible rather than something
+        you have to think to check."""
+        async_url, sync_url = oltp
+        redact_grievances("Khordha", 2024, oltp_url=async_url)
+        self._restamp(sync_url, "presidio-analyzer=0.0.1 an-older-build")
+
+        counts = redact_grievances("Khordha", 2024, oltp_url=async_url)
+        assert counts["stale_at_start"] == 3
+        assert counts["processed"] == 0
+
+    def test_stale_rows_are_not_reprocessed_by_default(self, oltp):
+        """A backfill over citizen text must not change scope because an
+        unrelated commit landed."""
+        async_url, sync_url = oltp
+        redact_grievances("Khordha", 2024, oltp_url=async_url)
+        self._restamp(sync_url, "presidio-analyzer=0.0.1 an-older-build")
+
+        counts = redact_grievances("Khordha", 2024, oltp_url=async_url)
+        assert counts["processed"] == 0
+
+    def test_refresh_stale_reprocesses_them(self, oltp):
+        async_url, sync_url = oltp
+        redact_grievances("Khordha", 2024, oltp_url=async_url)
+        self._restamp(sync_url, "presidio-analyzer=0.0.1 an-older-build")
+
+        counts = redact_grievances("Khordha", 2024, oltp_url=async_url, refresh_stale=True)
+        assert counts["processed"] == 3
+
+        engine = create_engine(sync_url)
+        with engine.begin() as conn:
+            stamps = conn.execute(
+                select(GrievanceRedaction.analyzer_version).distinct()
+            ).scalars().all()
+        engine.dispose()
+        assert len(stamps) == 1 and "0.0.1" not in stamps[0]
+
+    def test_refresh_stale_leaves_current_rows_alone(self, oltp):
+        """Rows already on the current analyzer are not rewritten, so a refresh
+        run costs only what actually changed."""
+        async_url, _ = oltp
+        redact_grievances("Khordha", 2024, oltp_url=async_url)
+        counts = redact_grievances("Khordha", 2024, oltp_url=async_url, refresh_stale=True)
+        assert counts["processed"] == 0
+        assert counts["stale_at_start"] == 0

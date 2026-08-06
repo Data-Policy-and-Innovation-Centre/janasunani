@@ -315,3 +315,91 @@ def test_redact_text_and_detect_pii_spans_agree_on_government_email():
     assert "citizen@gmail.com" not in red and "[EMAIL]" in red  # citizen: redacted
     assert len(email_spans) == 1
     assert text[email_spans[0].start : email_spans[0].end] == "citizen@gmail.com"
+
+
+class TestSchemeAndAccountIdentifiers:
+    """#139. Found in the Sambalpur 2024 pass: 579 digit runs of 11-18 chars
+    survived because nothing looked for them. In a corpus about pensions,
+    rations and scholarships, removing a citizen's name while leaving their
+    bank account is not a redaction.
+
+    Synthetic numbers only.
+    """
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "my account no. 123456789012345 not credited",
+            "bank a/c 987654321098 pension pending",
+            "account number is 123456789012 wrong",
+            "khata no 1234567890123 blocked",
+        ],
+    )
+    def test_context_anchored_account_numbers_are_redacted(self, text):
+        assert "[ACCOUNT]" in redact_text(text)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "ration card no 12345678901 not working",
+            "my ration card 12345678901 blocked",
+            "job card number 98765432101 wrong",
+            "registration no 123456789012 rejected",
+        ],
+    )
+    def test_context_anchored_scheme_ids_are_redacted(self, text):
+        assert "[ID]" in redact_text(text)
+
+    def test_a_long_bare_run_is_redacted_without_a_keyword(self):
+        """Nothing in a grievance subject is legitimately a 14+ digit number
+        except an account or scheme id, and requiring a keyword would miss
+        every one written without a label."""
+        assert "[ACCOUNT]" in redact_text("12345678901234567 credited late")
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Letter No. 1234567890 dated 05.06.2024",
+            "case no 12345678 pending review",
+        ],
+    )
+    def test_cited_reference_numbers_are_not_redacted(self, text):
+        """Below the bare-run threshold a keyword is required, or case and
+        letter numbers would be redacted wholesale."""
+        assert "[ACCOUNT]" not in redact_text(text)
+        assert "[ID]" not in redact_text(text)
+
+    def test_the_surrounding_words_survive(self):
+        """The span covers the digits only. Redacting 'account no.' along with
+        the number would destroy the sentence for the officer reading it."""
+        out = redact_text("my account no. 123456789012345 not credited")
+        assert "account no." in out
+        assert "not credited" in out
+
+    def test_aadhaar_still_wins_on_its_own_shape(self):
+        assert "[AADHAAR]" in redact_text("aadhaar 234567890123 mismatch")
+
+    def test_a_mobile_is_still_a_phone_not_an_identifier(self):
+        out = redact_text("call me on 9876543210 about the water supply")
+        assert "[PHONE]" in out
+        assert "[ACCOUNT]" not in out and "[ID]" not in out
+
+
+class TestLandlineShapesFromTheSambalpurScan:
+    """#120. Two shapes the n50 gold and the 55,544-row Sambalpur scan both
+    showed surviving after PHONE_NUMBER was dropped in #55."""
+
+    def test_std_written_without_the_leading_zero(self):
+        assert "[PHONE]" in redact_text("std 674-2536789 office")
+
+    def test_split_six_four_rather_than_at_the_std_boundary(self):
+        assert "[PHONE]" in redact_text("landline 025612 3456 ward")
+
+    def test_the_citation_guard_still_protects_reference_numbers(self):
+        """These shapes are structurally identical to zero-prefixed file
+        numbers, so the textual citation signal is what separates them."""
+        assert "[PHONE]" not in redact_text("Letter No. 1234567890 dated 05.06.2024")
+        assert "[PHONE]" not in redact_text("case no 123-4567890 pending")
+
+    def test_dates_are_still_not_phones(self):
+        assert "[PHONE]" not in redact_text("on 06.05.2025 we filed the complaint")

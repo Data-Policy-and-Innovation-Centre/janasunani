@@ -241,3 +241,26 @@ def test_cli_gate_exits_nonzero_when_below_baseline(tmp_path, capsys, monkeypatc
 
     assert code == 1
     assert "passed=false" in capsys.readouterr().out
+
+
+def test_an_entity_absent_from_the_gold_reports_na_not_zero():
+    """#139/#67. An entity the gold never labels has no recall to report.
+    Printing 0.0000 reads as total failure when it means the measurement
+    cannot see the class -- and this table gets published."""
+    from janasunani.pipeline.pii_eval import EntityMetrics, _format_metrics
+
+    row = _format_metrics(
+        "BANK_ACCOUNT", EntityMetrics(gold=0, predicted=7, overlap_hits=0, exact_hits=0)
+    )
+    assert "0.0000" not in row
+    assert "n/a" in row
+    assert "not labelled in this gold" in row
+
+
+def test_a_labelled_entity_still_reports_numeric_recall():
+    from janasunani.pipeline.pii_eval import EntityMetrics, _format_metrics
+
+    row = _format_metrics(
+        "NAME", EntityMetrics(gold=404, predicted=497, overlap_hits=176, exact_hits=106)
+    )
+    assert "0.4356" in row
