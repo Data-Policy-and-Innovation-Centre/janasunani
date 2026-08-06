@@ -40,7 +40,9 @@ Thresholds come from the repo, not from taste:
 |---|---|---|
 | Disk free | CRIT < 20 GiB | `deploy.sh`'s own `MIN_FREE_KIB`; that volume also holds prod Postgres |
 | Backup age | WARN > 26 h, CRIT > 48 h | nightly cadence, §5 of [DEPLOY.md](../docs/DEPLOY.md). The cron lives only on the box (#31), so a rebuilt box loses it silently |
-| Port 22 ingress | WARN on any, CRIT on `0.0.0.0/0`/`::/0` or a rule covering all ports/protocols; OK on the standing maintainer rule | the deploy opens 22 to the runner's /32 and revokes it; a leftover rule is #32. Covers `IpProtocol="-1"`, wide TCP port ranges and IPv6 sources, not just a literal `FromPort==22` |
+| Port 22 ingress | WARN on any, CRIT on `0.0.0.0/0`/`::/0` or a rule covering all ports/protocols; OK on the standing maintainer rule *if it is a single host* | the deploy opens 22 to the runner's /32 and revokes it; a leftover rule is #32. Covers `IpProtocol="-1"`, wide TCP port ranges and IPv6 sources, not just a literal `FromPort==22`. The maintainer-rule description alone is not trusted — `admin_cidr`'s terraform validation only rejects `0.0.0.0/0`, so a `/24` keeping that description still gets WARN |
+| Container health | CRIT if failing its HEALTHCHECK, WARN if still in `start_period` | oltp/api/frontend all define one (deploy/docker-compose.yml); a name-only `docker ps` can't tell "running" from "running but unhealthy" or "running but not confirmed healthy yet" (the api's warm-up can take minutes) |
+| Instance identity | exact `Name` tag + `Project=janasunani` | deploy/terraform's provider `default_tags` plus each instance's own `Name`; a substring match could let an unrelated instance in a shared account stand in for a missing box |
 | GPU box running | WARN | on-demand and billed hourly |
 | `processor` not `pipeline` | WARN | `mock` is up but serving canned results; anything else isn't a value the app produces at all — deploy.sh's own smoke gate greps for `"processor":"pipeline"` and would still be waiting on either |
 

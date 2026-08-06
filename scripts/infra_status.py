@@ -38,6 +38,7 @@ Exit code is 0 unless something is CRIT, so it is safe to put in a cron.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import shutil
 import subprocess
@@ -56,6 +57,14 @@ BACKUP_PREFIX = "janasunani/"
 # elsewhere gets a successful, empty response, not an error, and that reads
 # as "the box is gone" (see collect_instances).
 AWS_REGION_DEFAULT = "ap-south-1"
+# deploy/terraform/main.tf and gpu.tf: the exact `Name` tag each instance
+# resource sets. `Project` comes from the provider's own `default_tags` block
+# (main.tf), applied to every resource it manages, not just these two --
+# required alongside Name so an unrelated instance in a shared account (e.g.
+# a substring match on "cpu" hitting a "batch-cpu-worker") cannot stand in
+# for a missing production box.
+INSTANCE_NAME_TAGS = {"cpu box": "janasunani-cpu-box", "gpu box": "janasunani-gpu-box"}
+PROJECT_TAG_VALUE = "janasunani"
 # deploy.sh: min_free_kib="${MIN_FREE_KIB:-$((20 * 1024 * 1024))}"
 DISK_CRIT_GIB = 20
 DISK_WARN_GIB = 40
@@ -84,6 +93,13 @@ PRE_DEPLOY_CONTAINERS = frozenset({"janasunani-oltp"})
 # IpPermission, so a rule carrying this exact text is the intended permanent
 # access, not a leftover deploy-runner /32 (issue #32) -- distinguished here
 # so a healthy box can still render all clear.
+#
+# The description alone is not proof of scope: deploy/terraform/variables.tf's
+# `admin_cidr` validation only rejects 0.0.0.0/0, so a `/24` (or wider) still
+# passes terraform and keeps this exact description, and trusting the text
+# would then bless SSH from every address in that block. evaluate_ssh_exposure
+# also requires the CIDR itself to be a single host (see `_is_single_host`)
+# before treating it as the intended maintainer-only rule.
 MAINTAINER_SSH_DESCRIPTION = "SSH from the maintainer IP only"
 
 OK, WARN, CRIT, INFO = "OK", "WARN", "CRIT", "INFO"
@@ -194,6 +210,18 @@ def _rule_covers_ssh(rule: dict) -> bool:
     return from_port <= 22 <= to_port
 
 
+def _is_single_host(cidr: str) -> bool:
+    """Whether a CIDR block is exactly one address (a `/32` for IPv4, a
+    `/128` for IPv6) -- what "the maintainer IP only" actually means.
+    `admin_cidr`'s terraform validation only rejects `0.0.0.0/0`, so this
+    cannot be assumed from the variable's description or its name.
+    """
+    try:
+        return ipaddress.ip_network(cidr, strict=False).num_addresses == 1
+    except ValueError:
+        return False
+
+
 def evaluate_ssh_exposure(permissions: list[dict]) -> list[Finding]:
     """Port 22 ingress. See issue #32.
 
@@ -226,13 +254,28 @@ def evaluate_ssh_exposure(permissions: list[dict]) -> list[Finding]:
                         f"port 22 open to {block} — the box holds production PII",
                     )
                 )
-            elif description == MAINTAINER_SSH_DESCRIPTION:
+            elif description == MAINTAINER_SSH_DESCRIPTION and _is_single_host(block):
                 findings.append(
                     Finding(
                         "network",
                         "ssh exposure",
                         OK,
                         f"port 22 open to {block} ({description}) — standing maintainer access",
+                    )
+                )
+            elif description == MAINTAINER_SSH_DESCRIPTION:
+                # Carries the admin rule's description but is not a single
+                # host -- admin_cidr's terraform validation only rejects
+                # 0.0.0.0/0, so this is not hypothetical. Trusting the label
+                # here would bless SSH from the whole block.
+                findings.append(
+                    Finding(
+                        "network",
+                        "ssh exposure",
+                        WARN,
+                        f"port 22 open to {block} ({description}) — labeled as the "
+                        "maintainer rule but not a single host; check admin_cidr in "
+                        "deploy/terraform",
                     )
                 )
             else:
@@ -274,11 +317,19 @@ def evaluate_disk(free_gib: Optional[float]) -> Finding:
 
 
 def evaluate_containers(
-    running: Optional[list[str]], unhealthy: Optional[frozenset[str]] = None
+    running: Optional[list[str]],
+    unhealthy: Optional[frozenset[str]] = None,
+    starting: Optional[frozenset[str]] = None,
 ) -> list[Finding]:
     """``unhealthy`` are containers Docker itself has marked failing their
     HEALTHCHECK (oltp/api/frontend all define one) despite still running --
-    distinct from ``running`` not containing the name at all (stopped)."""
+    distinct from ``running`` not containing the name at all (stopped).
+    ``starting`` are containers still inside their HEALTHCHECK's
+    ``start_period`` (Docker's `(health: starting)`, e.g. the api's
+    multi-minute model warm-up) -- not yet *confirmed* healthy, so `make
+    infra` running mid-warm-up must not call that OK either, even though it
+    is an expected, transient state rather than a failure.
+    """
     if running is None:
         return [Finding("box", "stack", INFO, "not checked")]
     if not running:
@@ -301,6 +352,7 @@ def evaluate_containers(
             )
         ]
     unhealthy = unhealthy or frozenset()
+    starting = starting or frozenset()
     findings = []
     for name in STACK_CONTAINERS:
         if name not in running:
@@ -308,6 +360,10 @@ def evaluate_containers(
         elif name in unhealthy:
             findings.append(
                 Finding("box", name, CRIT, "running but failing its HEALTHCHECK")
+            )
+        elif name in starting:
+            findings.append(
+                Finding("box", name, WARN, "running, HEALTHCHECK still starting (warm-up)")
             )
         else:
             findings.append(Finding("box", name, OK, "running"))
@@ -423,7 +479,15 @@ def _aws_json(args: list[str], region: str) -> Optional[dict]:
 def collect_instances(
     tag_names: dict[str, str], region: str
 ) -> Optional[dict[str, Optional[dict]]]:
-    """None means the `describe-instances` call itself failed (credentials,
+    """`tag_names` maps a report label to the exact `Name` tag to match (see
+    `INSTANCE_NAME_TAGS`) -- an instance must also carry
+    `Project=PROJECT_TAG_VALUE` to qualify, so an unrelated instance sharing
+    part of the name (or the name outright, in a shared account) cannot stand
+    in for a missing production box. An exact match also means at most one
+    instance can satisfy a given label, so there is no "later matches
+    overwrite earlier ones" ambiguity left to depend on response order for.
+
+    None means the `describe-instances` call itself failed (credentials,
     region, IAM, network) -- distinct from a successful call that simply found
     no matching instance. Conflating the two turns "AWS is unreachable" into
     "the box is gone", which is a false production alarm, not a status check.
@@ -437,9 +501,11 @@ def collect_instances(
             if instance.get("State", {}).get("Name") == "terminated":
                 continue
             tags = {t["Key"]: t["Value"] for t in instance.get("Tags", [])}
+            if tags.get("Project") != PROJECT_TAG_VALUE:
+                continue
             name = tags.get("Name", "")
             for label, wanted in tag_names.items():
-                if wanted in name:
+                if name == wanted:
                     found[label] = instance
     return found
 
@@ -476,21 +542,27 @@ def collect_backup(region: str) -> Optional[tuple[Optional[str], Optional[int]]]
     return newest["LastModified"], newest.get("Size")
 
 
-def collect_box(
-    host: str,
-) -> tuple[Optional[float], Optional[list[str]], Optional[frozenset[str]]]:
-    """Disk free (GiB), running janasunani containers, and which of those
-    Docker itself considers unhealthy, over SSH.
+def collect_box(host: str) -> tuple[
+    Optional[float],
+    Optional[list[str]],
+    Optional[frozenset[str]],
+    Optional[frozenset[str]],
+]:
+    """Disk free (GiB), running janasunani containers, which of those Docker
+    considers unhealthy, and which are still inside their HEALTHCHECK's
+    start_period, over SSH.
 
     `docker ps` (no `-a`) already excludes exited containers, so a stopped
     container correctly falls out of the `containers` list. The gap this
     closes is the other direction: a container that is running but whose
     HEALTHCHECK (oltp/api/frontend all define one, deploy/docker-compose.yml)
-    is failing -- `docker ps --format '{{.Names}}'` alone can't distinguish
-    that from a genuinely healthy one, so a name-only list still says OK.
+    is failing, or has not finished its `start_period` yet (Docker's
+    `(health: starting)` -- the api's warm-up can take minutes) -- a
+    name-only list can't distinguish either from a genuinely healthy one, so
+    it still says OK.
     """
     if shutil.which("ssh") is None:
-        return None, None, None
+        return None, None, None, None
     ssh = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host]
 
     free_gib = None
@@ -500,10 +572,12 @@ def collect_box(
 
     containers = None
     unhealthy = None
+    starting = None
     raw = _run([*ssh, "docker ps --format '{{.Names}}\t{{.Status}}'"], timeout=30)
     if raw is not None:
         containers = []
         unhealthy_set = set()
+        starting_set = set()
         for line in raw.splitlines():
             name, _, status = line.strip().partition("\t")
             if not name.startswith("janasunani"):
@@ -511,8 +585,11 @@ def collect_box(
             containers.append(name)
             if "(unhealthy)" in status:
                 unhealthy_set.add(name)
+            elif "(health: starting)" in status:
+                starting_set.add(name)
         unhealthy = frozenset(unhealthy_set)
-    return free_gib, containers, unhealthy
+        starting = frozenset(starting_set)
+    return free_gib, containers, unhealthy, starting
 
 
 def collect_health(site: Optional[str]) -> tuple[Optional[dict], Optional[str]]:
@@ -600,7 +677,7 @@ def main() -> int:
     elif shutil.which("aws") is None:
         report.add("compute", "aws", INFO, "aws CLI not installed — AWS checks skipped")
     else:
-        instances = collect_instances({"cpu box": "cpu", "gpu box": "gpu"}, args.region)
+        instances = collect_instances(INSTANCE_NAME_TAGS, args.region)
         if instances is None:
             report.add(
                 "compute",
@@ -653,12 +730,12 @@ def main() -> int:
     if args.no_ssh:
         report.add("box", "ssh", INFO, "skipped (--no-ssh)")
     else:
-        free_gib, containers, unhealthy = collect_box(args.host)
+        free_gib, containers, unhealthy, starting = collect_box(args.host)
         if free_gib is None and containers is None:
             report.add("box", "ssh", INFO, f"{args.host} unreachable — box checks skipped")
         else:
             report.findings.append(evaluate_disk(free_gib))
-            report.findings.extend(evaluate_containers(containers, unhealthy))
+            report.findings.extend(evaluate_containers(containers, unhealthy, starting))
 
     payload, error = collect_health(args.site)
     if args.site:
