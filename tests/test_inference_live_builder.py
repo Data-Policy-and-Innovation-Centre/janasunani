@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -706,6 +707,42 @@ def test_preflight_never_leaks_the_oltp_url_on_connection_failure(tmp_path, monk
     assert secret not in check.detail
 
 
+def test_preflight_never_opens_a_real_connection_even_with_ambient_oltp_db_url(
+    tmp_path, monkeypatch
+):
+    """#119: preflight() must not silently follow whatever OLTP_DB_URL the
+    ambient environment (a shell-exported var, or a root .env via Settings)
+    happens to name. AGENTS.md/tests/README.md are explicit pytest must
+    never point at production Postgres; the live probe added in aab4d8e/
+    c97bdb6 is read-only, so this is not that table-dropping hazard, but a
+    routine `pytest` run should still never attempt to reach whatever
+    database a developer's own .env happens to configure, silently, while
+    testing something unrelated.
+
+    Deliberately does NOT stub `resolve_explicit_oltp_url` or
+    `_probe_oltp_connection` itself -- doing either would test this file's
+    own mocking, not whether the autouse `_no_ambient_oltp_probe` fixture in
+    conftest.py actually neutralizes the real code path. Sets OLTP_DB_URL to
+    a host confirmed (empirically, in this environment) to hang rather than
+    fail fast, so a real connection attempt would consume the probe's own
+    5s internal timeout (_OLTP_PROBE_TIMEOUT_S) -- comfortably distinguishing
+    "the neutralized probe returned instantly" from "a real attempt was
+    made" without depending on exactly how a given network path fails.
+    """
+    monkeypatch.setenv(
+        "OLTP_DB_URL", "postgresql+asyncpg://nope:nope@10.255.255.1:5432/nope"
+    )
+    started = time.monotonic()
+    checks = preflight(tmp_path)
+    elapsed = time.monotonic() - started
+    check = _advisory(checks, "oltp store")
+    assert check.ok is True, "the neutralized probe should report success, not attempt IO"
+    assert elapsed < 2.0, (
+        f"preflight() took {elapsed:.1f}s -- long enough to suggest a real "
+        "connection was attempted despite the autouse neutralization"
+    )
+
+
 def _sqlite_url_with_live_grievances(tmp_path) -> str:
     """A throwaway sqlite file with the real schema (Base.metadata, same as
     tests/test_serving_persistence.py's _make_oltp) -- test setup, not an
@@ -718,14 +755,21 @@ def _sqlite_url_with_live_grievances(tmp_path) -> str:
     return url
 
 
+@pytest.mark.real_oltp_probe
 def test_probe_oltp_connection_succeeds_when_live_grievances_exists(tmp_path):
     """Exercises the real probe (not the preflight wiring above, which stubs
     it) against an actual database with the real schema, so both the
     SELECT 1 round trip and the live_grievances existence check are proven
-    to work end to end without needing network or a real Postgres."""
+    to work end to end without needing network or a real Postgres.
+
+    Marked real_oltp_probe (#119) to opt out of conftest.py's autouse
+    neutralization of `service._probe_oltp_connection` -- this test's entire
+    point is calling the real implementation, against a throwaway sqlite
+    file it builds itself, never a real/ambient database."""
     service._probe_oltp_connection(_sqlite_url_with_live_grievances(tmp_path))
 
 
+@pytest.mark.real_oltp_probe
 def test_probe_oltp_connection_raises_when_live_grievances_is_missing(tmp_path):
     """A reachable database whose Alembic migration never ran must fail this
     probe, not just a connection failure -- otherwise --strict passes clean
@@ -738,6 +782,7 @@ def test_probe_oltp_connection_raises_when_live_grievances_is_missing(tmp_path):
         service._probe_oltp_connection(f"sqlite+aiosqlite:///{db_path}")
 
 
+@pytest.mark.real_oltp_probe
 def test_probe_oltp_connection_raises_for_an_unreachable_target():
     """127.0.0.1 loopback on a closed port refuses instantly -- no DNS, no
     real network needed -- which is what _oltp_check's except clause and the
