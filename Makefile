@@ -96,11 +96,46 @@ API_URL        ?= http://127.0.0.1:$(API_PORT)
 # printed and read via `sh_quote`/OLTP_DB_URL_RAW below), so they get the
 # same safe *parsing* but no additional quoting machinery beyond what
 # `ingest`/`publish-raw`/`deliver`/`box-paths` already did before #60.
+#
+# Two more failures of this same "parse-time `uv run` call" shape, both
+# #114: first, this whole extraction requires `uv` to already be
+# resolvable, which is exactly what a fresh or broken checkout does not
+# have -- and `scripts/setup.sh`'s install_uv() (invoked by the `setup`
+# target below) is the documented mechanism that installs it. Requiring
+# `uv` to run *before* `setup` can even start is a bootstrap cycle: the
+# repair target can't run because the environment is unrepaired. So the
+# `ifneq (,$(wildcard .env))` block immediately below only runs when
+# `setup` is *not* among the requested goals (`$(MAKECMDGOALS)`, populated
+# by Make from the command line before any makefile is read); `setup`
+# itself never touches OLTP_DB_URL or the Box keys, so skipping the
+# extraction for it costs nothing. `$(MAKE) install-hooks`, which `setup`
+# shells out to once scripts/setup.sh has installed `uv` and run `uv
+# sync`, is a *separate* `make` invocation with its own `MAKECMDGOALS`
+# (`install-hooks`, not `setup`) and re-parses this file normally, by
+# which point `uv` and a synced `.venv` both exist.
+#
+# Second: even with `uv` resolvable, a bare `uv run` re-syncs the
+# environment against `pyproject.toml`/`uv.lock` on every invocation,
+# including re-fetching metadata for direct-URL dependencies (e.g. the
+# spaCy model wheel) even when nothing about them has changed -- so a
+# transient network hiccup during *that* resync turns this parse-time call
+# (which only ever needs `python-dotenv`, already sitting in an existing
+# `.venv`) into a multi-minute hang, which the `ifeq`/$(error) guards below
+# then escalate to a hard abort of *every* target, `help`/`status`/
+# `box-paths` included. `--no-sync` makes the call use whatever `.venv`
+# already has instead of resyncing it; `--offline` is defense in depth so
+# any residual network attempt fails immediately rather than hanging.
+# Verified with uv 0.7.18: together they resolve in well under a second
+# against an already-synced `.venv`, and fail fast (not hang) against an
+# unsynced one -- correctly, since "no python-dotenv available" is a
+# genuine parse failure and must still hit the hard $(error) below, not a
+# silent fallback.
 define dotenv_get
-$(shell PATH="$(USER_BIN):$$PATH" uv run python -c "from dotenv import dotenv_values; import sys; v = dotenv_values('.env').get('$(1)'); sys.stdout.write('DOTENV_OK:' + (v if v is not None else ''))" 2>$(_DOTENV_STDERR))
+$(shell PATH="$(USER_BIN):$$PATH" uv run --no-sync --offline python -c "from dotenv import dotenv_values; import sys; v = dotenv_values('.env').get('$(1)'); sys.stdout.write('DOTENV_OK:' + (v if v is not None else ''))" 2>$(_DOTENV_STDERR))
 endef
 _DOTENV_STDERR := /tmp/.janasunani-makefile-dotenv-stderr-$(shell whoami 2>/dev/null)
 ifneq (,$(wildcard .env))
+ifeq ($(filter setup,$(MAKECMDGOALS)),)
 _DOTENV_RAW_OLTP_DB_URL := $(call dotenv_get,OLTP_DB_URL)
 ifeq ($(findstring DOTENV_OK:,$(_DOTENV_RAW_OLTP_DB_URL)),)
 $(error .env exists but OLTP_DB_URL could not be parsed from it (#103) -- refusing to silently fall back to the throwaway demo default. 'uv run python' stderr: $(shell cat $(_DOTENV_STDERR) 2>/dev/null))
@@ -144,6 +179,7 @@ endif
 _DOTENV_EXHIBITS_REMOTE := $(subst DOTENV_OK:,,$(_DOTENV_RAW_EXHIBITS_REMOTE))
 ifneq (,$(_DOTENV_EXHIBITS_REMOTE))
 EXHIBITS_REMOTE := $(_DOTENV_EXHIBITS_REMOTE)
+endif
 endif
 endif
 # A fourth instance of the same bug class, in the one place the .env fix

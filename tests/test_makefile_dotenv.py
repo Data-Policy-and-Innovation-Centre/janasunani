@@ -1,10 +1,12 @@
 """Real-code-path checks for the Makefile's `.env`-sourced settings (#60 and
-its sequels, #103, #104): that OLTP_DB_URL survives adversarial characters
-through every documented precedence tier (command line, shell-exported
-environment, `.env`), that a parse-time `uv` failure fails loudly rather than
-silently keeping the throwaway demo default, and that `.env` still supplies
-the other Make settings README.md documents (BOX_REMOTE, BOX_PROJECT_ROOT,
-INCOMING_REMOTE, EXHIBITS_REMOTE).
+its sequels, #103, #104, #114): that OLTP_DB_URL survives adversarial
+characters through every documented precedence tier (command line,
+shell-exported environment, `.env`), that a parse-time `uv` failure fails
+loudly rather than silently keeping the throwaway demo default, that `.env`
+still supplies the other Make settings README.md documents (BOX_REMOTE,
+BOX_PROJECT_ROOT, INCOMING_REMOTE, EXHIBITS_REMOTE), that `setup` (the
+install/repair target) stays runnable without `uv` already installed, and
+that the parse-time `uv run` call cannot hang waiting on network.
 
 Shells out to the actual `make` binary against the real Makefile -- not a
 copy, not a reimplementation of its logic -- with `-C` pointed at an isolated
@@ -23,6 +25,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -227,6 +230,127 @@ def test_missing_uv_fails_loudly_instead_of_silently_using_the_demo_default(isol
     assert demo_default not in result.stdout, (
         "must fail loudly, not silently resolve to the throwaway demo default"
     )
+
+
+# --- #114: the parse-time `uv` dependency must not make `setup` (the
+# install/repair target) unbootstrappable, and must not let a transient
+# network hiccup during environment sync escalate into a multi-minute hang
+# that then hard-aborts every target ----------------------------------------
+
+
+def test_setup_bypasses_dotenv_extraction_when_uv_is_unresolvable(isolated_dir):
+    """Before this fix, the parse-time dotenv extraction ran before any
+    target was selected, so a checkout with a root `.env` but no `uv`
+    installed made even `make setup` fail with 'uv: not found' -- while
+    `scripts/setup.sh`'s install_uv() is the documented mechanism that
+    installs it. That is a bootstrap cycle: the repair target can't run
+    because the environment is unrepaired.
+
+    `setup`'s own recipe never touches OLTP_DB_URL or the Box keys, so the
+    Makefile now skips the whole `ifneq (,$(wildcard .env))` extraction
+    whenever `setup` is among `$(MAKECMDGOALS)`. Proven here with `uv`
+    genuinely unresolvable (PATH stripped to /usr/bin:/bin, USER_BIN pointed
+    at a nonexistent directory) and a `.env` present -- before the fix this
+    combination hit the hard $(error) before printing anything.
+
+    `MAKE=true` replaces the real recursive `$(MAKE) install-hooks` call at
+    the end of `setup`'s recipe: GNU Make always executes a recipe line that
+    references the MAKE variable for real, even under `-n` (documented
+    behavior, verified directly against this Makefile) -- so a plain `-n`
+    here would actually re-invoke `install-hooks`, a target this test does
+    not want to exercise (it needs a real git checkout and the real `uv`
+    install `scripts/setup.sh` performs before it runs, neither of which
+    belongs in this unit test, and neither of which #114 is about: the
+    bypass is for `setup` only, not `install-hooks`). Substituting `true`
+    keeps that line real-and-run -- so the dry run still faithfully reflects
+    Make's actual behavior -- while making it a no-op.
+    """
+    (isolated_dir / ".env").write_text(
+        "OLTP_DB_URL=postgresql+asyncpg://postgres:fromenv@127.0.0.1:5544/janasunani\n"
+    )
+    env = {"HOME": os.environ.get("HOME", ""), "PATH": "/usr/bin:/bin"}
+    result = _make(
+        "-n", "USER_BIN=/nonexistent-dir-for-this-test", "MAKE=true", "setup",
+        cwd=isolated_dir, env=env,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "scripts/setup.sh" in result.stdout, result.stdout
+    assert "could not be parsed" not in result.stderr
+    assert "could not be parsed" not in result.stdout
+
+
+def test_setup_bypass_does_not_broaden_to_other_targets(isolated_dir):
+    """Control for the test above: the `setup` bypass is scoped to `setup`
+    specifically, not a blanket skip -- any other target under the same
+    unresolvable-`uv` conditions still hits #103's hard $(error), unchanged
+    (same assertion as test_missing_uv_fails_loudly_..., with a different
+    target to show it is not `preflight`-specific)."""
+    (isolated_dir / ".env").write_text(
+        "OLTP_DB_URL=postgresql+asyncpg://postgres:fromenv@127.0.0.1:5544/janasunani\n"
+    )
+    env = {"HOME": os.environ.get("HOME", ""), "PATH": "/usr/bin:/bin"}
+    result = _make(
+        "-n", "USER_BIN=/nonexistent-dir-for-this-test", "status",
+        cwd=isolated_dir, env=env,
+    )
+    assert result.returncode != 0
+    assert "could not be parsed" in result.stderr
+
+
+def test_parse_time_call_fails_fast_instead_of_hanging_when_sync_needs_network(
+    isolated_dir,
+):
+    """#114's second, independently-confirmed failure mode: a bare `uv run`
+    (no `--no-sync`) resyncs the environment against
+    pyproject.toml/uv.lock on every invocation -- including fetching
+    metadata for any dependency not already cached -- before running the
+    `-c` script that just wants `python-dotenv`. A transient network failure
+    during *that* resync (reproduced directly against this repo's own
+    pyproject.toml, which pins a direct-URL spaCy model wheel: `uv run
+    pytest` timed out after ~2 minutes fetching it) turned this parse-time
+    call into a multi-minute hang, which the `ifeq`/$(error) guards below
+    then escalate to a hard abort of *every* target -- not just the one
+    that actually needed OLTP_DB_URL.
+
+    Reproduced here deterministically, without relying on real network
+    flakiness: a throwaway uv project (`isolated_dir` gets its own
+    `pyproject.toml`) with no synced `.venv` needs `python-dotenv` fetched
+    to satisfy the parse-time import. `--offline` (added to dotenv_get's
+    `uv run` alongside `--no-sync`) turns that into an immediate local
+    failure instead of a network attempt, so the whole `make` invocation
+    returns in well under the bound below -- proving the call cannot hang
+    on network regardless of what triggers the sync attempt. `--no-sync`
+    alone is not sufficient to prove here: outside of a uv project (every
+    other test's `isolated_dir`) it is a silent no-op (`uv` just runs
+    whatever `python` is on PATH), so this test's own `pyproject.toml` is
+    what makes `--offline` the operative guard, not an incidental detail.
+    """
+    if shutil.which("uv") is None:
+        pytest.skip("uv not installed on this machine")
+    (isolated_dir / "pyproject.toml").write_text(
+        "[project]\n"
+        'name = "probe"\n'
+        'version = "0.1.0"\n'
+        'requires-python = ">=3.11"\n'
+        'dependencies = ["python-dotenv"]\n'
+        "\n"
+        "[tool.uv]\n"
+        "package = false\n"
+    )
+    (isolated_dir / ".env").write_text(
+        "OLTP_DB_URL=postgresql+asyncpg://postgres:fromenv@127.0.0.1:5544/janasunani\n"
+    )
+
+    start = time.monotonic()
+    result = _make("-n", "status", cwd=isolated_dir)
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 20, (
+        f"parse-time uv call took {elapsed:.1f}s -- should fail fast and "
+        "offline, not hang waiting on a sync that needs network"
+    )
+    assert result.returncode != 0
+    assert "could not be parsed" in result.stderr
 
 
 def test_db_guard_resolves_a_matching_default_identically(isolated_dir):
