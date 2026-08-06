@@ -13,8 +13,10 @@ pytest.importorskip("pytesseract")
 
 import pytesseract  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy import create_engine  # noqa: E402
 
 from janasunani.config import Settings  # noqa: E402
+from janasunani.db.models import Base  # noqa: E402
 from janasunani.inference import serve  # noqa: E402
 from janasunani.inference import service  # noqa: E402
 from janasunani.inference.service import (  # noqa: E402
@@ -654,7 +656,8 @@ def test_preflight_verifies_oltp_connectivity_not_just_presence(tmp_path, monkey
     monkeypatch.setattr(service, "_probe_oltp_connection", lambda url, timeout=5.0: None)
     check = _advisory(preflight(tmp_path), "oltp store")
     assert check.ok is True
-    assert "connection verified" in check.detail
+    assert "live_grievances" in check.detail
+    assert "verified" in check.detail
 
 
 def test_preflight_flags_an_explicit_but_unreachable_oltp(tmp_path, monkeypatch):
@@ -703,12 +706,36 @@ def test_preflight_never_leaks_the_oltp_url_on_connection_failure(tmp_path, monk
     assert secret not in check.detail
 
 
-def test_probe_oltp_connection_succeeds_against_a_real_sqlite_db(tmp_path):
+def _sqlite_url_with_live_grievances(tmp_path) -> str:
+    """A throwaway sqlite file with the real schema (Base.metadata, same as
+    tests/test_serving_persistence.py's _make_oltp) -- test setup, not an
+    Alembic migration; no migration is authored or run anywhere in this
+    file."""
+    url = f"sqlite+aiosqlite:///{tmp_path}/probe.db"
+    sync = create_engine(url.replace("+aiosqlite", ""))
+    Base.metadata.create_all(sync)
+    sync.dispose()
+    return url
+
+
+def test_probe_oltp_connection_succeeds_when_live_grievances_exists(tmp_path):
     """Exercises the real probe (not the preflight wiring above, which stubs
-    it) against an actual database, so the SELECT 1 round trip is proven to
-    work end to end without needing network or a real Postgres."""
-    db_path = tmp_path / "probe.db"
-    service._probe_oltp_connection(f"sqlite+aiosqlite:///{db_path}")
+    it) against an actual database with the real schema, so both the
+    SELECT 1 round trip and the live_grievances existence check are proven
+    to work end to end without needing network or a real Postgres."""
+    service._probe_oltp_connection(_sqlite_url_with_live_grievances(tmp_path))
+
+
+def test_probe_oltp_connection_raises_when_live_grievances_is_missing(tmp_path):
+    """A reachable database whose Alembic migration never ran must fail this
+    probe, not just a connection failure -- otherwise --strict passes clean
+    and the first real DatabaseResultStore.save() is what discovers the
+    missing table, against a citizen's actual submission. Codex re-review on
+    #88; deliberately existence-only (SELECT ... LIMIT 0), no migration is
+    run or authored here."""
+    db_path = tmp_path / "empty.db"  # no Base.metadata.create_all -- no tables at all
+    with pytest.raises(Exception):
+        service._probe_oltp_connection(f"sqlite+aiosqlite:///{db_path}")
 
 
 def test_probe_oltp_connection_raises_for_an_unreachable_target():

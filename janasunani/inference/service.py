@@ -589,7 +589,8 @@ _OLTP_PROBE_TIMEOUT_S = 5.0
 
 
 def _probe_oltp_connection(url: str, timeout: float = _OLTP_PROBE_TIMEOUT_S) -> None:
-    """Open a real connection and run a harmless query; raises on failure.
+    """Open a real connection, then confirm `live_grievances` exists; raises
+    on failure of either.
 
     Separated from `_oltp_check` so tests can stub this out rather than
     touching a real database or the network -- the same collection/judgement
@@ -598,17 +599,29 @@ def _probe_oltp_connection(url: str, timeout: float = _OLTP_PROBE_TIMEOUT_S) -> 
     being reachable, and preflight tests must never point at a real database.
     Bounded by `timeout` so an unreachable host degrades this one check
     within a few seconds rather than hanging preflight indefinitely.
+
+    The table check is existence only, not a migration-head check: `SELECT`
+    against `LiveGrievance.__table__` (janasunani/db/models.py, exactly what
+    `DatabaseResultStore.save` writes to) with `LIMIT 0`, so it raises the
+    same way an unreadable connection does if the table is absent, without
+    reading any row. Deliberately does not run or verify Alembic migrations
+    -- no migration is authored by this check, and none should be; this only
+    confirms the one table `DatabaseResultStore` needs is there, the same way
+    `SELECT 1` above only confirms the connection is there.
     """
     import asyncio
 
-    from sqlalchemy import text
+    from sqlalchemy import select, text
     from sqlalchemy.ext.asyncio import create_async_engine
+
+    from janasunani.db.models import LiveGrievance
 
     async def _probe() -> None:
         engine = create_async_engine(url)
         try:
             async with engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
+                await conn.execute(select(LiveGrievance.id).limit(0))
         finally:
             await engine.dispose()
 
@@ -617,12 +630,12 @@ def _probe_oltp_connection(url: str, timeout: float = _OLTP_PROBE_TIMEOUT_S) -> 
 
 def _oltp_check() -> DependencyCheck:
     """Whether live submissions will survive a restart -- verified with a
-    real connection, not just an explicit URL. `DatabaseResultStore`
-    (janasunani/serving/store.py) only creates its async engine at startup
-    and never actually connects until the first save, so a wrong password,
-    host, database, or a migration that never ran would otherwise pass
-    preflight clean and only surface when a citizen's submission fails to
-    save.
+    real connection and the `live_grievances` table's existence, not just an
+    explicit URL. `DatabaseResultStore` (janasunani/serving/store.py) only
+    creates its async engine at startup and never actually connects until
+    the first save, so a wrong password, host, database, or a migration that
+    never ran would otherwise pass preflight clean and only surface when a
+    citizen's submission fails to save.
     """
     # `required` is a property of the check, not of this run's outcome, so it
     # stays False on both branches below.
@@ -639,19 +652,22 @@ def _oltp_check() -> DependencyCheck:
     except Exception as exc:
         # Never str(exc): some DBAPI errors embed the DSN -- and its
         # password -- in their own message. The exception's type name is
-        # actionable (auth vs. host vs. timeout look different) without that
-        # risk; never the URL itself, which is what resolve_explicit_oltp_url
-        # returns and must not appear here either.
+        # actionable (a connection failure and a missing table raise
+        # different exception types) without that risk; never the URL
+        # itself, which is what resolve_explicit_oltp_url returns and must
+        # not appear here either.
         return DependencyCheck(
             "oltp store",
             False,
-            f"explicit OLTP_DB_URL set but unreachable ({type(exc).__name__})",
+            f"explicit OLTP_DB_URL set but not usable ({type(exc).__name__}: "
+            "unreachable, or live_grievances is missing -- run the Alembic migration)",
             required=False,
         )
     return DependencyCheck(
         "oltp store",
         True,
-        "explicit OLTP_DB_URL -> DatabaseResultStore, connection verified",
+        "explicit OLTP_DB_URL -> DatabaseResultStore, connection and "
+        "live_grievances both verified",
         required=False,
     )
 
