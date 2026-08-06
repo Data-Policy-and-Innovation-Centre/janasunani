@@ -618,3 +618,29 @@ def test_cross_script_lsh_bands_never_collide():
     bands_odia = set(lsh_bands(sig_odia, num_bands=8))
     bands_romanized = set(lsh_bands(sig_romanized, num_bands=8))
     assert not (bands_odia & bands_romanized)
+
+
+class TestEmptySignatureIsRejected:
+    """#100. An empty signature passes the divisibility check (0 % n == 0),
+    every band hashes the same empty tuple, and every such record band-matches
+    every other — collapsing the slice into one duplicate group."""
+
+    def test_empty_tuple_is_rejected(self):
+        with pytest.raises(ValueError, match="empty signature"):
+            lsh_bands((), num_bands=4)
+
+    def test_none_is_still_rejected_separately(self):
+        with pytest.raises(ValueError, match="None signature"):
+            lsh_bands(None, num_bands=4)
+
+    def test_two_empty_signatures_cannot_become_candidates(self):
+        """The failure this guards: without it both calls return identical band
+        tuples and the records match on every band."""
+        for signature in ((), ()):
+            with pytest.raises(ValueError):
+                lsh_bands(signature, num_bands=4)
+
+    def test_a_real_signature_still_bands(self):
+        signature = minhash_signature({"abc", "bcd", "cde"}, num_hashes=8)
+        assert signature is not None
+        assert len(lsh_bands(signature, num_bands=4)) == 4
