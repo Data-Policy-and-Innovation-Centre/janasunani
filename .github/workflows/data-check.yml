@@ -72,3 +72,26 @@ jobs:
         run: |
           test -f .dvc/config
           test -f dvc.yaml
+
+      - name: Check DVC lock is updated when deps change
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Cheap check that would have caught f890120: if a commit touches a
+          # stage's declared deps (dvc.yaml) without updating dvc.lock, the
+          # artifact in the DVC remote goes stale silently. dvc status cannot
+          # do this without the data, so we compare changed paths against the
+          # deps list in dvc.yaml.
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            git fetch origin main --depth=1 2>/dev/null || true
+            base="${{ github.event.pull_request.base.sha }}"
+            head="${{ github.sha }}"
+            # Fallback when base sha is empty (local act)
+            if [ -z "$base" ]; then
+              base="origin/main"
+            fi
+          else
+            base="HEAD~1"
+            head="HEAD"
+          fi
+          python3 scripts/check_dvc_lock.py --base "$base" --head "$head" 

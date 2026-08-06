@@ -39,15 +39,40 @@ stages:
       md5: d4a066e526da37ae5d8e8ecf1777af68.dir
       size: 167765
       nfiles: 2
-    - path: janasunani/pipeline
-      hash: md5
-      md5: 094d70d918c86af84dd9075a7aeea509.dir
-      size: 391304
-      nfiles: 65
     - path: models/format_classifier/page_split_v3.0_doc_split.pkl
       hash: md5
       md5: a428d2b7b057c53e94890d1bc2ec69ce
       size: 7227944
+    - path: janasunani/pipeline/pipeline.py
+      hash: md5
+      md5: 0d7db5d06824fe6182e62189887d4c40
+      size: 2513
+    - path: janasunani/pipeline/config.py
+      hash: md5
+      md5: e508043ffe368506a97889aa950097de
+      size: 1303
+    - path: janasunani/pipeline/db.py
+      hash: md5
+      md5: 58a2065f49b310e21662075e7fafd1a8
+      size: 2721
+    - path: janasunani/pipeline/cli.py
+      hash: md5
+      md5: 00c2a54e86da52fe2eb2353930102f69
+      size: 4761
+    - path: janasunani/pipeline/stages/format_classifier
+      hash: md5
+      md5: 5d5f5394ddfc8fb538fdfd79ff4a93cb.dir
+      size: 41034
+      nfiles: 6
+    - path: janasunani/pipeline/stages/ocr_extraction
+      hash: md5
+      md5: 3dd7b71caffe314dd2e92592d2e67978.dir
+      size: 29312
+      nfiles: 6
+    - path: janasunani/pipeline/stages/pii_tagger.py
+      hash: md5
+      md5: a2208c0a7707bdb2a01fca1369fd46c3
+      size: 25139
     outs:
     - path: data/processed/pipeline-sample.sqlite
       hash: md5

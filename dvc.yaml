@@ -33,7 +33,17 @@ stages:
     deps:
       - data/raw/documents-sample
       - models/format_classifier/page_split_v3.0_doc_split.pkl
-      - janasunani/pipeline
+      # Narrowed from the whole janasunani/pipeline directory (issue #87):
+      # only the modules executed by --stages format_classifier ocr_extraction pii_tagger.
+      # Adding dedup.py / redact_grievance.py etc. no longer invalidates this artifact.
+      # If you touch any path below, run: uv run --extra pipeline-core dvc repro pipeline-sample && dvc push && git add dvc.lock
+      - janasunani/pipeline/pipeline.py
+      - janasunani/pipeline/config.py
+      - janasunani/pipeline/db.py
+      - janasunani/pipeline/cli.py
+      - janasunani/pipeline/stages/format_classifier
+      - janasunani/pipeline/stages/ocr_extraction
+      - janasunani/pipeline/stages/pii_tagger.py
     outs:
       - data/processed/pipeline-sample.sqlite
 
