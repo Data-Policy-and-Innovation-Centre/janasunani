@@ -352,3 +352,45 @@ def test_refresh_progress_does_not_exceed_the_slice(oltp, caplog):
         done = int(line.split("redacted ")[1].split(" of ")[0])
         total = int(line.split(" of ")[1].split(" ")[0])
         assert done <= total, line
+
+
+def test_refresh_progress_counts_current_rows_in_a_mixed_slice(oltp, capsys):
+    """A slice that is part current and part stale must not finish at the stale
+    count alone: 48,544 current plus 7,000 stale ending at '7000 of 55544'
+    reads as a run that gave up (Codex on #141)."""
+    from loguru import logger as _logger
+
+    async_url, sync_url = oltp
+    redact_grievances("Khordha", 2024, oltp_url=async_url)
+
+    # Make exactly one of the three rows stale.
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE grievance_redactions SET analyzer_version = :v "
+                "WHERE ticket_no = 'T1'"
+            ),
+            {"v": "presidio-analyzer=0.0.1 an-older-build"},
+        )
+    engine.dispose()
+
+    records: list[str] = []
+    sink = _logger.add(lambda m: records.append(str(m)), level="INFO", format="{message}")
+    try:
+        counts = redact_grievances(
+            "Khordha", 2024, oltp_url=async_url, refresh_stale=True
+        )
+    finally:
+        _logger.remove(sink)
+
+    assert counts["stale_at_start"] == 1
+    assert counts["processed"] == 1
+
+    progress = [r for r in records if "redacted" in r and " of " in r]
+    assert progress
+    final = progress[-1]
+    done = int(final.split("redacted ")[1].split(" of ")[0])
+    total = int(final.split(" of ")[1].split(" ")[0])
+    # Two rows were already current, one was made current: all three.
+    assert done == total == 3, final

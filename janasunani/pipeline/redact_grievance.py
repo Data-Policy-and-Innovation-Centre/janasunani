@@ -248,11 +248,16 @@ async def _redact_slice(
             )
 
         processed += len(batch)
-        # In a refresh run `already` is the whole slice, so adding it to
-        # `processed` reports more rows than exist ("62544 of 55544"). Count
-        # rows carrying a current redaction instead: that is what the progress
-        # figure means in both modes.
-        current = processed if refresh_stale else processed + already
+        # Rows carrying a *current* redaction. One definition for both modes.
+        #
+        # `already + processed` double-counts in a refresh, because `already`
+        # includes the stale rows being reprocessed ("62544 of 55544"). Bare
+        # `processed` is wrong the other way: a slice of 48,544 current plus
+        # 7,000 stale rows would finish at "7000 of 55544" and read as a run
+        # that gave up. Subtracting the stale rows from `already` gives the
+        # ones that were current at the start, and `processed` adds the ones
+        # made current since.
+        current = already - stale + processed
         logger.info("redacted {} of {} ({} this batch)", current, total, len(batch))
 
     return {
