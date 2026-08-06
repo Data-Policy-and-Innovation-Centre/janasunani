@@ -68,14 +68,52 @@ ifneq (,$(_DOTENV_OLTP_DB_URL))
 OLTP_DB_URL := $(_DOTENV_OLTP_DB_URL)
 endif
 endif
-# Embeds an arbitrary value (e.g. $(OLTP_DB_URL)) as a single shell word safe
-# from further expansion: single-quoted, with each embedded `'` replaced by
-# `'\''` (close the quote, an escaped literal quote outside it, reopen the
+# A fourth instance of the same bug class, in the one place the .env fix
+# above does not reach: OLTP_DB_URL from `make OLTP_DB_URL=...` (command
+# line) or a shell-exported OLTP_DB_URL is stored by Make as a *recursively*
+# expanded value -- the raw text, re-scanned for `$`/`$(...)` on every
+# reference, not just once. Referencing plain $(OLTP_DB_URL) below (even
+# inside sh_quote's $(subst ...)) re-triggers that scan, so `pa$word` loses
+# `word` the same way an un-fixed `.env` value once did -- this is exactly
+# #60's bug, just arriving through the command-line/environment tier instead
+# of the .env tier, and it is precisely the tier `make OLTP_DB_URL=... db`
+# depends on to force a database for one run (the guard #60's own precedence
+# note above exists to protect).
+#
+# $(value OLTP_DB_URL) reads the raw stored text without expanding it, which
+# is exactly right for a command-line/environment value (a literal string,
+# never intended as a nested Make macro) but wrong for anything else: the
+# untouched default chain's raw text is the literal, unexpanded macro
+# reference `$(DEMO_OLTP_URL)`, and $(value ...) on that returns exactly
+# that string -- not the demo URL -- which would hand the shell a bare
+# `$(DEMO_OLTP_URL)` (itself a *shell* command-substitution token). So
+# $(value ...) is used only when $(origin OLTP_DB_URL) says the value came
+# from the command line or the environment; every other origin (the plain
+# `?=` default, or our own `:=` reassignment from .env above, already a
+# fully-resolved simply-expanded string) goes through normal `$(OLTP_DB_URL)`
+# expansion instead. Command-line values lock their origin regardless of
+# this file's later `:=` attempt (Make ignores plain reassignment of a
+# command-line variable), so this still resolves to "command line" even
+# after the .env block above runs.
+ifeq ($(origin OLTP_DB_URL),command line)
+OLTP_DB_URL_RAW := $(value OLTP_DB_URL)
+else ifeq ($(origin OLTP_DB_URL),environment)
+OLTP_DB_URL_RAW := $(value OLTP_DB_URL)
+else ifeq ($(origin OLTP_DB_URL),environment override)
+OLTP_DB_URL_RAW := $(value OLTP_DB_URL)
+else
+OLTP_DB_URL_RAW := $(OLTP_DB_URL)
+endif
+# Embeds an arbitrary value (e.g. $(OLTP_DB_URL_RAW)) as a single shell word
+# safe from further expansion: single-quoted, with each embedded `'` replaced
+# by `'\''` (close the quote, an escaped literal quote outside it, reopen the
 # quote) -- the standard POSIX idiom for putting a quote inside a quoted
 # string. Plain single-quoting handles `$`/`#` (#60) but a DSN containing a
 # literal `'` would otherwise still break the recipe's shell string; this
-# closes that gap. Use as `$(call sh_quote,$(OLTP_DB_URL))` -- already quoted,
-# so call sites do not wrap it in quotes themselves.
+# closes that gap. Use as `$(call sh_quote,$(OLTP_DB_URL_RAW))` -- already
+# quoted, so call sites do not wrap it in quotes themselves, and always via
+# OLTP_DB_URL_RAW, never the plain $(OLTP_DB_URL) reference, per the origin
+# note above.
 sh_quote = '$(subst ','\'',$(1))'
 SHELL          := /bin/bash
 .SHELLFLAGS    := -euo pipefail -c
@@ -239,7 +277,7 @@ models:
 # `'$(OLTP_DB_URL)'` fixes that but then breaks on an embedded `'` instead.
 # sh_quote handles both.
 preflight:
-	@OLTP_DB_URL=$(call sh_quote,$(OLTP_DB_URL)) uv run --extra demo janasunani-demo-preflight
+	@OLTP_DB_URL=$(call sh_quote,$(OLTP_DB_URL_RAW)) uv run --extra demo janasunani-demo-preflight
 
 # Idempotent: create the throwaway Postgres only if missing, start it if stopped,
 # always (re-)apply migrations (alembic upgrade head is a no-op when current).
@@ -248,7 +286,7 @@ preflight:
 # another, and never provisions/migrates an operator's own (local or off-box) DB.
 db:
 	@set -e; \
-	if [ $(call sh_quote,$(OLTP_DB_URL)) != $(call sh_quote,$(DEMO_OLTP_URL)) ]; then \
+	if [ $(call sh_quote,$(OLTP_DB_URL_RAW)) != $(call sh_quote,$(DEMO_OLTP_URL)) ]; then \
 	  echo "OLTP_DB_URL is not the throwaway demo default; skipping provisioning — create and migrate that database yourself."; \
 	  exit 0; \
 	fi; \
@@ -267,7 +305,7 @@ db:
 	  docker exec $(PG_CONTAINER) pg_isready -U postgres -d janasunani >/dev/null 2>&1 && break; \
 	  sleep 1; \
 	done; \
-	OLTP_DB_URL=$(call sh_quote,$(OLTP_DB_URL)) uv run alembic upgrade head; \
+	OLTP_DB_URL=$(call sh_quote,$(OLTP_DB_URL_RAW)) uv run alembic upgrade head; \
 	echo "Demo DB ready."
 
 # `@` so the OLTP DSN is not echoed. API_HOST=0.0.0.0 to serve off-box.
@@ -280,7 +318,7 @@ db:
 # in this order rather than `db preflight` so the cheap model/OCR-binary
 # checks still fail fast ahead of provisioning a container.
 api: preflight db
-	@OLTP_DB_URL=$(call sh_quote,$(OLTP_DB_URL)) JANASUNANI_API_HOST="$(API_HOST)" \
+	@OLTP_DB_URL=$(call sh_quote,$(OLTP_DB_URL_RAW)) JANASUNANI_API_HOST="$(API_HOST)" \
 	  JANASUNANI_API_PORT="$(API_PORT)" uv run --extra demo janasunani-api-live
 
 frontend:
@@ -299,7 +337,7 @@ frontend:
 up: preflight db
 	@set -e; \
 	echo "Starting live API (:$(API_PORT)) in the background..."; \
-	OLTP_DB_URL=$(call sh_quote,$(OLTP_DB_URL)) JANASUNANI_API_HOST="$(API_HOST)" \
+	OLTP_DB_URL=$(call sh_quote,$(OLTP_DB_URL_RAW)) JANASUNANI_API_HOST="$(API_HOST)" \
 	  JANASUNANI_API_PORT="$(API_PORT)" uv run --extra demo janasunani-api-live & \
 	API_PID=$$!; \
 	trap 'pkill -P $$API_PID 2>/dev/null; kill $$API_PID 2>/dev/null || true' EXIT INT TERM; \
