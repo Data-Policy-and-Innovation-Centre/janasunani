@@ -321,6 +321,18 @@ def _overlaps(gold: PIISpan, predicted: PIISpan) -> bool:
 
 
 def _format_metrics(entity: str, metrics: EntityMetrics) -> str:
+    # An entity the gold never labels has no recall to report. Printing
+    # 0.0000 there reads as total failure when it means the measurement
+    # cannot see the class at all -- and this table is published (#67).
+    # BANK_ACCOUNT and SCHEME_ID (#139) are exactly this case: the n50 gold
+    # predates them, so the tagger is scored as missing everything while
+    # actually redacting identifiers the gold never asked about.
+    if metrics.gold == 0:
+        return (
+            f"{entity} {metrics.gold} {metrics.predicted} "
+            f"{metrics.overlap_hits} {metrics.exact_hits} "
+            "n/a n/a  (not labelled in this gold)"
+        )
     return (
         f"{entity} {metrics.gold} {metrics.predicted} "
         f"{metrics.overlap_hits} {metrics.exact_hits} "
