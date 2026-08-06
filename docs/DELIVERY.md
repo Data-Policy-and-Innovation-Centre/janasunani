@@ -103,7 +103,7 @@ Three Sarvam models are relevant.
 
 Cost is a few hundred rupees for the whole comparison.
 
-One caveat. Sarvam documents their vision model as strong on printed text, tables and layout, with no mention of handwriting. Much of our corpus is handwritten. We will report handwritten and printed pages separately, because a result that holds only for printed forms is a much smaller result than it appears.
+One caveat, and it is not the one we first wrote down. Sarvam state that Vision is trained on handwritten text across all 22 Indian languages, so handwriting is a supported case rather than an unmentioned one. What they do not publish is a handwriting-specific number: the headline benchmarks are general document scores, and they note accuracy is lower on highly stylised handwriting without saying by how much. Much of our corpus is handwritten. We will report handwritten and printed pages separately, because the split is the part nobody has measured.
 
 ## Schedule
 

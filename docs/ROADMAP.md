@@ -1131,13 +1131,18 @@ benchmark design; latency, rate limits, and quality should.
 
 Four things to check before relying on any of it:
 
-- ⚠️ **Handwriting is not mentioned anywhere in the Vision documentation.** Tables,
-  layout, and printed Indic script are the advertised strengths. A large share of
-  our corpus is handwritten grievance letters, which is exactly the hardest case
-  and the one we most need solved. **Put handwritten pages in the benchmark
-  sample deliberately, stratified, and report them separately.** If Sarvam Vision
-  only wins on printed forms, that is a much smaller result than the headline
-  suggests.
+- ⚠️ **Handwriting is claimed but not benchmarked.** Corrected 2026-08-07: an
+  earlier revision of this section said handwriting was unmentioned in the Vision
+  documentation. It is mentioned, and directly — Sarvam state the model is trained
+  on handwritten text across all 22 Indian languages, and that it beats
+  general-purpose OCR on Indian-language handwriting. What they publish no number
+  for is handwriting itself: the headline scores are general document benchmarks,
+  and the only handwriting statement is qualitative, that accuracy is lower on
+  highly stylised hands. A large share of our corpus is handwritten grievance
+  letters. **Put handwritten pages in the benchmark sample deliberately,
+  stratified, and report them separately** — not as a hedge against an
+  unsupported case, but because the printed/handwritten split is the number
+  nobody has published and the one our corpus turns on.
 - ⚠️ **Sarvam-30B runs with reasoning enabled by default, and reasoning tokens bill
   as completion tokens** at 4x the input rate. Disable it for classification or
   the cost model above is wrong.
