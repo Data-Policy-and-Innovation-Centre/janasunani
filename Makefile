@@ -38,17 +38,23 @@ API_URL        ?= http://127.0.0.1:$(API_PORT)
 # the rest of the line); a stray `$(` with no matching `)` is worse — it is a
 # hard parse error that aborts `make` for every target, not just this one, so
 # a single unlucky character in a generated password can brick the Makefile
-# entirely. `Settings` reads the same file correctly via python-dotenv
-# (janasunani/config.py), so only OLTP_DB_URL needs the safe path here: it is
-# the one dotenv value this Makefile actually consumes (grep confirms no
-# other `?=` variable's name collides with a .env.example key).
+# entirely. Only OLTP_DB_URL needs the safe path here: it is the one dotenv
+# value this Makefile actually consumes (grep confirms no other `?=`
+# variable's name collides with a .env.example key).
 #
-# Extracted by `grep`/`sed`, never by letting Make or a shell evaluate the
-# line -- so a `$` or `#` in the value is just a character, and an unbalanced
-# `$(` cannot blow up the parse. `tail -n1` matches dotenv's own last-key-wins
-# rule for a repeated key; the two `sed` passes strip one layer of matching
-# quotes so a quoted .env value (`OLTP_DB_URL='...'`) parses the same way here
-# as it does for Settings.
+# Two earlier attempts at this extraction (`grep`/`sed` for the key, then for
+# one layer of matching quotes) each closed one character class and left
+# another: `$`/`#`, then an embedded `'`, then a valid dotenv inline comment
+# (`KEY=value # note`, which `sed`'s quote-stripping never accounted for --
+# `Settings` strips it via python-dotenv, so the Make wrapper silently kept it
+# and passed a corrupted DSN). Patching one more character each round is how
+# this stayed a live bug through three reviews. This now shells out to
+# `python-dotenv` itself -- the exact parser `Settings` uses
+# (janasunani/config.py) -- instead of re-deriving its quoting/comment rules
+# by hand, so the two can no longer drift: whatever `.env` value `Settings`
+# resolves is what Make resolves too. `uv run` only runs when `.env` exists
+# (the `ifneq` below), so a checkout with no `.env` (CI, a fresh clone) pays
+# nothing.
 #
 # `:=` (not `?=`), so a value here overrides both this demo default and a
 # shell-exported OLTP_DB_URL, matching the precedence documented above. A
@@ -57,8 +63,7 @@ API_URL        ?= http://127.0.0.1:$(API_PORT)
 # assignment (only `override`, unused here) can replace them -- verified with
 # `make OLTP_DB_URL=... db` against a conflicting `.env` (see PR description).
 ifneq (,$(wildcard .env))
-_DOTENV_OLTP_DB_URL := $(shell grep '^OLTP_DB_URL=' .env 2>/dev/null | tail -n1 | \
-  sed -e 's/^OLTP_DB_URL=//' -e 's/^"\(.*\)"$$/\1/' -e "s/^'\(.*\)'$$/\1/")
+_DOTENV_OLTP_DB_URL := $(shell uv run python -c "from dotenv import dotenv_values; import sys; v = dotenv_values('.env').get('OLTP_DB_URL'); sys.stdout.write(v if v is not None else '')" 2>/dev/null)
 ifneq (,$(_DOTENV_OLTP_DB_URL))
 OLTP_DB_URL := $(_DOTENV_OLTP_DB_URL)
 endif
