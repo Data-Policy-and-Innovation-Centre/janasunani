@@ -218,6 +218,12 @@ def check(records: Iterable[Record]) -> Report:
     return report
 
 
+# Keys in the human-pass report that hold raw record ids. Ticket numbers are
+# not citizen text, but they are the join key to it: a public comment listing
+# them says which specific grievances are in the labelled sample.
+_ID_ARRAYS = ("records_only_in_draft", "records_only_in_gold", "text_mismatches")
+
+
 def _changed_spans(human: dict[str, Any]) -> int:
     """How many spans the human pass actually touched, in any way."""
     return (
@@ -361,28 +367,50 @@ def main() -> None:
 
     if args.draft:
         human = diff(load(args.draft), gold)
-        payload["human_pass"] = human
+        # The checks below read the raw ids; only what gets *published* is
+        # sanitized. --json dumped all three arrays in full, and ids are ticket
+        # numbers -- the join key to citizen text -- in output written to be
+        # pasted into a PR (#96).
+        if args.show_samples:
+            payload["human_pass"] = human
+        else:
+            payload["human_pass"] = {
+                (f"{k}_count" if k in _ID_ARRAYS else k): (
+                    len(v) if k in _ID_ARRAYS else v
+                )
+                for k, v in human.items()
+            }
         # Completeness is part of correctness: a gold file missing pages, or whose
         # text was edited out from under its offsets, scores wrong rather than
         # failing. Both are hard errors so a pre-merge gate catches them.
+        # Record ids are not opaque: bootstrap builds them as
+        # f"{ticket}_p{page}", so an id is a real grievance ticket number.
+        # This report exists to be pasted into a PR, and the failure mode is
+        # exactly the one where someone pastes it -- the arrays fill, the tool
+        # exits 1, and the natural next step is to ask for help in public.
+        # Counts here; identities only behind --show-samples (#96).
+        hint = "" if args.show_samples else " Pass --show-samples to list them."
         if human["records_only_in_draft"]:
             missing = human["records_only_in_draft"]
+            shown = f" ({missing[:3]})" if args.show_samples else ""
             report.fail(
-                f"{len(missing)} draft record(s) absent from gold "
-                f"(first: {missing[:3]}). Every drafted page must be adjudicated."
+                f"{len(missing)} draft record(s) absent from gold{shown}. "
+                f"Every drafted page must be adjudicated.{hint}"
             )
         if human["records_only_in_gold"]:
             extra = human["records_only_in_gold"]
+            shown = f" ({extra[:3]})" if args.show_samples else ""
             report.fail(
-                f"{len(extra)} gold record(s) not present in the draft "
-                f"(first: {extra[:3]}). Ids must match the drafted set."
+                f"{len(extra)} gold record(s) not present in the draft{shown}. "
+                f"Ids must match the drafted set.{hint}"
             )
         if human["text_mismatches"]:
             bad = human["text_mismatches"]
+            shown = f" ({bad[:3]})" if args.show_samples else ""
             report.fail(
-                f"{len(bad)} record(s) whose text differs between draft and gold "
-                f"(first: {bad[:3]}). Offsets index into the text, so editing it "
-                f"silently invalidates every span in that record."
+                f"{len(bad)} record(s) whose text differs between draft and "
+                f"gold{shown}. Offsets index into the text, so editing it "
+                f"silently invalidates every span in that record.{hint}"
             )
         # No adjudication at all means the "gold" is analyzer output, which
         # scores ~100% recall against itself. That is a void measurement, not a
