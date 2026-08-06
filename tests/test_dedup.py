@@ -57,6 +57,21 @@ ROMANIZED_TEXT = (
     "aame ganre pani pump tini masa hela kharap achi doyakari maramati karantu"
 )
 
+# Digit-only translation tables built the same way _INDIC_DIGITS_TO_ASCII is
+# built in dedup.py, but inverted (ASCII -> script) so these fixtures are
+# generated, not hand-transcribed Unicode literals that would be easy to get
+# subtly wrong and hard to review.
+_ASCII_TO_ODIA_DIGITS = str.maketrans({str(i): chr(0x0B66 + i) for i in range(10)})
+_ASCII_TO_DEVANAGARI_DIGITS = str.maketrans({str(i): chr(0x0966 + i) for i in range(10)})
+# Bengali digits (U+09E6) — a script dedup.py deliberately does NOT
+# canonicalize, to pin the accepted "unhandled script" fallback behavior.
+_ASCII_TO_BENGALI_DIGITS = str.maketrans({str(i): chr(0x09E6 + i) for i in range(10)})
+
+MOBILE_ASCII = "9861234567"
+MOBILE_ODIA_DIGITS = MOBILE_ASCII.translate(_ASCII_TO_ODIA_DIGITS)
+MOBILE_DEVANAGARI_DIGITS = MOBILE_ASCII.translate(_ASCII_TO_DEVANAGARI_DIGITS)
+MOBILE_BENGALI_DIGITS = MOBILE_ASCII.translate(_ASCII_TO_BENGALI_DIGITS)
+
 
 # --- strip_placeholders ---------------------------------------------------
 
@@ -342,6 +357,52 @@ def test_identity_key_non_phone_numeric_id_is_not_treated_as_a_phone_number():
     # be silently reshaped — it falls back to plain trim+lowercase, and
     # distinct short codes must still produce distinct keys.
     assert identity_key("751001", "s") != identity_key("751002", "s")
+
+
+def test_identity_key_canonicalizes_odia_digit_phone_number():
+    # Odia-script and OCR-entered contact numbers are a primary input path
+    # for this corpus, not an edge case — the same subscriber typed in
+    # Odia numerals must link to the ASCII form for resubmission detection
+    # to work where it matters most.
+    assert identity_key(MOBILE_ODIA_DIGITS, "s") == identity_key(MOBILE_ASCII, "s")
+
+
+def test_identity_key_canonicalizes_devanagari_digit_phone_number():
+    assert identity_key(MOBILE_DEVANAGARI_DIGITS, "s") == identity_key(
+        MOBILE_ASCII, "s"
+    )
+
+
+def test_identity_key_canonicalizes_odia_digits_with_country_code():
+    # The 91 country-code prefix stripping must also apply after Indic
+    # digits are translated to ASCII, not just to already-ASCII input.
+    odia_with_country_code = ("91" + MOBILE_ASCII).translate(_ASCII_TO_ODIA_DIGITS)
+    assert identity_key(odia_with_country_code, "s") == identity_key(
+        MOBILE_ASCII, "s"
+    )
+
+
+def test_identity_key_canonicalizes_mixed_ascii_and_odia_digits():
+    # A realistic mixed-entry case: ASCII "+91" country code typed
+    # normally, local subscriber number in Odia numerals.
+    mixed = "+91 " + MOBILE_ODIA_DIGITS
+    assert identity_key(mixed, "s") == identity_key(MOBILE_ASCII, "s")
+
+
+def test_identity_key_unhandled_digit_script_does_not_link_but_stays_stable():
+    # Bengali digits are a deliberately unhandled script (see
+    # _canonical_phone_digits' docstring): dedup.py only transliterates
+    # Odia and Devanagari, matching the scripts this corpus actually uses.
+    # A Bengali-digit phone number must NOT silently claim to be the same
+    # identity as its ASCII form (that would be papering over a real gap),
+    # but it must still hash stably and distinctly from a different number
+    # in the same script — falling to the literal-text path, not crashing
+    # or colliding.
+    bengali_key = identity_key(MOBILE_BENGALI_DIGITS, "s")
+    assert bengali_key != identity_key(MOBILE_ASCII, "s")
+    assert bengali_key == identity_key(MOBILE_BENGALI_DIGITS, "s")  # stable
+    other_number_bengali = "9007654321".translate(_ASCII_TO_BENGALI_DIGITS)
+    assert bengali_key != identity_key(other_number_bengali, "s")
 
 
 def test_identity_key_never_appears_in_or_derives_shingle_text():

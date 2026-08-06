@@ -65,6 +65,17 @@ from collections.abc import Iterable
 # grievance text.
 _PLACEHOLDER_RE = re.compile(r"\[[A-Z]+\]")
 
+# Odia (U+0B66) and Devanagari (U+0966) decimal digits -> ASCII, for phone
+# canonicalization in identity_key(). Same two blocks and the same rationale
+# as pii_tagger.py's _INDIC_DIGITS_TO_ASCII: these are the digit scripts
+# that actually show up in this corpus (Odia-script filings; Devanagari for
+# the occasional Hindi-medium form). Deliberately narrow — see
+# _canonical_phone_digits()'s docstring for what happens to every other
+# Unicode digit system.
+_INDIC_DIGITS_TO_ASCII = str.maketrans(
+    {base + i: str(i) for base in (0x0966, 0x0B66) for i in range(10)}
+)
+
 # Character shingle width. Short enough to survive OCR noise and short
 # grievance text, long enough that shingles carry real content rather than
 # matching on common letter pairs.
@@ -297,15 +308,40 @@ def union_find_groups(
 
 def _canonical_phone_digits(value: str) -> str | None:
     """If ``value`` is shaped like an Indian phone number, return its
-    canonical 10-digit form; otherwise ``None``.
+    canonical 10-digit ASCII form; otherwise ``None``.
 
     Collapses the common ways the same mobile number shows up across
     `petitioner_mobile` / OCR / form entry — "+91 98612 34567",
-    "09861234567", "98612-34567", "9861234567" — to one string
-    ("9861234567") by dropping spaces/hyphens/parens, then stripping a
-    recognized leading country code ("91", for a resulting 12-digit
-    string) or trunk prefix ("0", for a resulting 11-digit string) down to
-    the bare 10-digit subscriber number.
+    "09861234567", "98612-34567", "9861234567", or the same number typed in
+    Odia or Devanagari numerals ("୯୮୬୧୨୩୪୫୬୭") — to one ASCII string
+    ("9861234567"). Odia/Devanagari digits are translated to ASCII *first*
+    (via ``_INDIC_DIGITS_TO_ASCII``), so a citizen number entered in
+    Odia-script numerals canonicalizes to the same key as the ASCII form —
+    this is a primary input path for this corpus, not an edge case,
+    exactly where resubmission linkage most needs to work. Only then are
+    spaces/hyphens/parens dropped and a recognized leading country code
+    ("91", for a resulting 12-digit string) or trunk prefix ("0", for a
+    resulting 11-digit string) stripped down to the bare 10-digit
+    subscriber number.
+
+    The digit match after translation is deliberately ``[0-9]``, not
+    ``\\d``: Python's ``\\d`` matches *any* Unicode decimal-digit
+    character, not just ASCII — Bengali, Tamil, Gurmukhi, full-width digits
+    and more all satisfy it. Without translating a script first, treating
+    its digits as fair game for the length/prefix arithmetic below would
+    silently misparse them (a lone untranslated Odia digit sitting next to
+    ASCII digits, for instance, would still count toward "12 digits,
+    strip 91" purely by ``\\d`` matching it, with no translation applied to
+    make that arithmetic correct). Restricting to ``[0-9]`` after
+    translating only the two scripts this corpus actually uses means any
+    *other* digit script fails the match outright and falls through to
+    :func:`identity_key`'s plain trim+lowercase path instead — it hashes
+    consistently (so repeated values in that script still link to each
+    other) but does not claim to link to the ASCII/Odia/Devanagari form of
+    the same number. That is an accepted gap, not silently patched over:
+    pinned in ``tests/test_dedup.py`` alongside the module's other
+    cross-script limitations, not "fixed" by transliterating scripts this
+    corpus does not use.
 
     Deliberately narrow rather than "keep the last 10 digits of anything
     10-15 digits long": that cruder rule would fold an unrelated 11-digit
@@ -313,12 +349,14 @@ def _canonical_phone_digits(value: str) -> str | None:
     "19861234567") onto the real "9861234567", which is exactly the kind
     of false resubmission match a dedup index must not manufacture.
     Anything that isn't a bare 10-digit number, or a 10-digit number behind
-    a recognized 0/91 prefix, returns ``None`` — including email addresses
-    and short non-phone identifiers — so :func:`identity_key` falls back to
-    plain trim+lowercase for those.
+    a recognized 0/91 prefix, returns ``None`` — including email addresses,
+    short non-phone identifiers, and phone numbers in an unhandled digit
+    script — so :func:`identity_key` falls back to plain trim+lowercase for
+    those.
     """
-    condensed = re.sub(r"[\s\-()]", "", value.strip())
-    if not re.fullmatch(r"\+?\d{10,13}", condensed):
+    ascii_digits = value.strip().translate(_INDIC_DIGITS_TO_ASCII)
+    condensed = re.sub(r"[\s\-()]", "", ascii_digits)
+    if not re.fullmatch(r"\+?[0-9]{10,13}", condensed):
         return None
     digits = condensed.lstrip("+")
     if len(digits) == 12 and digits.startswith("91"):
@@ -350,13 +388,17 @@ def identity_key(value: str, salt: str) -> str:
     compromised salt.
 
     Phone-shaped values are canonicalized via :func:`_canonical_phone_digits`
-    before hashing, so "+91 98612 34567", "09861234567", "98612-34567" and
-    "9861234567" all produce the *same* key — without this, the one job this
-    function exists for (linking same-citizen resubmissions on
-    `petitioner_mobile`) silently fails on real data, since those are all
-    the same subscriber typed differently. Anything else (email addresses)
-    is only stripped and lowercased, so "Citizen@Example.com" and
-    " citizen@example.com " match but distinct addresses stay distinct.
+    before hashing, so "+91 98612 34567", "09861234567", "98612-34567",
+    "9861234567" and the same number typed in Odia or Devanagari numerals
+    all produce the *same* key — without this, the one job this function
+    exists for (linking same-citizen resubmissions on `petitioner_mobile`)
+    silently fails on real data, since those are all the same subscriber
+    typed differently, and Odia-script/OCR-entered numbers are a primary
+    input path here, not a corner case. A phone number in any other digit
+    script is not canonicalized (see that function's docstring for why) and
+    falls to the plain-text path below instead. Anything else (email
+    addresses) is only stripped and lowercased, so "Citizen@Example.com"
+    and " citizen@example.com " match but distinct addresses stay distinct.
     """
     canonical_phone = _canonical_phone_digits(value)
     normalized = canonical_phone if canonical_phone is not None else value.strip().lower()
