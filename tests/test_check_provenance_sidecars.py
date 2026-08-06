@@ -129,6 +129,19 @@ class TestValueRules:
     def test_a_non_digest_checksum_is_rejected(self):
         assert check.check_payload(dict(VALID, source_gold_md5=CITIZEN_TEXT))
 
+    @pytest.mark.parametrize("value", [123, None, True, 1.5, ["a" * 32]])
+    def test_a_non_string_checksum_is_rejected(self, value):
+        # _check_scalar accepts every non-string scalar, so a checksum rule that
+        # only applies to strings leaves the field a reviewer trusts unguarded.
+        assert check.check_payload(dict(VALID, source_gold_md5=value))
+
+    def test_a_digest_with_a_trailing_newline_is_rejected(self):
+        # `$` matches before a trailing newline; only fullmatch anchors the end.
+        assert check.check_payload(dict(VALID, source_gold_md5="a" * 32 + "\n"))
+
+    def test_a_well_formed_digest_still_passes(self):
+        assert check.check_payload(dict(VALID, source_gold_md5="0" * 31 + "f")) == []
+
     def test_top_level_must_be_an_object(self):
         assert check.check_payload([VALID])
 

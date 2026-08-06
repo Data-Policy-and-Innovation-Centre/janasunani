@@ -133,7 +133,13 @@ def check_payload(payload: Any) -> list[str]:
                 problems += _check_scalar(f"{key}.{sub}", sub_value, MAX_STRING)
             continue
 
-        if key == "source_gold_md5" and isinstance(value, str) and not _MD5_RE.match(value):
+        # Negated as a whole, not guarded by isinstance: a non-string checksum
+        # (123, null, true) would otherwise skip this rule and be waved through
+        # by _check_scalar, which accepts every non-string scalar. fullmatch,
+        # not match, because `$` also matches before a trailing newline.
+        if key == "source_gold_md5" and not (
+            isinstance(value, str) and _MD5_RE.fullmatch(value)
+        ):
             problems.append("'source_gold_md5' is not a 32-character hex digest")
             continue
 
