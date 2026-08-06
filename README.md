@@ -223,14 +223,18 @@ history.
 You can create an optional local `.env` file in the repo root to configure
 machine-specific Box/rclone paths:
 
-```make
+```dotenv
 BOX_REMOTE=box
 BOX_PROJECT_ROOT=2. Projects/21. Governance/
 ```
 
 `.env` is ignored by Git and should be used only for local path or remote-name
-settings, not credentials or data files. Use Make-style assignments, do not use
-shell `export` lines, and do not wrap values with spaces in shell quotes.
+settings, not credentials or data files. It uses the same dotenv syntax
+`Settings` reads (`janasunani/config.py`) — plain `KEY=value` per line, an
+optional `export ` prefix, and optional quotes around the value — not Make
+syntax: the Makefile parses it with python-dotenv rather than including it as
+Makefile text, specifically so a value containing `$`, `#`, or a quote
+character is read literally instead of being misread as Make syntax.
 
 Most users only need to set `BOX_REMOTE` and `BOX_PROJECT_ROOT`; the Makefile
 derives the full remotes from those values. Collaborators may see the same

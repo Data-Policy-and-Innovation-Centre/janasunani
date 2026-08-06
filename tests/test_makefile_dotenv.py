@@ -1,6 +1,10 @@
-"""Real-code-path checks that OLTP_DB_URL survives adversarial characters
-through every documented precedence tier of the Makefile (#60 and its
-sequels): command line, shell-exported environment, and `.env`.
+"""Real-code-path checks for the Makefile's `.env`-sourced settings (#60 and
+its sequels, #103, #104): that OLTP_DB_URL survives adversarial characters
+through every documented precedence tier (command line, shell-exported
+environment, `.env`), that a parse-time `uv` failure fails loudly rather than
+silently keeping the throwaway demo default, and that `.env` still supplies
+the other Make settings README.md documents (BOX_REMOTE, BOX_PROJECT_ROOT,
+INCOMING_REMOTE, EXHIBITS_REMOTE).
 
 Shells out to the actual `make` binary against the real Makefile -- not a
 copy, not a reimplementation of its logic -- with `-C` pointed at an isolated
@@ -244,3 +248,81 @@ def test_db_guard_resolves_a_matching_default_identically(isolated_dir):
         line for line in result.stdout.splitlines() if line.strip().startswith("if [")
     )
     assert guard_line.count(f"'{demo_url}'") == 2, guard_line
+
+
+# --- #104: .env must still supply BOX_REMOTE/BOX_PROJECT_ROOT/INCOMING_REMOTE/
+# EXHIBITS_REMOTE -----------------------------------------------------------
+#
+# README.md's "Box paths and data ops" tells collaborators to persist these
+# four in .env. 17bad32 replaced `-include .env` with a parser that imported
+# only OLTP_DB_URL, silently dropping the rest -- `make ingest`/`make
+# deliver` then read from or published to the built-in Box paths with no
+# indication the operator's own .env was ignored.
+
+
+def test_dotenv_supplied_box_remote_reaches_box_paths(isolated_dir):
+    """A .env-only BOX_REMOTE must actually reach the recipe that consumes
+    it (`box-paths`, which just echoes the resolved Make variables --
+    exactly what `ingest`/`publish-raw`/`deliver` build their rclone
+    invocations from), not merely exist as a Make variable somewhere."""
+    (isolated_dir / ".env").write_text("BOX_REMOTE=my-custom-remote\n")
+    result = _make("box-paths", cwd=isolated_dir)
+    assert result.returncode == 0, result.stderr
+    assert "BOX_REMOTE=my-custom-remote" in result.stdout, result.stdout
+
+
+def test_dotenv_supplied_box_project_root_propagates_to_derived_remotes(isolated_dir):
+    """BOX_PROJECT_ROOT itself contains spaces by default (its own `?=`:
+    "2. Projects/21. Governance/") -- a real value operators set, not just a
+    hypothetical adversarial case. INCOMING_REMOTE/EXHIBITS_REMOTE derive
+    from it via their own `?=` (recursively expanded, so they pick up
+    whatever BOX_PROJECT_ROOT resolves to at reference time), so a .env
+    override must flow through to both without being set directly."""
+    (isolated_dir / ".env").write_text("BOX_PROJECT_ROOT=DPIC/janasunani\n")
+    result = _make("box-paths", cwd=isolated_dir)
+    assert result.returncode == 0, result.stderr
+    assert "BOX_PROJECT_ROOT=DPIC/janasunani" in result.stdout
+    assert "DPIC/janasunani/Data/Raw/" in result.stdout
+    assert "DPIC/janasunani/Analysis/Exhibits/" in result.stdout
+
+
+def test_dotenv_supplied_incoming_and_exhibits_remote_override_directly(isolated_dir):
+    """README.md: "If a derived path doesn't match your Box layout, override
+    the full endpoint (INCOMING_REMOTE / EXHIBITS_REMOTE) in .env" -- these
+    must be settable independently of BOX_REMOTE/BOX_PROJECT_ROOT."""
+    (isolated_dir / ".env").write_text(
+        "INCOMING_REMOTE=customremote:'Custom/Path/'\n"
+        "EXHIBITS_REMOTE=customremote:'Other/Path/'\n"
+    )
+    result = _make("box-paths", cwd=isolated_dir)
+    assert result.returncode == 0, result.stderr
+    assert "INCOMING_REMOTE=customremote:'Custom/Path/'" in result.stdout
+    assert "EXHIBITS_REMOTE=customremote:'Other/Path/'" in result.stdout
+    # BOX_REMOTE/BOX_PROJECT_ROOT untouched by .env here -- still the `?=` defaults.
+    assert "BOX_REMOTE=box" in result.stdout
+
+
+def test_command_line_still_wins_over_dotenv_for_box_remote(isolated_dir):
+    """Same precedence guarantee as OLTP_DB_URL, now proven for the restored
+    keys too: command line > .env > shell export > default."""
+    (isolated_dir / ".env").write_text("BOX_REMOTE=from-dotenv\n")
+    result = _make("box-paths", "BOX_REMOTE=from-cmdline", cwd=isolated_dir)
+    assert result.returncode == 0, result.stderr
+    assert "BOX_REMOTE=from-cmdline" in result.stdout
+    assert "from-dotenv" not in result.stdout
+
+
+def test_oltp_db_url_still_survives_adversarial_characters_alongside_box_remote(
+    isolated_dir,
+):
+    """Regression guard for the #104 refactor: extending the shared
+    dotenv_get machinery to four more keys must not reintroduce #60's bug
+    class for OLTP_DB_URL, which still needs the $/#/'/comment handling the
+    other four don't."""
+    (isolated_dir / ".env").write_text(
+        f"OLTP_DB_URL={ADVERSARIAL_DSN}\nBOX_REMOTE=myremote\n"
+    )
+    result = _make("-n", "preflight", cwd=isolated_dir)
+    assert result.returncode == 0, result.stderr
+    dsn_without_comment = ADVERSARIAL_DSN.split(" # ")[0]
+    assert _sh_quote(dsn_without_comment) in result.stdout, result.stdout

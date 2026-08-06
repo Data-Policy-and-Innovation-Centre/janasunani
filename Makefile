@@ -38,9 +38,7 @@ API_URL        ?= http://127.0.0.1:$(API_PORT)
 # the rest of the line); a stray `$(` with no matching `)` is worse — it is a
 # hard parse error that aborts `make` for every target, not just this one, so
 # a single unlucky character in a generated password can brick the Makefile
-# entirely. Only OLTP_DB_URL needs the safe path here: it is the one dotenv
-# value this Makefile actually consumes (grep confirms no other `?=`
-# variable's name collides with a .env.example key).
+# entirely.
 #
 # Two earlier attempts at this extraction (`grep`/`sed` for the key, then for
 # one layer of matching quotes) each closed one character class and left
@@ -48,7 +46,7 @@ API_URL        ?= http://127.0.0.1:$(API_PORT)
 # (`KEY=value # note`, which `sed`'s quote-stripping never accounted for --
 # `Settings` strips it via python-dotenv, so the Make wrapper silently kept it
 # and passed a corrupted DSN). Patching one more character each round is how
-# this stayed a live bug through three reviews. This now shells out to
+# this stayed a live bug through three reviews. This shells out to
 # `python-dotenv` itself -- the exact parser `Settings` uses
 # (janasunani/config.py) -- instead of re-deriving its quoting/comment rules
 # by hand, so the two can no longer drift: whatever `.env` value `Settings`
@@ -56,39 +54,96 @@ API_URL        ?= http://127.0.0.1:$(API_PORT)
 # (the `ifneq` below), so a checkout with no `.env` (CI, a fresh clone) pays
 # nothing.
 #
-# `:=` (not `?=`), so a value here overrides both this demo default and a
-# shell-exported OLTP_DB_URL, matching the precedence documented above. A
-# `make OLTP_DB_URL=...` command-line value still wins regardless: Make locks
-# in command-line variables before reading any of the makefile, and no plain
-# assignment (only `override`, unused here) can replace them -- verified with
-# `make OLTP_DB_URL=... db` against a conflicting `.env` (see PR description).
+# `:=` (not `?=`), so a value here overrides both the `?=` default and a
+# shell-exported value, matching the OLTP_DB_URL precedence documented above
+# (the same precedence applies to every key below). A `make KEY=...`
+# command-line value still wins regardless: Make locks in command-line
+# variables before reading any of the makefile, and no plain assignment
+# (only `override`, unused here) can replace them -- verified for OLTP_DB_URL
+# with `make OLTP_DB_URL=... db` against a conflicting `.env` (see PR
+# description).
 #
-# Two things fixed here (#103, a regression this extraction itself
-# introduced): first, `uv` is looked up with PATH widened by $(USER_BIN)
-# directly on *this* command, not via the `export PATH` line below -- that
-# only reaches recipe subprocesses, not a $(shell ...) call evaluated here
-# at Make-parse time (confirmed directly: an `export`ed PATH change does not
-# reach an immediately-following $(shell ...) in GNU Make). Without this, a
-# `uv` installed only under $(USER_BIN) -- the repo's own documented install
-# location -- would not resolve here even though every recipe below finds it
-# fine. Second, the python one-liner always prints a `DOTENV_OK:` prefix on
-# success, even with an empty value, so a genuine parse failure (uv still
-# not found, python-dotenv missing, any other error) is distinguishable from
-# ".env exists but doesn't set OLTP_DB_URL" by that prefix's *absence* --
-# never by empty output alone. A failure here is a hard `$(error ...)`, not
-# a silent fallback: silently keeping the throwaway demo default while an
-# operator's .env names a real database is exactly the wrong outcome `make
-# OLTP_DB_URL=... db`'s guard exists to prevent, reached by a different
-# route.
+# Two things fixed for OLTP_DB_URL (#103, a regression this extraction
+# itself introduced): first, `uv` is looked up with PATH widened by
+# $(USER_BIN) directly on *this* command, not via the `export PATH` line
+# below -- that only reaches recipe subprocesses, not a $(shell ...) call
+# evaluated here at Make-parse time (confirmed directly: an `export`ed PATH
+# change does not reach an immediately-following $(shell ...) in GNU Make).
+# Without this, a `uv` installed only under $(USER_BIN) -- the repo's own
+# documented install location -- would not resolve here even though every
+# recipe below finds it fine. Second, dotenv_get below always prints a
+# `DOTENV_OK:` prefix on success, even with an empty value, so a genuine
+# parse failure (uv still not found, python-dotenv missing, any other error)
+# is distinguishable from "this key is not set in .env" by that prefix's
+# *absence* -- never by empty output alone. A failure is a hard
+# `$(error ...)`, not a silent fallback: for OLTP_DB_URL specifically,
+# silently keeping the throwaway demo default while an operator's .env names
+# a real database is exactly the wrong outcome `make OLTP_DB_URL=... db`'s
+# guard exists to prevent, reached by a different route.
+#
+# OLTP_DB_URL was the only key extracted here until #104: the audit done
+# when this extraction landed (17bad32) checked that no other `?=`
+# variable's *name* collided with a .env.example key -- the wrong direction.
+# The actual question is which variables README.md's "Box paths and data
+# ops" section tells operators to persist in .env: BOX_REMOTE,
+# BOX_PROJECT_ROOT, INCOMING_REMOTE and EXHIBITS_REMOTE, none of which
+# collide with a .env.example key but all of which `-include .env` used to
+# supply before #60. Dropping them silently turned `make ingest`/`make
+# deliver` into reading from or publishing to the wrong Box folder with no
+# indication the operator's own .env was ignored -- the same "silently wrong
+# instead of loudly wrong" shape as #103, just for these four keys instead
+# of the database URL. They are not secrets (unlike OLTP_DB_URL, never
+# printed and read via `sh_quote`/OLTP_DB_URL_RAW below), so they get the
+# same safe *parsing* but no additional quoting machinery beyond what
+# `ingest`/`publish-raw`/`deliver`/`box-paths` already did before #60.
+define dotenv_get
+$(shell PATH="$(USER_BIN):$$PATH" uv run python -c "from dotenv import dotenv_values; import sys; v = dotenv_values('.env').get('$(1)'); sys.stdout.write('DOTENV_OK:' + (v if v is not None else ''))" 2>$(_DOTENV_STDERR))
+endef
 _DOTENV_STDERR := /tmp/.janasunani-makefile-dotenv-stderr-$(shell whoami 2>/dev/null)
 ifneq (,$(wildcard .env))
-_DOTENV_RAW_OLTP_DB_URL := $(shell PATH="$(USER_BIN):$$PATH" uv run python -c "from dotenv import dotenv_values; import sys; v = dotenv_values('.env').get('OLTP_DB_URL'); sys.stdout.write('DOTENV_OK:' + (v if v is not None else ''))" 2>$(_DOTENV_STDERR))
+_DOTENV_RAW_OLTP_DB_URL := $(call dotenv_get,OLTP_DB_URL)
 ifeq ($(findstring DOTENV_OK:,$(_DOTENV_RAW_OLTP_DB_URL)),)
 $(error .env exists but OLTP_DB_URL could not be parsed from it (#103) -- refusing to silently fall back to the throwaway demo default. 'uv run python' stderr: $(shell cat $(_DOTENV_STDERR) 2>/dev/null))
 endif
 _DOTENV_OLTP_DB_URL := $(subst DOTENV_OK:,,$(_DOTENV_RAW_OLTP_DB_URL))
 ifneq (,$(_DOTENV_OLTP_DB_URL))
 OLTP_DB_URL := $(_DOTENV_OLTP_DB_URL)
+endif
+
+_DOTENV_RAW_BOX_REMOTE := $(call dotenv_get,BOX_REMOTE)
+ifeq ($(findstring DOTENV_OK:,$(_DOTENV_RAW_BOX_REMOTE)),)
+$(error .env exists but BOX_REMOTE could not be parsed from it (#104) -- refusing to silently fall back to the default. 'uv run python' stderr: $(shell cat $(_DOTENV_STDERR) 2>/dev/null))
+endif
+_DOTENV_BOX_REMOTE := $(subst DOTENV_OK:,,$(_DOTENV_RAW_BOX_REMOTE))
+ifneq (,$(_DOTENV_BOX_REMOTE))
+BOX_REMOTE := $(_DOTENV_BOX_REMOTE)
+endif
+
+_DOTENV_RAW_BOX_PROJECT_ROOT := $(call dotenv_get,BOX_PROJECT_ROOT)
+ifeq ($(findstring DOTENV_OK:,$(_DOTENV_RAW_BOX_PROJECT_ROOT)),)
+$(error .env exists but BOX_PROJECT_ROOT could not be parsed from it (#104) -- refusing to silently fall back to the default. 'uv run python' stderr: $(shell cat $(_DOTENV_STDERR) 2>/dev/null))
+endif
+_DOTENV_BOX_PROJECT_ROOT := $(subst DOTENV_OK:,,$(_DOTENV_RAW_BOX_PROJECT_ROOT))
+ifneq (,$(_DOTENV_BOX_PROJECT_ROOT))
+BOX_PROJECT_ROOT := $(_DOTENV_BOX_PROJECT_ROOT)
+endif
+
+_DOTENV_RAW_INCOMING_REMOTE := $(call dotenv_get,INCOMING_REMOTE)
+ifeq ($(findstring DOTENV_OK:,$(_DOTENV_RAW_INCOMING_REMOTE)),)
+$(error .env exists but INCOMING_REMOTE could not be parsed from it (#104) -- refusing to silently fall back to the default. 'uv run python' stderr: $(shell cat $(_DOTENV_STDERR) 2>/dev/null))
+endif
+_DOTENV_INCOMING_REMOTE := $(subst DOTENV_OK:,,$(_DOTENV_RAW_INCOMING_REMOTE))
+ifneq (,$(_DOTENV_INCOMING_REMOTE))
+INCOMING_REMOTE := $(_DOTENV_INCOMING_REMOTE)
+endif
+
+_DOTENV_RAW_EXHIBITS_REMOTE := $(call dotenv_get,EXHIBITS_REMOTE)
+ifeq ($(findstring DOTENV_OK:,$(_DOTENV_RAW_EXHIBITS_REMOTE)),)
+$(error .env exists but EXHIBITS_REMOTE could not be parsed from it (#104) -- refusing to silently fall back to the default. 'uv run python' stderr: $(shell cat $(_DOTENV_STDERR) 2>/dev/null))
+endif
+_DOTENV_EXHIBITS_REMOTE := $(subst DOTENV_OK:,,$(_DOTENV_RAW_EXHIBITS_REMOTE))
+ifneq (,$(_DOTENV_EXHIBITS_REMOTE))
+EXHIBITS_REMOTE := $(_DOTENV_EXHIBITS_REMOTE)
 endif
 endif
 # A fourth instance of the same bug class, in the one place the .env fix
