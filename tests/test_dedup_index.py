@@ -2,9 +2,11 @@
 
 `janasunani.pipeline.dedup_index` walks a redacted district-year slice,
 computes MinHash/LSH signatures and salted identity keys, blocks candidate
-generation by district/script/time-window, verifies LSH candidates with
-exact Jaccard, unions everything (text + identity) with `dedup.py`'s
-`union_find_groups`, and persists `dedup_signatures`/`dedup_groups`.
+generation by district/script/time-window, verifies every LSH *and*
+identity-key candidate pair with exact Jaccard (a matching identity means
+the same citizen, not the same issue -- it is not duplicate evidence on its
+own), unions what passes with `dedup.py`'s `union_find_groups`, and persists
+`dedup_signatures`/`dedup_groups`.
 
 Synthetic complaint text only — no real grievance text, no `data/` access.
 Salted with a fixed test-only salt (`_SALT`), never a real deployment
@@ -12,6 +14,7 @@ secret.
 """
 
 from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine, insert, select
@@ -27,6 +30,7 @@ from janasunani.pipeline.dedup import identity_key, minhash_signature, shingles
 from janasunani.pipeline.dedup_index import (
     DEFAULT_NUM_HASHES,
     _script_of,
+    _text_candidate_pairs,
     build_dedup_index,
 )
 
@@ -244,6 +248,41 @@ class TestSaltRequirement:
         assert _signature_rows(sync_url)["T1"].identity_key_mobile == expected
 
 
+class TestThresholdValidation:
+    """The backfill persists duplicate_group_id, so a bad threshold
+    corrupts the slice instead of failing fast (review finding, #135):
+    -1 would union every candidate, >1/NaN would reject every real one."""
+
+    def _assert_rejected_before_any_db_connection(self, oltp, monkeypatch, threshold):
+        async_url, _ = oltp
+        import janasunani.pipeline.dedup_index as dedup_index_module
+
+        def _boom(*args, **kwargs):
+            raise AssertionError("create_async_engine must not be called with a bad threshold")
+
+        monkeypatch.setattr(dedup_index_module, "create_async_engine", _boom)
+
+        with pytest.raises(ValueError, match="threshold"):
+            build_dedup_index(
+                "Khordha", 2024, oltp_url=async_url, salt=_SALT, threshold=threshold
+            )
+
+    def test_negative_threshold_is_rejected(self, oltp, monkeypatch):
+        self._assert_rejected_before_any_db_connection(oltp, monkeypatch, -1.0)
+
+    def test_threshold_above_one_is_rejected(self, oltp, monkeypatch):
+        self._assert_rejected_before_any_db_connection(oltp, monkeypatch, 1.5)
+
+    def test_nan_threshold_is_rejected(self, oltp, monkeypatch):
+        self._assert_rejected_before_any_db_connection(oltp, monkeypatch, float("nan"))
+
+    def test_boundary_values_zero_and_one_are_accepted(self, oltp):
+        async_url, _ = oltp
+        # Must not raise.
+        build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT, threshold=0.0)
+        build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT, threshold=1.0)
+
+
 class TestSignatureContents:
     def test_signature_is_a_full_length_minhash(self, oltp):
         async_url, sync_url = oltp
@@ -311,8 +350,11 @@ def dup_oltp(tmp_path):
         ("T2", "Sambalpur", 2024, datetime(2024, 1, 10), None, None, "raw t2", CAMPAIGN_A),
         ("T3", "Sambalpur", 2024, datetime(2024, 1, 12), None, None, "raw t3", CAMPAIGN_C_REWORDED),
         ("T4", "Sambalpur", 2024, datetime(2024, 1, 8), None, None, "raw t4", UNRELATED_A),
-        # --- resubmission, same mobile as T1, different window/text ---
+        # --- same citizen (mobile), different issue: must NOT group ---
         ("T5", "Sambalpur", 2024, datetime(2024, 6, 20), "9861234567", None, "raw t5", UNRELATED_B),
+        # --- same citizen (mobile) AND matching text, different window:
+        # must group -- identity widens the search, text still decides ---
+        ("T5R", "Sambalpur", 2024, datetime(2024, 4, 15), "9861234567", None, "raw t5r", CAMPAIGN_A),
         # --- decoys ---
         ("T6", "Puri", 2024, datetime(2024, 1, 5), None, None, "raw t6", CAMPAIGN_A),
         ("T7", "Sambalpur", 2024, datetime(2024, 1, 5), None, None, "raw t7 with 9999999999", None),
@@ -330,9 +372,12 @@ def dup_oltp(tmp_path):
         ("T15", "Sambalpur", 2024, datetime(2024, 3, 3), None, None, "raw t15", ODIA_TEXT),
         # --- blocking: identical text to T1's campaign, but window 6 (Jul 2024) ---
         ("T18", "Sambalpur", 2024, datetime(2024, 7, 1), None, None, "raw t18", CAMPAIGN_A),
-        # --- identity via email, unblocked by window/text ---
+        # --- same citizen (email), different issue: must NOT group ---
         ("T19", "Sambalpur", 2024, datetime(2024, 1, 6), None, "citizen@example.com", "raw t19", UNRELATED_B),
         ("T20", "Sambalpur", 2024, datetime(2024, 8, 1), None, "Citizen@Example.com ", "raw t20", UNRELATED_C),
+        # --- same citizen (email, case/whitespace-normalized) AND matching
+        # text, different window: must group ---
+        ("T20R", "Sambalpur", 2024, datetime(2024, 10, 1), None, "citizen@example.com", "raw t20r", UNRELATED_B),
     ]
     return _dup_oltp(tmp_path, rows)
 
@@ -418,6 +463,35 @@ class TestBlockingByTimeWindow:
         assert row.block_key == "Sambalpur:latin:0"
 
 
+class TestBucketVerifiesAllPairsNotJustStarEdges:
+    """Every unordered pair within an LSH bucket must be emitted as a
+    candidate, not just first-to-other edges (review finding, #135): if the
+    first member happens to be an accidental band collision that fails
+    Jaccard verification against the other two, star edges would leave two
+    genuine near-duplicates elsewhere in the bucket uncompared with each
+    other. Exercised directly against `_text_candidate_pairs` (a pure
+    function of its `rows` argument) with a hand-built 3-member bucket,
+    rather than through real text -- getting three real signatures to
+    collide in a specific band deterministically would be fragile."""
+
+    def test_three_member_bucket_yields_all_three_pairs(self):
+        # a, b, c all share the same value in band 0 (so all three land in
+        # one bucket together) but differ in band 1. A star topology
+        # (first-to-other only) would emit (a, b) and (a, c) but never
+        # (b, c).
+        row_a = SimpleNamespace(ticket_no="a", block_key="X", signature=[1, 1, 100, 101])
+        row_b = SimpleNamespace(ticket_no="b", block_key="X", signature=[1, 1, 200, 201])
+        row_c = SimpleNamespace(ticket_no="c", block_key="X", signature=[1, 1, 300, 301])
+
+        pairs = _text_candidate_pairs([row_a, row_b, row_c], num_bands=2)
+
+        normalized = {frozenset(p) for p in pairs}
+        assert frozenset({"a", "b"}) in normalized
+        assert frozenset({"a", "c"}) in normalized
+        assert frozenset({"b", "c"}) in normalized
+        assert len(normalized) == 3
+
+
 class TestCrossScriptNonSupport:
     def test_same_script_near_duplicate_is_grouped(self, dup_oltp):
         async_url, sync_url = dup_oltp
@@ -445,20 +519,45 @@ class TestCrossScriptNonSupport:
 
 
 class TestIdentityKeyLinking:
-    def test_same_mobile_links_across_windows_and_unrelated_text(self, dup_oltp):
-        # T1 and T5 share a mobile number but sit in different time windows
-        # with unrelated text -- only the identity-key path (unblocked by
-        # window) can find this pair.
-        async_url, sync_url = dup_oltp
-        build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt=_SALT)
-        groups = _group_rows(sync_url)
-        assert groups["T1"].duplicate_group_id == groups["T5"].duplicate_group_id
+    """Identity equality is a candidate source, not duplicate evidence on its
+    own (review finding, #135): a repeat filer with two unrelated grievances
+    must not be collapsed into one duplicate group, since duplicate-adjusted
+    workload is a number people act on."""
 
-    def test_same_email_links_regardless_of_case_whitespace_and_window(self, dup_oltp):
+    def test_same_mobile_different_issue_does_not_group(self, dup_oltp):
+        # T1 and T5 share a mobile number, but T5's redacted text
+        # (UNRELATED_B) has nothing to do with T1's campaign text -- same
+        # citizen, different issue. Identity alone must not merge them.
         async_url, sync_url = dup_oltp
         build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt=_SALT)
         groups = _group_rows(sync_url)
-        assert groups["T19"].duplicate_group_id == groups["T20"].duplicate_group_id
+        assert groups["T1"].duplicate_group_id != groups["T5"].duplicate_group_id
+
+    def test_same_email_different_issue_does_not_group(self, dup_oltp):
+        async_url, sync_url = dup_oltp
+        build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt=_SALT)
+        groups = _group_rows(sync_url)
+        assert groups["T19"].duplicate_group_id != groups["T20"].duplicate_group_id
+
+    def test_same_mobile_and_matching_text_across_windows_does_group(self, dup_oltp):
+        # T1 and T5R share a mobile number AND near-identical text, but sit
+        # in different time windows -- pure text-LSH blocking would never
+        # generate this pair as a candidate (different block_key). Only the
+        # identity-key path (unblocked by window) surfaces it as a
+        # candidate, and it clears jaccard_similarity like any other
+        # candidate, so it unions.
+        async_url, sync_url = dup_oltp
+        build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt=_SALT)
+        groups = _group_rows(sync_url)
+        assert groups["T1"].duplicate_group_id == groups["T5R"].duplicate_group_id
+
+    def test_same_email_and_matching_text_across_windows_does_group(self, dup_oltp):
+        # T19 and T20R: same normalized email, identical redacted text
+        # (UNRELATED_B for both), different windows.
+        async_url, sync_url = dup_oltp
+        build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt=_SALT)
+        groups = _group_rows(sync_url)
+        assert groups["T19"].duplicate_group_id == groups["T20R"].duplicate_group_id
 
     def test_identity_keys_are_salted_and_not_derived_from_redacted_text(self, dup_oltp):
         async_url, sync_url = dup_oltp
@@ -466,13 +565,28 @@ class TestIdentityKeyLinking:
         sigs = _signature_rows(sync_url)
         # T1 and T5 have the same mobile but completely different redacted
         # text -- the stored identity key must agree with a direct call to
-        # identity_key() on the raw mobile, independent of the text path.
+        # identity_key() on the raw mobile, independent of the text path
+        # (and independent of whether the pair ends up in the same
+        # duplicate group).
         expected = identity_key("9861234567", _SALT)
         assert sigs["T1"].identity_key_mobile == expected
         assert sigs["T5"].identity_key_mobile == expected
         # a different salt would change it -- proves it is not a
         # placeholder/text-derived value
         assert sigs["T1"].identity_key_mobile != identity_key("9861234567", "a-different-salt")
+
+    def test_same_citizen_different_issue_stays_queryable_via_identity_key(self, dup_oltp):
+        # The relationship is not discarded just because it does not meet
+        # the duplicate bar: T1 and T5 fail to group, but both still carry
+        # the same identity_key_mobile, so "same citizen, different issue"
+        # remains directly queryable (e.g. for a future spike-decomposition
+        # consumer) by joining on that column.
+        async_url, sync_url = dup_oltp
+        build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt=_SALT)
+        sigs = _signature_rows(sync_url)
+        groups = _group_rows(sync_url)
+        assert sigs["T1"].identity_key_mobile == sigs["T5"].identity_key_mobile
+        assert groups["T1"].duplicate_group_id != groups["T5"].duplicate_group_id
 
 
 class TestAbstention:

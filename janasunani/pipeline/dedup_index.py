@@ -35,15 +35,19 @@ created_on, petitioner_mobile/email); it never selects `complaints.grievance`.
    point 3; see `identity_key()`'s contract). Writes `dedup_signatures`.
 2. `_group_duplicates()` — not batched. It loads every signature already
    written for the slice (tens of thousands of rows, comfortably in memory),
-   buckets by `(block_key, lsh band)` to find text candidates, re-fetches
-   redacted text for just the candidate tickets to verify with
-   `jaccard_similarity` (dedup.py module docstring point 6 — an LSH band
-   collision is a candidate, not a confirmed duplicate), adds identity-key
-   equality as a second, unblocked source of verified pairs (same-citizen
-   resubmission does not need to fall in the same time window), and unions
-   everything with `union_find_groups`. Recomputed and upserted whole every
-   run: cheap at this scale, and correct where an incremental update would
-   drift (a late resubmission can change a group id that already exists).
+   buckets by `(block_key, lsh band)` to find text candidates, adds
+   identity-key equality as a second, unblocked source of candidates
+   (same-citizen resubmission does not need to fall in the same time
+   window), re-fetches redacted text for every candidate ticket, and
+   verifies **every** candidate pair — text and identity alike — with
+   `jaccard_similarity` before it is allowed to union (dedup.py module
+   docstring point 6 — a shared LSH band *or* a shared identity is a
+   candidate, not a confirmed duplicate: the same citizen filing two
+   unrelated grievances is "same citizen", not "same issue"). Unions
+   everything that passes with `union_find_groups`. Recomputed and upserted
+   whole every run: cheap at this scale, and correct where an incremental
+   update would drift (a late resubmission can change a group id that
+   already exists).
 
 **Blocked by district and time window, not compared pairwise.** A single
 district-year slice runs to tens of thousands of rows — 55,544 for
@@ -63,6 +67,21 @@ construction (disjoint Unicode ranges; see `dedup.py` module docstring point
 4). This is a known, accepted gap: the transliteration step that would close
 it is Phase 17, which runs after this phase. Do not "fix" this by comparing
 across the block boundary.
+
+**A matching identity key is a candidate, not duplicate evidence.** Same
+mobile/email links two tickets to the same citizen, not necessarily the same
+issue — a repeat filer with a water complaint and, months later, an
+unrelated pension complaint must not be folded into one duplicate group.
+"Duplicate-adjusted workload" is a number people act on (DELIVERY.md;
+ROADMAP §5.2 warns deduplication destructively changes management's
+counts), so identity equality only widens candidate generation across time
+windows and scripts — the same `jaccard_similarity` check on the redacted
+text that LSH candidates go through still decides whether the pair actually
+unions. A "same citizen, different issue" pair that fails that check is not
+discarded: `identity_key_mobile`/`identity_key_email` stay on every
+`dedup_signatures` row, so the relationship is directly queryable by joining
+on those columns — real signal for a spike-decomposition consumer, just not
+this table's duplicate signal.
 
 **`dpic-infra` classified.** Redaction lowers exposure; it does not
 declassify what is derived from citizen prose. A MinHash signature or a
@@ -94,8 +113,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import math
 from collections import Counter, defaultdict
 from datetime import date, datetime, timezone
+from itertools import combinations
 from typing import Optional
 
 from loguru import logger
@@ -132,12 +153,14 @@ BATCH_SIZE = 500
 # matching, which is not blocked by time (see module docstring).
 DEFAULT_WINDOW_DAYS = 30
 
-# Jaccard threshold a verified LSH candidate pair must clear to union.
-# Matches the threshold used in tests/test_dedup.py's end-to-end
-# candidate -> verify -> union example: comfortably above the ~0.3 two
-# unrelated filings share via boilerplate alone, comfortably below the
-# ~0.78 a lightly-reworded duplicate scores (see dedup.py's
-# DEFAULT_NUM_BANDS comment for both numbers).
+# Jaccard threshold a candidate pair must clear to union -- LSH and identity
+# candidates alike (see _group_duplicates). Matches the threshold used in
+# tests/test_dedup.py's end-to-end candidate -> verify -> union example:
+# comfortably above the ~0.3 two unrelated filings share via boilerplate
+# alone, comfortably below the ~0.78 a lightly-reworded duplicate scores
+# (see dedup.py's DEFAULT_NUM_BANDS comment for both numbers). Must be a
+# finite value in [0, 1] -- build_dedup_index() enforces this before
+# opening a DB connection, since this backfill persists what it computes.
 DEFAULT_DUPLICATE_THRESHOLD = 0.5
 
 # Odia Unicode block. Presence, not majority: any real Odia content in a
@@ -369,7 +392,15 @@ def _text_candidate_pairs(rows, num_bands: int) -> set[tuple[str, str]]:
     """LSH candidate pairs, blocked by `block_key` — a shared band hash
     within the same block is a candidate, never across blocks. Rows with no
     signature (`minhash_signature` abstained) are skipped: there is nothing
-    to band (dedup.py module docstring point 5)."""
+    to band (dedup.py module docstring point 5).
+
+    Every unordered pair within a bucket is emitted, via
+    `itertools.combinations` — not just edges from an arbitrary first
+    member. LSH membership has no "first": a star topology (first-to-other
+    only) would leave two genuine near-duplicates elsewhere in a
+    3+-member bucket uncompared with each other whenever neither happens to
+    verify against whichever ticket landed first in iteration order.
+    """
     buckets: dict[tuple[str, int, int], list[str]] = defaultdict(list)
     for row in rows:
         if row.signature is None:
@@ -381,18 +412,32 @@ def _text_candidate_pairs(rows, num_bands: int) -> set[tuple[str, str]]:
     pairs: set[tuple[str, str]] = set()
     for members in buckets.values():
         if len(members) > 1:
-            first = members[0]
-            pairs.update((first, other) for other in members[1:] if other != first)
+            pairs.update(combinations(sorted(set(members)), 2))
     return pairs
 
 
 def _identity_candidate_pairs(rows) -> set[tuple[str, str]]:
-    """Same-citizen resubmission pairs from identity-key equality —
-    unblocked by time window or script on purpose (module docstring): a
-    resubmission can land months later, and a citizen's phone number does
-    not carry a script. Equality is itself the evidence, so these pairs
-    bypass `jaccard_similarity` verification; only the LSH text candidates
-    need it (dedup.py module docstring point 6)."""
+    """Same-citizen pairs from identity-key equality — unblocked by time
+    window or script on purpose (module docstring): a resubmission can land
+    months later, and a citizen's phone number does not carry a script.
+
+    **Candidates, not confirmed duplicates.** A matching identity means the
+    same citizen, not the same issue — a repeat filer with a water complaint
+    and, months later, an unrelated pension complaint shares an identity key
+    but is not a duplicate. `_group_duplicates` runs these pairs through the
+    same `jaccard_similarity` check as LSH text candidates before any of
+    them are allowed to union; identity equality only widens the search
+    (across time/script), it does not decide the match on its own (module
+    docstring). A pair that fails that check is not lost information —
+    `identity_key_mobile`/`identity_key_email` remain on every
+    `dedup_signatures` row, so "same citizen, different issue" stays
+    directly queryable even when it is not folded into a duplicate group.
+
+    Every unordered pair within one identity group is emitted (same
+    `itertools.combinations` reasoning as `_text_candidate_pairs` — star
+    edges under-connect once every pair needs its own verification, not
+    just connectivity).
+    """
     pairs: set[tuple[str, str]] = set()
     for key_of in (lambda r: r.identity_key_mobile, lambda r: r.identity_key_email):
         groups: dict[str, list[str]] = defaultdict(list)
@@ -402,8 +447,7 @@ def _identity_candidate_pairs(rows) -> set[tuple[str, str]]:
                 groups[key].append(row.ticket_no)
         for members in groups.values():
             if len(members) > 1:
-                first = members[0]
-                pairs.update((first, other) for other in members[1:] if other != first)
+                pairs.update(combinations(sorted(set(members)), 2))
     return pairs
 
 
@@ -420,22 +464,27 @@ async def _group_duplicates(
     if not rows:
         return {"slice_signatures": 0, "verified_pairs": 0, "groups": 0}
 
-    text_pairs = _text_candidate_pairs(rows, DEFAULT_NUM_BANDS)
-    identity_pairs = _identity_candidate_pairs(rows)
+    # Both sources are candidates only, never confirmed duplicates on their
+    # own: an LSH band collision needs Jaccard verification (dedup.py module
+    # docstring point 6), and so does an identity-key match, which means
+    # "same citizen", not "same issue" (see _identity_candidate_pairs). One
+    # verification pass covers both.
+    candidate_pairs = _text_candidate_pairs(rows, DEFAULT_NUM_BANDS) | _identity_candidate_pairs(
+        rows
+    )
 
-    involved = sorted({ticket for pair in text_pairs for ticket in pair})
+    involved = sorted({ticket for pair in candidate_pairs for ticket in pair})
     async with engine.begin() as conn:
         text_by_ticket = await _load_redacted_text(conn, involved)
 
     verified_pairs = [
         (a, b)
-        for a, b in text_pairs
+        for a, b in candidate_pairs
         if jaccard_similarity(
             shingles(text_by_ticket.get(a, "")), shingles(text_by_ticket.get(b, ""))
         )
         >= threshold
     ]
-    verified_pairs.extend(identity_pairs)
 
     all_tickets = [row.ticket_no for row in rows]
     groups = union_find_groups(verified_pairs, items=all_tickets)
@@ -488,7 +537,8 @@ def build_dedup_index(
 
     Returns per-run counts from both stages. Raises ``ValueError``
     immediately — before opening any DB connection — if no salt is
-    configured; see the module docstring.
+    configured, or if ``threshold`` is not a finite value in ``[0, 1]``; see
+    the module docstring.
     """
     effective_salt = salt if salt is not None else settings.DEDUP_SALT
     if not effective_salt or not effective_salt.strip():
@@ -499,6 +549,19 @@ def build_dedup_index(
             "over the ~10^10 mobile-number space -- see identity_key()'s "
             "docstring in janasunani.pipeline.dedup. Fix the deployment "
             "config; do not retry with an empty string."
+        )
+
+    # This backfill persists duplicate_group_id, not just a report, so a bad
+    # threshold corrupts the slice instead of failing fast: -1 unions every
+    # LSH/identity candidate as a duplicate, and >1 or NaN rejects every real
+    # one silently (NaN comparisons are just always False). Same "fail loud
+    # before touching the DB" stance as the salt check above.
+    if not math.isfinite(threshold) or not (0.0 <= threshold <= 1.0):
+        raise ValueError(
+            f"build_dedup_index() requires threshold in [0, 1], got "
+            f"{threshold!r}. Jaccard similarity is only ever in [0, 1]; a "
+            "value outside that range is a misconfiguration, not a stricter "
+            "or looser real threshold."
         )
 
     engine = create_async_engine(oltp_url or settings.OLTP_DB_URL)
@@ -547,7 +610,8 @@ def main() -> None:
         "--threshold",
         type=float,
         default=DEFAULT_DUPLICATE_THRESHOLD,
-        help="Jaccard similarity an LSH candidate pair must clear to be unioned.",
+        help="Jaccard similarity an LSH/identity candidate pair must clear to be "
+        "unioned. Must be in [0, 1].",
     )
     parser.add_argument(
         "--limit",
