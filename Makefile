@@ -71,11 +71,13 @@ API_URL        ?= http://127.0.0.1:$(API_PORT)
 # change does not reach an immediately-following $(shell ...) in GNU Make).
 # Without this, a `uv` installed only under $(USER_BIN) -- the repo's own
 # documented install location -- would not resolve here even though every
-# recipe below finds it fine. Second, dotenv_get below always prints a
-# `DOTENV_OK:` prefix on success, even with an empty value, so a genuine
+# recipe below finds it fine. Second, dotenv_get below always records the
+# python call's exit status to `_DOTENV_STATUS` (a file, read back via
+# `dotenv_status` immediately after each call -- see #115 below for why
+# this lives on a file rather than in the value's own text), so a genuine
 # parse failure (uv still not found, python-dotenv missing, any other error)
-# is distinguishable from "this key is not set in .env" by that prefix's
-# *absence* -- never by empty output alone. A failure is a hard
+# is distinguishable from "this key is not set in .env" by that status --
+# never by the value's emptiness or content. A failure is a hard
 # `$(error ...)`, not a silent fallback: for OLTP_DB_URL specifically,
 # silently keeping the throwaway demo default while an operator's .env names
 # a real database is exactly the wrong outcome `make OLTP_DB_URL=... db`'s
@@ -130,55 +132,88 @@ API_URL        ?= http://127.0.0.1:$(API_PORT)
 # unsynced one -- correctly, since "no python-dotenv available" is a
 # genuine parse failure and must still hit the hard $(error) below, not a
 # silent fallback.
+#
+# A fifth failure, #115: dotenv_get used to signal success by prefixing its
+# stdout with a literal `DOTENV_OK:` marker, and each of the five call sites
+# below stripped it back off with a global `$(subst DOTENV_OK:,,$(raw))`.
+# `$(subst)` is unanchored, so a `.env` value that itself contained the
+# literal substring `DOTENV_OK:` anywhere -- e.g.
+# `BOX_PROJECT_ROOT=Archive/DOTENV_OK:2026` -- had *that* occurrence deleted
+# too, not just the sentinel this file had prepended, silently corrupting
+# the value `ingest`/`deliver` then used. Anchoring the strip instead
+# (`$(patsubst DOTENV_OK:%,%,$(raw))` or `$(filter DOTENV_OK:%,$(raw))`)
+# does not fix this: both are WHITESPACE-SPLITTING word operations -- they
+# split text into space-separated words, transform each word independently,
+# and rejoin with a single space -- so a value containing spaces (a
+# documented, supported case; BOX_PROJECT_ROOT's own default is "2.
+# Projects/21. Governance/") would come back with its internal spacing
+# collapsed or rewritten, sentinel collision or not.
+#
+# The fix carries the status on a channel separate from the value's text
+# instead of encoding it into that text at all: the compound shell command
+# in dotenv_get now writes the python call's exit status to `_DOTENV_STATUS`
+# (a small file, alongside the existing `_DOTENV_STDERR` capture) via a
+# trailing `echo $?` redirected to *that file*, never to stdout -- so what
+# `$(shell ...)` captures as dotenv_get's own expansion is exactly what
+# python wrote to its stdout: the bare value, untouched, never a prefix this
+# file has to strip back out. `dotenv_status` reads the status file back
+# with `$(shell cat ...)` -- GNU Make 3.81, what this repo runs, predates
+# both `$(.SHELLSTATUS)` (4.2) and `$(file ...)` (4.0), so shelling out to
+# `cat` is the only portable way to get it into a Make variable, the same
+# technique `_DOTENV_STDERR` already uses below to surface the error text.
+# Each `dotenv_status` reference must come immediately after its
+# corresponding `$(call dotenv_get,...)`, before anything else writes
+# `_DOTENV_STATUS` -- exactly how each block below sequences its
+# raw-value/status-check/assign lines. Verified against both an adversarial
+# case this bug missed (a value containing spaces) and the one it hit (a
+# value containing the literal `DOTENV_OK:` substring): both now round-trip
+# unchanged (tests/test_makefile_dotenv.py).
 define dotenv_get
-$(shell PATH="$(USER_BIN):$$PATH" uv run --no-sync --offline python -c "from dotenv import dotenv_values; import sys; v = dotenv_values('.env').get('$(1)'); sys.stdout.write('DOTENV_OK:' + (v if v is not None else ''))" 2>$(_DOTENV_STDERR))
+$(shell PATH="$(USER_BIN):$$PATH" uv run --no-sync --offline python -c "from dotenv import dotenv_values; import sys; v = dotenv_values('.env').get('$(1)'); sys.stdout.write(v if v is not None else '')" 2>$(_DOTENV_STDERR); echo $$? >$(_DOTENV_STATUS))
 endef
 _DOTENV_STDERR := /tmp/.janasunani-makefile-dotenv-stderr-$(shell whoami 2>/dev/null)
+_DOTENV_STATUS := /tmp/.janasunani-makefile-dotenv-status-$(shell whoami 2>/dev/null)
+dotenv_status = $(shell cat $(_DOTENV_STATUS) 2>/dev/null)
 ifneq (,$(wildcard .env))
 ifeq ($(filter setup,$(MAKECMDGOALS)),)
 _DOTENV_RAW_OLTP_DB_URL := $(call dotenv_get,OLTP_DB_URL)
-ifeq ($(findstring DOTENV_OK:,$(_DOTENV_RAW_OLTP_DB_URL)),)
+ifneq (0,$(dotenv_status))
 $(error .env exists but OLTP_DB_URL could not be parsed from it (#103) -- refusing to silently fall back to the throwaway demo default. 'uv run python' stderr: $(shell cat $(_DOTENV_STDERR) 2>/dev/null))
 endif
-_DOTENV_OLTP_DB_URL := $(subst DOTENV_OK:,,$(_DOTENV_RAW_OLTP_DB_URL))
-ifneq (,$(_DOTENV_OLTP_DB_URL))
-OLTP_DB_URL := $(_DOTENV_OLTP_DB_URL)
+ifneq (,$(_DOTENV_RAW_OLTP_DB_URL))
+OLTP_DB_URL := $(_DOTENV_RAW_OLTP_DB_URL)
 endif
 
 _DOTENV_RAW_BOX_REMOTE := $(call dotenv_get,BOX_REMOTE)
-ifeq ($(findstring DOTENV_OK:,$(_DOTENV_RAW_BOX_REMOTE)),)
+ifneq (0,$(dotenv_status))
 $(error .env exists but BOX_REMOTE could not be parsed from it (#104) -- refusing to silently fall back to the default. 'uv run python' stderr: $(shell cat $(_DOTENV_STDERR) 2>/dev/null))
 endif
-_DOTENV_BOX_REMOTE := $(subst DOTENV_OK:,,$(_DOTENV_RAW_BOX_REMOTE))
-ifneq (,$(_DOTENV_BOX_REMOTE))
-BOX_REMOTE := $(_DOTENV_BOX_REMOTE)
+ifneq (,$(_DOTENV_RAW_BOX_REMOTE))
+BOX_REMOTE := $(_DOTENV_RAW_BOX_REMOTE)
 endif
 
 _DOTENV_RAW_BOX_PROJECT_ROOT := $(call dotenv_get,BOX_PROJECT_ROOT)
-ifeq ($(findstring DOTENV_OK:,$(_DOTENV_RAW_BOX_PROJECT_ROOT)),)
+ifneq (0,$(dotenv_status))
 $(error .env exists but BOX_PROJECT_ROOT could not be parsed from it (#104) -- refusing to silently fall back to the default. 'uv run python' stderr: $(shell cat $(_DOTENV_STDERR) 2>/dev/null))
 endif
-_DOTENV_BOX_PROJECT_ROOT := $(subst DOTENV_OK:,,$(_DOTENV_RAW_BOX_PROJECT_ROOT))
-ifneq (,$(_DOTENV_BOX_PROJECT_ROOT))
-BOX_PROJECT_ROOT := $(_DOTENV_BOX_PROJECT_ROOT)
+ifneq (,$(_DOTENV_RAW_BOX_PROJECT_ROOT))
+BOX_PROJECT_ROOT := $(_DOTENV_RAW_BOX_PROJECT_ROOT)
 endif
 
 _DOTENV_RAW_INCOMING_REMOTE := $(call dotenv_get,INCOMING_REMOTE)
-ifeq ($(findstring DOTENV_OK:,$(_DOTENV_RAW_INCOMING_REMOTE)),)
+ifneq (0,$(dotenv_status))
 $(error .env exists but INCOMING_REMOTE could not be parsed from it (#104) -- refusing to silently fall back to the default. 'uv run python' stderr: $(shell cat $(_DOTENV_STDERR) 2>/dev/null))
 endif
-_DOTENV_INCOMING_REMOTE := $(subst DOTENV_OK:,,$(_DOTENV_RAW_INCOMING_REMOTE))
-ifneq (,$(_DOTENV_INCOMING_REMOTE))
-INCOMING_REMOTE := $(_DOTENV_INCOMING_REMOTE)
+ifneq (,$(_DOTENV_RAW_INCOMING_REMOTE))
+INCOMING_REMOTE := $(_DOTENV_RAW_INCOMING_REMOTE)
 endif
 
 _DOTENV_RAW_EXHIBITS_REMOTE := $(call dotenv_get,EXHIBITS_REMOTE)
-ifeq ($(findstring DOTENV_OK:,$(_DOTENV_RAW_EXHIBITS_REMOTE)),)
+ifneq (0,$(dotenv_status))
 $(error .env exists but EXHIBITS_REMOTE could not be parsed from it (#104) -- refusing to silently fall back to the default. 'uv run python' stderr: $(shell cat $(_DOTENV_STDERR) 2>/dev/null))
 endif
-_DOTENV_EXHIBITS_REMOTE := $(subst DOTENV_OK:,,$(_DOTENV_RAW_EXHIBITS_REMOTE))
-ifneq (,$(_DOTENV_EXHIBITS_REMOTE))
-EXHIBITS_REMOTE := $(_DOTENV_EXHIBITS_REMOTE)
+ifneq (,$(_DOTENV_RAW_EXHIBITS_REMOTE))
+EXHIBITS_REMOTE := $(_DOTENV_RAW_EXHIBITS_REMOTE)
 endif
 endif
 endif

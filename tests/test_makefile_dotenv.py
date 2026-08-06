@@ -450,3 +450,109 @@ def test_oltp_db_url_still_survives_adversarial_characters_alongside_box_remote(
     assert result.returncode == 0, result.stderr
     dsn_without_comment = ADVERSARIAL_DSN.split(" # ")[0]
     assert _sh_quote(dsn_without_comment) in result.stdout, result.stdout
+
+
+# --- #115: the DOTENV_OK: success sentinel must not corrupt a .env value
+# that itself contains that literal substring, and the fix (an out-of-band
+# exit-status file, not a text prefix stripped back out of the value) must
+# not corrupt a value containing spaces either -------------------------------
+#
+# Regression case: BOX_PROJECT_ROOT=Archive/DOTENV_OK:2026 used to resolve
+# to Archive/2026 because the old $(subst DOTENV_OK:,,$(raw)) extraction was
+# global/unanchored -- it deleted every occurrence of the sentinel text, not
+# just the one dotenv_get itself had prepended.
+
+SENTINEL_LOOKALIKE = "Archive/DOTENV_OK:2026"
+
+
+def test_dotenv_value_containing_sentinel_substring_survives_intact_box_project_root(
+    isolated_dir,
+):
+    """The exact #115 regression case, verified end-to-end through
+    box-paths -- including the two remotes BOX_PROJECT_ROOT derives, since
+    those are what `ingest`/`deliver` actually build their rclone
+    invocations from."""
+    (isolated_dir / ".env").write_text(f"BOX_PROJECT_ROOT={SENTINEL_LOOKALIKE}\n")
+    result = _make("box-paths", cwd=isolated_dir)
+    assert result.returncode == 0, result.stderr
+    assert f"BOX_PROJECT_ROOT={SENTINEL_LOOKALIKE}" in result.stdout, result.stdout
+    assert f"{SENTINEL_LOOKALIKE}/Data/Raw/" in result.stdout
+    assert f"{SENTINEL_LOOKALIKE}/Analysis/Exhibits/" in result.stdout
+
+
+def test_dotenv_value_containing_sentinel_substring_survives_for_other_box_keys(
+    isolated_dir,
+):
+    """Representative coverage across the other keys sharing dotenv_get's
+    extraction: BOX_REMOTE, INCOMING_REMOTE, EXHIBITS_REMOTE."""
+    (isolated_dir / ".env").write_text(
+        "BOX_REMOTE=my-DOTENV_OK:-remote\n"
+        "INCOMING_REMOTE=customremote:'DOTENV_OK:/Incoming/'\n"
+        "EXHIBITS_REMOTE=customremote:'DOTENV_OK:/Exhibits/'\n"
+    )
+    result = _make("box-paths", cwd=isolated_dir)
+    assert result.returncode == 0, result.stderr
+    assert "BOX_REMOTE=my-DOTENV_OK:-remote" in result.stdout, result.stdout
+    assert "INCOMING_REMOTE=customremote:'DOTENV_OK:/Incoming/'" in result.stdout
+    assert "EXHIBITS_REMOTE=customremote:'DOTENV_OK:/Exhibits/'" in result.stdout
+
+
+def test_dotenv_value_containing_sentinel_substring_survives_for_oltp_db_url(
+    isolated_dir,
+):
+    """Same coverage for OLTP_DB_URL, verified the same way the existing
+    adversarial-character tests are: through preflight's -n recipe text and
+    sh_quote, since OLTP_DB_URL (unlike the Box keys) goes through
+    OLTP_DB_URL_RAW/sh_quote before reaching a recipe."""
+    dsn = "postgresql+asyncpg://postgres:pwDOTENV_OK:end@127.0.0.1:5544/janasunani"
+    (isolated_dir / ".env").write_text(f"OLTP_DB_URL={dsn}\n")
+    result = _make("-n", "preflight", cwd=isolated_dir)
+    assert result.returncode == 0, result.stderr
+    assert _sh_quote(dsn) in result.stdout, result.stdout
+
+
+def test_dotenv_value_with_spaces_is_not_corrupted_by_the_status_extraction(
+    isolated_dir,
+):
+    """The naive anchored-strip fixes #115 considered and rejected
+    ($(patsubst DOTENV_OK:%,%,...) / $(filter DOTENV_OK:%,...)) both
+    word-split on whitespace and would have collapsed or rewritten a
+    multi-word value's internal spacing. This value has no DOTENV_OK: text
+    at all, isolating the whitespace-safety property from the
+    sentinel-collision property covered above."""
+    (isolated_dir / ".env").write_text("BOX_PROJECT_ROOT=My Custom  Folder\n")
+    result = _make("box-paths", cwd=isolated_dir)
+    assert result.returncode == 0, result.stderr
+    assert "BOX_PROJECT_ROOT=My Custom  Folder" in result.stdout, result.stdout
+
+
+def test_dotenv_value_with_both_spaces_and_the_sentinel_substring(isolated_dir):
+    """Combines both adversarial properties #115 called out explicitly:
+    spaces *and* an embedded DOTENV_OK: substring in the same value."""
+    value = "My DOTENV_OK: Folder 2026"
+    (isolated_dir / ".env").write_text(f"BOX_PROJECT_ROOT={value}\n")
+    result = _make("box-paths", cwd=isolated_dir)
+    assert result.returncode == 0, result.stderr
+    assert f"BOX_PROJECT_ROOT={value}" in result.stdout, result.stdout
+
+
+def test_key_absent_vs_parse_failure_distinction_still_holds_after_115(isolated_dir):
+    """#115 replaced the DOTENV_OK: stdout-prefix mechanism with an
+    out-of-band exit-status file (_DOTENV_STATUS / dotenv_status). Re-proves
+    the #103 invariant the new mechanism must still satisfy: a key simply
+    absent from a parseable .env keeps the built-in default (status 0, no
+    error), while a genuine parse failure (uv unresolvable) still hits the
+    hard $(error) -- never silently keeping the default in either
+    direction."""
+    (isolated_dir / ".env").write_text("SOME_UNRELATED_KEY=1\n")
+    result = _make("box-paths", cwd=isolated_dir)
+    assert result.returncode == 0, result.stderr
+    assert "BOX_REMOTE=box" in result.stdout  # untouched ?= default
+
+    env = {"HOME": os.environ.get("HOME", ""), "PATH": "/usr/bin:/bin"}
+    result = _make(
+        "-n", "USER_BIN=/nonexistent-dir-for-this-test", "box-paths",
+        cwd=isolated_dir, env=env,
+    )
+    assert result.returncode != 0
+    assert "could not be parsed" in result.stderr
