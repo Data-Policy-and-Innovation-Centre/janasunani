@@ -364,3 +364,103 @@ class GrievanceRedaction(Base):
 
     redacted_at = Column(DateTime, nullable=False, server_default=func.now())
     analyzer_version = Column(String, nullable=True)
+
+
+class DedupSignature(Base):
+    """MinHash/LSH signature and salted identity keys for one redacted
+    grievance (Phase 14 dedup index backfill, #71).
+
+    Built from ``grievance_redactions.grievance_redacted`` **only** — never
+    from ``complaints.grievance`` — by
+    :mod:`janasunani.pipeline.dedup_index`, which mirrors
+    :mod:`janasunani.pipeline.redact_grievance`'s slice-scoped, resumable
+    shape one stage downstream. One row per ticket; upserted, so re-running
+    the backfill (or running it under different ``index_version``
+    parameters) replaces the row rather than accumulating one per run.
+
+    ``dpic-infra`` classified, the same tier as the raw lake: redaction
+    lowers exposure but does not declassify what is derived from citizen
+    prose, since distinctive phrasing can re-identify a filing after a
+    phone number no longer can (ROADMAP §3.2). Deliberately **not** listed
+    in ``olap.materialize.LAKE_TABLES`` — see that module's comment next to
+    the tuple for why this differs from ``grievance_redactions``.
+    """
+
+    __tablename__ = "dedup_signatures"
+
+    # ticket_no is the PK, not a surrogate id: exactly one current signature
+    # per complaint, and the upsert conflict target needs to be the
+    # identity — same reasoning as GrievanceRedaction.ticket_no.
+    ticket_no = Column(String, ForeignKey("complaints.ticket_no"), primary_key=True)
+
+    # Denormalized from complaints (not re-joined on read) so the slice can
+    # be reconciled and the grouping pass can block without a join back to
+    # complaints — same rationale as PipelinePage.ticket_number.
+    district = Column(String, nullable=False, index=True)
+    created_year = Column(Integer, nullable=False, index=True)
+
+    # Blocking dimensions computed at index time. `script` partitions
+    # Odia-script filings from romanized ones — cross-script recall is
+    # unsupported, see pipeline/dedup_index.py's module docstring.
+    # `window_index`/`block_key` partition by time within the slice.
+    # `block_key` is the literal key the backfill runner buckets LSH
+    # candidates on; it is stored rather than recomputed on read so the
+    # grouping pass (and any later audit) partitions on exactly what the
+    # signature was actually built under, not a re-derivation that could
+    # drift from it.
+    script = Column(String, nullable=False)
+    window_index = Column(Integer, nullable=True)
+    block_key = Column(String, nullable=False, index=True)
+
+    # 0 means minhash_signature() abstained on an empty shingle set (see
+    # that function's docstring) — `signature` is then NULL, not a
+    # comparable-looking sentinel.
+    num_shingles = Column(Integer, nullable=False)
+    signature = Column(JSON, nullable=True)
+
+    # A separate path from the text columns above (dedup.py module
+    # docstring point 3): salted hashes of petitioner_mobile /
+    # petitioner_email, computed from those `complaints` columns directly
+    # and never from redacted text.
+    identity_key_mobile = Column(String, nullable=True, index=True)
+    identity_key_email = Column(String, nullable=True, index=True)
+
+    index_version = Column(String, nullable=True)
+    indexed_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class DedupGroup(Base):
+    """Duplicate-group assignment for one ticket (Phase 14 dedup index
+    backfill, #71).
+
+    Written by :mod:`janasunani.pipeline.dedup_index`'s union-find pass over
+    verified MinHash/LSH candidate pairs (campaign / near-duplicate text)
+    and identity-key matches (resubmission), within one district-year
+    slice. Every ticket with a `DedupSignature` row in the slice gets a
+    `DedupGroup` row, including singletons (`duplicate_group_id ==
+    ticket_no`, `group_size == 1`) — "not a duplicate of anything found" is
+    itself the reconciliation signal this table exists to make queryable
+    against the slice definition, rather than an absence that looks the
+    same as "not processed yet".
+
+    Recomputed and upserted whole on every grouping run, not incrementally:
+    a slice's signatures fit comfortably in memory, and a late-arriving
+    resubmission can change a group id that already exists, so a partial/
+    incremental update would drift from a true recompute.
+
+    Same `dpic-infra` classification and lake exclusion as
+    `DedupSignature` — see that class's docstring.
+    """
+
+    __tablename__ = "dedup_groups"
+
+    ticket_no = Column(String, ForeignKey("complaints.ticket_no"), primary_key=True)
+    district = Column(String, nullable=False, index=True)
+    created_year = Column(Integer, nullable=False, index=True)
+    block_key = Column(String, nullable=False, index=True)
+
+    duplicate_group_id = Column(String, nullable=False, index=True)
+    group_size = Column(Integer, nullable=False)
+
+    index_version = Column(String, nullable=True)
+    grouped_at = Column(DateTime, nullable=False, server_default=func.now())
