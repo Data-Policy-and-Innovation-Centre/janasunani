@@ -87,7 +87,7 @@ The only place phase status is recorded.
 | 11 | II | Demo frontend (Next.js, DPIC-branded; first cut) | 🔄 |
 | 12 | II | Demo integration & cloud deployment | 🔄 |
 | 13 | II | **Pipeline completion**: PII gold set, Presidio tuning, end-to-end run *(a)* | 🔄 *(gold set underway, #15)* |
-| 14 | II | **Spam & duplicate detection** *(b)* | ⬜ |
+| 14 | II | **Spam & duplicate detection** *(b)* | 🔄 *(dedup index backfill runner merged, #71 — no real slice run yet, spam scoring not started)* |
 | 15 | II | **Structured analytics I**: metrics layer, dashboards, spikes *(c)* | ⬜ |
 | 16 | II | **A/B instrumentation + retrospective impact evidence** *(d)* | ⬜ |
 | 17 | II | **Sarvam benchmark + provider registry + egress control** *(e)* | ⬜ |
@@ -615,7 +615,10 @@ New stage order for documents:
 page_type_classifier → summarizer → categorizer`.
 
 Backfill order for history:
-`janasunani-redact-grievance → dedup index build → spam_duplicate scoring`.
+`janasunani-redact-grievance → dedup index build (janasunani-dedup-index, #71) → spam_duplicate scoring`.
+The runner exists and is tested on synthetic fixtures; no real district-year
+slice has been run through it yet, and spam_duplicate scoring is still
+unbuilt.
 
 **Three firsts this stage introduces**, worth flagging:
 

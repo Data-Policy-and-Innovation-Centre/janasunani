@@ -26,6 +26,18 @@ LAKE_TABLES = (
     # The redaction of complaints.grievance. Hardcoded tuple, so a new table
     # reaches Parquet only by being named here (ROADMAP §3.2).
     "grievance_redactions",
+    # `dedup_signatures`/`dedup_groups` (pipeline/dedup_index.py, #71) are
+    # deliberately NOT here. They pass the same "no un-redacted page text"
+    # test grievance_redactions does, but that is not the bar: ROADMAP §3.2
+    # classifies MinHash signatures and identity keys as `dpic-infra`
+    # artifacts precisely because redaction lowers exposure without
+    # declassifying what is derived from citizen prose (distinctive
+    # phrasing/a shared duplicate group re-identifies where a phone number
+    # no longer does). The Parquet lake is not access-controlled per table
+    # the way the OLTP store is (see LAKE_COLUMN_DENYLIST above), and Phase
+    # 18's RBAC/audit scope -- the control ROADMAP §3.2 names for these
+    # artifacts -- has not landed. Revisit once it has; this is a scope
+    # decision for #71, not a permanent one.
 )
 
 # Columns held back from the lake.

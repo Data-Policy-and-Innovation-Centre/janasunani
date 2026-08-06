@@ -125,6 +125,13 @@ class Settings(BaseSettings):
     )
     MLFLOW_ARTIFACT_URI: Optional[str] = os.getenv("MLFLOW_ARTIFACT_URI")
 
+    # Salt for pipeline/dedup.py's identity_key() (dedup index backfill,
+    # Phase 14 / #71). Deployment secret, not a code constant: rotating it
+    # is how a compromised salt gets revoked, which only works if it lives
+    # outside version control. identity_key() itself refuses a blank salt
+    # rather than silently hash citizen contact fields unsalted.
+    DEDUP_SALT: Optional[str] = os.getenv("DEDUP_SALT")
+
     model_config = SettingsConfigDict(env_file=ROOT_DIR / ".env", extra="ignore")
 
     @field_validator("DEBUG", mode="before")
