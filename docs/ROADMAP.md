@@ -1101,7 +1101,7 @@ building, this moves fast).
 
 | Model / API | ID | What it does | Price | Limits |
 |---|---|---|---|---|
-| Sarvam Vision | `sarvam-vision` | 3B vision-language model for document digitisation. Text extraction, **table structure**, layout preservation. Out: HTML / Markdown / JSON. In: PDF, PNG, JPG, ZIP | **₹0.50 / page** | 10 pages per PDF, 200 MB, **10 req/min** |
+| Sarvam Vision | `sarvam-vision-v1` | 3B vision-language model for document digitisation. Text extraction, **table structure**, layout preservation, and **schema-driven structured extraction**. Out: HTML / Markdown / JSON. In: PDF, PNG, JPG, ZIP | **₹0.50 / page** | 10 pages per PDF, 200 MB, **10 req/min** |
 | Sarvam-30B | `sarvam-30b` | MoE, 30B total / 2.4B active, 128 experts, **64K context**. Native tool calling. OpenAI-compatible | ₹2.5 / ₹1.5 cached / ₹10 per 1M tokens (in / cached / out) | Tiered, below |
 | Sarvam-105B | `sarvam-105b` | Flagship, ~9B active, 128K context | ₹4 / ₹2.5 / ₹16 per 1M tokens | Tiered, below |
 | Transliteration | text API | Roman ↔ native script, bidirectional. **Odia is `od-IN`** | Text pricing | 1,000 chars per request |
@@ -1153,7 +1153,26 @@ Four things to check before relying on any of it:
   pytesseract compares a pipeline with its own reasoning and validation on top
   against a bare OCR engine, which is not the comparison the scorecard claims to
   make. **Benchmark the model, name the surface in the artifact, and state which
-  one was called.**
+  one was called.** The Doc AI endpoint takes `model: "sarvam-vision-v1"`, so the
+  model id is what the API accepts and Akshar is the surface around it.
+- ⚠️ **The Doc AI endpoint is an async job API and takes a `schema`, so it is not a
+  drop-in OCR call.** `POST /doc-ai/v1/job/extract` returns a `job_id` and a
+  status; results are polled. Two consequences that are easy to get wrong once
+  and expensive to fix. **The `Idempotency-Key` must be derived deterministically
+  from document identity, never randomly** — a random key means a crashed backfill
+  reprocesses and re-bills every page it retries, and at 10 req/min a re-run is
+  not cheap in time either. And given a JSON `schema` the endpoint returns
+  *structured fields rather than text*, which is a different task from OCR:
+  pytesseract cannot do it, so a schema-driven run is a capability demonstration
+  and not a comparison. **Pin which of the two runs the scorecard reports before
+  the run, not after.**
+- ⚠️ **Structured extraction is not PII detection, and the gap is the redaction
+  case.** A schema field like `complainant_name` returns the one salient name;
+  the n50 gold holds ~4.5 NAME spans per page, the rest being officials,
+  witnesses, third parties and names inside quoted correspondence. All of them
+  need redacting. A high extraction score on the complainant field is not
+  evidence that the PII problem is solved, and reading it that way ships a
+  redactor that misses most names on the page. See #92.
 - ⚠️ **Sarvam-30B runs with reasoning enabled by default, and reasoning tokens bill
   as completion tokens** at 4x the input rate. Disable it for classification or
   the cost model above is wrong.
