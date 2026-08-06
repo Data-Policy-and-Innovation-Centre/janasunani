@@ -190,8 +190,11 @@ release gates.
     terms, encryption, audit policy, and fallback. The tier is the index into
     those fields, not the control by itself;
   - a kill switch reverts every `authorized-external` entry to a **maintained**
-    lower-tier counterpart, and Sarvam-30B / 105B being Apache 2.0 means the
-    GPU-box deployment is a real exit ramp, not a notional one;
+    lower-tier counterpart. The GPU-box deployment was the exit ramp on the
+    argument that Sarvam-30B is Apache 2.0 and fits the box; 30B has since been
+    withdrawn and 105B exceeds the current 24 GB L4, so **that ramp is
+    unconfirmed** until the licence and sizing are re-checked (#125). The
+    same-host counterparts remain the working fallback;
   - the network allowlist permits Sarvam and nothing else, which is **stricter
     than today**, where no-egress is policy only and BART downloads from a public
     hub at startup.

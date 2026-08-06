@@ -191,9 +191,11 @@ Tier alone is not the control; it is the index into those fields.
   and the authorization record it relies on.
 - A kill switch reverts every `authorized-external` entry to a maintained
   counterpart at a lower tier.
-- Sarvam-30B and 105B are Apache 2.0, so a `dpic-infra` deployment on the GPU box
-  is the standing exit ramp. The decision to use the third party rests on
-  something better than trust.
+- Sarvam-105B is the standing exit ramp *if* it is still Apache 2.0 and *if* it
+  fits the box — both now unverified (#125). Sarvam-30B, the model this argument
+  was written around, has been withdrawn, and 105B does not fit the 24 GB L4 that
+  30B was borderline on. **Treat the exit ramp as unconfirmed until measured.**
+  The decision to use the third party rests on something better than trust.
 
 This is stricter than the old rule in the place that matters and more honest in
 two places it was quietly wrong. `dpic-infra` traffic was never covered by
@@ -1101,9 +1103,11 @@ building, this moves fast).
 
 | Model / API | ID | What it does | Price | Limits |
 |---|---|---|---|---|
-| Sarvam Vision | `sarvam-vision` | 3B vision-language model for document digitisation. Text extraction, **table structure**, layout preservation. Out: HTML / Markdown / JSON. In: PDF, PNG, JPG, ZIP | **₹0.50 / page** | 10 pages per PDF, 200 MB, **10 req/min** |
-| Sarvam-30B | `sarvam-30b` | MoE, 30B total / 2.4B active, 128 experts, **64K context**. Native tool calling. OpenAI-compatible | ₹2.5 / ₹1.5 cached / ₹10 per 1M tokens (in / cached / out) | Tiered, below |
-| Sarvam-105B | `sarvam-105b` | Flagship, ~9B active, 128K context | ₹4 / ₹2.5 / ₹16 per 1M tokens | Tiered, below |
+| Sarvam Vision | `sarvam-vision-v1` | 3B vision-language model for document digitisation. **Digitise** (text, tables, layout; HTML or Markdown out) and **Extract** (schema-driven structured fields; JSON, CSV or XLSX out) are separate endpoints and bill separately. In: PDF, PNG, JPG, ZIP | **₹0.50 / page digitise, ₹1.00 / page extract.** Per page, not per field | 10 pages per PDF, 200 MB, **10 req/min** |
+| ~~Sarvam-30B~~ | ~~`sarvam-30b`~~ | **Withdrawn.** Absent from the billing page as of 2026-08-07, so not callable. Superseded by 105B | — | — |
+| Sarvam-105B | `sarvam-105b` | Flagship, ~9B active, 128K context. Also `sarvam-105b-chat` | **₹29.28 / ₹10.98 / ₹73.20 per 1M tokens** (in / cached / out) | Tiered, below |
+| GLM 5.2 | third-party, billed via Sarvam | Available on the same account. **Not a Sarvam model** — see the authorization note below | ₹128.10 / ₹23.79 / ₹402.60 per 1M tokens | Tiered, below |
+| Gemma-4 31B | third-party, billed via Sarvam | Available on the same account. **Not a Sarvam model** | ₹36.60 / ₹13.73 / ₹91.50 per 1M tokens | Tiered, below |
 | Transliteration | text API | Roman ↔ native script, bidirectional. **Odia is `od-IN`** | Text pricing | 1,000 chars per request |
 | Sarvam Translate / Mayura | translate API | 22 scheduled languages (Translate); colloquial and code-mixed (Mayura) | Text pricing | Tiered |
 | Saaras v3 / Saarika v2.5 | speech APIs | ASR with transcribe / translate / **transliterate** / codemix output modes | ₹30 per hour (₹45 diarised) | Tiered |
@@ -1114,7 +1118,7 @@ limits differ by model class, and **the limit that binds us is the lower one**:
 | Model class | Starter | Pro | Business |
 |---|---|---|---|
 | Default chat models | 60 | 200 | 1,000 |
-| **Sarvam-30B / 105B** (our candidates) | **40** | **60** | **120** |
+| **Sarvam-105B** (our candidate) | **40** | **60** | **120** |
 | Vision, document intelligence | 10 | 10 | 10 |
 
 Vision limits do not rise with the plan. Verified against Sarvam's published rate
@@ -1124,10 +1128,35 @@ limits, 2026-07-28.
 languages plus English, Odia among them explicitly, which is more than our current
 OCR can honestly claim.
 
-**Cost is not the constraint either.** A 500-page benchmark is **₹250**. Running
-Sarvam-30B over all 1.37M grievance subjects is roughly 275M input tokens, on the
-order of **₹700**. These numbers are small enough that cost should not shape the
-benchmark design; latency, rate limits, and quality should.
+**Cost is not the constraint for the benchmark. It is for the corpus.** Corrected
+2026-08-07 against the dashboard billing page; the earlier figures costed
+Sarvam-30B, which has been withdrawn.
+
+| Run | Figure |
+|---|---|
+| 500-page benchmark, digitise only | **₹250** |
+| 500-page benchmark, digitise + extract | **₹750** |
+| 1.37M grievance subjects, ~275M input tokens, on 105B | **₹8,050** (was quoted as ₹700 on 30B) |
+| 96,469-page English corpus, digitise only | **₹48,000** |
+| 96,469-page English corpus, both endpoints | **₹145,000** |
+
+Sarvam-105B is **11.7x the input rate and 7.3x the output rate** that Sarvam-30B
+was costed at, so the ₹700 estimate was low by an order of magnitude. Output
+pricing is the one to watch for summarisation, where output volume drives the
+bill rather than input.
+
+The benchmark numbers remain small enough that cost should not shape its design;
+latency, rate limits and quality should. **The corpus numbers are not.** At
+₹0.50-₹1.50 a page and 10 req/min — roughly ten days of continuous calling for
+the full corpus — Doc AI is a measurement instrument, not a production backfill
+path. Any proposal to run it over the corpus is its own decision and needs its
+own approval, rather than being absorbed into a backfill ticket.
+
+⚠️ **The account also bills GLM 5.2 and Gemma-4 31B, which are not Sarvam
+models.** "Route through Sarvam" and "use a Sarvam model" are therefore different
+decisions. The MoU covers Sarvam; it should not be assumed to extend to a
+third-party model reached through the same key. The per-call audit log's model id
+is what makes the distinction auditable after the fact (§Phase 17, #83).
 
 Four things to check before relying on any of it:
 
@@ -1136,16 +1165,67 @@ Four things to check before relying on any of it:
   documentation. It is mentioned, and directly — Sarvam state the model is trained
   on handwritten text across all 22 Indian languages, and that it beats
   general-purpose OCR on Indian-language handwriting. What they publish no number
-  for is handwriting itself: the headline scores are general document benchmarks,
-  and the only handwriting statement is qualitative, that accuracy is lower on
-  highly stylised hands. A large share of our corpus is handwritten grievance
-  letters. **Put handwritten pages in the benchmark sample deliberately,
-  stratified, and report them separately** — not as a hedge against an
-  unsupported case, but because the printed/handwritten split is the number
-  nobody has published and the one our corpus turns on.
-- ⚠️ **Sarvam-30B runs with reasoning enabled by default, and reasoning tokens bill
-  as completion tokens** at 4x the input rate. Disable it for classification or
-  the cost model above is wrong.
+  for is handwriting itself: the headline scores are general document benchmarks
+  (olmOCR-Bench, OmniDocBench, Sarvam Indic OCR Bench), and the only handwriting
+  statement is qualitative, that accuracy is lower on highly stylised hands. A
+  large share of our corpus is handwritten grievance letters. **Put handwritten
+  pages in the benchmark sample deliberately, stratified, and report them
+  separately** — not as a hedge against an unsupported case, but because the
+  printed/handwritten split is the number nobody has published and the one our
+  corpus turns on.
+- ⚠️ **"Akshar" is the product, `sarvam-vision` is still the model. Do not treat
+  them as the same thing when benchmarking.** Sarvam Akshar is a document
+  digitisation platform layered on Sarvam Vision, described as an intelligence
+  layer over it rather than a rename of it. The API model list still carries
+  Sarvam Vision for document intelligence and no Akshar entry. This matters for
+  what §Phase 17 actually measures: benchmarking the Akshar platform against
+  pytesseract compares a pipeline with its own reasoning and validation on top
+  against a bare OCR engine, which is not the comparison the scorecard claims to
+  make. **Benchmark the model, name the surface in the artifact, and state which
+  one was called.** The Doc AI endpoint takes `model: "sarvam-vision-v1"`, so the
+  model id is what the API accepts and Akshar is the surface around it.
+- ⚠️ **Doc AI is an async job API with two distinct endpoints, not a drop-in OCR
+  call.** `POST /doc-ai/v1/job/digitise` is the transcription path (`output_format`
+  `html` default or `md`, no schema); `POST /doc-ai/v1/job/extract` is the
+  structured path (`schema` or a saved `config_id` in, `json`/`csv`/`xlsx` out).
+  Both return a `job_id`, polled at `GET /doc-ai/v1/job/{id}/status`. Separate
+  submissions, separate results endpoints, presumably separate billing, so the
+  provider interface must cover both operations rather than one with an optional
+  schema. Odia is `od-IN`. Limits: 10 req/min on all plans, 10 PDF pages or 10 ZIP
+  images per submission, 200 MB.
+- ⚠️ **`partially_completed` is a terminal state, so outcomes are per page.**
+  Terminal states are `completed`, `partially_completed`, `failed`, `rejected`,
+  and the status response carries `pages_total` / `pages_succeeded` /
+  `pages_failed`. An adapter that treats a job as success-or-failure silently
+  drops the failed pages inside a partially completed job and reports the batch as
+  done — at a 10-page cap, one bad page is a 10% loss. **Reconcile
+  `pages_succeeded` against `pages_total` per job and record the delta.**
+- ⚠️ **Idempotency is undocumented, so our own submission log is the control.**
+  The dashboard sample sends an `Idempotency-Key` header; the API reference
+  documents no idempotency parameter. Send a deterministic key derived from
+  document identity anyway, but **do not depend on undocumented dedup semantics
+  to prevent double-billing**: write the job id to the audit log at submission and
+  check it before resubmitting. At 10 req/min a re-run is expensive in time as
+  well as money.
+- ⚠️ **A schema run and a Digitise run answer different questions.** Given a
+  schema, Extract returns structured fields rather than text, which is a task
+  pytesseract cannot attempt — so a schema-driven run is a capability
+  demonstration, not a comparison. Use Digitise for the scorecard. **Digitise
+  returns Markdown, not plain text**, so comparing it against pytesseract's flat
+  character stream needs a normaliser whose aggressiveness moves the headline
+  number. Write and freeze that normaliser before looking at any output.
+- ⚠️ **Structured extraction is not PII detection, and the gap is the redaction
+  case.** A schema field like `complainant_name` returns the one salient name;
+  the n50 gold holds ~4.5 NAME spans per page, the rest being officials,
+  witnesses, third parties and names inside quoted correspondence. All of them
+  need redacting. A high extraction score on the complainant field is not
+  evidence that the PII problem is solved, and reading it that way ships a
+  redactor that misses most names on the page. See #92.
+- ⚠️ **Reasoning-by-default was a Sarvam-30B trap; confirm whether it carries to
+  105B.** On 30B, reasoning ran by default and reasoning tokens billed as
+  completion tokens at 4x the input rate. At 105B's ₹73.20/1M output that would be
+  a far larger multiplier than it was, so verify before costing anything (#125).
+  Disable it for classification either way.
 - **Vision is capped at 10 pages per PDF and 10 requests per minute.** Our pipeline
   is already page-level so the page cap is harmless, but 10 req/min is the binding
   constraint on any full-corpus run: at 10 pages per request that is 6,000 pages an
@@ -1164,9 +1244,10 @@ backends*, not an external dependency:
 
 Both sit behind one registry entry. That is what makes the egress decision
 reversible, and why §3.1 replaces the invariant rather than abandoning it.
-Sarvam-30B at 4-bit is roughly at the limit of the current 24 GB L4; 105B is beyond
-it and would need a larger instance. **Measure before assuming the exit ramp is
-usable.**
+Sarvam-30B at 4-bit was roughly at the limit of the current 24 GB L4, and it has
+since been withdrawn. **105B is beyond that box and would need a larger instance,
+so the self-hosted exit ramp is closed at current hardware** unless the box is
+replaced. Measure before assuming otherwise (#125).
 
 **Registry generalization.** Today a model is a local DVC path. It becomes:
 
@@ -1206,9 +1287,9 @@ romanized Odia, English.
 |---|---|---|---|
 | OCR | Sarvam Vision | pytesseract `ori`, DeepSeek-OCR | Largest expected gain. DeepSeek is English-only in practice; Odia comes out script-confused |
 | Transliteration | Sarvam Translate / Mayura | IndicXlit (Phase 21) | Code-mixed romanized Odia is the designed-for case |
-| Categorization | Sarvam-30B, structured output | MuRIL, 0.7104 acc | MuRIL is English-gated today; the 0.51 worst-class F1 has headroom |
-| Summarization | Sarvam-30B | BART | BART is English-only; DSI usefulness 1.9 at best, 0.45 on IDs |
-| PII detection | Sarvam-30B NER | Presidio + spaCy | spaCy has no Odia name model. The biggest measured gap |
+| Categorization | **Doc AI Extract**, category in the schema (#126) | MuRIL, 0.7104 acc | Runs off the same call as the OCR arm. MuRIL is English-gated today; the 0.51 worst-class F1 has headroom. **Do not compare against the 0.7104 headline** — that is typed subject lines, not scans (#127) |
+| Summarization | Doc AI Extract, summary in the schema | BART | Possible reference set in officer-typed subjects (#128). DSI usefulness 1.9 at best, 0.45 on IDs, with no reproducible basis in this repo |
+| PII detection | Doc AI Extract, exhaustive-name schema | Presidio + spaCy | spaCy has no Odia name model. The biggest measured gap. **Extraction is not detection** — see #92 before reading any score here |
 
 Two cautions on the PII row. Spans must be returned over the **original** text or
 they are unusable for redaction. And using an external model to *find* PII means
