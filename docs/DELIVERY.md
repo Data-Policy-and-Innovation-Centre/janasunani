@@ -105,6 +105,8 @@ Cost is a few hundred rupees for the whole comparison.
 
 One caveat, and it is not the one we first wrote down. Sarvam state that Vision is trained on handwritten text across all 22 Indian languages, so handwriting is a supported case rather than an unmentioned one. What they do not publish is a handwriting-specific number: the headline benchmarks are general document scores, and they note accuracy is lower on highly stylised handwriting without saying by how much. Much of our corpus is handwritten. We will report handwritten and printed pages separately, because the split is the part nobody has measured.
 
+A naming note, since the two are easy to conflate. Sarvam Akshar is the document digitisation platform; Sarvam Vision is the model underneath it. We benchmark the model, and the scorecard will say which surface was called.
+
 ## Schedule
 
 **Table 3. Three weeks**

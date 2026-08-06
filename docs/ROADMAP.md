@@ -1136,13 +1136,24 @@ Four things to check before relying on any of it:
   documentation. It is mentioned, and directly — Sarvam state the model is trained
   on handwritten text across all 22 Indian languages, and that it beats
   general-purpose OCR on Indian-language handwriting. What they publish no number
-  for is handwriting itself: the headline scores are general document benchmarks,
-  and the only handwriting statement is qualitative, that accuracy is lower on
-  highly stylised hands. A large share of our corpus is handwritten grievance
-  letters. **Put handwritten pages in the benchmark sample deliberately,
-  stratified, and report them separately** — not as a hedge against an
-  unsupported case, but because the printed/handwritten split is the number
-  nobody has published and the one our corpus turns on.
+  for is handwriting itself: the headline scores are general document benchmarks
+  (olmOCR-Bench, OmniDocBench, Sarvam Indic OCR Bench), and the only handwriting
+  statement is qualitative, that accuracy is lower on highly stylised hands. A
+  large share of our corpus is handwritten grievance letters. **Put handwritten
+  pages in the benchmark sample deliberately, stratified, and report them
+  separately** — not as a hedge against an unsupported case, but because the
+  printed/handwritten split is the number nobody has published and the one our
+  corpus turns on.
+- ⚠️ **"Akshar" is the product, `sarvam-vision` is still the model. Do not treat
+  them as the same thing when benchmarking.** Sarvam Akshar is a document
+  digitisation platform layered on Sarvam Vision, described as an intelligence
+  layer over it rather than a rename of it. The API model list still carries
+  Sarvam Vision for document intelligence and no Akshar entry. This matters for
+  what §Phase 17 actually measures: benchmarking the Akshar platform against
+  pytesseract compares a pipeline with its own reasoning and validation on top
+  against a bare OCR engine, which is not the comparison the scorecard claims to
+  make. **Benchmark the model, name the surface in the artifact, and state which
+  one was called.**
 - ⚠️ **Sarvam-30B runs with reasoning enabled by default, and reasoning tokens bill
   as completion tokens** at 4x the input rate. Disable it for classification or
   the cost model above is wrong.
