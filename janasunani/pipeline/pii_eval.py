@@ -115,9 +115,56 @@ def load_gold_jsonl(path: Path) -> list[GoldExample]:
                 _parse_gold_span(span, text=text, path=path, line_number=line_number)
                 for span in raw_entities
             )
+            _reject_duplicate_spans(spans, example_id, path, line_number)
             examples.append(GoldExample(id=example_id, text=text, entities=spans))
     _require_unique_ids(examples)
     return examples
+
+
+def _reject_duplicate_spans(
+    spans: Sequence[PIISpan], example_id: str, path: Path, line_number: int
+) -> None:
+    """Fail closed on exact duplicate spans within a record (#89).
+
+    A duplicated gold span inflates the denominator by one while contributing
+    at most one hit, so recall is depressed and the output still looks
+    entirely plausible. That is worse than a crash: nothing downstream can
+    tell a corrupt gold from a bad model.
+
+    ``scripts/verify_pii_gold.py`` already caught this, but the verifier is a
+    review tool someone has to remember to run, while this is the path that
+    produces the published figure. The check belongs here too. It found 22
+    duplicates in one record of the n50 gold, which had already been scored.
+    """
+    seen: set[tuple[int, int, str]] = set()
+    for span in spans:
+        key = (span.start, span.end, normalize_entity(span.entity))
+        if key in seen:
+            raise ValueError(
+                f"{path}:{line_number}: record {example_id!r} has a duplicate span "
+                f"[{span.start},{span.end}) {key[2]}. A duplicated gold span "
+                f"inflates the denominator and silently depresses recall."
+            )
+        seen.add(key)
+
+
+def overlapping_spans(
+    spans: Sequence[PIISpan],
+) -> list[tuple[PIISpan, PIISpan]]:
+    """Pairs of distinct spans in one record whose extents overlap.
+
+    Warned about rather than rejected: unlike an exact duplicate, a nested
+    span is a labelling judgement, and adjudicating it needs a human. But a
+    gold set has to end up non-overlapping, because redaction produces
+    non-overlapping replacements and two overlapping gold spans can never both
+    be satisfied by a real redaction.
+    """
+    ordered = sorted(spans, key=lambda s: (s.start, s.end))
+    return [
+        (left, right)
+        for left, right in zip(ordered, ordered[1:])
+        if left.start < right.end and right.start < left.end
+    ]
 
 
 def score_examples(
@@ -248,10 +295,45 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Always exit 0 after printing the report.",
     )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "Also fail on overlapping (not identical) gold spans. Warned about "
+            "by default: a nested span is a labelling judgement, not file "
+            "corruption, and adjudicating it needs a human."
+        ),
+    )
     args = parser.parse_args(argv)
 
+    examples = load_gold_jsonl(args.gold)
+
+    # Overlaps are surfaced on the scoring path too, so a corrupt gold cannot
+    # be scored by accident just because nobody ran the verifier (#89). Offsets
+    # and record ids only, never the text they cover.
+    overlaps = [
+        (example.id, left, right)
+        for example in examples
+        for left, right in overlapping_spans(example.entities)
+    ]
+    if overlaps:
+        print(
+            f"WARNING: {len(overlaps)} overlapping gold span pair(s). A gold set "
+            "must end up non-overlapping: redaction produces non-overlapping "
+            "replacements, so two overlapping golds can never both be satisfied."
+        )
+        for example_id, left, right in overlaps[:10]:
+            print(
+                f"  {example_id}: [{left.start},{left.end}) {left.entity} "
+                f"vs [{right.start},{right.end}) {right.entity}"
+            )
+        if len(overlaps) > 10:
+            print(f"  ... and {len(overlaps) - 10} more")
+        if args.strict:
+            return 1
+
     report = score_examples(
-        load_gold_jsonl(args.gold),
+        examples,
         baseline_overlap_recall=args.baseline_overlap,
     )
     if args.json:
