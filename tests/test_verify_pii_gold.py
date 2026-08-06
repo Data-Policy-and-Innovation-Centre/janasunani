@@ -451,3 +451,61 @@ class TestVoidMeasurementsFail:
         )
         with pytest.raises(ValueError, match="duplicate record ids"):
             verify.diff(draft, gold)
+
+
+class TestRecordIdsAreNotPublishedByDefault:
+    """#96. Record ids are `{ticket}_p{page}` — not citizen text, but the join
+    key to it. This report exists to be pasted into a PR, and the failure mode
+    is exactly the one where someone pastes it: the arrays fill, the tool exits
+    1, and the natural next step is to ask for help in public."""
+
+    TICKET = "CMOFF-D-2021-01956_p2"
+
+    def _run(self, monkeypatch, capsys, gold: Path, draft: Path, *extra: str):
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["verify_pii_gold.py", "--gold", str(gold), "--draft", str(draft), *extra],
+        )
+        try:
+            verify.main()
+        except SystemExit:
+            pass
+        return capsys.readouterr().out
+
+    def _mismatched_pair(self, tmp_path):
+        gold = write_jsonl(
+            tmp_path / "gold.jsonl",
+            [{"id": self.TICKET, "text": TEXT, "entities": []}],
+        )
+        draft = write_jsonl(
+            tmp_path / "draft.jsonl",
+            [{"id": "some-other-page_p1", "text": TEXT, "entities": []}],
+        )
+        return gold, draft
+
+    def test_ticket_ids_absent_from_default_output(self, tmp_path, monkeypatch, capsys):
+        gold, draft = self._mismatched_pair(tmp_path)
+        out = self._run(monkeypatch, capsys, gold, draft)
+        assert self.TICKET not in out
+        assert "--show-samples" in out
+
+    def test_ticket_ids_absent_from_json_output(self, tmp_path, monkeypatch, capsys):
+        gold, draft = self._mismatched_pair(tmp_path)
+        out = self._run(monkeypatch, capsys, gold, draft, "--json")
+        assert self.TICKET not in out
+        assert "records_only_in_gold_count" in out
+
+    def test_counts_are_still_reported(self, tmp_path, monkeypatch, capsys):
+        gold, draft = self._mismatched_pair(tmp_path)
+        out = self._run(monkeypatch, capsys, gold, draft, "--json")
+        payload = json.loads(out)
+        human = payload["human_pass"]
+        assert human["records_only_in_gold_count"] == 1
+        assert human["records_only_in_draft_count"] == 1
+
+    def test_show_samples_still_lists_them(self, tmp_path, monkeypatch, capsys):
+        """The flag that already guards citizen text guards identities too."""
+        gold, draft = self._mismatched_pair(tmp_path)
+        out = self._run(monkeypatch, capsys, gold, draft, "--show-samples")
+        assert self.TICKET in out

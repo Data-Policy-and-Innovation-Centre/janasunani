@@ -9,6 +9,8 @@ it is the one real code-path CI coverage the whole intelligence layer
 Synthetic strings only — no real grievance text, no `data/` access.
 """
 
+from itertools import combinations
+
 import pytest
 
 from janasunani.pipeline.dedup import (
@@ -377,8 +379,14 @@ def test_union_find_groups_end_to_end_campaign_vs_unrelated():
     candidate_pairs = set()
     for bucket_docs in buckets.values():
         if len(bucket_docs) > 1:
-            first = bucket_docs[0]
-            candidate_pairs.update((first, other) for other in bucket_docs[1:])
+            # Every unordered pair, not star edges from an arbitrary first
+            # member (#101). Exact Jaccard verification is not transitive: in
+            # a bucket of three the first can fall below the threshold against
+            # both others while those two exceed it against each other, and if
+            # that bucket is their only shared band the duplicate is lost.
+            # This block is the pattern people copy, so it has to be the right
+            # one -- janasunani/pipeline/dedup_index.py does the same.
+            candidate_pairs.update(combinations(sorted(bucket_docs), 2))
 
     verified_pairs = [
         (doc_a, doc_b)
