@@ -30,10 +30,35 @@ stages:
       --ocr-engine pytesseract
       --stages format_classifier ocr_extraction pii_tagger
       --workers 1
+    # File-level deps, not the whole `janasunani/pipeline` tree (#87). The
+    # directory hash changed on every merge into that package -- dedup, the
+    # exporter, the evaluator, the grievance redactor -- none of which this
+    # stage runs, so the cached artifact read as stale when it was fine, and
+    # nothing distinguished that from genuinely stale. CI only runs `dvc dag`,
+    # which validates structure and never compares anything.
+    #
+    # Listed here: the entrypoint and its plumbing, plus exactly the three
+    # stages named in `--stages` above. Adding a stage to that flag means
+    # adding it here, which is the point -- the dep list and the command
+    # should disagree loudly rather than silently.
+    #
+    # cli.py imports the summarizer, categorizer and page-type stages too, and
+    # they are deliberately NOT deps: they do not execute under this --stages
+    # list, so they cannot change the artifact. If one of them breaks the
+    # import the run fails outright, which is the loud failure. What DVC deps
+    # exist to prevent is the quiet one -- a cached artifact that looks current
+    # and was produced by different code.
     deps:
       - data/raw/documents-sample
       - models/format_classifier/page_split_v3.0_doc_split.pkl
-      - janasunani/pipeline
+      - janasunani/pipeline/cli.py
+      - janasunani/pipeline/pipeline.py
+      - janasunani/pipeline/config.py
+      - janasunani/pipeline/db.py
+      - janasunani/pipeline/ticket.py
+      - janasunani/pipeline/stages/format_classifier
+      - janasunani/pipeline/stages/ocr_extraction
+      - janasunani/pipeline/stages/pii_tagger.py
     outs:
       - data/processed/pipeline-sample.sqlite
 
