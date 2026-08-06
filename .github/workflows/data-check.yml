@@ -33,15 +33,9 @@ jobs:
 
       # Provenance sidecars are the one exception above: they record versions,
       # checksums and span counts so a gold artifact can be reviewed without
-      # pulling it. The exception is granted by filename, so this step checks
-      # that the contents actually match that description.
-      #
-      # This is an allowlist, deliberately. Enumerating forbidden keys cannot
-      # work: citizen text under a key named "content", "excerpt" or "raw"
-      # would pass a denylist and be committed to a repo that must never hold
-      # it. Anything not named here fails, so a new field is a conscious edit
-      # to this list rather than a silent addition. The value rules are the
-      # real barrier — prose cannot survive a 200-character scalar cap.
+      # pulling it. The exception is granted by filename, so the contents have
+      # to be checked against the metadata contract. The rules, and why they
+      # are an allowlist rather than a denylist, live in the script.
       - name: Check provenance sidecars carry metadata only
         shell: bash
         run: |
@@ -50,104 +44,9 @@ jobs:
           sidecars="$(git ls-files 'data/external/*.provenance.json' || true)"
           [ -n "$sidecars" ] || exit 0
 
-          python3 - "$sidecars" <<'PY'
-          import json
-          import pathlib
-          import sys
-
-          # Mirrors provenance() in scripts/rederive_pii_draft.py.
-          ALLOWED_TOP = {
-              "kind", "note", "created_utc", "out", "source_gold",
-              "source_gold_md5", "records", "spans", "spans_by_entity",
-              "analyzer", "environment",
-          }
-          # Nested objects: fixed key sets, except span counts which are keyed
-          # by entity label and must map to integers.
-          ALLOWED_NESTED = {
-              "analyzer": {
-                  "git_commit", "presidio_analyzer", "spacy", "en_core_web_sm",
-              },
-              "environment": {"python", "system", "machine"},
-          }
-          COUNTER_OBJECTS = {"spans_by_entity"}
-
-          MAX_BYTES = 16 * 1024
-          MAX_STRING = 200
-          # "note" is the one deliberately long field: a fixed caveat written by
-          # the script, never derived from a record.
-          MAX_NOTE = 1000
-
-          def check_scalar(name, path, value, limit):
-              if isinstance(value, bool) or value is None:
-                  return []
-              if isinstance(value, (int, float)):
-                  return []
-              if not isinstance(value, str):
-                  return [f"{name}: {path} is {type(value).__name__}, expected a scalar"]
-              if len(value) > limit:
-                  return [f"{name}: {path} is {len(value)} chars, over the {limit}-char cap"]
-              return []
-
-          def check_sidecar(name, payload):
-              if not isinstance(payload, dict):
-                  return [f"{name}: top level is {type(payload).__name__}, expected an object"]
-
-              problems = []
-              for key, value in payload.items():
-                  if key not in ALLOWED_TOP:
-                      problems.append(f"{name}: unknown key '{key}' (add it here if intended)")
-                      continue
-
-                  if key in COUNTER_OBJECTS:
-                      if not isinstance(value, dict):
-                          problems.append(f"{name}: '{key}' must be an object of counts")
-                          continue
-                      for label, count in value.items():
-                          if isinstance(count, bool) or not isinstance(count, int):
-                              problems.append(f"{name}: '{key}.{label}' must be an integer count")
-                      continue
-
-                  if key in ALLOWED_NESTED:
-                      if not isinstance(value, dict):
-                          problems.append(f"{name}: '{key}' must be an object")
-                          continue
-                      for sub, sub_value in value.items():
-                          if sub not in ALLOWED_NESTED[key]:
-                              problems.append(f"{name}: unknown key '{key}.{sub}'")
-                              continue
-                          problems += check_scalar(name, f"{key}.{sub}", sub_value, MAX_STRING)
-                      continue
-
-                  limit = MAX_NOTE if key == "note" else MAX_STRING
-                  problems += check_scalar(name, key, value, limit)
-
-              return problems
-
-          names = sys.argv[1].split()
-          failures = []
-          for name in names:
-              path = pathlib.Path(name)
-              size = path.stat().st_size
-              if size > MAX_BYTES:
-                  failures.append(f"{name}: {size} bytes exceeds the {MAX_BYTES}-byte metadata cap")
-                  continue
-              try:
-                  payload = json.loads(path.read_text())
-              except json.JSONDecodeError as exc:
-                  failures.append(f"{name}: not valid JSON ({exc})")
-                  continue
-              failures += check_sidecar(name, payload)
-
-          if failures:
-              print("Provenance sidecars must hold metadata only:")
-              for failure in failures:
-                  print(f"  {failure}")
-              print("")
-              print("Never put document text or spans in a sidecar; it is committed to Git.")
-              raise SystemExit(1)
-
-          print(f"Checked {len(names)} provenance sidecar(s) against the metadata schema.")
-          PY
+          # Word-split intentionally: git ls-files gives one path per line.
+          # shellcheck disable=SC2086
+          python3 scripts/check_provenance_sidecars.py $sidecars
 
       - name: Reject local state and secret files
         shell: bash
