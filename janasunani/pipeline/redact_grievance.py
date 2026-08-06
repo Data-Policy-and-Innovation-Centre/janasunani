@@ -47,17 +47,48 @@ from janasunani.pipeline.export import _dialect_upsert
 BATCH_SIZE = 500
 
 
+def _repo_commit() -> str:
+    """Short commit of this checkout, suffixed -dirty if the source is modified.
+
+    Pathspecs are scoped to the analyzer's own tree so an unrelated edit does
+    not mark a redaction dirty.
+    """
+    import subprocess
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    try:
+        commit = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        dirty = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain", "--", "janasunani"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        return f"{commit}-dirty" if dirty else commit
+    except (subprocess.CalledProcessError, OSError):  # pragma: no cover
+        return "unknown"
+
+
 def _analyzer_version() -> str:
     """Stamp identifying the analyzer that produced a redaction.
 
-    Package versions rather than a git commit: the recognizers are ours but the
-    NER underneath them is not, and a redaction that differs between runs will
-    differ because presidio or the spaCy model moved, not because the commit
-    did.
+    Two halves, because either can change the output on its own. The NER and
+    its model are third-party, so their versions matter; but the recognizers,
+    thresholds and replacement behaviour in ``pii_tagger`` are ours and change
+    without any dependency moving. #55, #56 and #91 all altered what gets
+    redacted while every package version stayed put, so a package-only stamp
+    would mark materially different redactions as identical and make targeted
+    reprocessing impossible.
     """
     from importlib.metadata import PackageNotFoundError, version
 
-    parts = []
+    parts = [f"janasunani={_repo_commit()}"]
     for dist in ("presidio-analyzer", "spacy", "en-core-web-sm"):
         try:
             parts.append(f"{dist}={version(dist)}")
@@ -150,7 +181,12 @@ async def _redact_slice(
             if not batch:
                 break
 
-            now = datetime.now(timezone.utc)
+            # Naive UTC. Every timestamp column in this schema is TIMESTAMP
+            # WITHOUT TIME ZONE, and asyncpg refuses to bind a tz-aware value
+            # into one while SQLite silently accepts it -- so an aware value
+            # here passes every local test and fails on the first batch against
+            # the deployed Postgres. Same normalisation as db/crud.py.
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
             rows = [
                 {
                     "ticket_no": ticket_no,

@@ -173,6 +173,39 @@ class TestWhatIsWritten:
         engine.dispose()
         assert stamp and "presidio-analyzer=" in stamp
 
+    def test_stamp_carries_our_own_code_version(self, oltp):
+        """#55, #56 and #91 all changed what gets redacted with every package
+        version unchanged. A package-only stamp would mark materially different
+        redactions as identical and make targeted reprocessing impossible."""
+        async_url, sync_url = oltp
+        redact_grievances("Khordha", 2024, oltp_url=async_url)
+        engine = create_engine(sync_url)
+        with engine.begin() as conn:
+            stamp = conn.execute(
+                select(GrievanceRedaction.analyzer_version).where(
+                    GrievanceRedaction.ticket_no == "T1"
+                )
+            ).scalar()
+        engine.dispose()
+        assert "janasunani=" in stamp
+
+    def test_redacted_at_is_naive_utc(self, oltp):
+        """asyncpg refuses to bind a tz-aware value into TIMESTAMP WITHOUT TIME
+        ZONE while SQLite accepts it, so an aware value passes every test here
+        and fails on the first batch against the deployed Postgres."""
+        async_url, sync_url = oltp
+        redact_grievances("Khordha", 2024, oltp_url=async_url)
+        engine = create_engine(sync_url)
+        with engine.begin() as conn:
+            stamped = conn.execute(
+                select(GrievanceRedaction.redacted_at).where(
+                    GrievanceRedaction.ticket_no == "T1"
+                )
+            ).scalar()
+        engine.dispose()
+        assert stamped is not None
+        assert stamped.tzinfo is None
+
 
 class TestSchemaGuards:
     def test_grievance_redacted_is_in_no_index(self):
