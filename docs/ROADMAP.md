@@ -191,9 +191,11 @@ Tier alone is not the control; it is the index into those fields.
   and the authorization record it relies on.
 - A kill switch reverts every `authorized-external` entry to a maintained
   counterpart at a lower tier.
-- Sarvam-30B and 105B are Apache 2.0, so a `dpic-infra` deployment on the GPU box
-  is the standing exit ramp. The decision to use the third party rests on
-  something better than trust.
+- Sarvam-105B is the standing exit ramp *if* it is still Apache 2.0 and *if* it
+  fits the box — both now unverified (#125). Sarvam-30B, the model this argument
+  was written around, has been withdrawn, and 105B does not fit the 24 GB L4 that
+  30B was borderline on. **Treat the exit ramp as unconfirmed until measured.**
+  The decision to use the third party rests on something better than trust.
 
 This is stricter than the old rule in the place that matters and more honest in
 two places it was quietly wrong. `dpic-infra` traffic was never covered by
@@ -1116,7 +1118,7 @@ limits differ by model class, and **the limit that binds us is the lower one**:
 | Model class | Starter | Pro | Business |
 |---|---|---|---|
 | Default chat models | 60 | 200 | 1,000 |
-| **Sarvam-30B / 105B** (our candidates) | **40** | **60** | **120** |
+| **Sarvam-105B** (our candidate) | **40** | **60** | **120** |
 | Vision, document intelligence | 10 | 10 | 10 |
 
 Vision limits do not rise with the plan. Verified against Sarvam's published rate
@@ -1219,9 +1221,11 @@ Four things to check before relying on any of it:
   need redacting. A high extraction score on the complainant field is not
   evidence that the PII problem is solved, and reading it that way ships a
   redactor that misses most names on the page. See #92.
-- ⚠️ **Sarvam-30B runs with reasoning enabled by default, and reasoning tokens bill
-  as completion tokens** at 4x the input rate. Disable it for classification or
-  the cost model above is wrong.
+- ⚠️ **Reasoning-by-default was a Sarvam-30B trap; confirm whether it carries to
+  105B.** On 30B, reasoning ran by default and reasoning tokens billed as
+  completion tokens at 4x the input rate. At 105B's ₹73.20/1M output that would be
+  a far larger multiplier than it was, so verify before costing anything (#125).
+  Disable it for classification either way.
 - **Vision is capped at 10 pages per PDF and 10 requests per minute.** Our pipeline
   is already page-level so the page cap is harmless, but 10 req/min is the binding
   constraint on any full-corpus run: at 10 pages per request that is 6,000 pages an
@@ -1240,9 +1244,10 @@ backends*, not an external dependency:
 
 Both sit behind one registry entry. That is what makes the egress decision
 reversible, and why §3.1 replaces the invariant rather than abandoning it.
-Sarvam-30B at 4-bit is roughly at the limit of the current 24 GB L4; 105B is beyond
-it and would need a larger instance. **Measure before assuming the exit ramp is
-usable.**
+Sarvam-30B at 4-bit was roughly at the limit of the current 24 GB L4, and it has
+since been withdrawn. **105B is beyond that box and would need a larger instance,
+so the self-hosted exit ramp is closed at current hardware** unless the box is
+replaced. Measure before assuming otherwise (#125).
 
 **Registry generalization.** Today a model is a local DVC path. It becomes:
 
@@ -1282,9 +1287,9 @@ romanized Odia, English.
 |---|---|---|---|
 | OCR | Sarvam Vision | pytesseract `ori`, DeepSeek-OCR | Largest expected gain. DeepSeek is English-only in practice; Odia comes out script-confused |
 | Transliteration | Sarvam Translate / Mayura | IndicXlit (Phase 21) | Code-mixed romanized Odia is the designed-for case |
-| Categorization | Sarvam-30B, structured output | MuRIL, 0.7104 acc | MuRIL is English-gated today; the 0.51 worst-class F1 has headroom |
-| Summarization | Sarvam-30B | BART | BART is English-only; DSI usefulness 1.9 at best, 0.45 on IDs |
-| PII detection | Sarvam-30B NER | Presidio + spaCy | spaCy has no Odia name model. The biggest measured gap |
+| Categorization | **Doc AI Extract**, category in the schema (#126) | MuRIL, 0.7104 acc | Runs off the same call as the OCR arm. MuRIL is English-gated today; the 0.51 worst-class F1 has headroom. **Do not compare against the 0.7104 headline** — that is typed subject lines, not scans (#127) |
+| Summarization | Doc AI Extract, summary in the schema | BART | Possible reference set in officer-typed subjects (#128). DSI usefulness 1.9 at best, 0.45 on IDs, with no reproducible basis in this repo |
+| PII detection | Doc AI Extract, exhaustive-name schema | Presidio + spaCy | spaCy has no Odia name model. The biggest measured gap. **Extraction is not detection** — see #92 before reading any score here |
 
 Two cautions on the PII row. Spans must be returned over the **original** text or
 they are unusable for redaction. And using an external model to *find* PII means

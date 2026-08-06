@@ -32,7 +32,7 @@ The document-reading half of that comparison is gated by something else entirely
 | Spam and duplicates | Repeat submissions linked and mass campaigns grouped as one issue, across a defined portion of the backlog, with a count of how much of it is duplicated work. Complaints written in Odia script and in Roman letters are matched separately, not against each other | **Bounded** | Duplicates without spam scoring. A smaller portion of the backlog |
 | The intelligence layer | Duplicate-adjusted workload. One worked example of a spike separated into filings, distinct problems and distinct citizens. Local issue themes for one category. The closure finding | **Bounded** | Themes drop first. If duplicate detection slips, only the closure finding survives, since it is the one item needing no new processing |
 | A/B testing of the automation | The experiment design, the size of effect we could detect, and where the AI already agrees with officers today | **Framework only** | None needed. Nothing here depends on new engineering |
-| Sarvam benchmark | Sarvam Vision against our text extraction on a transcribed sample, with handwritten and printed pages reported separately | **Bounded** | Document reading only. Comparing Sarvam on categorisation and summarisation, and the switch between providers, are stretch |
+| Sarvam benchmark | Sarvam Vision against our pipeline on a paired sample of a few hundred pages. **Categorisation reports accuracy against the recorded category; document reading reports only how the two differ**, since no transcription owner was named | **Bounded** | Categorisation is now in scope, because its reference is administrative data we already hold. Transcription accuracy is out, and reported comparatively |
 
 **Committed** means we will demonstrate it. **Bounded** means we will demonstrate it on a defined slice rather than the full 1.37 million. **Framework only** means a design and a calculation, not running software.
 
@@ -45,7 +45,7 @@ The portion of the backlog is not yet fixed. We will settle it after a brainstor
 | Stage | Earlier figure, and what it was measured on | 14 August |
 |---|---|---|
 | Personal information removal | 80.6% of items found, on a 106-sentence English validation split | Re-measured on our corrected 85-page set, by data type and by language |
-| Text extraction from scans | 77.9% of pages passed three plausibility checks, on 96,469 English pages. Not transcription accuracy: there was no ground truth | Measured against a deliberately transcribed sample, handwritten and printed separately, against Sarvam Vision |
+| Text extraction from scans | 77.9% of pages passed three plausibility checks, on 96,469 English pages. Not transcription accuracy: there was no ground truth | **No accuracy figure.** No transcription sample was commissioned, so there is still no ground truth. Reported as divergence from Sarvam Vision, handwritten and printed separately, with no verdict on which is right |
 | Duplicate detection | Not attempted | Recall against the 34,000 duplicates officers have already identified |
 | Page type | 67% accurate, on the earlier team's own 1,500-page sample | Historical context only. No labelled set exists for August |
 | Category assignment | 71% accurate, on the earlier team's train/test split | Historical context only, unless a held-out labelled set is identified in week 1 |
@@ -97,8 +97,8 @@ The fifth is a measurement: does Sarvam read Odia better than we do? The scoreca
 
 Three Sarvam models are relevant.
 
-- **Sarvam Vision** reads scanned documents in 22 Indian languages including Odia, at 50 paise per page. Direct comparison against our text extraction.
-- **Sarvam-30B**, tested on categorisation and summarisation.
+- **Sarvam Vision** reads scanned documents in 22 Indian languages including Odia. Two modes: reading a page as text at 50 paise, or pulling named fields out of it at ₹1. The second is what a grievance officer would actually use, and our pipeline has no equivalent.
+- **Sarvam-105B** for categorisation and summarisation. Note that the model we originally costed, Sarvam-30B, has since been withdrawn, and its replacement is roughly twelve times the price. The whole comparison is still a few thousand rupees.
 - **Transliteration**, converting Odia written in Roman letters into Odia script. Our pipeline does not solve this at all today.
 
 Cost is a few hundred rupees for the whole comparison.
@@ -115,7 +115,7 @@ A naming note, since the two are easy to conflate. Sarvam Akshar is the document
 |---|---|---|
 | 27 to 31 July | Manual privacy labelling complete. System live on AWS. Pipeline run end to end | A grievance submitted in a browser returns a result. Counts reconcile at every pipeline step |
 | 3 to 7 August | Privacy scorecard. Historical complaint text redacted. Spam and duplicate detection. Backlog duplication count. Management metrics, local issue themes, and spike view | Missed-PII rate by data type and language. Redaction pass completes over the chosen portion before any matching runs. Known repeat submissions found in a held-out sample. Each metric reconciles against source data. One real spike found and explained |
-| 10 to 14 August | Sarvam scorecard. Experiment design and power calculation. Full benchmark table | Sarvam and our models compared on the same test data. Every stage in Table 2 has a number |
+| 10 to 14 August | Sarvam scorecard. Experiment design and power calculation. Full benchmark table | Sarvam and our models compared on the same pages, as a paired sample with stated uncertainty. Every stage in Table 2 has a number **except text extraction, which has no reference to score against** |
 
 Work stops Thursday 13 August. Friday is rehearsal, no code changes.
 
@@ -150,9 +150,11 @@ Below that, three kinds of work, and they scale differently.
 | Choosing which portion of the backlog to demonstrate on | A judgement about what is defensible. It is also the starting gun for the overnight processing, which cannot begin until the portion is fixed |
 | Fixing the A/B analysis plan | The estimator and the power calculation need statistical judgement |
 
-**One request, and it is the main one.** The transcription sample has no owner, and it sits on the final week's path. It needs perhaps fifty pages, printed and handwritten, transcribed by someone who reads Odia. Naming that person is on the agenda for our next meeting.
+**Resolved, and not in the direction we wanted.** No owner was named for the transcription sample, so on 7 August we took the written fallback rather than let the decision block the final week. The document-reading comparison reports how the two systems differ, with no verdict on which is right.
 
-If we have an owner, the Sarvam comparison reports accuracy. If not, it reports a narrower result: how the two systems differ from each other, without a verdict on which is right.
+What that costs is narrower than it first appears. Only one of the three comparisons needed a transcriber. **Categorisation is measured against the category already recorded on each ticket**, and that reference costs nothing to assemble, so the benchmark still produces a real accuracy result — arguably the more decision-relevant one, since it is the number that would change how a grievance is routed.
+
+The transcription sample is still worth commissioning after 14 August. Sarvam say their model is trained on handwritten text in all 22 languages but publish no handwriting-specific figure, and much of this corpus is handwritten. An independent split result on printed versus handwritten pages would be a measurement nobody has published, on precisely the case this corpus consists of.
 
 ## Not in scope for August
 
