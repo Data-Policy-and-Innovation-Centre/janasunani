@@ -20,7 +20,7 @@ jobs:
 
           bad_files="$(
             git ls-files 'data/**' 'outputs/**' |
-              grep -Ev '(^|/)\.gitkeep$|\.dvc$' || true
+              grep -Ev '(^|/)\.gitkeep$|\.dvc$|^data/external/[^/]+\.provenance\.json$' || true
           )"
 
           if [ -n "$bad_files" ]; then
@@ -30,6 +30,63 @@ jobs:
             echo "Use DVC for approved data or keep stakeholder-facing artifacts in Box."
             exit 1
           fi
+
+      # Provenance sidecars are the one exception above: they record versions,
+      # checksums and span counts so a gold artifact can be reviewed without
+      # pulling it. The exception is by filename, so this step checks the
+      # contents actually match that description and no citizen text rode in.
+      - name: Check provenance sidecars carry metadata only
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sidecars="$(git ls-files 'data/external/*.provenance.json' || true)"
+          [ -n "$sidecars" ] || exit 0
+
+          python3 - "$sidecars" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          # Keys that would carry document or span content rather than metadata.
+          FORBIDDEN = {"text", "entities", "spans_text", "samples", "records_text"}
+          MAX_BYTES = 16 * 1024
+
+          def walk(node, path=""):
+              if isinstance(node, dict):
+                  for key, value in node.items():
+                      if key.lower() in FORBIDDEN:
+                          yield f"{path}{key}"
+                      yield from walk(value, f"{path}{key}.")
+              elif isinstance(node, list):
+                  for item in node:
+                      yield from walk(item, path)
+
+          failures = []
+          for name in sys.argv[1].split():
+              path = pathlib.Path(name)
+              size = path.stat().st_size
+              if size > MAX_BYTES:
+                  failures.append(f"{name}: {size} bytes exceeds the {MAX_BYTES}-byte metadata cap")
+                  continue
+              try:
+                  payload = json.loads(path.read_text())
+              except json.JSONDecodeError as exc:
+                  failures.append(f"{name}: not valid JSON ({exc})")
+                  continue
+              for key in walk(payload):
+                  failures.append(f"{name}: contains content key '{key}'")
+
+          if failures:
+              print("Provenance sidecars must hold metadata only:")
+              for failure in failures:
+                  print(f"  {failure}")
+              print("")
+              print("Never put document text or spans in a sidecar; it is committed to Git.")
+              raise SystemExit(1)
+
+          print(f"Checked {len(sys.argv[1].split())} provenance sidecar(s): metadata only.")
+          PY
 
       - name: Reject local state and secret files
         shell: bash
