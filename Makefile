@@ -272,6 +272,13 @@ db:
 
 # `@` so the OLTP DSN is not echoed. API_HOST=0.0.0.0 to serve off-box.
 # OLTP_DB_URL quoted via sh_quote for the same reason as `preflight` above.
+# Note: `preflight` now opens a real, timeout-bounded connection to
+# OLTP_DB_URL when one is set (janasunani/inference/service.py's
+# _oltp_check). On a fresh box that means it can WARN "unreachable" here,
+# before `db` (next) has started the throwaway Postgres it is pointed at --
+# non-fatal (advisory, not --strict) and self-resolving once `db` runs, kept
+# in this order rather than `db preflight` so the cheap model/OCR-binary
+# checks still fail fast ahead of provisioning a container.
 api: preflight db
 	@OLTP_DB_URL=$(call sh_quote,$(OLTP_DB_URL)) JANASUNANI_API_HOST="$(API_HOST)" \
 	  JANASUNANI_API_PORT="$(API_PORT)" uv run --extra demo janasunani-api-live
@@ -286,6 +293,9 @@ frontend:
 # a UI against a dead backend. The trap reaps only the API process we launched
 # (its PID + children) -- never a global `pkill` that could hit an unrelated
 # live API on the same box. A single Ctrl-C on the frontend stops both.
+# See `api`'s comment above re: preflight's OLTP connectivity probe possibly
+# WARNing here on a fresh box, before `db` (next) has started the throwaway
+# Postgres -- non-fatal and self-resolving.
 up: preflight db
 	@set -e; \
 	echo "Starting live API (:$(API_PORT)) in the background..."; \

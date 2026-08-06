@@ -585,22 +585,73 @@ def _lake_check() -> DependencyCheck:
     )
 
 
+_OLTP_PROBE_TIMEOUT_S = 5.0
+
+
+def _probe_oltp_connection(url: str, timeout: float = _OLTP_PROBE_TIMEOUT_S) -> None:
+    """Open a real connection and run a harmless query; raises on failure.
+
+    Separated from `_oltp_check` so tests can stub this out rather than
+    touching a real database or the network -- the same collection/judgement
+    split `scripts/infra_status.py` uses for its own AWS/SSH/HTTP calls, for
+    the same reason: a test suite must never depend on real infrastructure
+    being reachable, and preflight tests must never point at a real database.
+    Bounded by `timeout` so an unreachable host degrades this one check
+    within a few seconds rather than hanging preflight indefinitely.
+    """
+    import asyncio
+
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    async def _probe() -> None:
+        engine = create_async_engine(url)
+        try:
+            async with engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+        finally:
+            await engine.dispose()
+
+    asyncio.run(asyncio.wait_for(_probe(), timeout=timeout))
+
+
 def _oltp_check() -> DependencyCheck:
-    """Whether live submissions will survive a restart."""
-    # Never include the URL itself: it can carry a DB password.
+    """Whether live submissions will survive a restart -- verified with a
+    real connection, not just an explicit URL. `DatabaseResultStore`
+    (janasunani/serving/store.py) only creates its async engine at startup
+    and never actually connects until the first save, so a wrong password,
+    host, database, or a migration that never ran would otherwise pass
+    preflight clean and only surface when a citizen's submission fails to
+    save.
+    """
     # `required` is a property of the check, not of this run's outcome, so it
-    # stays False on the passing branch too.
-    if resolve_explicit_oltp_url():
+    # stays False on both branches below.
+    url = resolve_explicit_oltp_url()
+    if not url:
         return DependencyCheck(
             "oltp store",
-            True,
-            "explicit OLTP_DB_URL -> DatabaseResultStore",
+            False,
+            "OLTP_DB_URL not set -> InMemoryResultStore, submissions lost on restart",
+            required=False,
+        )
+    try:
+        _probe_oltp_connection(url)
+    except Exception as exc:
+        # Never str(exc): some DBAPI errors embed the DSN -- and its
+        # password -- in their own message. The exception's type name is
+        # actionable (auth vs. host vs. timeout look different) without that
+        # risk; never the URL itself, which is what resolve_explicit_oltp_url
+        # returns and must not appear here either.
+        return DependencyCheck(
+            "oltp store",
+            False,
+            f"explicit OLTP_DB_URL set but unreachable ({type(exc).__name__})",
             required=False,
         )
     return DependencyCheck(
         "oltp store",
-        False,
-        "OLTP_DB_URL not set -> InMemoryResultStore, submissions lost on restart",
+        True,
+        "explicit OLTP_DB_URL -> DatabaseResultStore, connection verified",
         required=False,
     )
 
@@ -639,6 +690,9 @@ def preflight(models_dir: str | Path | None = None) -> list[DependencyCheck]:
 
     # Advisory checks: none of these stop `build_processor`, and all three fail
     # in ways the running demo does not surface. See DependencyCheck.required.
+    # _oltp_check is the one exception to "milliseconds" above when
+    # OLTP_DB_URL is explicitly set: it opens a real, timeout-bounded
+    # connection (_OLTP_PROBE_TIMEOUT_S) rather than just checking presence.
     checks.append(_routing_mappings_check())
     checks.append(_lake_check())
     checks.append(_oltp_check())

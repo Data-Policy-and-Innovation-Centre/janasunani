@@ -640,14 +640,85 @@ def test_preflight_flags_unconfigured_oltp(tmp_path, monkeypatch):
     assert "lost on restart" in check.detail
 
 
-def test_preflight_never_leaks_the_oltp_url(tmp_path, monkeypatch):
+def test_preflight_verifies_oltp_connectivity_not_just_presence(tmp_path, monkeypatch):
+    """DatabaseResultStore (janasunani/serving/store.py) only creates its
+    async engine at startup and never actually connects until the first
+    save, so a wrong password/host/database/migration would otherwise pass
+    preflight and only fail on a citizen's first submission. Stubs
+    `_probe_oltp_connection` rather than touching a real database or the
+    network -- the same split infra_status.py's AWS/SSH tests use. Codex
+    review on #88."""
+    monkeypatch.setattr(
+        service, "resolve_explicit_oltp_url", lambda: "postgresql+asyncpg://u:p@h/db"
+    )
+    monkeypatch.setattr(service, "_probe_oltp_connection", lambda url, timeout=5.0: None)
+    check = _advisory(preflight(tmp_path), "oltp store")
+    assert check.ok is True
+    assert "connection verified" in check.detail
+
+
+def test_preflight_flags_an_explicit_but_unreachable_oltp(tmp_path, monkeypatch):
+    """A configured OLTP_DB_URL that cannot actually be connected to must not
+    read as ready -- exactly the gap that lets /health report
+    processor=pipeline while the first submission fails on save."""
+    monkeypatch.setattr(
+        service, "resolve_explicit_oltp_url", lambda: "postgresql+asyncpg://u:p@h/db"
+    )
+
+    def _boom(url, timeout=5.0):
+        raise ConnectionRefusedError("nope")
+
+    monkeypatch.setattr(service, "_probe_oltp_connection", _boom)
+    check = _advisory(preflight(tmp_path), "oltp store")
+    assert check.ok is False
+    assert "unreachable" in check.detail
+    assert "ConnectionRefusedError" in check.detail
+
+
+def test_preflight_never_leaks_the_oltp_url_on_success(tmp_path, monkeypatch):
     """The URL carries a DB password; the report must never print it."""
     secret = "postgresql+asyncpg://user:hunter2@db.internal/janasunani"
     monkeypatch.setattr(service, "resolve_explicit_oltp_url", lambda: secret)
+    monkeypatch.setattr(service, "_probe_oltp_connection", lambda url, timeout=5.0: None)
     check = _advisory(preflight(tmp_path), "oltp store")
     assert check.ok is True
     assert "hunter2" not in check.detail
     assert secret not in check.detail
+
+
+def test_preflight_never_leaks_the_oltp_url_on_connection_failure(tmp_path, monkeypatch):
+    """The likelier leak vector: some DBAPI errors embed the DSN -- and its
+    password -- in their own exception message. Only the exception's type
+    name may be reported, never str(exc)."""
+    secret = "postgresql+asyncpg://user:hunter2@db.internal/janasunani"
+    monkeypatch.setattr(service, "resolve_explicit_oltp_url", lambda: secret)
+
+    def _boom(url, timeout=5.0):
+        raise RuntimeError(f"could not connect to {secret}")
+
+    monkeypatch.setattr(service, "_probe_oltp_connection", _boom)
+    check = _advisory(preflight(tmp_path), "oltp store")
+    assert check.ok is False
+    assert "hunter2" not in check.detail
+    assert secret not in check.detail
+
+
+def test_probe_oltp_connection_succeeds_against_a_real_sqlite_db(tmp_path):
+    """Exercises the real probe (not the preflight wiring above, which stubs
+    it) against an actual database, so the SELECT 1 round trip is proven to
+    work end to end without needing network or a real Postgres."""
+    db_path = tmp_path / "probe.db"
+    service._probe_oltp_connection(f"sqlite+aiosqlite:///{db_path}")
+
+
+def test_probe_oltp_connection_raises_for_an_unreachable_target():
+    """127.0.0.1 loopback on a closed port refuses instantly -- no DNS, no
+    real network needed -- which is what _oltp_check's except clause and the
+    timeout bound both depend on being a real `raise`, not a hang."""
+    with pytest.raises(Exception):
+        service._probe_oltp_connection(
+            "postgresql+asyncpg://u:p@127.0.0.1:1/nonexistent", timeout=2.0
+        )
 
 
 def test_advisory_failures_do_not_fail_preflight_by_default(tmp_path, monkeypatch):
