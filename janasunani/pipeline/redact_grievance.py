@@ -335,10 +335,14 @@ def main() -> None:
         limit=args.limit,
         refresh_stale=args.refresh_stale,
     )
+    # Same arithmetic as the per-batch progress line: rows carrying a *current*
+    # redaction. The batch line was fixed in #141/#147 and this one was not, so
+    # tonight's refresh ended on "111088 of 55544" -- the number that gets
+    # pasted into a run record, which is worse than the one that scrolls past.
     logger.info(
         "done: {} processed this run, {} of {} redacted in slice {}/{}",
         counts["processed"],
-        counts["already_redacted"] + counts["processed"],
+        counts["already_redacted"] - counts["stale_at_start"] + counts["processed"],
         counts["total"],
         args.district,
         args.year,
