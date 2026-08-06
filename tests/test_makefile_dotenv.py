@@ -556,3 +556,207 @@ def test_key_absent_vs_parse_failure_distinction_still_holds_after_115(isolated_
     )
     assert result.returncode != 0
     assert "could not be parsed" in result.stderr
+
+
+# --- #118: INCOMING_REMOTE/EXHIBITS_REMOTE need quoting at the recipe
+# boundary -----------------------------------------------------------------
+#
+# #104 restored these two from .env, but the recipes interpolated them bare
+# (`rclone copy $(INCOMING_REMOTE) $(RAW_LOCAL) --progress`). A full-endpoint
+# override written with normal dotenv outer quotes has those quotes stripped
+# by python-dotenv -- correctly, that is what dotenv quoting means -- and the
+# resulting space-bearing value then reached an unquoted recipe position,
+# where the shell word-split it: `box:2. Projects/...` became several
+# arguments and `make ingest` read from (or `make deliver` published to) the
+# wrong place instead of failing loudly. BOX_PROJECT_ROOT's own default is
+# "2. Projects/21. Governance/" -- spaces are the documented normal case
+# here, not an exotic one.
+#
+# These tests run the real (non-dry-run) recipe with a stub `rclone` on PATH
+# that records its argv one-per-line, so a passing assertion proves the
+# actual argument boundary the shell constructs -- not just that `-n`'s
+# printed text looks right (which passing single quotes through unchanged
+# would already satisfy even if a later shell word-split them some other
+# way).
+
+
+def _stub_rclone(bin_dir: Path, argv_file: Path) -> None:
+    """Installs a fake `rclone` on `bin_dir` that records its own argv, one
+    argument per line, to `argv_file` -- instead of doing anything to a real
+    Box remote. `printf '%s\\n' "$@"` recycles the format once per positional
+    argument, so this is a direct readout of how many shell words the
+    Makefile's recipe produced, not a parse of the recipe's source text."""
+    bin_dir.mkdir(exist_ok=True)
+    stub = bin_dir / "rclone"
+    stub.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > "{argv_file}"\n')
+    stub.chmod(0o755)
+
+
+def _rclone_argv(isolated_dir: Path, *make_args: str) -> list[str]:
+    """Runs `make` for real (no `-n`) against `isolated_dir` with a stub
+    `rclone` prepended to PATH, and returns the argv that stub recorded."""
+    bin_dir = isolated_dir / "fakebin"
+    argv_file = isolated_dir / "rclone_argv.txt"
+    _stub_rclone(bin_dir, argv_file)
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
+    result = _make(*make_args, cwd=isolated_dir, env=env)
+    assert result.returncode == 0, result.stderr
+    return argv_file.read_text().splitlines()
+
+
+def test_default_ingest_endpoint_matches_pre_118_behavior(isolated_dir):
+    """Control: a plain, default-configured `make ingest` (no .env, no
+    overrides) must produce exactly the same rclone endpoint argument #118
+    does -- 'box:2. Projects/21. Governance//Data/Raw/' as a single word
+    (the double slash is BOX_PROJECT_ROOT's own trailing '/' plus the
+    '/Data/Raw/' suffix, an existing quirk this fix does not touch). Before
+    #118 the default default achieved this via a literal single-quote baked
+    into INCOMING_REMOTE's `?=` value; #118 moves that quoting to the recipe
+    boundary instead (sh_quote), and this is the proof the visible behavior
+    for the common, unconfigured case did not move."""
+    argv = _rclone_argv(isolated_dir, "ingest")
+    assert argv == [
+        "copy",
+        "box:2. Projects/21. Governance//Data/Raw/",
+        "data/raw/",
+        "--progress",
+    ], argv
+
+
+def test_default_deliver_endpoint_matches_pre_118_behavior(isolated_dir):
+    """Same control as above, for `deliver`/EXHIBITS_REMOTE."""
+    argv = _rclone_argv(isolated_dir, "deliver")
+    assert argv == [
+        "copy",
+        "outputs/",
+        "box:2. Projects/21. Governance//Analysis/Exhibits/",
+        "--progress",
+    ], argv
+
+
+def test_dotenv_full_endpoint_override_with_spaces_reaches_rclone_as_one_argument(
+    isolated_dir,
+):
+    """The exact #118 regression: a full-endpoint INCOMING_REMOTE override
+    written with normal dotenv outer double quotes (stripped by
+    python-dotenv, per dotenv semantics -- the value stored is the bare,
+    unquoted, space-bearing path) must still reach rclone as ONE argument,
+    not be word-split into several. Before the fix this failed exactly this
+    way (verified directly against the pre-fix Makefile: 'box:2.',
+    'Projects/21.', 'Governance/Custom', 'Sub/' -- four arguments instead of
+    one)."""
+    (isolated_dir / ".env").write_text(
+        'INCOMING_REMOTE="box:2. Projects/21. Governance/Custom Sub/"\n'
+    )
+    argv = _rclone_argv(isolated_dir, "ingest")
+    assert argv == [
+        "copy",
+        "box:2. Projects/21. Governance/Custom Sub/",
+        "data/raw/",
+        "--progress",
+    ], argv
+
+
+def test_dotenv_full_endpoint_override_with_spaces_reaches_rclone_for_deliver_too(
+    isolated_dir,
+):
+    """Same regression, for EXHIBITS_REMOTE/`deliver`."""
+    (isolated_dir / ".env").write_text(
+        'EXHIBITS_REMOTE="box:2. Projects/21. Governance/Custom Exhibits/"\n'
+    )
+    argv = _rclone_argv(isolated_dir, "deliver")
+    assert argv == [
+        "copy",
+        "outputs/",
+        "box:2. Projects/21. Governance/Custom Exhibits/",
+        "--progress",
+    ], argv
+
+
+def test_default_box_project_root_override_with_spaces_reaches_rclone_as_one_argument(
+    isolated_dir,
+):
+    """The other documented space-bearing path: overriding BOX_PROJECT_ROOT
+    (not the full endpoint) and letting INCOMING_REMOTE derive from it, per
+    README.md's "Most users only need to set BOX_REMOTE and
+    BOX_PROJECT_ROOT". Must reach rclone as one argument the same way."""
+    (isolated_dir / ".env").write_text("BOX_PROJECT_ROOT=DPIC Janasunani Project\n")
+    argv = _rclone_argv(isolated_dir, "ingest")
+    assert argv == [
+        "copy",
+        "box:DPIC Janasunani Project/Data/Raw/",
+        "data/raw/",
+        "--progress",
+    ], argv
+
+
+def test_incoming_remote_value_containing_a_literal_quote_reaches_rclone_intact(
+    isolated_dir,
+):
+    """sh_quote's whole reason for existing over plain single-quoting (#60):
+    a value containing a literal `'` must not break the recipe's shell
+    string. Here that value is INCOMING_REMOTE itself, not a DSN."""
+    (isolated_dir / ".env").write_text("INCOMING_REMOTE=box:Governance's Folder/\n")
+    argv = _rclone_argv(isolated_dir, "ingest")
+    assert argv == [
+        "copy",
+        "box:Governance's Folder/",
+        "data/raw/",
+        "--progress",
+    ], argv
+
+
+def test_command_line_box_remote_containing_dollar_survives_to_rclone(isolated_dir):
+    """Regression guard for the $(origin ...)/$(value ...) treatment #118
+    also gives BOX_REMOTE (mirroring OLTP_DB_URL_RAW, per the comment above
+    BOX_REMOTE_RAW's definition in the Makefile): a command-line BOX_REMOTE
+    is stored recursively expanded, so referencing it naively from inside
+    sh_quote's $(subst ...) -- itself another expansion -- would re-scan a
+    literal `$` in the value for a (likely undefined, silently-emptied) Make
+    variable reference, the same bug class as #60/#103, one layer down.
+    BOX_REMOTE_RAW's $(value BOX_REMOTE) protects against exactly this."""
+    argv = _rclone_argv(isolated_dir, "BOX_REMOTE=a$b", "ingest")
+    assert argv == [
+        "copy",
+        "a$b:2. Projects/21. Governance//Data/Raw/",
+        "data/raw/",
+        "--progress",
+    ], argv
+
+
+def test_dry_run_ingest_shows_quoted_endpoint_for_default_config(isolated_dir):
+    """Lighter-weight companion to the real-run tests above, using `-n` the
+    way the rest of this file does: proves the printed recipe text itself is
+    now single-quoted at the call site (sh_quote), not just that the
+    underlying value is correct."""
+    result = _make("-n", "ingest", cwd=isolated_dir)
+    assert result.returncode == 0, result.stderr
+    assert (
+        "rclone copy 'box:2. Projects/21. Governance//Data/Raw/' 'data/raw/' --progress"
+        in result.stdout
+    ), result.stdout
+
+
+def test_dry_run_deliver_shows_quoted_endpoint_for_default_config(isolated_dir):
+    result = _make("-n", "deliver", cwd=isolated_dir)
+    assert result.returncode == 0, result.stderr
+    assert (
+        "rclone copy 'outputs/' 'box:2. Projects/21. Governance//Analysis/Exhibits/' --progress"
+        in result.stdout
+    ), result.stdout
+
+
+def test_box_paths_still_reports_incoming_remote_without_stray_quote_characters(
+    isolated_dir,
+):
+    """box-paths now echoes INCOMING_REMOTE_RAW/EXHIBITS_REMOTE_RAW (#118),
+    which -- unlike the pre-#118 default -- no longer has a literal `'`
+    baked into it: the quoting moved to the recipe boundary, so box-paths'
+    diagnostic display of the default is now the bare, unquoted path."""
+    result = _make("box-paths", cwd=isolated_dir)
+    assert result.returncode == 0, result.stderr
+    assert "INCOMING_REMOTE=box:2. Projects/21. Governance//Data/Raw/" in result.stdout
+    assert "'" not in [
+        line for line in result.stdout.splitlines() if line.startswith("INCOMING_REMOTE=")
+    ][0]

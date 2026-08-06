@@ -242,7 +242,12 @@ shared Box folder under different path prefixes — print the resolved paths wit
 `make box-paths`, and override per command
 (`make deliver BOX_PROJECT_ROOT="DPIC/janasunani"`) or persistently in `.env`.
 If a derived path doesn't match your Box layout, override the full endpoint
-(`INCOMING_REMOTE` / `EXHIBITS_REMOTE`) in `.env`.
+(`INCOMING_REMOTE` / `EXHIBITS_REMOTE`) in `.env` — write the bare value, with
+no manual shell quoting around spaces (`INCOMING_REMOTE=box:My Custom Path/`,
+not `box:'My Custom Path/'`): the `ingest`/`publish-raw`/`deliver` recipes
+quote it for you at the point they hand it to `rclone`, so a value with
+spaces (the default `BOX_PROJECT_ROOT` above has one) or an embedded `'`
+reaches `rclone` as a single argument either way.
 
 Common data operations:
 

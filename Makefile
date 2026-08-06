@@ -4,8 +4,28 @@ BOX_REMOTE     ?= box
 BOX_PROJECT_ROOT ?= 2. Projects/21. Governance/
 RAW_LOCAL      ?= data/raw/
 EXHIBITS_LOCAL ?= outputs/
-INCOMING_REMOTE ?= $(BOX_REMOTE):'$(BOX_PROJECT_ROOT)/Data/Raw/'
-EXHIBITS_REMOTE ?= $(BOX_REMOTE):'$(BOX_PROJECT_ROOT)/Analysis/Exhibits/'
+# No embedded quotes here (#118): quoting a Box endpoint at *definition* time
+# only protects the literal text of this default -- it does nothing for an
+# operator's own INCOMING_REMOTE/EXHIBITS_REMOTE override (.env or command
+# line), which reaches this variable already stripped of whatever dotenv/shell
+# quoting it was written with (that is what dotenv quoting means: the outer
+# quotes mark where the value ends, they are not part of it). A value that
+# then contains spaces -- BOX_PROJECT_ROOT's own default does, and README.md
+# documents overriding the full endpoint the same way -- reaches an unquoted
+# recipe position and the shell word-splits it. The quoting has to happen
+# where the value meets that shell word boundary -- the
+# ingest/publish-raw/deliver recipes below -- via sh_quote, not here.
+#
+# References BOX_REMOTE_RAW/BOX_PROJECT_ROOT_RAW (defined further down, after
+# the .env extraction) rather than the plain BOX_REMOTE/BOX_PROJECT_ROOT.
+# Forward-referencing them is fine: `?=` makes this a recursively-expanded
+# variable, and Make does not evaluate a recursive variable's text until
+# something references it, by which point the whole file -- BOX_REMOTE_RAW
+# included -- has been parsed. Using the _RAW forms instead of the plain ones
+# matters even here, in the *unset*-default case: see the block that defines
+# them below for why.
+INCOMING_REMOTE ?= $(BOX_REMOTE_RAW):$(BOX_PROJECT_ROOT_RAW)/Data/Raw/
+EXHIBITS_REMOTE ?= $(BOX_REMOTE_RAW):$(BOX_PROJECT_ROOT_RAW)/Analysis/Exhibits/
 # Live-demo stack (see docs/DEMO.md). Throwaway Postgres only — never the prod
 # volume, never the :5433 pytest-fixture DB.
 PG_CONTAINER   ?= janasunani-demo-oltp
@@ -253,6 +273,81 @@ OLTP_DB_URL_RAW := $(value OLTP_DB_URL)
 else
 OLTP_DB_URL_RAW := $(OLTP_DB_URL)
 endif
+# #118: BOX_REMOTE, BOX_PROJECT_ROOT, INCOMING_REMOTE and EXHIBITS_REMOTE need
+# the same treatment as OLTP_DB_URL_RAW above, for the same reason -- a
+# command-line (`make BOX_REMOTE=... ingest`) or shell-exported value is
+# stored recursively expanded, so a later reference (including from inside
+# sh_quote's $(subst ...), which #118 adds to ingest/publish-raw/deliver
+# below) re-scans it for `$`/`$(...)`. None of these four are secrets/
+# generated passwords like OLTP_DB_URL, so a literal `$` in one is a lower-
+# probability trap, but it is the identical mechanism, and this file's own
+# history (#60, #103, #114, #115) is that leaving one instance of this bug
+# class unfixed while fixing the others is exactly how it keeps coming back
+# -- so it gets the same fix here, not a note deferring it (verified in
+# tests/test_makefile_dotenv.py).
+#
+# INCOMING_REMOTE and EXHIBITS_REMOTE derive from BOX_REMOTE/BOX_PROJECT_ROOT
+# by default (see the `?=` lines at the top of this file), so their _RAW
+# variants below are written in terms of BOX_REMOTE_RAW/BOX_PROJECT_ROOT_RAW,
+# not the plain BOX_REMOTE/BOX_PROJECT_ROOT: in the "still at its default"
+# case, $(INCOMING_REMOTE) re-expands whatever BOX_REMOTE currently means, and
+# if BOX_REMOTE_RAW were skipped that reference would reintroduce this same
+# bug one level down, inside a value this block exists to make safe. Both the
+# still-default case and the .env-override case (INCOMING_REMOTE reassigned
+# via `:=` above, already a simply-expanded/frozen string by this point) land
+# in the same "file origin" branch below and are both safe to expand
+# normally: the default's template only references the frozen _RAW leaves,
+# and the .env value is already frozen text with nothing left to re-scan --
+# see the dotenv_get comment block's #115 section for why a `:=` chain does
+# not itself re-trigger this.
+ifeq ($(origin BOX_REMOTE),command line)
+BOX_REMOTE_RAW := $(value BOX_REMOTE)
+else ifeq ($(origin BOX_REMOTE),environment)
+BOX_REMOTE_RAW := $(value BOX_REMOTE)
+else ifeq ($(origin BOX_REMOTE),environment override)
+BOX_REMOTE_RAW := $(value BOX_REMOTE)
+else
+BOX_REMOTE_RAW := $(BOX_REMOTE)
+endif
+
+ifeq ($(origin BOX_PROJECT_ROOT),command line)
+BOX_PROJECT_ROOT_RAW := $(value BOX_PROJECT_ROOT)
+else ifeq ($(origin BOX_PROJECT_ROOT),environment)
+BOX_PROJECT_ROOT_RAW := $(value BOX_PROJECT_ROOT)
+else ifeq ($(origin BOX_PROJECT_ROOT),environment override)
+BOX_PROJECT_ROOT_RAW := $(value BOX_PROJECT_ROOT)
+else
+BOX_PROJECT_ROOT_RAW := $(BOX_PROJECT_ROOT)
+endif
+
+ifeq ($(origin INCOMING_REMOTE),command line)
+INCOMING_REMOTE_RAW := $(value INCOMING_REMOTE)
+else ifeq ($(origin INCOMING_REMOTE),environment)
+INCOMING_REMOTE_RAW := $(value INCOMING_REMOTE)
+else ifeq ($(origin INCOMING_REMOTE),environment override)
+INCOMING_REMOTE_RAW := $(value INCOMING_REMOTE)
+else
+INCOMING_REMOTE_RAW := $(INCOMING_REMOTE)
+endif
+
+ifeq ($(origin EXHIBITS_REMOTE),command line)
+EXHIBITS_REMOTE_RAW := $(value EXHIBITS_REMOTE)
+else ifeq ($(origin EXHIBITS_REMOTE),environment)
+EXHIBITS_REMOTE_RAW := $(value EXHIBITS_REMOTE)
+else ifeq ($(origin EXHIBITS_REMOTE),environment override)
+EXHIBITS_REMOTE_RAW := $(value EXHIBITS_REMOTE)
+else
+EXHIBITS_REMOTE_RAW := $(EXHIBITS_REMOTE)
+endif
+# RAW_LOCAL/EXHIBITS_LOCAL (below, at the ingest/publish-raw/deliver recipes)
+# get sh_quote at the recipe boundary too -- a local path can contain spaces
+# just as easily as a Box one -- but not this _RAW/$(origin ...) treatment:
+# neither is ever populated from .env (they are plain local-directory `?=`
+# defaults, not part of the dotenv_get extraction above), so the only way
+# either becomes a recursively-expanded value with attacker-shaped content is
+# an operator directly typing `make RAW_LOCAL='...'`, a much narrower path
+# than the four keys above (which a shared team .env or a copy-pasted Box URL
+# routinely populates).
 # Embeds an arbitrary value (e.g. $(OLTP_DB_URL_RAW)) as a single shell word
 # safe from further expansion: single-quoted, with each embedded `'` replaced
 # by `'\''` (close the quote, an escaped literal quote outside it, reopen the
@@ -262,7 +357,12 @@ endif
 # closes that gap. Use as `$(call sh_quote,$(OLTP_DB_URL_RAW))` -- already
 # quoted, so call sites do not wrap it in quotes themselves, and always via
 # OLTP_DB_URL_RAW, never the plain $(OLTP_DB_URL) reference, per the origin
-# note above.
+# note above. #118 reuses this same macro for INCOMING_REMOTE_RAW/
+# EXHIBITS_REMOTE_RAW/RAW_LOCAL/EXHIBITS_LOCAL at the ingest/publish-raw/
+# deliver recipes below -- a Box endpoint or local path needs exactly the same
+# single-shell-word guarantee a DSN does, just against spaces (BOX_PROJECT_
+# ROOT's own default has one: "2. Projects/21. Governance/") rather than a
+# generated password's character set.
 sh_quote = '$(subst ','\'',$(1))'
 SHELL          := /bin/bash
 .SHELLFLAGS    := -euo pipefail -c
@@ -317,14 +417,19 @@ pull: _check_git_clean
 	uv run dvc pull
 	@echo "Done."
 
+# #118: both endpoints go through sh_quote so a space-bearing value -- the
+# default BOX_PROJECT_ROOT ("2. Projects/21. Governance/") is the normal
+# case here, not an exotic one -- reaches rclone as one argument instead of
+# being word-split by the shell. INCOMING_REMOTE_RAW, never the plain
+# $(INCOMING_REMOTE), per the origin note above its definition.
 ingest:
 	@echo "Copying all original source files from Box..."
-	rclone copy $(INCOMING_REMOTE) $(RAW_LOCAL) --progress
+	rclone copy $(call sh_quote,$(INCOMING_REMOTE_RAW)) $(call sh_quote,$(RAW_LOCAL)) --progress
 	@echo "Ingested raw data. The original Box files were not modified."
 
 publish-raw:
 	@echo "Publishing all local raw files to Box..."
-	rclone copy $(RAW_LOCAL) $(INCOMING_REMOTE) --progress
+	rclone copy $(call sh_quote,$(RAW_LOCAL)) $(call sh_quote,$(INCOMING_REMOTE_RAW)) --progress
 	@echo "Published raw data. Existing Box files with other names were not deleted."
 
 push: _check_git_clean
@@ -348,9 +453,10 @@ exhibits:
 	uv run dvc repro
 	@echo "Pipeline complete. Check outputs/ for regenerated exhibits."
 
+# #118: sh_quote for the same reason as ingest/publish-raw above.
 deliver:
 	@echo "Delivering exhibits to Box..."
-	rclone copy $(EXHIBITS_LOCAL) $(EXHIBITS_REMOTE) --progress
+	rclone copy $(call sh_quote,$(EXHIBITS_LOCAL)) $(call sh_quote,$(EXHIBITS_REMOTE_RAW)) --progress
 	@echo "Exhibits delivered. Existing Box files were not deleted."
 
 .PHONY: docs docs-clean infra status
@@ -369,13 +475,17 @@ docs/%.docx: docs/%.md scripts/md_to_docx.py
 docs-clean:
 	rm -f $(DOC_TARGETS)
 
+# The _RAW forms so this echoes exactly what ingest/publish-raw/deliver
+# actually use (see the #118 block above) rather than the plain variable,
+# which -- for a command-line/environment-origin value containing `$` -- can
+# differ from it (the plain reference re-scans; the _RAW one does not).
 box-paths:
-	@echo "BOX_REMOTE=$(BOX_REMOTE)"
-	@echo "BOX_PROJECT_ROOT=$(BOX_PROJECT_ROOT)"
+	@echo "BOX_REMOTE=$(BOX_REMOTE_RAW)"
+	@echo "BOX_PROJECT_ROOT=$(BOX_PROJECT_ROOT_RAW)"
 	@echo "RAW_LOCAL=$(RAW_LOCAL)"
 	@echo "EXHIBITS_LOCAL=$(EXHIBITS_LOCAL)"
-	@echo "INCOMING_REMOTE=$(INCOMING_REMOTE)"
-	@echo "EXHIBITS_REMOTE=$(EXHIBITS_REMOTE)"
+	@echo "INCOMING_REMOTE=$(INCOMING_REMOTE_RAW)"
+	@echo "EXHIBITS_REMOTE=$(EXHIBITS_REMOTE_RAW)"
 
 
 # Read-only pass over the cloud infra (EC2 boxes, SSH exposure, disk,
