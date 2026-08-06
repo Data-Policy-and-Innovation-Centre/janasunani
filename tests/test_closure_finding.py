@@ -6,7 +6,7 @@ cannot tell a correct query from a query that happens to agree with today's
 corpus.
 
 The fixture is arranged so each headline figure has an independently countable
-answer, and so the two denominators genuinely differ — collapsing them is the
+answer, and so the two denominators genuinely differ. Collapsing them is the
 failure mode this finding is most exposed to.
 """
 
@@ -171,7 +171,7 @@ def test_the_mart_never_reads_the_citizen_text_column(tmp_path):
 
     Checked twice: the SQL never names the column, and a lake that *has* the
     column never surfaces it. The static half strips comments and string
-    literals first — the disposal templates themselves contain the word
+    literals first: the disposal templates themselves contain the word
     "grievance", so a plain substring search would pass for the wrong reason.
     """
     sql = re.sub(r"--[^\n]*", "", closure.sql_text())
@@ -214,8 +214,8 @@ def test_headline_reports_both_denominators_and_they_differ(lake):
 def test_rung_assignment_normalizes_case_whitespace_and_trailing_stops(lake):
     """T2's remark has no trailing stop; T5's has a doubled internal space."""
     row = closure.compute(lake)["closure_finding_summary"].row(0, named=True)
-    assert row["bare"] == 3  # T1, T2, T3 — T2 only if normalization works
-    assert row["with_action"] == 2  # T4, T5 — T5 only if whitespace collapses
+    assert row["bare"] == 3  # T1, T2, T3; T2 only if normalization works
+    assert row["with_action"] == 2  # T4, T5; T5 only if whitespace collapses
 
 
 def test_closing_remark_is_the_latest_action_not_the_first_row(lake):
@@ -389,7 +389,7 @@ def test_off_ladder_templates_never_leak_low_frequency_text(lake):
 
 
 def test_template_drift_is_reported_rather_than_silently_shrinking_the_base(tmp_path):
-    """An unmatched ladder string does not error — it moves complaints into
+    """An unmatched ladder string does not error. It moves complaints into
     `off_ladder` and quietly shrinks the denominator the headline divides by."""
     drifted = [(i, t, d, r.replace("grievance", "petition")) for i, t, d, r in _ACTIONS]
     tables = closure.compute(_write_lake(tmp_path, actions=drifted))

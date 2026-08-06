@@ -10,7 +10,7 @@ Two rules are enforced in code rather than left to whoever quotes the number:
 
 * **Both denominators, always.** :func:`render_markdown` cannot emit the
   headline share without the templated-closure base beside it and the
-  all-resolved share under it — they come out of the same row of the same view.
+  all-resolved share under it. They come out of the same row of the same view.
 * **Aggregates only.** Every output is a count or a share. The one view that
   emits strings (``closure_off_ladder_templates``) is bounded to remarks used
   1,000+ times, which are dropdown templates rather than citizen writing. This
@@ -44,7 +44,7 @@ FINDING_VIEWS = (
 # free text, but frequency is evidence and not proof: a remark repeated ten
 # thousand times could still carry a name or a number somebody pasted into a
 # form. So it goes to its own directory, never into the shareable set, and it
-# exists for one purpose — telling you the ladder stopped matching.
+# exists for one purpose: telling you the ladder stopped matching.
 DIAGNOSTIC_VIEWS = ("closure_off_ladder_templates",)
 
 REPORT_VIEWS = FINDING_VIEWS + DIAGNOSTIC_VIEWS
@@ -150,8 +150,8 @@ def render_markdown(tables: dict[str, pl.DataFrame]) -> str:
         "",
         (
             "This subset is the useful half: it names a specific set of cases "
-            "rather than the system as a whole. Two days is fast, not wrong — "
-            "an information request answered on the spot belongs here too."
+            "rather than the system as a whole. Two days is fast, not wrong. "
+            "An information request answered on the spot belongs here too."
         ),
         "",
         "### Conditioned on trajectory",
@@ -262,7 +262,7 @@ def check_ladder_coverage(tables: dict[str, pl.DataFrame]) -> Optional[str]:
         return None
     return (
         f"The disposal ladder matched only {_pct(coverage)} of resolved "
-        "complaints. Expected roughly two thirds — the template strings have "
+        "complaints. Expected roughly two thirds. The template strings have "
         "probably drifted. Check closure_off_ladder_templates.csv before "
         "quoting anything."
     )

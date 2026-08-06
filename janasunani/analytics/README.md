@@ -1,4 +1,4 @@
-# janasunani.analytics — marts and findings over the lake
+# janasunani.analytics: marts and findings over the lake
 
 The analytical layer. It reads the Parquet lake (`janasunani.olap.lake`), never
 OLTP, and it produces two different kinds of thing.
@@ -6,8 +6,8 @@ OLTP, and it produces two different kinds of thing.
 ## Marts (`sql/`)
 
 Governed derived tables, written as portable SQL views over the lake's base
-tables. **The SQL is the deliverable**, not an implementation detail — several
-of these are handed to the department to run for themselves — so
+tables. **The SQL is the deliverable**, not an implementation detail. Several
+of these are handed to the department to run for themselves, so
 `marts.py` only locates and installs it. Nothing rewrites it and no mart's logic
 is duplicated in Python.
 
@@ -36,7 +36,7 @@ Two house rules, enforced by tests rather than by convention:
   existing dashboard could produce. Presenting the first as the second is the
   failure mode (ROADMAP §5.3).
 
-### `closure` — how cases are closed (#76)
+### `closure`: how cases are closed (#76)
 
 ```bash
 uv run janasunani-closure-finding                 # over data/interim -> outputs/findings
@@ -51,7 +51,7 @@ right beside it in the dropdown.
 **Reading the output.** The share moves by half depending on the denominator, so
 `closure_finding_summary` reports both and neither is optional:
 
-- share of **templated closures** — complaints closed on one of the six
+- share of **templated closures**: complaints closed on one of the six
 - share of **all resolved complaints**, including the third closing on neither
 
 Quote the templated-closure base in the same breath as the headline. The
@@ -71,7 +71,7 @@ says. `closure_by_trajectory` crosses action-step count with elapsed days;
 rather than the system as a whole.
 
 **Template drift is the failure mode.** An unmatched ladder string does not
-error — it moves complaints into `off_ladder` and quietly shrinks the
+error. It moves complaints into `off_ladder` and quietly shrinks the
 denominator. Below 50% coverage (expect roughly two thirds) the CLI **writes
 nothing and exits 1**, rather than warning beside the artifacts: a batch caller
 keeping stdout and dropping stderr would otherwise publish exactly the number
@@ -81,7 +81,7 @@ written, because it is what tells you why.
 **`diagnostics/` is engineer-facing and not part of the handover.**
 `closure_off_ladder_templates` is the only output carrying remark text. A
 1,000-use floor is dropdown scale rather than free text, but frequency is
-evidence and not proof — a remark repeated ten thousand times could still carry
+evidence and not proof. A remark repeated ten thousand times could still carry
 something somebody pasted into a form. It goes to its own directory so the
 directory the finding is shared out of stays aggregates-only.
 

@@ -1,9 +1,9 @@
 """Marts: the governed derived tables under ``analytics/sql/``.
 
 A mart is one ``.sql`` file of ``CREATE OR REPLACE VIEW`` statements over the
-lake's base tables. The SQL is the deliverable, not an implementation detail —
-several of these are handed to the department to run against their own
-PostgreSQL — so this module only locates and installs it. It never rewrites it,
+lake's base tables. The SQL is the deliverable, not an implementation detail.
+Several of these are handed to the department to run against their own
+PostgreSQL, so this module only locates and installs it. It never rewrites it,
 and no mart's logic is duplicated in Python.
 
 Portability is on the SQL author: keep to constructs DuckDB and PostgreSQL both
@@ -30,7 +30,7 @@ def mart_path(name: str) -> Path:
 
 
 def mart_sql(name: str) -> str:
-    """A mart's view definitions, verbatim — this is what gets handed over."""
+    """A mart's view definitions, verbatim. This is what gets handed over."""
     return mart_path(name).read_text()
 
 
