@@ -17,7 +17,7 @@ from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import create_engine, insert, select
+from sqlalchemy import create_engine, insert, select, text
 
 from janasunani.db.models import (
     Base,
@@ -657,3 +657,76 @@ class TestSchemaGuards:
         )
         script_dir = ScriptDirectory(str(script_location))
         assert len(script_dir.get_heads()) == 1
+
+
+class TestRefreshStaleSignatures:
+    """#136. Without this the index_version stamp is write-only. It matters most
+    after a salt rotation: you rotate *because* the old salt is suspect, and a
+    rotation that leaves every stored identity hash in place has not rotated
+    anything for the rows that matter."""
+
+    def _restamp(self, sync_url: str, version: str) -> None:
+        engine = create_engine(sync_url)
+        with engine.begin() as conn:
+            conn.execute(
+                text("UPDATE dedup_signatures SET index_version = :v"), {"v": version}
+            )
+        engine.dispose()
+
+    def test_the_stamp_records_which_salt_was_used(self, dup_oltp):
+        """Not the salt itself: a column holding the secret beside the hashes it
+        protects defeats the point."""
+        from janasunani.pipeline.dedup_index import _index_version
+
+        one = _index_version(30, 0.5, "salt-one")
+        two = _index_version(30, 0.5, "salt-two")
+        assert one != two
+        assert "salt-one" not in one and "salt-two" not in two
+
+    def test_same_salt_gives_the_same_stamp(self):
+        from janasunani.pipeline.dedup_index import _index_version
+
+        assert _index_version(30, 0.5, "s") == _index_version(30, 0.5, "s")
+
+    def test_stale_signatures_are_counted_but_not_rebuilt_by_default(self, dup_oltp):
+        async_url, sync_url = dup_oltp
+        build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt="s")
+        self._restamp(sync_url, "an-older-parameter-set")
+
+        counts = build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt="s")
+        assert counts["stale_at_start"] > 0
+        assert counts["processed"] == 0
+
+    def test_refresh_stale_rebuilds_them(self, dup_oltp):
+        async_url, sync_url = dup_oltp
+        first = build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt="s")
+        self._restamp(sync_url, "an-older-parameter-set")
+
+        counts = build_dedup_index(
+            "Sambalpur", 2024, oltp_url=async_url, salt="s", refresh_stale=True
+        )
+        assert counts["processed"] == first["processed"]
+
+        engine = create_engine(sync_url)
+        with engine.begin() as conn:
+            versions = (
+                conn.execute(select(DedupSignature.index_version).distinct())
+                .scalars()
+                .all()
+            )
+        engine.dispose()
+        assert versions == [_index_version_for_test()]
+
+    def test_a_salt_rotation_makes_every_row_stale(self, dup_oltp):
+        """The case the issue is about: rotate the salt, and every stored
+        identity hash is from the compromised one."""
+        async_url, _ = dup_oltp
+        build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt="old-salt")
+        counts = build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt="new-salt")
+        assert counts["stale_at_start"] == counts["already_indexed"]
+
+
+def _index_version_for_test() -> str:
+    from janasunani.pipeline.dedup_index import _index_version
+
+    return _index_version(30, 0.5, "s")

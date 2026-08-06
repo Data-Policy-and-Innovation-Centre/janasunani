@@ -116,6 +116,7 @@ import asyncio
 import math
 from collections import Counter, defaultdict
 from datetime import date, datetime, timezone
+import hashlib
 from itertools import combinations
 from typing import Optional
 
@@ -200,16 +201,35 @@ def _block_key(district: str, script: str, window_index: Optional[int]) -> str:
     return f"{district}:{script}:{window_label}"
 
 
-def _index_version(window_days: int, threshold: float) -> str:
-    """Stamp identifying the algorithm parameters a signature/group row was
-    produced under — same purpose as `redact_grievance._analyzer_version`,
-    scaled down: `dedup.py` is stdlib-only with no third-party package
-    versions to track, but its own constants and this runner's blocking/
-    verification parameters can still change what the index contains."""
+def _salt_marker(salt: str) -> str:
+    """A one-way marker identifying *which* salt produced a row (#136).
+
+    The salt itself must never reach a database column -- it is the secret
+    that stops stored identity hashes being reversed, and a column holding it
+    beside the hashes it protects defeats the point. A truncated digest says
+    "these rows came from a different salt than the current one" without
+    saying anything about either.
+    """
+    return hashlib.blake2b(salt.encode("utf-8"), digest_size=6).hexdigest()
+
+
+def _index_version(window_days: int, threshold: float, salt: str) -> str:
+    """Stamp identifying the parameters a signature/group row was produced
+    under — same purpose as `redact_grievance._analyzer_version`, scaled down:
+    `dedup.py` is stdlib-only with no third-party package versions to track,
+    but its own constants and this runner's blocking/verification parameters
+    can still change what the index contains.
+
+    The salt marker is included because rotating the salt changes every
+    identity hash. Without it a rotation is undetectable: the compromised
+    hashes stay stored, and new complaints hash under the new salt while old
+    ones keep the old, so same-citizen linkage silently stops working across
+    the boundary with no error and no visible symptom (#136).
+    """
     return (
         f"shingle_size={DEFAULT_SHINGLE_SIZE} num_hashes={DEFAULT_NUM_HASHES} "
         f"num_bands={DEFAULT_NUM_BANDS} window_days={window_days} "
-        f"threshold={threshold}"
+        f"threshold={threshold} salt={_salt_marker(salt)}"
     )
 
 
@@ -239,8 +259,32 @@ async def _count_signature_slice(conn, district: str, year: int) -> tuple[int, i
     return int(total or 0), int(done or 0)
 
 
-async def _load_pending_signature_batch(conn, district: str, year: int, limit: int):
-    """Redacted complaints in the slice with no `dedup_signatures` row yet.
+async def _count_stale_signatures(conn, district: str, year: int, version: str) -> int:
+    """Signatures produced under different parameters than the current ones.
+
+    Reported by every run whether or not it acts on them, so a salt rotation
+    or a window change is visible rather than something you have to think to
+    check (#136).
+    """
+    return int(
+        await conn.scalar(
+            select(func.count())
+            .select_from(DedupSignature)
+            .join(Complaint, Complaint.ticket_no == DedupSignature.ticket_no)
+            .where(
+                Complaint.district == district,
+                Complaint.created_year == year,
+                DedupSignature.index_version != version,
+            )
+        )
+        or 0
+    )
+
+
+async def _load_pending_signature_batch(
+    conn, district: str, year: int, limit: int, version: str | None = None
+):
+    """Redacted complaints in the slice with no current `dedup_signatures` row.
 
     Selects `GrievanceRedaction.grievance_redacted` — never
     `Complaint.grievance` — joined to `complaints` only for the structured
@@ -252,6 +296,12 @@ async def _load_pending_signature_batch(conn, district: str, year: int, limit: i
     done = select(DedupSignature.ticket_no).where(
         DedupSignature.ticket_no == GrievanceRedaction.ticket_no
     )
+    if version is not None:
+        # A row stamped with different parameters counts as pending (#136).
+        # Without this the stamp is write-only: rotating the salt leaves every
+        # compromised identity hash in place, and identity linkage silently
+        # breaks across the rotation boundary.
+        done = done.where(DedupSignature.index_version == version)
     stmt = (
         select(
             GrievanceRedaction.ticket_no,
@@ -283,13 +333,15 @@ async def _index_signatures(
     window_days: int,
     threshold: float,
     limit: Optional[int] = None,
+    refresh_stale: bool = False,
 ) -> dict[str, int]:
-    version = _index_version(window_days, threshold)
+    version = _index_version(window_days, threshold, salt)
     epoch = date(year, 1, 1)
     processed = 0
 
     async with engine.begin() as conn:
         total, already = await _count_signature_slice(conn, district, year)
+        stale = await _count_stale_signatures(conn, district, year, version)
     logger.info(
         "slice {}/{}: {} redacted complaints, {} already indexed",
         district,
@@ -297,6 +349,17 @@ async def _index_signatures(
         total,
         already,
     )
+    if stale:
+        logger.warning(
+            "{} signature(s) were built under different parameters than this "
+            "run. {}",
+            stale,
+            "Reprocessing them (--refresh-stale)."
+            if refresh_stale
+            else "Leaving them; pass --refresh-stale to rebuild. After a salt "
+            "rotation this is not optional -- the old identity hashes stay "
+            "stored and linkage breaks across the boundary (#136).",
+        )
 
     while True:
         remaining = None if limit is None else limit - processed
@@ -305,7 +368,9 @@ async def _index_signatures(
         size = BATCH_SIZE if remaining is None else min(BATCH_SIZE, remaining)
 
         async with engine.begin() as conn:
-            batch = await _load_pending_signature_batch(conn, district, year, size)
+            batch = await _load_pending_signature_batch(
+                conn, district, year, size, version=version if refresh_stale else None
+            )
             if not batch:
                 break
 
@@ -349,7 +414,12 @@ async def _index_signatures(
             "indexed {} of {} ({} this batch)", processed + already, total, len(batch)
         )
 
-    return {"total": total, "already_indexed": already, "processed": processed}
+    return {
+        "total": total,
+        "already_indexed": already,
+        "processed": processed,
+        "stale_at_start": stale,
+    }
 
 
 # --- stage 2: grouping ------------------------------------------------------
@@ -457,6 +527,7 @@ async def _group_duplicates(
     year: int,
     window_days: int,
     threshold: float,
+    salt: str,
 ) -> dict[str, int]:
     async with engine.begin() as conn:
         rows = await _load_slice_signatures(conn, district, year)
@@ -490,7 +561,7 @@ async def _group_duplicates(
     groups = union_find_groups(verified_pairs, items=all_tickets)
     group_sizes = Counter(groups.values())
 
-    version = _index_version(window_days, threshold)
+    version = _index_version(window_days, threshold, salt)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     block_key_by_ticket = {row.ticket_no: row.block_key for row in rows}
     group_rows = [
@@ -532,6 +603,7 @@ def build_dedup_index(
     window_days: int = DEFAULT_WINDOW_DAYS,
     threshold: float = DEFAULT_DUPLICATE_THRESHOLD,
     limit: Optional[int] = None,
+    refresh_stale: bool = False,
 ) -> dict[str, int]:
     """Index one district-year slice and (re)compute its duplicate groups.
 
@@ -569,10 +641,17 @@ def build_dedup_index(
     async def run() -> dict[str, int]:
         try:
             signature_counts = await _index_signatures(
-                engine, district, year, effective_salt, window_days, threshold, limit=limit
+                engine,
+                district,
+                year,
+                effective_salt,
+                window_days,
+                threshold,
+                limit=limit,
+                refresh_stale=refresh_stale,
             )
             group_counts = await _group_duplicates(
-                engine, district, year, window_days, threshold
+                engine, district, year, window_days, threshold, effective_salt
             )
             return {**signature_counts, **group_counts}
         finally:
@@ -620,6 +699,17 @@ def main() -> None:
         help="Stop signature indexing after this many complaints. For a smoke "
         "test before the full run.",
     )
+    parser.add_argument(
+        "--refresh-stale",
+        action="store_true",
+        help=(
+            "Also rebuild signatures produced under different parameters "
+            "(salt, window, threshold, or dedup.py's own constants). Off by "
+            "default: a backfill over derived citizen data should not change "
+            "scope because an unrelated value moved. Required after a salt "
+            "rotation, or the old identity hashes stay stored."
+        ),
+    )
     args = parser.parse_args()
 
     counts = build_dedup_index(
@@ -630,6 +720,7 @@ def main() -> None:
         window_days=args.window_days,
         threshold=args.threshold,
         limit=args.limit,
+        refresh_stale=args.refresh_stale,
     )
     logger.info(
         "done: {} processed this run, {} of {} indexed, {} duplicate groups "
