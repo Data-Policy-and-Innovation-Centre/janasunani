@@ -213,6 +213,10 @@ data/output/*
 !data/interim/*.dvc
 !data/processed/*.dvc
 !data/external/*.dvc
+# Provenance sidecars for gold/draft artifacts: versions, checksums and span
+# counts only, written by scripts/rederive_pii_draft.py. They exist to be read
+# in review, so they belong in git. Never put citizen text in one.
+!data/external/*.provenance.json
 !data/oltp/.gitkeep
 outputs/*
 !outputs/figures/

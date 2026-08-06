@@ -25,11 +25,13 @@ Run (pipeline-core env: tesseract binary + presidio + spaCy model needed):
         [--out data/output/pii_gold_draft.jsonl] [--max-pages-per-doc N]
 
 Gold files hold real citizen text and must NEVER be committed to git. The
-draft lives under data/output/ (gitignored, regenerable). The CORRECTED gold
-is irreplaceable human work: promote it to data/external/pii_gold.jsonl and
-DVC-track it — only the .dvc pointer enters git; the bytes go to the private
-S3 remote (same posture as the raw dump). See scripts/README.md,
-"Gold-file lifecycle".
+draft lives under data/output/ (gitignored). It is NOT safely regenerable:
+re-running this script re-runs OCR, which is not byte-reproducible (#57), and
+the draft is the only record of which pages were drafted. DVC-track it before
+the label pass. The CORRECTED gold is irreplaceable human work: promote it to
+data/external/pii_gold.jsonl and DVC-track it — only the .dvc pointer enters
+git; the bytes go to the private S3 remote (same posture as the raw dump).
+See scripts/README.md, "Gold-file lifecycle".
 """
 
 from __future__ import annotations
