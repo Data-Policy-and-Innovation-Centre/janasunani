@@ -3,10 +3,10 @@
 Deterministic, CPU-only, no model — the algorithmic core of "component (b)"
 in docs/ROADMAP.md §5.2. Lives at the light `janasunani.pipeline` level
 (like `ocr_quality.py` and `ticket.py`), not inside `stages/`, because it is
-deliberately **stdlib-only**: `hashlib`, `re`, `random`, `collections.abc`.
-No numpy, no presidio, no torch, no datasketch. That keeps this module (and
-`tests/test_dedup.py`) importable and runnable in CI, which installs no
-heavy extras — every other pipeline test guards with
+deliberately **stdlib-only**: `hashlib`, `re`, `random`, `unicodedata`,
+`collections.abc`. No numpy, no presidio, no torch, no datasketch. That
+keeps this module (and `tests/test_dedup.py`) importable and runnable in
+CI, which installs no heavy extras — every other pipeline test guards with
 `pytest.importorskip` and skips there. This is the one pipeline module that
 doesn't, and is therefore the only real CI coverage over the whole
 intelligence layer that Phase 15 converges on. Keep it that way: do not add
@@ -14,11 +14,11 @@ a dependency here to make an implementation nicer.
 
 Wiring this in as the 7th pipeline stage (`spam_duplicate`, after
 `pii_tagger`) is deliberately out of scope for this module — see the
-tracking issue. This file only provides the primitives:
-`shingles`, `minhash_signature`, `lsh_bands`, `union_find_groups`,
-`strip_placeholders`, `identity_key`.
+tracking issue. This file provides the primitives:
+`shingles`, `minhash_signature`, `lsh_bands`, `jaccard_similarity`,
+`union_find_groups`, `strip_placeholders`, `identity_key`.
 
-Four things that shape every function below:
+Six things that shape every function below:
 
 1. **Character n-grams, not word tokens.** Word tokenization does not work
    across Odia, romanized Odia and English in one index; character grams
@@ -50,6 +50,33 @@ Four things that shape every function below:
    script (or language field) before building an index and never run one
    index across both. `test_dedup.py` pins this as a limitation, not a
    feature to "fix" by loosening the shingle function.
+5. **Refuse rather than hash a value with nothing meaningful in it.**
+   Several review rounds found the same shape of bug under different
+   clothes: an input that looks valid enough to hash but silently collapses
+   distinct records onto one identity or one group. `minhash_signature`
+   returns ``None`` (not a shared sentinel) for an empty shingle set;
+   `identity_key` returns ``None`` (not a hash of the empty string) for a
+   blank/whitespace-only value — `petitioner_mobile`/`petitioner_email` are
+   nullable and blank strings are not normalized to ``None`` at ingestion,
+   so hashing `""` would otherwise merge every citizen with a missing
+   contact field into one "identity"; `minhash_signature` also rejects
+   ``num_hashes <= 0`` outright rather than silently returning an empty
+   signature that would band-collapse an entire indexed slice into one
+   group. One rule, three call sites: **if there is nothing real to
+   compare, refuse rather than produce a comparable-looking output.**
+6. **An LSH candidate is not a duplicate until verified.** `lsh_bands`
+   reports a shared band as a candidate worth checking, not a confirmed
+   match — a chance collision between two unrelated documents is expected
+   at some rate by construction. `union_find_groups` performs blind
+   transitive closure over whatever pairs it is given and does not verify
+   anything itself, so passing raw LSH candidate pairs straight into it
+   turns every chance collision into a confirmed duplicate group, and
+   transitive merging can pull further, unrelated documents into that
+   false group. `jaccard_similarity` is the verification step: compute it
+   on the real shingle sets for every candidate pair and only pass pairs
+   above a chosen threshold into `union_find_groups`. See the end-to-end
+   test in `test_dedup.py` for the full candidate -> verify -> union
+   pattern.
 """
 
 from __future__ import annotations
@@ -57,6 +84,7 @@ from __future__ import annotations
 import hashlib
 import random
 import re
+import unicodedata
 from collections.abc import Iterable
 
 # Typed PII placeholder tokens look like "[PHONE]", "[NAME]", "[AADHAAR]"
@@ -128,10 +156,27 @@ def strip_placeholders(text: str) -> str:
 def shingles(text: str, k: int = DEFAULT_SHINGLE_SIZE) -> set[str]:
     """Character k-gram shingles of ``text``.
 
-    Strips typed PII placeholders first (module docstring point 2) and
-    lowercases before n-gramming — ``.lower()`` only folds cased
-    (Latin-script) characters, so this is a no-op on Odia script and simply
-    normalizes case variation in English/romanized-Odia text.
+    Strips typed PII placeholders first (module docstring point 2), then
+    Unicode-normalizes to NFC and lowercases before n-gramming.
+
+    NFC (canonical composition) matters specifically for Odia script:
+    Unicode allows the same visible character to be encoded two ways —
+    e.g. the vowel sign U+0B4B, or the canonically equivalent sequence
+    U+0B47 U+0B3E — and which one a given OCR pass or storage layer emits
+    is not something this module controls or can assume is consistent
+    across the corpus. Without normalizing, the composed and decomposed
+    encodings of the *same filing* produce disjoint shingle sets (different
+    codepoint sequences, different sliding windows) and never share an LSH
+    band, so byte-identical-looking text fails to dedup against itself.
+    NFC (over NFD, or the compatibility forms NFKC/NFKD) is the deliberate
+    choice: NFC resolves exactly this canonical-equivalence case — the
+    concern here — without NFKC/NFKD's further compatibility folding (e.g.
+    full-width digits onto ASCII, ligatures onto letter sequences), which
+    would fold text that is not actually the same character sequence and
+    is out of scope for this fix. `.lower()` runs after normalization —
+    it only folds cased (Latin-script) characters, so it is a no-op on
+    Odia script and simply normalizes case variation in
+    English/romanized-Odia text.
 
     Character n-grams, not word tokens (module docstring point 1): this
     also means shingles never bridge scripts on their own (module docstring
@@ -142,7 +187,7 @@ def shingles(text: str, k: int = DEFAULT_SHINGLE_SIZE) -> set[str]:
     Returns an empty set for text that reduces to fewer than ``k``
     characters after stripping (e.g. an all-placeholder page).
     """
-    normalized = strip_placeholders(text).lower()
+    normalized = unicodedata.normalize("NFC", strip_placeholders(text)).lower()
     if len(normalized) < k:
         return set()
     return {normalized[i : i + k] for i in range(len(normalized) - k + 1)}
@@ -199,7 +244,20 @@ def minhash_signature(
     :func:`lsh_bands` (which raises on ``None``) or treat it as a duplicate
     match; documents with no signature are low-signal/spam-review
     candidates for a different stage, not duplicate evidence.
+
+    Raises ``ValueError`` for ``num_hashes <= 0``. Without this check a
+    nonpositive value silently produced an *empty* tuple instead of either
+    a real signature or the ``None`` abstention above — a signature that
+    :func:`lsh_bands` would then accept (an empty tuple trivially satisfies
+    ``0 % num_bands == 0``), hash zero-length slices for every band, and
+    so give every document in the slice the same band values, collapsing
+    the whole indexed slice into one duplicate group. That is a
+    misconfiguration, not a legitimate abstention, so it fails loudly here
+    instead of surfacing three functions downstream as a silent mass
+    false-duplicate.
     """
+    if num_hashes <= 0:
+        raise ValueError(f"num_hashes must be positive, got {num_hashes}")
     base_hashes = [_base_hash(s) for s in shingle_set]
     if not base_hashes:
         return None
@@ -255,18 +313,62 @@ def lsh_bands(
     return tuple(bands)
 
 
+def jaccard_similarity(shingles_a: Iterable[str], shingles_b: Iterable[str]) -> float:
+    """Exact Jaccard similarity ``|A ∩ B| / |A ∪ B|`` of two shingle sets.
+
+    This is the verification step LSH candidate generation calls for but
+    does not perform itself (module docstring point 6): :func:`lsh_bands`
+    reports a shared band as a *candidate*, and :func:`union_find_groups`
+    unions whatever pairs it is handed with no verification of its own —
+    call this on the real shingle sets (not the MinHash signatures, which
+    only *estimate* Jaccard) for every candidate pair, and only pass pairs
+    at or above your chosen duplicate threshold into
+    :func:`union_find_groups`. See the end-to-end test in
+    ``tests/test_dedup.py`` for the full candidate -> verify -> union
+    pattern.
+
+    Returns ``0.0`` for two empty shingle sets rather than the
+    mathematically undefined ``0/0``: nothing to compare is not evidence of
+    similarity, the same "refuse rather than claim a match" stance
+    :func:`minhash_signature` and :func:`identity_key` take for a single
+    empty/blank input (module docstring point 5) — this just extends it to
+    the pairwise case in case a caller passes two abstained-from inputs
+    through instead of already having skipped them.
+    """
+    set_a, set_b = set(shingles_a), set(shingles_b)
+    if not set_a and not set_b:
+        return 0.0
+    return len(set_a & set_b) / len(set_a | set_b)
+
+
 def union_find_groups(
     pairs: Iterable[tuple[str, str]],
     items: Iterable[str] | None = None,
 ) -> dict[str, str]:
-    """Union-find over candidate pairs (e.g. document ids that shared an LSH
-    band), returning ``{item: group_id}`` for every item seen.
+    """Union-find over **already-verified** candidate pairs (e.g. document
+    ids whose shingle sets passed a :func:`jaccard_similarity` threshold
+    after an LSH candidate search), returning ``{item: group_id}`` for
+    every item seen.
+
+    This function performs blind transitive closure: it does not compute
+    or check any similarity itself, and trusts every pair it is given.
+    Passing raw LSH candidate pairs (a shared band, not a verified match —
+    see :func:`lsh_bands`) straight into this function turns every chance
+    band collision into a confirmed duplicate group, and transitive merging
+    then pulls further, unrelated documents into that false group. Verify
+    with :func:`jaccard_similarity` first — this is module docstring
+    point 6, and it is a real hazard, not a hypothetical one: an earlier
+    version of ``tests/test_dedup.py`` fed shared-band buckets straight
+    into this function without that check.
 
     Merges are **transitive**: if pairs contain ``("a", "b")`` and
     ``("b", "c")``, ``a``, ``b`` and ``c`` all land in one group even though
     ``a`` and ``c`` never appeared together in a pair — exactly the case LSH
     banding produces, since it only reports pairwise band collisions, not a
-    full pairwise comparison.
+    full pairwise comparison. This is precisely why unverified input is
+    dangerous here: one false-positive candidate pair does not just merge
+    two documents, it can chain-merge everything transitively reachable
+    through it.
 
     ``group_id`` is the lexicographically smallest item string in the
     group, so it is stable and does not depend on the order pairs arrive
@@ -366,7 +468,7 @@ def _canonical_phone_digits(value: str) -> str | None:
     return digits if len(digits) == 10 else None
 
 
-def identity_key(value: str, salt: str) -> str:
+def identity_key(value: str, salt: str) -> str | None:
     """Salted hash of a citizen identity value (mobile number, email) for
     resubmission linkage ("same citizen, same issue" — ROADMAP §5.2,
     duplicate relation 1).
@@ -399,9 +501,22 @@ def identity_key(value: str, salt: str) -> str:
     falls to the plain-text path below instead. Anything else (email
     addresses) is only stripped and lowercased, so "Citizen@Example.com"
     and " citizen@example.com " match but distinct addresses stay distinct.
+
+    Returns ``None`` — an abstention, the same contract
+    :func:`minhash_signature` uses for "nothing meaningful here" (module
+    docstring point 5) — if ``value`` is blank or whitespace-only after
+    normalization. `petitioner_mobile` / `petitioner_email` are nullable
+    columns and blank strings are not normalized to ``None`` at ingestion,
+    so hashing `""` would otherwise give every citizen with a missing
+    contact field the *same* valid-looking salted hash, merging unrelated
+    citizens into one "identity" purely because both left the field blank.
+    Callers must check for ``None`` and skip resubmission linkage for that
+    record rather than treat a blank contact field as an identity.
     """
     canonical_phone = _canonical_phone_digits(value)
     normalized = canonical_phone if canonical_phone is not None else value.strip().lower()
+    if not normalized:
+        return None
     digest = hashlib.blake2b(
         f"{salt}\x00{normalized}".encode("utf-8"), digest_size=32
     )

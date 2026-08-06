@@ -1,10 +1,10 @@
 """MinHash/LSH duplicate index (janasunani.pipeline.dedup).
 
-`dedup.py` is deliberately stdlib-only (hashlib, re, random) so it — and
-this test file — run in CI with no pipeline extras installed. Unlike every
-other pipeline test, this file does NOT `pytest.importorskip`: it is the one
-real code-path CI coverage the whole intelligence layer (Phase 15) has, per
-docs/ROADMAP.md §5.2/§5.6. Do not add a guard here.
+`dedup.py` is deliberately stdlib-only (hashlib, re, random, unicodedata) so
+it — and this test file — run in CI with no pipeline extras installed.
+Unlike every other pipeline test, this file does NOT `pytest.importorskip`:
+it is the one real code-path CI coverage the whole intelligence layer
+(Phase 15) has, per docs/ROADMAP.md §5.2/§5.6. Do not add a guard here.
 
 Synthetic strings only — no real grievance text, no `data/` access.
 """
@@ -14,6 +14,7 @@ import pytest
 from janasunani.pipeline.dedup import (
     DEFAULT_NUM_HASHES,
     identity_key,
+    jaccard_similarity,
     lsh_bands,
     minhash_signature,
     shingles,
@@ -72,6 +73,27 @@ MOBILE_ODIA_DIGITS = MOBILE_ASCII.translate(_ASCII_TO_ODIA_DIGITS)
 MOBILE_DEVANAGARI_DIGITS = MOBILE_ASCII.translate(_ASCII_TO_DEVANAGARI_DIGITS)
 MOBILE_BENGALI_DIGITS = MOBILE_ASCII.translate(_ASCII_TO_BENGALI_DIGITS)
 
+# Same Odia word, two canonically equivalent Unicode encodings: KA (U+0B15)
+# followed by either the composed vowel sign O (U+0B4B), or the canonically
+# equivalent decomposed sequence vowel sign E (U+0B47) + AA length mark
+# (U+0B3E) — the exact pair Codex's review cited. Built from codepoints via
+# chr(), not pasted glyphs, so the two forms are unambiguous on review and
+# cannot be silently re-normalized by an editor/git. Real OCR/storage
+# layers are not guaranteed to agree on which form they emit for the same
+# filing.
+_ODIA_KA = chr(0x0B15)
+_ODIA_O_COMPOSED = chr(0x0B4B)
+_ODIA_E_SIGN = chr(0x0B47)
+_ODIA_AA_LENGTH_MARK = chr(0x0B3E)
+ODIA_WORD_NFC = "respected sir " + _ODIA_KA + _ODIA_O_COMPOSED + " village pump broken"
+ODIA_WORD_NFD = (
+    "respected sir "
+    + _ODIA_KA
+    + _ODIA_E_SIGN
+    + _ODIA_AA_LENGTH_MARK
+    + " village pump broken"
+)
+
 
 # --- strip_placeholders ---------------------------------------------------
 
@@ -125,6 +147,17 @@ def test_shingles_short_text_returns_empty_set():
 
 def test_shingles_case_insensitive_for_latin_script():
     assert shingles("Hello World", k=5) == shingles("hello world", k=5)
+
+
+def test_shingles_normalizes_canonically_equivalent_unicode_forms():
+    # ODIA_WORD_NFC and ODIA_WORD_NFD are the *same visible filing text* in
+    # two different, canonically equivalent Unicode encodings (composed
+    # U+0B4B vs. decomposed U+0B47 U+0B3E). Without NFC normalization these
+    # produce disjoint codepoint sequences and disjoint shingle sets, so a
+    # filing would fail to dedup against a byte-different encoding of
+    # itself depending on what the OCR/storage layer happened to emit.
+    assert ODIA_WORD_NFC != ODIA_WORD_NFD  # confirm the fixtures really differ
+    assert shingles(ODIA_WORD_NFC) == shingles(ODIA_WORD_NFD)
 
 
 # --- minhash_signature -------------------------------------------------
@@ -184,6 +217,22 @@ def test_minhash_signature_approximates_jaccard_similarity():
     assert abs(agreement - true_jaccard) < 0.1
 
 
+def test_minhash_signature_rejects_nonpositive_num_hashes():
+    # num_hashes <= 0 used to silently return an empty tuple (neither a
+    # real signature nor the None abstention) — lsh_bands() then accepted
+    # it (0 % num_bands == 0), hashed empty slices, and gave every document
+    # in a slice the same band values, collapsing the whole slice into one
+    # duplicate group. This is a misconfiguration and must fail loudly.
+    with pytest.raises(ValueError):
+        minhash_signature(shingles(CAMPAIGN_A), num_hashes=0)
+    with pytest.raises(ValueError):
+        minhash_signature(shingles(CAMPAIGN_A), num_hashes=-1)
+    # The same check applies even for an already-empty shingle set — an
+    # invalid num_hashes is an error regardless of what else is wrong.
+    with pytest.raises(ValueError):
+        minhash_signature(set(), num_hashes=0)
+
+
 def test_minhash_signature_dissimilar_texts_have_low_agreement():
     sig_a = minhash_signature(shingles(CAMPAIGN_A), num_hashes=256)
     sig_b = minhash_signature(shingles(UNRELATED_COMPLAINT), num_hashes=256)
@@ -241,6 +290,33 @@ def test_lsh_bands_rejects_abstained_none_signature():
         lsh_bands(None)
 
 
+# --- jaccard_similarity ---------------------------------------------------
+
+
+def test_jaccard_similarity_identical_sets_is_one():
+    s = shingles(CAMPAIGN_A)
+    assert jaccard_similarity(s, s) == 1.0
+
+
+def test_jaccard_similarity_disjoint_sets_is_zero():
+    assert jaccard_similarity({"aaaaa"}, {"bbbbb"}) == 0.0
+
+
+def test_jaccard_similarity_matches_manual_computation():
+    a = shingles(CAMPAIGN_A)
+    b = shingles(CAMPAIGN_C_REWORDED)
+    expected = len(a & b) / len(a | b)
+    assert jaccard_similarity(a, b) == expected
+
+
+def test_jaccard_similarity_both_empty_is_zero_not_undefined():
+    # 0/0 is mathematically undefined; refuse to claim similarity for two
+    # abstained-from ("nothing here") inputs rather than raising or
+    # guessing — the same "refuse rather than hash/claim a match" stance
+    # the module takes for a single empty/blank input.
+    assert jaccard_similarity(set(), set()) == 0.0
+
+
 # --- union_find_groups ---------------------------------------------------
 
 
@@ -276,31 +352,61 @@ def test_union_find_groups_group_id_independent_of_pair_order():
 
 
 def test_union_find_groups_end_to_end_campaign_vs_unrelated():
-    # Full pipeline: shingle -> minhash -> band -> bucket by band -> union.
+    # Full pipeline: shingle -> minhash -> band -> bucket by band ->
+    # VERIFY with jaccard_similarity -> union. The verification step is not
+    # optional here: union_find_groups() blindly trusts every pair it is
+    # given (see its docstring), so LSH candidates — a shared band, not a
+    # confirmed match — must be checked against the real shingle sets
+    # before they are allowed to merge documents into a duplicate group.
     docs = {
         "sig_a": CAMPAIGN_A,
         "sig_b": CAMPAIGN_B,
         "sig_c": CAMPAIGN_C_REWORDED,
         "sig_u": UNRELATED_COMPLAINT,
     }
+    doc_shingles = {doc_id: shingles(text) for doc_id, text in docs.items()}
     signatures = {
-        doc_id: minhash_signature(shingles(text), num_hashes=128)
-        for doc_id, text in docs.items()
+        doc_id: minhash_signature(s, num_hashes=128) for doc_id, s in doc_shingles.items()
     }
     buckets: dict[tuple[int, int], list[str]] = {}
     for doc_id, sig in signatures.items():
         for band_index, band_hash in enumerate(lsh_bands(sig, num_bands=16)):
             buckets.setdefault((band_index, band_hash), []).append(doc_id)
 
-    pairs = []
+    duplicate_threshold = 0.5
+    candidate_pairs = set()
     for bucket_docs in buckets.values():
         if len(bucket_docs) > 1:
             first = bucket_docs[0]
-            pairs.extend((first, other) for other in bucket_docs[1:])
+            candidate_pairs.update((first, other) for other in bucket_docs[1:])
 
-    groups = union_find_groups(pairs, items=docs.keys())
+    verified_pairs = [
+        (doc_a, doc_b)
+        for doc_a, doc_b in candidate_pairs
+        if jaccard_similarity(doc_shingles[doc_a], doc_shingles[doc_b])
+        >= duplicate_threshold
+    ]
+
+    groups = union_find_groups(verified_pairs, items=docs.keys())
     assert groups["sig_a"] == groups["sig_b"] == groups["sig_c"]
     assert groups["sig_u"] != groups["sig_a"]
+
+
+def test_union_find_groups_trusts_unverified_pairs_this_is_why_verification_matters():
+    # union_find_groups() does not know or check what a "pair" means — it
+    # performs blind transitive closure. Feed it two clearly unrelated
+    # documents directly (skipping jaccard_similarity() verification on
+    # purpose) and it merges them anyway: this is the exact unsafe pattern
+    # the module docstring (point 6) and union_find_groups()'s own
+    # docstring warn against, pinned here so the warning stays true and
+    # the safe end-to-end test above cannot silently regress to this.
+    unverified_pairs = [("sig_a", "sig_u")]
+    groups = union_find_groups(unverified_pairs)
+    assert groups["sig_a"] == groups["sig_u"]  # merged despite being unrelated
+    true_similarity = jaccard_similarity(
+        shingles(CAMPAIGN_A), shingles(UNRELATED_COMPLAINT)
+    )
+    assert true_similarity < 0.3  # confirms they should NOT have merged
 
 
 # --- identity_key ---------------------------------------------------------
@@ -403,6 +509,33 @@ def test_identity_key_unhandled_digit_script_does_not_link_but_stays_stable():
     assert bengali_key == identity_key(MOBILE_BENGALI_DIGITS, "s")  # stable
     other_number_bengali = "9007654321".translate(_ASCII_TO_BENGALI_DIGITS)
     assert bengali_key != identity_key(other_number_bengali, "s")
+
+
+def test_identity_key_abstains_on_blank_value():
+    # petitioner_mobile / petitioner_email are nullable and blank strings
+    # are not normalized to None at ingestion (janasunani/db/models.py).
+    # Hashing "" would give every citizen with a missing contact field the
+    # same valid-looking salted hash, merging unrelated citizens as one
+    # "identity" purely because both left the field blank. Must abstain
+    # (None) instead — the same contract minhash_signature() uses.
+    assert identity_key("", "salt-1") is None
+    assert identity_key("   ", "salt-1") is None
+    assert identity_key("\t\n", "salt-1") is None
+
+
+def test_identity_key_two_blank_records_do_not_look_like_the_same_citizen():
+    # Both abstain; a caller comparing "identity_key(a) == identity_key(b)"
+    # naively would otherwise treat two citizens who both left the contact
+    # field blank as a resubmission match. Branching on None (per the
+    # docstring contract) avoids ever reaching that comparison.
+    assert identity_key("", "salt-1") is None
+    assert identity_key("", "salt-2") is None  # different salt, still None
+
+
+def test_identity_key_real_value_still_hashes_normally():
+    # Sanity check alongside the abstention: a non-blank value is
+    # unaffected by the blank-value guard.
+    assert identity_key(MOBILE_ASCII, "s") is not None
 
 
 def test_identity_key_never_appears_in_or_derives_shingle_text():
