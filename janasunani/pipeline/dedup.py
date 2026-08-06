@@ -512,7 +512,32 @@ def identity_key(value: str, salt: str) -> str | None:
     citizens into one "identity" purely because both left the field blank.
     Callers must check for ``None`` and skip resubmission linkage for that
     record rather than treat a blank contact field as an identity.
+
+    Raises ``ValueError`` — not the ``None`` abstention above — if
+    ``salt`` is blank or whitespace-only. A blank ``value`` is a property
+    of one citizen's record: skipping that one record and hashing the rest
+    normally is the correct, contained response. A blank ``salt`` is a
+    property of the *deployment*: every key this function has ever
+    produced or will produce in that run is affected identically, so
+    "abstain and keep going" is the wrong response — it would silently
+    keep emitting keys that all fail the same way. A mobile number is one
+    of 10 billion (10^10) enumerable values; hashed without a real salt,
+    the "salted hash" is offline-invertible over that space, which
+    defeats the exact secret/rotation boundary this docstring documents
+    two paragraphs up. That is a citizen-PII exposure, not an
+    input-validation nicety, so it fails loudly and immediately rather
+    than degrading per-record.
     """
+    if not salt.strip():
+        raise ValueError(
+            "identity_key() requires a non-blank salt: a blank/"
+            "whitespace-only salt would still produce stable-looking "
+            "hashes, but over an enumerable ~10^10 mobile-number space "
+            "that is effectively unsalted and offline-invertible, "
+            "defeating the secret/rotation boundary this function exists "
+            "to provide. Fix the deployment config; do not retry with an "
+            "empty string."
+        )
     canonical_phone = _canonical_phone_digits(value)
     normalized = canonical_phone if canonical_phone is not None else value.strip().lower()
     if not normalized:

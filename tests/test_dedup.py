@@ -538,6 +538,35 @@ def test_identity_key_real_value_still_hashes_normally():
     assert identity_key(MOBILE_ASCII, "s") is not None
 
 
+def test_identity_key_rejects_blank_salt():
+    # A blank salt is a deployment misconfiguration, not a per-record
+    # abstention case: every key that run produces is affected identically,
+    # and a "salted" hash over the ~10^10 enumerable mobile-number space
+    # without a real salt is effectively unsalted and offline-invertible.
+    # This must raise, not silently return None like the blank-value case —
+    # abstaining would mean quietly continuing to emit compromised keys for
+    # every subsequent record instead of stopping the misconfigured run.
+    with pytest.raises(ValueError):
+        identity_key(MOBILE_ASCII, "")
+    with pytest.raises(ValueError):
+        identity_key(MOBILE_ASCII, "   ")
+    with pytest.raises(ValueError):
+        identity_key(MOBILE_ASCII, "\t\n")
+
+
+def test_identity_key_blank_salt_rejected_even_for_a_blank_value():
+    # The salt check must not be shadowed by the value-abstention path —
+    # a blank salt is invalid regardless of what value it would have been
+    # applied to.
+    with pytest.raises(ValueError):
+        identity_key("", "")
+
+
+def test_identity_key_real_salt_still_hashes_normally():
+    # Sanity check alongside the guard: a non-blank salt is unaffected.
+    assert identity_key(MOBILE_ASCII, "a-real-salt") is not None
+
+
 def test_identity_key_never_appears_in_or_derives_shingle_text():
     # Guards the separation this module's docstring insists on: an identity
     # key is not text and must never be fed into the shingling path.
