@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -170,6 +171,58 @@ def test_db_guard_skips_provisioning_for_a_command_line_dsn_with_special_charact
     assert result.returncode == 0, result.stderr
     assert "skipping provisioning" in result.stdout
     assert "Creating throwaway Postgres" not in result.stdout
+
+
+def test_dotenv_extraction_finds_uv_installed_only_under_user_bin(isolated_dir):
+    """#103: the parse-time `uv run python ...` call used to look `uv` up on
+    whatever PATH the invoking shell already had -- before the later
+    `export PATH := $(USER_BIN):$(PATH)` line, which only reaches recipe
+    subprocesses, not this earlier $(shell ...) call. Reproduces the
+    documented install shape (uv under ~/.local/bin) by removing exactly
+    that directory from PATH (keeping the rest of the real environment
+    intact, unlike the fully-stripped env below -- `uv run` needs more than
+    a bare PATH to resolve this repo's project/dependencies from an
+    unrelated tmp_path) and pointing USER_BIN at it instead."""
+    real_uv = shutil.which("uv")
+    if real_uv is None:
+        pytest.skip("uv not installed on this machine")
+    user_bin = str(Path(real_uv).parent)
+    (isolated_dir / ".env").write_text(
+        "OLTP_DB_URL=postgresql+asyncpg://postgres:fromenv@127.0.0.1:5544/janasunani\n"
+    )
+    env = dict(os.environ)
+    env["PATH"] = os.pathsep.join(
+        p for p in env.get("PATH", "").split(os.pathsep) if p != user_bin
+    )
+    assert shutil.which("uv", path=env["PATH"]) is None, "test setup: uv must not resolve via PATH"
+    result = _make(
+        "-n", f"USER_BIN={user_bin}", "preflight", cwd=isolated_dir, env=env
+    )
+    assert result.returncode == 0, result.stderr
+    assert "fromenv" in result.stdout, result.stdout
+
+
+def test_missing_uv_fails_loudly_instead_of_silently_using_the_demo_default(isolated_dir):
+    """#103's more dangerous half: when `uv` cannot be resolved at all (not
+    on PATH, not under USER_BIN), the extraction must not silently leave
+    OLTP_DB_URL at the throwaway demo default -- `.env` names a real
+    database here, and silently ignoring that is exactly the outcome `make
+    OLTP_DB_URL=... db`'s guard exists to prevent, reached by a different
+    route (a broken uv install instead of a forgotten override)."""
+    (isolated_dir / ".env").write_text(
+        "OLTP_DB_URL=postgresql+asyncpg://postgres:fromenv@127.0.0.1:5544/janasunani\n"
+    )
+    env = {"HOME": os.environ.get("HOME", ""), "PATH": "/usr/bin:/bin"}
+    result = _make(
+        "-n", "USER_BIN=/nonexistent-dir-for-this-test", "preflight",
+        cwd=isolated_dir, env=env,
+    )
+    assert result.returncode != 0
+    assert "could not be parsed" in result.stderr
+    demo_default = "postgresql+asyncpg://postgres:demo@127.0.0.1:5544/janasunani"
+    assert demo_default not in result.stdout, (
+        "must fail loudly, not silently resolve to the throwaway demo default"
+    )
 
 
 def test_db_guard_resolves_a_matching_default_identically(isolated_dir):

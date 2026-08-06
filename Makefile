@@ -62,8 +62,31 @@ API_URL        ?= http://127.0.0.1:$(API_PORT)
 # in command-line variables before reading any of the makefile, and no plain
 # assignment (only `override`, unused here) can replace them -- verified with
 # `make OLTP_DB_URL=... db` against a conflicting `.env` (see PR description).
+#
+# Two things fixed here (#103, a regression this extraction itself
+# introduced): first, `uv` is looked up with PATH widened by $(USER_BIN)
+# directly on *this* command, not via the `export PATH` line below -- that
+# only reaches recipe subprocesses, not a $(shell ...) call evaluated here
+# at Make-parse time (confirmed directly: an `export`ed PATH change does not
+# reach an immediately-following $(shell ...) in GNU Make). Without this, a
+# `uv` installed only under $(USER_BIN) -- the repo's own documented install
+# location -- would not resolve here even though every recipe below finds it
+# fine. Second, the python one-liner always prints a `DOTENV_OK:` prefix on
+# success, even with an empty value, so a genuine parse failure (uv still
+# not found, python-dotenv missing, any other error) is distinguishable from
+# ".env exists but doesn't set OLTP_DB_URL" by that prefix's *absence* --
+# never by empty output alone. A failure here is a hard `$(error ...)`, not
+# a silent fallback: silently keeping the throwaway demo default while an
+# operator's .env names a real database is exactly the wrong outcome `make
+# OLTP_DB_URL=... db`'s guard exists to prevent, reached by a different
+# route.
+_DOTENV_STDERR := /tmp/.janasunani-makefile-dotenv-stderr-$(shell whoami 2>/dev/null)
 ifneq (,$(wildcard .env))
-_DOTENV_OLTP_DB_URL := $(shell uv run python -c "from dotenv import dotenv_values; import sys; v = dotenv_values('.env').get('OLTP_DB_URL'); sys.stdout.write(v if v is not None else '')" 2>/dev/null)
+_DOTENV_RAW_OLTP_DB_URL := $(shell PATH="$(USER_BIN):$$PATH" uv run python -c "from dotenv import dotenv_values; import sys; v = dotenv_values('.env').get('OLTP_DB_URL'); sys.stdout.write('DOTENV_OK:' + (v if v is not None else ''))" 2>$(_DOTENV_STDERR))
+ifeq ($(findstring DOTENV_OK:,$(_DOTENV_RAW_OLTP_DB_URL)),)
+$(error .env exists but OLTP_DB_URL could not be parsed from it (#103) -- refusing to silently fall back to the throwaway demo default. 'uv run python' stderr: $(shell cat $(_DOTENV_STDERR) 2>/dev/null))
+endif
+_DOTENV_OLTP_DB_URL := $(subst DOTENV_OK:,,$(_DOTENV_RAW_OLTP_DB_URL))
 ifneq (,$(_DOTENV_OLTP_DB_URL))
 OLTP_DB_URL := $(_DOTENV_OLTP_DB_URL)
 endif
