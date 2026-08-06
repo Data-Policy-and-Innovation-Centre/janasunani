@@ -236,6 +236,49 @@ def test_closing_remark_is_the_latest_action_not_the_first_row(lake):
     assert cell["bare"] == 0
 
 
+def test_actions_after_resolution_are_not_treated_as_the_closing_action(tmp_path):
+    """A reopen or audit row filed after `resolved_on` did not close the case.
+
+    Taking the latest row unconditionally would pick it as the closing remark,
+    knocking a complaint off the ladder whose actual disposal matched, and
+    would count post-closure activity as work done before closure.
+    """
+    complaints = [
+        ("R1", datetime(2024, 1, 1), datetime(2024, 1, 10), None, "Water", "Puri", "RWSS")
+    ]
+    actions = [
+        (1, "R1", datetime(2024, 1, 2), "Forwarded to the executive engineer."),
+        (2, "R1", datetime(2024, 1, 10), _BARE),
+        # Six weeks later: an audit note. Not a closing action.
+        (3, "R1", datetime(2024, 2, 20), "Audit observation recorded."),
+    ]
+    tables = closure.compute(_write_lake(tmp_path, complaints, actions))
+
+    row = tables["closure_finding_summary"].row(0, named=True)
+    assert row["bare"] == 1  # still on the ladder
+    assert row["off_ladder"] == 0
+
+    # And the audit row is not counted as a step of work before closure.
+    traj = tables["closure_by_trajectory"].row(0, named=True)
+    assert traj["steps_bucket"] == "2 steps"
+
+
+def test_negative_durations_are_quarantined_rather_than_read_as_fast_closures(tmp_path):
+    """`resolved_on` before `created_on` happens: the two timestamps are parsed
+    independently at ingest and nothing enforces an order. Such a row is bad
+    data, not a two-day closure."""
+    complaints = [
+        # Resolved four days *before* it was created.
+        ("N1", datetime(2024, 1, 10), datetime(2024, 1, 6), None, "Water", "Puri", "RWSS"),
+    ]
+    actions = [(1, "N1", datetime(2024, 1, 6), _BARE)]
+    tables = closure.compute(_write_lake(tmp_path, complaints, actions))
+
+    assert tables["closure_two_day_bare"].row(0, named=True)["two_day_bare"] == 0
+    buckets = tables["closure_by_trajectory"]["elapsed_bucket"].to_list()
+    assert buckets == ["invalid"]
+
+
 def test_actions_for_unknown_tickets_do_not_invent_complaints(lake):
     """T404's action row has no complaint. It must not reach any count."""
     row = closure.compute(lake)["closure_finding_summary"].row(0, named=True)
@@ -264,19 +307,22 @@ def test_trajectory_conditioning_separates_two_day_closures_from_worked_cases(la
     # The buckets partition the resolved complaints, exactly once each.
     assert traj["resolved_complaints"].sum() == 8
 
-    # A complaint with no action history lands in the zero-step bucket rather
-    # than being silently dropped.
+    # A complaint with no action history gets its own bucket rather than being
+    # dropped, and rather than being folded in with genuinely one-step cases.
     none = traj.filter(
-        (pl.col("steps_bucket") == "1 step") & (pl.col("elapsed_bucket") == "3-7 days")
+        (pl.col("steps_bucket") == "0 steps") & (pl.col("elapsed_bucket") == "3-7 days")
     ).row(0, named=True)
     assert none["resolved_complaints"] == 1  # T8, zero actions
+    # T1 and T2 genuinely have one action row each, and stay separate from it.
+    assert traj.filter(pl.col("steps_bucket") == "1 step")["resolved_complaints"].sum() == 2
 
 
 def test_two_day_bare_subfinding(lake):
     row = closure.compute(lake)["closure_two_day_bare"].row(0, named=True)
 
     assert row["two_day_bare"] == 2  # T1 (1 day), T2 (2 days)
-    assert row["two_day_bare_single_step"] == 2
+    # Both closed on one action row, which is inside the three-step floor.
+    assert row["two_day_bare_min_trajectory"] == 2
     assert row["bare"] == 3
     assert row["share_of_bare_pct"] == pytest.approx(200.0 / 3)
     assert row["share_of_ladder_pct"] == pytest.approx(200.0 / 6)
@@ -285,6 +331,38 @@ def test_two_day_bare_subfinding(lake):
     # T3 is a bare disposal too, but it took forty days over four steps. If the
     # boundary leaked it would show up here.
     assert row["two_day_bare"] < row["bare"]
+
+
+def test_min_trajectory_separates_the_floor_case_from_a_fast_worked_case(tmp_path):
+    """Two days is fast. Two days *after four steps of work* is a different
+    case, and the floor column has to tell them apart.
+
+    The threshold is three action rows, not one: the portal writes a create and
+    an assign row before an officer can dispose, so a one-step disposal does not
+    exist in this record.
+    """
+    complaints = [
+        ("F1", datetime(2024, 1, 1), datetime(2024, 1, 2), None, "Water", "Puri", "RWSS"),
+        ("F2", datetime(2024, 1, 1), datetime(2024, 1, 3), None, "Water", "Puri", "RWSS"),
+    ]
+    actions = [
+        # F1: the floor -- created, assigned, disposed.
+        (1, "F1", datetime(2024, 1, 1), "Complaint registered."),
+        (2, "F1", datetime(2024, 1, 1), "Assigned to the block officer."),
+        (3, "F1", datetime(2024, 1, 2), _BARE),
+        # F2: same two days, but five steps of real movement first.
+        (4, "F2", datetime(2024, 1, 1), "Complaint registered."),
+        (5, "F2", datetime(2024, 1, 1), "Assigned to the block officer."),
+        (6, "F2", datetime(2024, 1, 2), "Forwarded to the executive engineer."),
+        (7, "F2", datetime(2024, 1, 2), "ATR submitted."),
+        (8, "F2", datetime(2024, 1, 3), _BARE),
+    ]
+    row = closure.compute(_write_lake(tmp_path, complaints, actions))[
+        "closure_two_day_bare"
+    ].row(0, named=True)
+
+    assert row["two_day_bare"] == 2  # both are two-day bare disposals
+    assert row["two_day_bare_min_trajectory"] == 1  # only F1 is the floor case
 
 
 def test_benefitted_overlap_is_reported_so_the_third_rung_is_not_claimed_novel(lake):
@@ -336,16 +414,63 @@ def test_markdown_never_states_the_headline_without_its_base(lake):
     # No citizen text, and no per-office breakdown, ever.
     assert _OFF_LADDER not in md
 
+    # The trajectory table carries its own base too. Without it, a cell reading
+    # "4 templated closures" looks like thin data when it is actually tens of
+    # thousands of complaints that closed on a discard template instead.
+    assert "| Action steps | Elapsed | Resolved | Templated closures |" in md
+    assert "| 0 steps | 3-7 days | 1 | 0 | 0 | n/a |" in md  # T8, zero actions
+
 
 def test_write_emits_the_tables_the_markdown_and_the_handed_over_sql(lake, tmp_path):
-    written = closure.write(closure.compute(lake), tmp_path / "findings")
+    out = tmp_path / "findings"
+    written = closure.write(closure.compute(lake), out)
 
-    for view in closure.REPORT_VIEWS:
+    for view in closure.FINDING_VIEWS:
         assert written[view].exists()
     assert written["markdown"].read_text().startswith("## How cases are closed")
     # The deliverable is the view definition, so it ships beside the numbers.
     assert written["sql"].read_text() == closure.sql_text()
 
     # The two complaint-level views stay intermediate: no per-complaint file.
-    names = {p.name for p in (tmp_path / "findings").iterdir()}
+    names = {p.name for p in out.iterdir()}
     assert not {n for n in names if n.startswith(("closure_rung", "closure_closing"))}
+
+
+def test_the_remark_diagnostic_never_lands_in_the_shareable_directory(lake, tmp_path):
+    """`closure_off_ladder_templates` is the only output carrying remark text.
+
+    A 1,000-use floor is dropdown scale, but frequency is evidence and not
+    proof, so it goes to `diagnostics/` and the directory the finding is shared
+    out of stays aggregates-only.
+    """
+    out = tmp_path / "findings"
+    tables = closure.compute(lake)
+    closure.write(tables, out)
+    assert not (out / "closure_off_ladder_templates.csv").exists()
+
+    written = closure.write_diagnostics(tables, out)
+    assert written["closure_off_ladder_templates"].parent.name == "diagnostics"
+    assert (out / "diagnostics" / "closure_off_ladder_templates.csv").exists()
+
+
+def test_the_cli_refuses_to_publish_when_the_ladder_guard_fails(tmp_path, monkeypatch):
+    """A warning beside the artifacts is not a guard.
+
+    A batch caller keeping stdout and dropping stderr would publish exactly the
+    number `check_ladder_coverage` says must not be quoted.
+    """
+    drifted = [(i, t, d, r.replace("grievance", "petition")) for i, t, d, r in _ACTIONS]
+    lake = _write_lake(tmp_path, actions=drifted)
+    out = tmp_path / "findings"
+    monkeypatch.setattr(
+        "sys.argv", ["janasunani-closure-finding", "--lake-dir", str(lake), "--out-dir", str(out)]
+    )
+
+    with pytest.raises(SystemExit) as exit_info:
+        closure.main()
+    assert exit_info.value.code == 1
+
+    assert not (out / "closure_finding.md").exists()
+    assert not (out / "closure_finding_summary.csv").exists()
+    # The diagnostic is still written: it is what tells you why.
+    assert (out / "diagnostics" / "closure_off_ladder_templates.csv").exists()

@@ -21,9 +21,10 @@
 --
 -- Portable across DuckDB (the Parquet lake) and PostgreSQL (the OLTP store).
 -- Reads `complaints` and `action_history` only. It never touches
--- `complaints.grievance`, so it needs no redaction pass and emits no citizen
--- text -- every view below is an aggregate or a template string used tens of
--- thousands of times.
+-- `complaints.grievance`, so it needs no redaction pass. Every reportable view
+-- below is an aggregate. The one view that emits remark text at all,
+-- `closure_off_ladder_templates`, is a drift diagnostic for the engineer rather
+-- than part of the handover, and is written to a separate directory.
 
 -- ---------------------------------------------------------------------------
 -- 1. The disposal ladder.
@@ -49,8 +50,9 @@ SELECT * FROM (
 -- 2. One row per resolved complaint: its closing remark plus its trajectory.
 --
 -- "Resolved" is `resolved_on IS NOT NULL`. The closing remark is the latest
--- action row by `action_taken_date`, ties broken by `id` (insertion order), so
--- a complaint with no action history still appears, with a NULL remark.
+-- action row **at or before the resolution date**, ties broken by `id`
+-- (insertion order), so a complaint with no action history still appears, with
+-- a NULL remark and zero steps.
 --
 -- Trajectory is carried here rather than bolted on later because it is a
 -- required control, not an optional cut.
@@ -61,6 +63,14 @@ WITH resolved AS (
     FROM complaints
     WHERE resolved_on IS NOT NULL
 ),
+-- Actions up to the recorded resolution, and only those. A reopen, audit or
+-- follow-up row filed after `resolved_on` is not what closed the case: taking
+-- the latest row unconditionally would pick it as the "closing" remark and
+-- knock a complaint off the ladder whose actual disposal matched a template,
+-- while also counting post-closure activity as work done before closure.
+-- Compared at date granularity, not timestamp, because the disposal row and
+-- `resolved_on` are written by different code paths on the same day and an
+-- intraday ordering difference is not a signal.
 actions AS (
     SELECT
         a.ticket_no,
@@ -72,7 +82,9 @@ actions AS (
         ) AS recency_rank,
         COUNT(*) OVER (PARTITION BY a.ticket_no) AS action_steps
     FROM action_history a
-    WHERE a.ticket_no IS NOT NULL
+    JOIN resolved r ON r.ticket_no = a.ticket_no
+    WHERE a.action_taken_date IS NULL
+       OR CAST(a.action_taken_date AS DATE) <= CAST(r.resolved_on AS DATE)
 ),
 closing AS (
     SELECT ticket_no, action_taken_remark, action_status, action_steps
@@ -111,14 +123,25 @@ SELECT
     COALESCE(l.rung, 'off_ladder') AS rung,
     l.ladder_position,
     CASE WHEN l.rung IS NOT NULL THEN 1 ELSE 0 END AS on_ladder,
+    -- Zero actions is its own bucket, not folded into '1 step'. A complaint
+    -- with no action history at all is a different object from one an officer
+    -- touched once, and folding them together silently pads the denominator of
+    -- the shortest-trajectory cut.
     CASE
-        WHEN c.action_steps <= 1 THEN '1 step'
+        WHEN c.action_steps = 0 THEN '0 steps'
+        WHEN c.action_steps = 1 THEN '1 step'
         WHEN c.action_steps = 2 THEN '2 steps'
         WHEN c.action_steps <= 5 THEN '3-5 steps'
         ELSE '6+ steps'
     END AS steps_bucket,
+    -- `resolved_on` before `created_on` is possible: the two timestamps are
+    -- parsed independently at ingest and nothing enforces an order. Such a row
+    -- has a negative duration, and without this branch it would land in
+    -- '0-2 days' and inflate the fast-closure subset with bad data rather than
+    -- fast work.
     CASE
         WHEN c.elapsed_days IS NULL THEN 'unknown'
+        WHEN c.elapsed_days < 0 THEN 'invalid'
         WHEN c.elapsed_days <= 2 THEN '0-2 days'
         WHEN c.elapsed_days <= 7 THEN '3-7 days'
         WHEN c.elapsed_days <= 30 THEN '8-30 days'
@@ -181,26 +204,34 @@ GROUP BY steps_bucket, elapsed_bucket;
 -- on rather than one they have to defend against. Same caveat still applies:
 -- two days is fast, not wrong. An information request answered on the spot
 -- belongs here too.
+--
+-- `two_day_bare_min_trajectory` is the floor case: closed in two days on the
+-- shortest trajectory that reaches a disposal at all. THREE action rows, not
+-- one. The portal writes a create and an assign row before an officer can
+-- dispose, so a single-step disposal is not a thing that exists in this record
+-- (22 resolved complaints corpus-wide carry one action row, and none of them
+-- close on the ladder). Anyone reaching for "closed in one step" is reaching
+-- for this.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE VIEW closure_two_day_bare AS
 SELECT
-    COUNT(*) FILTER (WHERE rung = 'bare' AND elapsed_days <= 2)
+    COUNT(*) FILTER (WHERE rung = 'bare' AND elapsed_days BETWEEN 0 AND 2)
         AS two_day_bare,
-    COUNT(*) FILTER (WHERE rung = 'bare' AND elapsed_days <= 2 AND action_steps <= 1)
-        AS two_day_bare_single_step,
+    COUNT(*) FILTER (WHERE rung = 'bare' AND elapsed_days BETWEEN 0 AND 2 AND action_steps <= 3)
+        AS two_day_bare_min_trajectory,
     COUNT(*) FILTER (WHERE rung = 'bare')
         AS bare,
     SUM(on_ladder)
         AS ladder_closures,
     COUNT(*)
         AS resolved_complaints,
-    100.0 * COUNT(*) FILTER (WHERE rung = 'bare' AND elapsed_days <= 2)
+    100.0 * COUNT(*) FILTER (WHERE rung = 'bare' AND elapsed_days BETWEEN 0 AND 2)
           / NULLIF(COUNT(*) FILTER (WHERE rung = 'bare'), 0)
         AS share_of_bare_pct,
-    100.0 * COUNT(*) FILTER (WHERE rung = 'bare' AND elapsed_days <= 2)
+    100.0 * COUNT(*) FILTER (WHERE rung = 'bare' AND elapsed_days BETWEEN 0 AND 2)
           / NULLIF(SUM(on_ladder), 0)
         AS share_of_ladder_pct,
-    100.0 * COUNT(*) FILTER (WHERE rung = 'bare' AND elapsed_days <= 2)
+    100.0 * COUNT(*) FILTER (WHERE rung = 'bare' AND elapsed_days BETWEEN 0 AND 2)
           / NULLIF(COUNT(*), 0)
         AS share_of_resolved_pct
 FROM closure_rung;

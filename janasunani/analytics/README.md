@@ -72,9 +72,18 @@ rather than the system as a whole.
 
 **Template drift is the failure mode.** An unmatched ladder string does not
 error — it moves complaints into `off_ladder` and quietly shrinks the
-denominator. `check_ladder_coverage` warns below 50% (expect roughly two
-thirds), and `closure_off_ladder_templates` lists what stopped matching. Run
-that first against any corpus this has not been run against before.
+denominator. Below 50% coverage (expect roughly two thirds) the CLI **writes
+nothing and exits 1**, rather than warning beside the artifacts: a batch caller
+keeping stdout and dropping stderr would otherwise publish exactly the number
+the check says must not be quoted. `closure_off_ladder_templates` is still
+written, because it is what tells you why.
+
+**`diagnostics/` is engineer-facing and not part of the handover.**
+`closure_off_ladder_templates` is the only output carrying remark text. A
+1,000-use floor is dropdown scale rather than free text, but frequency is
+evidence and not proof — a remark repeated ten thousand times could still carry
+something somebody pasted into a form. It goes to its own directory so the
+directory the finding is shared out of stays aggregates-only.
 
 **Why it needs nothing else.** It reads `action_taken_remark` and structured
 `complaints` columns. It never reads `complaints.grievance`, so it needs no

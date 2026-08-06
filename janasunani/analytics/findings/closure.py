@@ -29,16 +29,25 @@ from janasunani.config import OUTPUTS_DIR
 
 MART = "closure"
 
-# The mart's reportable views. `closure_closing_action` and `closure_rung` are
+# The shareable finding. `closure_closing_action` and `closure_rung` are
 # intermediate and stay unwritten: they are complaint-level, so they are the two
 # that must not become an output file.
-REPORT_VIEWS = (
+FINDING_VIEWS = (
     "closure_finding_summary",
     "closure_by_trajectory",
     "closure_two_day_bare",
     "closure_benefitted_overlap",
-    "closure_off_ladder_templates",
 )
+
+# Engineer-facing, and deliberately not part of the handover. This is the only
+# view that emits remark text. A 1,000-use floor is dropdown scale rather than
+# free text, but frequency is evidence and not proof: a remark repeated ten
+# thousand times could still carry a name or a number somebody pasted into a
+# form. So it goes to its own directory, never into the shareable set, and it
+# exists for one purpose — telling you the ladder stopped matching.
+DIAGNOSTIC_VIEWS = ("closure_off_ladder_templates",)
+
+REPORT_VIEWS = FINDING_VIEWS + DIAGNOSTIC_VIEWS
 
 # Deterministic ordering per view, so reruns diff cleanly.
 _ORDER_BY = {
@@ -135,8 +144,8 @@ def render_markdown(tables: dict[str, pl.DataFrame]) -> str:
             f"{_n(t['two_day_bare'])} complaints, "
             f"{_pct(t['share_of_bare_pct'])} of all bare disposals and "
             f"{_pct(t['share_of_resolved_pct'])} of all resolved complaints. "
-            f"{_n(t['two_day_bare_single_step'])} of them carry a single "
-            f"action step."
+            f"{_n(t['two_day_bare_min_trajectory'])} of them closed on the "
+            f"shortest trajectory that reaches a disposal at all."
         ),
         "",
         (
@@ -152,15 +161,26 @@ def render_markdown(tables: dict[str, pl.DataFrame]) -> str:
             "whatever the closing phrase says. The bare share by trajectory:"
         ),
         "",
-        "| Action steps | Elapsed | Templated closures | Bare | Share |",
-        "|---|---|---|---|---|",
+        "| Action steps | Elapsed | Resolved | Templated closures | Bare | Share |",
+        "|---|---|---|---|---|---|",
     ]
     for row in tables["closure_by_trajectory"].iter_rows(named=True):
         lines.append(
             f"| {row['steps_bucket']} | {row['elapsed_bucket']} | "
-            f"{_n(row['ladder_closures'])} | {_n(row['bare'])} | "
-            f"{_pct(row['bare_share_of_ladder_pct'])} |"
+            f"{_n(row['resolved_complaints'])} | {_n(row['ladder_closures'])} | "
+            f"{_n(row['bare'])} | {_pct(row['bare_share_of_ladder_pct'])} |"
         )
+    lines += [
+        "",
+        (
+            "Read the resolved column beside the templated one. Cells where the "
+            "two diverge sharply are not thin data, they are complaints that "
+            "closed on a **discard** template rather than a disposal one "
+            "(`complaint details inadequate`, `duplicate copy`, `not within the "
+            "purview of this grievance cell`). Those are off the ladder by "
+            "construction and are a separate finding, not part of this share."
+        ),
+    ]
 
     lines += [
         "",
@@ -183,16 +203,23 @@ def render_markdown(tables: dict[str, pl.DataFrame]) -> str:
     return "\n".join(lines)
 
 
+def _out_dir(out_dir: Optional[Path]) -> Path:
+    return Path(out_dir) if out_dir else OUTPUTS_DIR / "findings"
+
+
 def write(
     tables: dict[str, pl.DataFrame], out_dir: Optional[Path] = None
 ) -> dict[str, Path]:
-    """Write each table as CSV, the Markdown fragment, and the handed-over SQL."""
-    out = Path(out_dir) if out_dir else OUTPUTS_DIR / "findings"
+    """Write the shareable finding: its CSVs, the fragment, and the SQL.
+
+    Diagnostics are **not** written here. See :func:`write_diagnostics`.
+    """
+    out = _out_dir(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     written: dict[str, Path] = {}
-    for name, frame in tables.items():
+    for name in FINDING_VIEWS:
         path = out / f"{name}.csv"
-        frame.write_csv(path)
+        tables[name].write_csv(path)
         written[name] = path
     md = out / "closure_finding.md"
     md.write_text(render_markdown(tables))
@@ -200,6 +227,25 @@ def write(
     handover = out / "closure_finding.sql"
     handover.write_text(sql_text())
     written["sql"] = handover
+    return written
+
+
+def write_diagnostics(
+    tables: dict[str, pl.DataFrame], out_dir: Optional[Path] = None
+) -> dict[str, Path]:
+    """Write the engineer-facing drift diagnostic, under ``diagnostics/``.
+
+    Kept out of :func:`write` on purpose: this is the only output carrying
+    remark text, and the directory the finding is shared out of should contain
+    aggregates only.
+    """
+    out = _out_dir(out_dir) / "diagnostics"
+    out.mkdir(parents=True, exist_ok=True)
+    written = {}
+    for name in DIAGNOSTIC_VIEWS:
+        path = out / f"{name}.csv"
+        tables[name].write_csv(path)
+        written[name] = path
     return written
 
 
@@ -250,9 +296,21 @@ def main() -> None:
         return
 
     tables = compute(args.lake_dir)
+
+    # The diagnostic is written either way: when the guard fails it is the
+    # thing you need to read to find out why.
+    for name, path in write_diagnostics(tables, args.out_dir).items():
+        logger.info(f"{name} -> {path}")
+
     drift = check_ladder_coverage(tables)
     if drift:
-        logger.warning(drift)
+        # Refuse to produce the artifacts rather than warning beside them. A
+        # batch caller that keeps stdout and drops stderr would otherwise
+        # publish exactly the number this check says must not be quoted.
+        logger.error(drift)
+        logger.error("Refusing to write the finding. Nothing was published.")
+        raise SystemExit(1)
+
     for name, path in write(tables, args.out_dir).items():
         logger.success(f"{name} -> {path}")
     print(render_markdown(tables))

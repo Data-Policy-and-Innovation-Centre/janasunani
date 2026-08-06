@@ -908,11 +908,33 @@ whole point.
   - Run `closure_off_ladder_templates` before quoting the figure on any corpus
     this has not been run against. An unmatched ladder string does not error,
     it moves complaints into `off_ladder` and silently shrinks the denominator.
-- **State the denominator explicitly; it moves the number by half.** Of the 792,038
-  complaints whose closing remark is one of the disposal templates, **60.8%** are on
-  the bare rung (481,268 bare vs 310,770 claiming action). Measured against *all*
-  1,209,138 resolved complaints it is **39.1%**, because 35.8% close on neither
-  template. Quote the 792,038 base whenever the 61% figure is used.
+- **State the denominator explicitly; it moves the number by half.** Of the 776,922
+  complaints whose closing remark is one of the disposal templates, **60.9%** are on
+  the bare rung (472,782 bare vs 304,140 claiming action). Measured against *all*
+  1,209,144 resolved complaints it is **39.1%**, because 35.7% close on neither
+  template. Quote the 776,922 base whenever the 61% figure is used.
+  - Measured 7 Aug by the `closure` mart. The earlier ad-hoc counts (792,038 /
+    481,268 / 310,770) ran about 2% high; every percentage they were quoted
+    with survives unchanged. Use the counts above.
+- ⚠️ **The bare share rises with the amount of work done, which inverts the
+  obvious reading.** 58.4% at three to five action steps, 64.8% at six or more,
+  and 72.6% at six or more closing inside a week. The cases with the most
+  movement on file are the *most* likely to close on the bare rung, not the
+  least. Whatever drives the choice of phrase, it is not "nothing happened".
+  This is the single most important qualifier on the number and it was not
+  visible before the view existed.
+- **The two-day subset is small, and that is a result.** 8,974 complaints created
+  and closed within two days on a bare disposal: 1.9% of bare disposals, 0.7% of
+  resolved. Only 1,022 sit on the floor trajectory. The suspicious mass §5.3
+  expected at two days is not there, so the sub-finding names a tractable set of
+  cases rather than an indictment, which is what it was asked to do.
+- **Below three action steps the ladder is empty**, because the portal writes a
+  create and an assign row before an officer can dispose. The 145,621 resolved
+  complaints with two action rows close almost entirely on *discard* templates
+  (`complaint details inadequate`, `duplicate copy`, `not within the purview of
+  this grievance cell`), which is Phase 15's discard-reason finding, not this
+  one. Report the resolved base beside the templated base in any trajectory cut,
+  or those cells read as thin data rather than as a different population.
 - ⚠️ **A bare disposal does not mean the case was mishandled.** Sometimes no action
   is correct: an information request answered, an ineligible claim properly refused,
   a matter already settled elsewhere. Correct closure and premature closure are
