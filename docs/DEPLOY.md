@@ -73,9 +73,16 @@ Outputs: `public_ip`, `instance_id`, `ssh_command`, and (when the GPU box is up)
 `gpu_box_ip` / `gpu_ssh_command`.
 
 > **SSH times out later?** `admin_cidr` pins SSH to your IP, which rotates
-> (VPN on/off, ISP). Re-run `echo "$(curl -4 -s ifconfig.me)/32"`, update
-> `terraform.tfvars`, `terraform apply`. Use plain **`curl -4`** — bare curl may
-> return IPv6, which won't match the /32.
+> (VPN on/off, ISP), and the failure looks like a dead box: a TCP timeout
+> before any handshake. Use plain **`curl -4`** — bare curl may return IPv6,
+> which won't match the /32.
+>
+> **Do not reach for `terraform apply` first.** An apply during a running
+> `Deploy demo` job reconciles away CI's temporary runner rule and severs the
+> SSH session executing `deploy.sh`. Follow the add/verify/revoke procedure in
+> [deploy/terraform/README.md](../deploy/terraform/README.md#when-ssh-to-the-box-times-out),
+> which also covers revoking the stale rule from **every** group — leaving it
+> means whoever next receives that address has SSH access to citizen data.
 
 ## 2 · CPU box — first-time bring-up
 

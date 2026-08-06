@@ -82,23 +82,42 @@ To unblock immediately without running an apply against production:
 ```bash
 NEW_CIDR="$(curl -4 -s ifconfig.me)/32"
 
-# Add first, verify, and only then remove the old rule. Doing it in this order
-# means a wrong CIDR cannot lock you out of the box.
+# Do this for EVERY Janasunani security group, not just the CPU box. gpu.tf
+# applies the same admin_cidr, so a GPU box that is up gets locked out too, and
+# a GPU box that is down keeps the stale rule waiting for whoever inherits that
+# address. Groups: sg-0321058ce58a24322 (cpu), sg-0356bbc5c5ff9f7c6 (gpu).
+GROUP=sg-0321058ce58a24322
+
+# Add first, verify, and only then remove the old rule. In this order a wrong
+# CIDR cannot lock you out.
 aws ec2 authorize-security-group-ingress --region ap-south-1 \
-  --group-id sg-0321058ce58a24322 \
+  --group-id "$GROUP" \
   --ip-permissions "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=$NEW_CIDR,Description=\"SSH from the maintainer IP only\"}]"
 
-nc -z -w 8 52.66.116.80 22   # must succeed before the next step
+# If this fails, the address you just authorized is NOT the one your SSH
+# actually egresses from -- split-tunnel VPN, a proxy, or a wrong answer from
+# ifconfig.me. REVOKE IT before doing anything else: leaving it means an
+# unrelated address holds SSH access to a host with citizen data.
+if ! nc -z -w 8 52.66.116.80 22; then
+  aws ec2 revoke-security-group-ingress --region ap-south-1 \
+    --group-id "$GROUP" \
+    --ip-permissions "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=$NEW_CIDR}]"
+  echo "wrong CIDR, revoked; find your real egress address before retrying" >&2
+  exit 1
+fi
 
+# Only now remove the stale rule.
 aws ec2 revoke-security-group-ingress --region ap-south-1 \
-  --group-id sg-0321058ce58a24322 \
+  --group-id "$GROUP" \
   --ip-permissions 'IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=<OLD_CIDR>}]'
 ```
 
 **Revoke the old rule; do not just leave it.** An address you have stopped using
 goes back to the ISP pool and gets handed to someone else, and until it is
-revoked that stranger has SSH exposure to a host holding citizen data. Sweep for
-leftovers across the account, since the GPU group carries the same CIDR:
+revoked that stranger has SSH exposure to a host holding citizen data.
+
+Then confirm the old CIDR is gone from **every** group in the account, not just
+the one you were working on:
 
 ```bash
 aws ec2 describe-security-groups --region ap-south-1 \
@@ -106,9 +125,21 @@ aws ec2 describe-security-groups --region ap-south-1 \
   --query 'SecurityGroups[].{Id:GroupId,Name:GroupName}'
 ```
 
-If a `terraform apply` is the route instead, **abort if the plan shows destroy or
-replace on `aws_instance.cpu_box` or `aws_security_group.cpu_box`.** A CIDR change
-is an in-place rule update; anything more than that is the line that loses the box.
+Anything this lists still needs the add/verify/revoke sequence above. It should
+return an empty list when you are done.
+
+### If you use `terraform apply` instead
+
+⚠️ **Check that no `Deploy demo` job is running first, and wait for it if one
+is.** The deploy workflow authorizes a temporary runner `/32` on
+`aws_security_group.cpu_box`; an apply reconciles that rule away and severs the
+SSH session executing `deploy.sh` mid-deploy, and a severed session can skip
+rollback. This collision is documented in
+[docs/DEPLOY.md](../../docs/DEPLOY.md) under the deploy-workflow hazards.
+
+**Abort if the plan shows destroy or replace on `aws_instance.cpu_box` or
+`aws_security_group.cpu_box`.** A CIDR change is an in-place rule update;
+anything more than that is the line that loses the box.
 
 Longer term this recurs by design. SSM Session Manager needs no inbound rule at
 all and is worth considering once the demo is past.
