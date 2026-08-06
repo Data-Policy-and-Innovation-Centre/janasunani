@@ -299,6 +299,18 @@ def lsh_bands(
             "None for an empty shingle set; treat that as low-signal/spam, "
             "not a duplicate candidate, and do not call lsh_bands() on it"
         )
+    if not signature:
+        # An empty signature passes the divisibility check below (0 % n == 0),
+        # every band then hashes the same empty tuple, and every empty-signature
+        # record band-matches every other -- collapsing the indexed slice into
+        # one duplicate group. The num_hashes <= 0 guard upstream protects the
+        # producer; a signature read back from `dedup_signatures` or built by
+        # hand never passes through minhash_signature() at all, which is the
+        # path that matters once signatures are persisted for the backfill.
+        raise ValueError(
+            "cannot band an empty signature — every band would hash the same "
+            "empty tuple, so unrelated records would all become candidates"
+        )
     if num_bands <= 0 or len(signature) % num_bands != 0:
         raise ValueError(
             f"num_bands ({num_bands}) must evenly divide the signature "
