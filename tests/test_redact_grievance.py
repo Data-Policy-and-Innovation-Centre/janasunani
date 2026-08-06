@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import create_engine, insert, select, text
 
 from janasunani.db.models import Base, Complaint, GrievanceRedaction
-from janasunani.pipeline.redact_grievance import redact_grievances
+from janasunani.pipeline.redact_grievance import main, redact_grievances
 
 # Deliberately not real PII: these tests assert plumbing, not detection.
 ROWS = [
@@ -394,3 +394,49 @@ def test_refresh_progress_counts_current_rows_in_a_mixed_slice(oltp, capsys):
     total = int(final.split(" of ")[1].split(" ")[0])
     # Two rows were already current, one was made current: all three.
     assert done == total == 3, final
+
+
+def test_done_line_does_not_exceed_the_slice(oltp, monkeypatch):
+    """The per-batch progress line was fixed in #141/#147 and this one was not,
+    so the refresh ended on '111088 of 55544'. It is the line that gets pasted
+    into a run record, which is worse than the one that scrolls past."""
+    import sys
+
+    from loguru import logger as _logger
+
+    async_url, sync_url = oltp
+    redact_grievances("Khordha", 2024, oltp_url=async_url)
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text("UPDATE grievance_redactions SET analyzer_version = :v"),
+            {"v": "presidio-analyzer=0.0.1 an-older-build"},
+        )
+    engine.dispose()
+
+    records: list[str] = []
+    sink = _logger.add(lambda m: records.append(str(m)), level="INFO", format="{message}")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "redact_grievance.py",
+            "--district",
+            "Khordha",
+            "--year",
+            "2024",
+            "--oltp-url",
+            async_url,
+            "--refresh-stale",
+        ],
+    )
+    try:
+        main()
+    finally:
+        _logger.remove(sink)
+
+    done = [r for r in records if r.startswith("done:")]
+    assert done, "expected a done line"
+    counted = int(done[-1].split("this run, ")[1].split(" of ")[0])
+    total = int(done[-1].split(" of ")[1].split(" ")[0])
+    assert counted == total == 3, done[-1]
