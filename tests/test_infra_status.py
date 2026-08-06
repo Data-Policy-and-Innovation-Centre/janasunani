@@ -222,6 +222,61 @@ def test_maintainer_rule_over_ipv6_single_host_is_whitelisted():
     assert findings[0].status == OK
 
 
+def test_ssh_via_referenced_security_group_is_not_absorbed_into_ok():
+    """A rule can grant 22 through UserIdGroupPairs (another security group
+    as the source) instead of a CIDR. Before #102 this source type was never
+    classified, so the "no findings -> OK" fallback below printed a clean
+    all-clear regardless of what that referenced group actually contains."""
+    permissions = [
+        {
+            "IpProtocol": "tcp",
+            "FromPort": 22,
+            "ToPort": 22,
+            "UserIdGroupPairs": [{"GroupId": "sg-0abc123", "Description": "bastion"}],
+        }
+    ]
+    findings = infra_status.evaluate_ssh_exposure(permissions)
+    assert [f.status for f in findings] == [WARN]
+    assert "sg-0abc123" in findings[0].detail
+    assert "bastion" in findings[0].detail
+
+
+def test_ssh_via_prefix_list_is_not_absorbed_into_ok():
+    """Same gap, for a managed prefix list (PrefixListIds) instead of a
+    referenced security group -- also never classified before #102."""
+    permissions = [
+        {
+            "IpProtocol": "tcp",
+            "FromPort": 22,
+            "ToPort": 22,
+            "PrefixListIds": [{"PrefixListId": "pl-0def456", "Description": "vpn"}],
+        }
+    ]
+    findings = infra_status.evaluate_ssh_exposure(permissions)
+    assert [f.status for f in findings] == [WARN]
+    assert "pl-0def456" in findings[0].detail
+    assert "vpn" in findings[0].detail
+
+
+def test_ssh_rule_with_both_cidr_and_group_source_reports_both():
+    """A single rule can carry more than one source type at once -- both
+    must be reported, not just the CIDR half that was already handled."""
+    permissions = [
+        {
+            "IpProtocol": "tcp",
+            "FromPort": 22,
+            "ToPort": 22,
+            "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
+            "UserIdGroupPairs": [{"GroupId": "sg-0abc123"}],
+        }
+    ]
+    findings = infra_status.evaluate_ssh_exposure(permissions)
+    assert len(findings) == 2
+    statuses = {f.status for f in findings}
+    assert CRIT in statuses  # the 0.0.0.0/0 CIDR
+    assert WARN in statuses  # the referenced group
+
+
 # --- disk ---------------------------------------------------------------------
 
 
@@ -584,6 +639,104 @@ def test_collect_instances_matches_exact_name_and_project(monkeypatch):
     found = infra_status.collect_instances(infra_status.INSTANCE_NAME_TAGS, "ap-south-1")
     assert found["cpu box"] is found_instance
     assert found["gpu box"] is None
+
+
+# --- security group attachment: the P1 (checking only the supplied --sg-id) --
+# https://github.com/Data-Policy-and-Innovation-Centre/janasunani/pull/88#discussion_r3728680714
+#
+# A CPU box can have more than one security group attached, and any one of
+# them can expose SSH. Checking only whatever --sg-id an operator happened
+# to pass -- or a group that isn't even attached to the box -- let a real
+# exposure through a different attached group print a clean "OK no port-22
+# ingress". _attached_security_group_ids reads every group actually attached
+# to an instance straight out of describe-instances' own response (already
+# fetched for evaluate_instance), so main() can check all of them.
+
+
+def test_attached_security_group_ids_returns_every_group():
+    instance = {
+        "SecurityGroups": [
+            {"GroupId": "sg-111", "GroupName": "default"},
+            {"GroupId": "sg-222", "GroupName": "cpu-box"},
+        ]
+    }
+    assert infra_status._attached_security_group_ids(instance) == ["sg-111", "sg-222"]
+
+
+def test_attached_security_group_ids_is_none_for_no_instance():
+    assert infra_status._attached_security_group_ids(None) is None
+
+
+def test_attached_security_group_ids_is_none_for_no_groups():
+    """Defensive: a real EC2 instance always has at least one group, but
+    treat an empty/missing list as "nothing to check from," not "checked
+    and found zero groups" -- the caller must not read this as an all-clear."""
+    assert infra_status._attached_security_group_ids({"SecurityGroups": []}) is None
+    assert infra_status._attached_security_group_ids({}) is None
+
+
+def test_main_checks_every_attached_security_group_not_just_one(monkeypatch, capsys):
+    """The core P1 regression: the CPU box has two attached groups, only one
+    of which exposes SSH. Neither --sg-id nor its absence should matter --
+    both groups must be checked from the instance's own attachment list."""
+    cpu_instance = _instance("janasunani-cpu-box")
+    cpu_instance["SecurityGroups"] = [
+        {"GroupId": "sg-clean"},
+        {"GroupId": "sg-open"},
+    ]
+
+    def fake_aws_json(args, region):
+        if args[:2] == ["ec2", "describe-instances"]:
+            return _reservation(cpu_instance)
+        if args[:2] == ["ec2", "describe-security-groups"]:
+            group_id = args[args.index("--group-ids") + 1]
+            if group_id == "sg-open":
+                perms = [
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": 22,
+                        "ToPort": 22,
+                        "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
+                    }
+                ]
+            else:
+                perms = []
+            return {"SecurityGroups": [{"IpPermissions": perms}]}
+        if args[:2] == ["s3api", "list-objects-v2"]:
+            return {}
+        raise AssertionError(f"unexpected aws call: {args}")
+
+    monkeypatch.setattr(infra_status, "_aws_json", fake_aws_json)
+    monkeypatch.setattr(sys, "argv", ["infra_status.py", "--no-ssh"])
+    exit_code = infra_status.main()
+    out = capsys.readouterr().out
+    assert "0.0.0.0/0" in out
+    assert exit_code == 1  # CRIT present
+
+
+def test_main_warns_when_supplied_sg_id_is_not_an_attached_group(monkeypatch, capsys):
+    """A --sg-id naming a group that is not actually attached to the CPU box
+    must not be silently substituted for the real attached groups -- and the
+    real attached groups are checked regardless, per the P1 fix above."""
+    cpu_instance = _instance("janasunani-cpu-box")
+    cpu_instance["SecurityGroups"] = [{"GroupId": "sg-real"}]
+
+    def fake_aws_json(args, region):
+        if args[:2] == ["ec2", "describe-instances"]:
+            return _reservation(cpu_instance)
+        if args[:2] == ["ec2", "describe-security-groups"]:
+            return {"SecurityGroups": [{"IpPermissions": []}]}
+        if args[:2] == ["s3api", "list-objects-v2"]:
+            return {}
+        raise AssertionError(f"unexpected aws call: {args}")
+
+    monkeypatch.setattr(infra_status, "_aws_json", fake_aws_json)
+    monkeypatch.setattr(sys, "argv", ["infra_status.py", "--no-ssh", "--sg-id", "sg-wrong"])
+    infra_status.main()
+    out = capsys.readouterr().out
+    assert "sg-wrong" in out
+    assert "not among the CPU box's attached groups" in out
+    assert "sg-real" in out
 
 
 def test_collect_backup_returns_none_when_the_aws_call_fails(monkeypatch):

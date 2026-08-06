@@ -188,6 +188,23 @@ def evaluate_instance(name: str, instance: Optional[dict], *, always_on: bool) -
     return Finding(section, name, OK, f"{state} ({itype})")
 
 
+def _attached_security_group_ids(instance: Optional[dict]) -> Optional[list[str]]:
+    """Every security group ID actually attached to an instance, straight out
+    of `describe-instances`' own `SecurityGroups` field on the instance dict
+    `collect_instances` already returns -- no extra AWS call needed.
+
+    A box can have more than one group attached, and any one of them can
+    expose SSH; checking only a single operator-supplied `--sg-id` missed
+    that. None (not an empty list) when there is no instance to read from, or
+    it has no groups -- both cases the caller must treat as "nothing to
+    check from this," not as "checked and found zero groups."
+    """
+    if not instance:
+        return None
+    ids = [g["GroupId"] for g in instance.get("SecurityGroups", []) if g.get("GroupId")]
+    return ids or None
+
+
 def _rule_covers_ssh(rule: dict) -> bool:
     """Whether an IpPermission's protocol/port coverage includes TCP/22.
 
@@ -225,13 +242,22 @@ def _is_single_host(cidr: str) -> bool:
 def evaluate_ssh_exposure(permissions: list[dict]) -> list[Finding]:
     """Port 22 ingress. See issue #32.
 
-    Checks both `IpRanges` (IPv4) and `Ipv6Ranges` (IPv6) — an IPv6-only
-    source is exposure this tool would otherwise never see. The standing
-    maintainer rule (`MAINTAINER_SSH_DESCRIPTION`) is recognized as intended
-    access, not a leftover; anything else is either a deploy authorizing 22 to
-    the runner's /32 (expected only for the duration of that deploy, revoked
-    after — a leftover means a runner died mid-deploy) or, open to the world,
-    something badly wrong.
+    Checks all four source types AWS's `IpPermission` can carry on a rule
+    covering SSH: `IpRanges` (IPv4), `Ipv6Ranges` (IPv6), `UserIdGroupPairs`
+    (a referenced security group -- membership not resolvable without
+    another AWS call this read-only pass does not make) and `PrefixListIds`
+    (a managed prefix list -- likewise opaque without resolving it). The
+    latter two cannot be scored CRIT/OK the way a CIDR can (their contents
+    are unknown here), but skipping them silently is exactly the earlier bug
+    (#102): a rule granting 22 through a referenced group or prefix list
+    added no finding, so the "no findings -> OK" fallback below printed a
+    clean all-clear regardless. They now always WARN, so a real exposure
+    through either can never be absorbed into that fallback.
+    The standing maintainer rule (`MAINTAINER_SSH_DESCRIPTION`) is recognized
+    as intended access, not a leftover; a plain CIDR source is either a
+    deploy authorizing 22 to the runner's /32 (expected only for the
+    duration of that deploy, revoked after — a leftover means a runner died
+    mid-deploy) or, open to the world, something badly wrong.
     """
     findings: list[Finding] = []
     for rule in permissions:
@@ -289,6 +315,33 @@ def evaluate_ssh_exposure(permissions: list[dict]) -> list[Finding]:
                         " — expected only during a deploy; a leftover rule is issue #32",
                     )
                 )
+        for group in rule.get("UserIdGroupPairs", []):
+            group_id = group.get("GroupId", "?")
+            description = group.get("Description")
+            findings.append(
+                Finding(
+                    "network",
+                    "ssh exposure",
+                    WARN,
+                    f"port 22 open to security group {group_id}"
+                    f"{f' ({description})' if description else ''}"
+                    " — membership not resolved by this tool; check which instances "
+                    "belong to that group",
+                )
+            )
+        for prefix in rule.get("PrefixListIds", []):
+            prefix_id = prefix.get("PrefixListId", "?")
+            description = prefix.get("Description")
+            findings.append(
+                Finding(
+                    "network",
+                    "ssh exposure",
+                    WARN,
+                    f"port 22 open to prefix list {prefix_id}"
+                    f"{f' ({description})' if description else ''}"
+                    " — contents not resolved by this tool; check what CIDRs it expands to",
+                )
+            )
     if not findings:
         findings.append(Finding("network", "ssh exposure", OK, "no port-22 ingress"))
     return findings
@@ -702,6 +755,7 @@ def main() -> int:
         report.add("compute", "aws", INFO, "aws CLI not installed — AWS checks skipped")
     else:
         instances = collect_instances(INSTANCE_NAME_TAGS, args.region)
+        cpu_box = None
         if instances is None:
             report.add(
                 "compute",
@@ -711,21 +765,56 @@ def main() -> int:
                 "network) — not checked",
             )
         else:
-            report.findings.append(
-                evaluate_instance("cpu box", instances["cpu box"], always_on=True)
-            )
+            cpu_box = instances["cpu box"]
+            report.findings.append(evaluate_instance("cpu box", cpu_box, always_on=True))
             report.findings.append(
                 evaluate_instance("gpu box", instances["gpu box"], always_on=False)
             )
 
-        if not args.sg_id:
-            report.add(
-                "network",
-                "ssh exposure",
-                INFO,
-                "not checked (pass --sg-id, from `terraform output cpu_box_security_group_id`)",
-            )
-        else:
+        # Every security group actually attached to the CPU box, not just the
+        # one named by --sg-id: describe-instances (above, already fetched)
+        # returns each instance's SecurityGroups for free, no extra AWS call.
+        # A box can have more than one group attached, and any one of them
+        # can expose 22 -- checking only the group an operator happened to
+        # pass would print "OK no port-22 ingress" while a *different*
+        # attached group leaves it open. This is preferred over the weaker
+        # "refuse an all-clear on a --sg-id mismatch" fallback because it
+        # does not depend on the operator supplying --sg-id at all, or
+        # supplying the right one.
+        attached_group_ids = _attached_security_group_ids(cpu_box)
+        if attached_group_ids:
+            if args.sg_id and args.sg_id not in attached_group_ids:
+                report.add(
+                    "network",
+                    "ssh exposure",
+                    WARN,
+                    f"--sg-id {args.sg_id} is not among the CPU box's attached groups "
+                    f"({', '.join(attached_group_ids)}) — checking the attached groups "
+                    "instead, not the one supplied",
+                )
+            all_permissions: list[dict] = []
+            collection_failed = False
+            for group_id in attached_group_ids:
+                permissions = collect_security_group(group_id, args.region)
+                if permissions is None:
+                    collection_failed = True
+                    break
+                all_permissions.extend(permissions)
+            if collection_failed:
+                report.add(
+                    "network",
+                    "ssh exposure",
+                    INFO,
+                    "describe-security-groups failed for one or more of the CPU box's "
+                    f"attached groups ({', '.join(attached_group_ids)}, "
+                    f"region={args.region}) — not checked",
+                )
+            else:
+                report.findings.extend(evaluate_ssh_exposure(all_permissions))
+        elif args.sg_id:
+            # Instance lookup unavailable (AWS collection failed above, or no
+            # instance tagged "cpu box" was found) -- fall back to whatever
+            # group the operator supplied, the best available check.
             permissions = collect_security_group(args.sg_id, args.region)
             if permissions is None:
                 report.add(
@@ -737,6 +826,14 @@ def main() -> int:
                 )
             else:
                 report.findings.extend(evaluate_ssh_exposure(permissions))
+        else:
+            report.add(
+                "network",
+                "ssh exposure",
+                INFO,
+                "not checked (CPU box not found and no --sg-id given; from `terraform "
+                "output cpu_box_security_group_id`)",
+            )
 
         backup = collect_backup(args.region)
         if backup is None:
