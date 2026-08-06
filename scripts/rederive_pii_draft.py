@@ -124,16 +124,30 @@ def _version(*candidates: str) -> str:
 
 
 def _git_commit() -> str:
+    """The commit that produced this draft, suffixed -dirty if it was uncommitted.
+
+    Pathspecs resolve against the process working directory, so `-C scripts`
+    turned `janasunani` and `scripts` into `scripts/janasunani` and
+    `scripts/scripts`, which match nothing. Every draft was therefore recorded
+    as clean, attributing output to committed code that may not have produced
+    it. Run from the repository root so the pathspecs mean what they say.
+    """
     try:
+        root = subprocess.run(
+            ["git", "-C", str(_SCRIPT_DIR), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
         out = subprocess.run(
-            ["git", "-C", str(_SCRIPT_DIR), "rev-parse", "--short", "HEAD"],
+            ["git", "-C", root, "rev-parse", "--short", "HEAD"],
             capture_output=True,
             text=True,
             check=True,
         )
         commit = out.stdout.strip()
         dirty = subprocess.run(
-            ["git", "-C", str(_SCRIPT_DIR), "status", "--porcelain", "--", "janasunani", "scripts"],
+            ["git", "-C", root, "status", "--porcelain", "--", "janasunani", "scripts"],
             capture_output=True,
             text=True,
             check=True,
@@ -182,6 +196,16 @@ def main() -> None:
         "--force", action="store_true", help="Overwrite --out if it already exists"
     )
     args = parser.parse_args()
+
+    # --force exists to overwrite a stale draft. Pointed at the gold it would
+    # overwrite irreplaceable human labelling with analyzer output, and the
+    # checksum below would then hash the destroyed file and record it as the
+    # source. No flag makes that recoverable, so it is refused outright.
+    if args.out.resolve() == args.gold.resolve():
+        sys.exit(
+            f"--out is the same file as --gold ({args.gold}). Refusing: this would "
+            "overwrite the corrected gold with analyzer output and cannot be undone."
+        )
 
     if args.out.exists() and not args.force:
         sys.exit(

@@ -109,8 +109,14 @@ uv run --extra pipeline-core janasunani-evaluate-pii --gold <corrected.jsonl>
 
 ### Gold-file lifecycle
 
-- **Draft** (`data/output/pii_gold_draft.jsonl`): regenerable by this script —
-  not tracked anywhere, gitignored, safe to delete.
+- **Draft** (`data/output/pii_gold_draft.jsonl`): **DVC-track it before the
+  label pass, and do not delete it.** It looks regenerable and is not. Re-running
+  this script re-runs OCR, which is not byte-reproducible (#57), so the text the
+  annotator actually saw cannot be recovered. The original draft is also the only
+  record of *which pages were drafted*, so without it a gold file cannot be shown
+  to be complete — `scripts/rederive_pii_draft.py` reconstructs a draft from the
+  gold's own text, which makes the completeness and text-equality checks pass by
+  construction and proves nothing about them.
 - **Corrected gold** (`data/external/pii_gold.jsonl`): irreplaceable human
   labeling work — **DVC-tracked** so it survives any one machine. Only the
   `.dvc` pointer (md5 + path) enters git; the content goes to the private,

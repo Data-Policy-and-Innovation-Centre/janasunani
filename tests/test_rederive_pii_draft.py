@@ -160,3 +160,67 @@ def test_cli_writes_the_draft_and_a_provenance_sidecar(tmp_path, monkeypatch, ca
 
     # No citizen text on stdout, ever.
     assert _TEXT not in capsys.readouterr().out
+
+
+def test_cli_refuses_to_write_over_the_gold_even_with_force(tmp_path, monkeypatch):
+    """--force exists to replace a stale draft. Aimed at the gold it would destroy
+    irreplaceable human labelling and then hash the wreckage as the source
+    checksum, so it is refused regardless of the flag."""
+    gold = _gold(tmp_path, {"id": "CMO1_p1", "text": _TEXT})
+    before = gold.read_text(encoding="utf-8")
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["rederive_pii_draft.py", "--gold", str(gold), "--out", str(gold), "--force"],
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        mod.main()
+
+    assert excinfo.value.code != 0
+    assert gold.read_text(encoding="utf-8") == before
+
+
+def test_cli_refuses_an_aliased_path_to_the_gold(tmp_path, monkeypatch):
+    """Same file reached by a different path string is the same destruction."""
+    gold = _gold(tmp_path, {"id": "CMO1_p1", "text": _TEXT})
+    before = gold.read_text(encoding="utf-8")
+    aliased = tmp_path / "sub" / ".." / gold.name
+    (tmp_path / "sub").mkdir()
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["rederive_pii_draft.py", "--gold", str(gold), "--out", str(aliased), "--force"],
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        mod.main()
+
+    assert excinfo.value.code != 0
+    assert gold.read_text(encoding="utf-8") == before
+
+
+def test_git_commit_notices_an_uncommitted_analyzer(tmp_path, monkeypatch):
+    """Pathspecs resolve against the working directory, so running from scripts/
+    silently matched nothing and every draft was recorded as clean -- attributing
+    output to committed code that may not have produced it."""
+    calls: list[list[str]] = []
+
+    class _Result:
+        def __init__(self, stdout: str) -> None:
+            self.stdout = stdout
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        if "--show-toplevel" in cmd:
+            return _Result("/repo\n")
+        if "rev-parse" in cmd:
+            return _Result("abc1234\n")
+        return _Result(" M janasunani/pipeline/stages/pii_tagger.py\n")
+
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+
+    assert mod._git_commit() == "abc1234-dirty"
+    status = next(c for c in calls if "status" in c)
+    # The pathspecs must be interpreted from the repository root, not scripts/.
+    assert status[: status.index("status")] == ["git", "-C", "/repo"]

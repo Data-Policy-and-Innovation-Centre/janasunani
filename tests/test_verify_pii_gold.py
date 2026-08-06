@@ -340,3 +340,114 @@ class TestCLIExitStatus:
 
 def json_lines(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+
+class TestMalformedGoldIsRejected:
+    """Each of these once verified clean. A gold file that passes the gate but is
+    structurally wrong produces a plausible privacy number, which is worse than a
+    crash: nothing downstream can tell the difference."""
+
+    def test_empty_file_is_rejected(self, tmp_path):
+        path = tmp_path / "gold.jsonl"
+        path.write_text("", encoding="utf-8")
+        with pytest.raises(ValueError, match="no records"):
+            verify.load(path)
+
+    def test_blank_lines_only_is_rejected(self, tmp_path):
+        path = tmp_path / "gold.jsonl"
+        path.write_text("\n\n   \n", encoding="utf-8")
+        with pytest.raises(ValueError, match="no records"):
+            verify.load(path)
+
+    def test_missing_entities_field_is_rejected(self, tmp_path):
+        """pii_eval's loader requires the field, so accepting it here would pass an
+        artifact the scorecard then refuses to load."""
+        path = write_jsonl(tmp_path / "gold.jsonl", [{"id": "a", "text": TEXT}])
+        with pytest.raises(ValueError, match="'entities' missing"):
+            verify.load(path)
+
+    def test_explicitly_empty_entities_is_accepted(self, tmp_path):
+        path = write_jsonl(tmp_path / "gold.jsonl", [{"id": "a", "text": TEXT, "entities": []}])
+        assert verify.check(verify.load(path)).errors == []
+
+    @pytest.mark.parametrize("bad", [0.9, True, "0", None])
+    def test_non_integer_offsets_are_rejected(self, tmp_path, bad):
+        """int() would turn 0.9 into 0 and True into 1, verifying clean against
+        boundaries the gold does not contain."""
+        path = write_jsonl(
+            tmp_path / "gold.jsonl",
+            [{"id": "a", "text": TEXT, "entities": [{"start": bad, "end": 10, "entity": "NAME"}]}],
+        )
+        with pytest.raises(ValueError, match="must be an integer"):
+            verify.load(path)
+
+
+class TestUntrustedLabelsAreNotEchoed:
+    """The entity field is annotator input and this report is written to be pasted
+    into a PR, so a bad label is counted, never repeated."""
+
+    LEAKED = "Ravi Patra, At/Po Balipatna"
+
+    def _report(self, tmp_path):
+        path = write_jsonl(
+            tmp_path / "gold.jsonl",
+            [
+                {
+                    "id": "a",
+                    "text": TEXT,
+                    "entities": [{"start": 0, "end": 10, "entity": self.LEAKED}],
+                }
+            ],
+        )
+        return verify.check(verify.load(path))
+
+    def test_bad_label_still_fails(self, tmp_path):
+        report = self._report(tmp_path)
+        assert any("unrecognised entity label" in e for e in report.errors)
+
+    def test_bad_label_value_never_appears_in_errors(self, tmp_path):
+        report = self._report(tmp_path)
+        assert all(self.LEAKED.upper() not in e.upper() for e in report.errors)
+
+    def test_bad_label_value_never_appears_in_counts(self, tmp_path):
+        report = self._report(tmp_path)
+        assert self.LEAKED.upper() not in report.by_entity
+        assert report.by_entity[verify.UNRECOGNISED_ENTITY] == 1
+
+
+class TestVoidMeasurementsFail:
+    def _run(self, monkeypatch, gold: Path, draft: Path) -> int:
+        monkeypatch.setattr(
+            sys, "argv", ["verify_pii_gold.py", "--gold", str(gold), "--draft", str(draft)]
+        )
+        try:
+            verify.main()
+        except SystemExit as exc:
+            return int(exc.code or 0)
+        return 0
+
+    def test_gold_identical_to_draft_fails(self, tmp_path, monkeypatch):
+        """Analyzer output graded against itself scores ~100% recall. That is a void
+        measurement, not a perfect one."""
+        rows = [{"id": "a", "text": TEXT, "entities": [{"start": 0, "end": 10, "entity": "NAME"}]}]
+        gold = write_jsonl(tmp_path / "gold.jsonl", rows)
+        draft = write_jsonl(tmp_path / "draft.jsonl", rows)
+        assert self._run(monkeypatch, gold, draft) == 1
+
+    def test_duplicate_draft_ids_are_rejected(self, tmp_path):
+        """dict() would silently keep the last record, and the completeness check is
+        set-based, so the id sets would still match while a record was dropped."""
+        draft = verify.load(
+            write_jsonl(
+                tmp_path / "draft.jsonl",
+                [
+                    {"id": "a", "text": TEXT, "entities": []},
+                    {"id": "a", "text": TEXT, "entities": []},
+                ],
+            )
+        )
+        gold = verify.load(
+            write_jsonl(tmp_path / "gold.jsonl", [{"id": "a", "text": TEXT, "entities": []}])
+        )
+        with pytest.raises(ValueError, match="duplicate record ids"):
+            verify.diff(draft, gold)

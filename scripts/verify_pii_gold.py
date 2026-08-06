@@ -55,6 +55,11 @@ from typing import Any, Iterable
 KNOWN_ENTITIES = {"NAME", "PHONE", "EMAIL", "AADHAAR", "PAN"}
 ENTITY_KEYS = ("entity", "label", "type", "entity_type")
 
+# Bucket for labels outside KNOWN_ENTITIES. The entity field is annotator
+# input, so a malformed export can carry citizen text in it; this report is
+# written to be pasted into a PR, so the value is counted, never repeated.
+UNRECOGNISED_ENTITY = "<unrecognised>"
+
 
 @dataclass
 class Span:
@@ -100,6 +105,20 @@ def _entity_of(raw: dict[str, Any]) -> str:
     raise KeyError("span has no entity/label/type/entity_type")
 
 
+def _offset_of(raw: dict[str, Any], key: str, where: str) -> int:
+    """Read a span offset, refusing anything that is not already an integer.
+
+    `int()` would silently turn 0.9 into 0 and True into 1, so a malformed
+    export would verify clean against boundaries the gold does not contain.
+    Exact-span scoring is defined on these indices; normalising them here
+    would move the answer.
+    """
+    value = raw.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{where}: span {key!r} must be an integer, got {type(value).__name__}")
+    return value
+
+
 def load(path: Path) -> list[Record]:
     """Parse the gold JSONL. Raises on malformed lines rather than skipping."""
     records: list[Record] = []
@@ -114,13 +133,27 @@ def load(path: Path) -> list[Record]:
                 raise ValueError(f"{path}:{number}: invalid JSON: {exc}") from exc
             if not isinstance(raw.get("text"), str):
                 raise ValueError(f"{path}:{number}: 'text' missing or not a string")
+            # A missing 'entities' key is not an unlabelled record. pii_eval's
+            # own loader requires the field, so accepting it here would pass an
+            # artifact the scorecard then refuses to load.
+            if "entities" not in raw:
+                raise ValueError(
+                    f"{path}:{number}: 'entities' missing. Use [] for a record with no PII."
+                )
+            if not isinstance(raw["entities"], list):
+                raise ValueError(f"{path}:{number}: 'entities' must be a list")
+            where = f"{path}:{number}"
             spans = [
-                Span(int(s["start"]), int(s["end"]), _entity_of(s))
-                for s in raw.get("entities", [])
+                Span(_offset_of(s, "start", where), _offset_of(s, "end", where), _entity_of(s))
+                for s in raw["entities"]
             ]
             records.append(
                 Record(id=str(raw.get("id") or f"line-{number}"), text=raw["text"], spans=spans)
             )
+    if not records:
+        raise ValueError(
+            f"{path}: no records. A truncated or empty artifact must not verify clean."
+        )
     return records
 
 
@@ -143,10 +176,21 @@ def check(records: Iterable[Record]) -> Report:
         length = len(record.text)
         for span in record.spans:
             report.spans += 1
-            report.by_entity[span.entity] += 1
+            # by_entity is printed and serialised, so an unrecognised label is
+            # bucketed rather than echoed. Same reason as the error text below.
+            known = span.entity in KNOWN_ENTITIES
+            report.by_entity[span.entity if known else UNRECOGNISED_ENTITY] += 1
 
-            if span.entity not in KNOWN_ENTITIES:
-                report.fail(f"{record.id}: unrecognised entity {span.entity!r}")
+            if not known:
+                # The label is untrusted: a malformed export can put a citizen
+                # name in the entity field, and this output is written to be
+                # pasted into a PR. Say where the bad label is and what was
+                # expected, never what it contained.
+                report.fail(
+                    f"{record.id}: span [{span.start},{span.end}) has an unrecognised "
+                    f"entity label (expected one of {sorted(KNOWN_ENTITIES)}); "
+                    "value withheld, it may contain citizen text"
+                )
             if span.start < 0 or span.end > length:
                 report.fail(
                     f"{record.id}: span [{span.start},{span.end}) outside text of length {length}"
@@ -174,8 +218,30 @@ def check(records: Iterable[Record]) -> Report:
     return report
 
 
+def _changed_spans(human: dict[str, Any]) -> int:
+    """How many spans the human pass actually touched, in any way."""
+    return (
+        human["spans_added"]
+        + human["spans_removed"]
+        + human["spans_rebounded"]
+        + human["spans_relabelled"]
+    )
+
+
 def diff(draft: list[Record], gold: list[Record]) -> dict[str, Any]:
     """Summarise the human pass: what was added, removed, re-bounded, relabelled."""
+    # A concatenated draft would lose records to this dict silently, and the
+    # completeness comparison below is set-based so the id sets would still
+    # match. The audit would then be missing a record without saying so.
+    draft_ids = [r.id for r in draft]
+    duplicate_draft_ids = sorted({i for i in draft_ids if draft_ids.count(i) > 1})
+    if duplicate_draft_ids:
+        raise ValueError(
+            "draft has duplicate record ids, so records would be dropped from "
+            f"the audit: {', '.join(duplicate_draft_ids[:10])}"
+            + (" ..." if len(duplicate_draft_ids) > 10 else "")
+        )
+
     draft_by_id = {r.id: r for r in draft}
     gold_by_id = {r.id: r for r in gold}
     shared = sorted(set(draft_by_id) & set(gold_by_id))
@@ -318,6 +384,17 @@ def main() -> None:
                 f"(first: {bad[:3]}). Offsets index into the text, so editing it "
                 f"silently invalidates every span in that record."
             )
+        # No adjudication at all means the "gold" is analyzer output, which
+        # scores ~100% recall against itself. That is a void measurement, not a
+        # perfect one, so it fails rather than warns -- and it has to be decided
+        # here, not in the print branch, or --json never sees it.
+        if _changed_spans(human) == 0:
+            report.fail(
+                "the corrected file is identical to the draft: no spans were added, "
+                "removed, re-bounded or relabelled. The draft is analyzer output, so "
+                "scoring against it measures the analyzer against itself and the "
+                "recall figure would be void."
+            )
         payload["errors"] = report.errors
 
     if args.show_samples:
@@ -343,19 +420,7 @@ def main() -> None:
             print(f"  spans re-bounded : {human['spans_rebounded']}")
             print(f"  spans relabelled : {human['spans_relabelled']}")
             print(f"  spans unchanged  : {human['spans_unchanged']}")
-            changed = (
-                human["spans_added"]
-                + human["spans_removed"]
-                + human["spans_rebounded"]
-                + human["spans_relabelled"]
-            )
-            if changed == 0:
-                print(
-                    "\n  WARNING: the corrected file is identical to the draft.\n"
-                    "  The draft is analyzer output, so evaluating it scores ~100% recall\n"
-                    "  by construction. The measurement would be void."
-                )
-            elif human["spans_added"] == 0:
+            if _changed_spans(human) and human["spans_added"] == 0:
                 print(
                     "\n  WARNING: no spans were ADDED. Added spans are the recall misses,\n"
                     "  which is the number the scorecard exists to report. Deletions alone\n"
