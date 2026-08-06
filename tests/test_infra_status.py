@@ -263,6 +263,28 @@ def test_no_containers_reads_as_not_deployed_not_as_broken():
     assert "not deployed" in findings[0].detail
 
 
+def test_all_containers_exited_is_a_full_outage_not_a_pre_deploy_box():
+    """`running=[]` alone is ambiguous: it means both "never deployed" and
+    "deployed, then every container crashed". `docker ps` (no -a) can't tell
+    them apart -- collect_box now uses `-a` and passes `all_seen` so this
+    function can. Codex re-review on #88."""
+    findings = infra_status.evaluate_containers(
+        [], all_seen=list(infra_status.STACK_CONTAINERS)
+    )
+    assert [f.status for f in findings] == [CRIT] * len(infra_status.STACK_CONTAINERS)
+    assert all("not running" in f.detail for f in findings)
+
+
+def test_all_seen_defaults_to_none_and_keeps_old_not_deployed_behavior():
+    """A caller that doesn't pass all_seen (e.g. a stub in an older test)
+    must not suddenly read a full outage as a pre-deploy box, or vice versa
+    -- default is "unknown", which still reads as not-deployed, matching the
+    pre-`-a` behavior exactly."""
+    findings = infra_status.evaluate_containers([])
+    assert [f.status for f in findings] == [INFO]
+    assert "not deployed" in findings[0].detail
+
+
 def test_oltp_only_reads_as_pre_deploy_not_as_three_missing_containers():
     """docs/DEPLOY.md's documented first-time state (`up -d oltp` only,
     before the app images are deployed) must not CRIT api/frontend/proxy --
@@ -588,6 +610,38 @@ def test_aws_json_pins_the_region(monkeypatch):
     infra_status._aws_json(["ec2", "describe-instances"], "ap-south-1")
     assert "--region" in captured["command"]
     assert "ap-south-1" in captured["command"]
+
+
+def test_collect_box_uses_docker_ps_dash_a_and_splits_running_from_all_seen(monkeypatch):
+    """`docker ps -a`'s Status field starts with "Up" only for a genuinely
+    running container ("Exited (1) 2 hours ago", "Created", ... otherwise).
+    Mixed output must split into `running` (Up only, further checked for
+    unhealthy/starting) and `all_seen` (every janasunani container,
+    regardless of state) -- the distinction evaluate_containers needs to
+    tell a full outage (all_seen non-empty, running empty) apart from a
+    pre-deploy box (both empty). Codex re-review on #88 flagged the
+    pre-`-a` version of this collector for exactly this gap."""
+    docker_output = (
+        "janasunani-oltp\tUp 5 minutes (healthy)\n"
+        "janasunani-api\tExited (1) 2 hours ago\n"
+        "janasunani-frontend\tUp 2 minutes (health: starting)\n"
+        "unrelated-container\tUp 10 minutes\n"
+    )
+    captured_docker_command: list = []
+
+    def fake_run(command, timeout=30):
+        if "docker ps" in command[-1]:
+            captured_docker_command.extend(command)
+            return docker_output
+        return "1048576"  # df -Pk: 1 GiB free, in KiB
+
+    monkeypatch.setattr(infra_status, "_run", fake_run)
+    _free_gib, running, unhealthy, starting, all_seen = infra_status.collect_box("fake-host")
+    assert "-a" in captured_docker_command[-1], captured_docker_command
+    assert set(running) == {"janasunani-oltp", "janasunani-frontend"}
+    assert set(all_seen) == {"janasunani-oltp", "janasunani-api", "janasunani-frontend"}
+    assert starting == frozenset({"janasunani-frontend"})
+    assert not unhealthy
 
 
 # --- the read-only guarantee --------------------------------------------------

@@ -320,6 +320,7 @@ def evaluate_containers(
     running: Optional[list[str]],
     unhealthy: Optional[frozenset[str]] = None,
     starting: Optional[frozenset[str]] = None,
+    all_seen: Optional[list[str]] = None,
 ) -> list[Finding]:
     """``unhealthy`` are containers Docker itself has marked failing their
     HEALTHCHECK (oltp/api/frontend all define one) despite still running --
@@ -329,16 +330,32 @@ def evaluate_containers(
     multi-minute model warm-up) -- not yet *confirmed* healthy, so `make
     infra` running mid-warm-up must not call that OK either, even though it
     is an expected, transient state rather than a failure.
+
+    ``all_seen`` is every janasunani container `docker ps -a` sees,
+    regardless of state -- collected so an *empty* ``running`` can be told
+    apart from "never deployed": if every previously-deployed container has
+    exited, `running` is empty exactly the same as a box that was never
+    deployed at all, and reading that as "not deployed yet" would mask a
+    full outage as a non-event. Only when `all_seen` is *also* empty is
+    nothing running the pre-deploy state.
     """
     if running is None:
         return [Finding("box", "stack", INFO, "not checked")]
     if not running:
-        return [
-            Finding(
-                "box", "stack", INFO, "no janasunani containers — stack not deployed yet"
-            )
-        ]
-    if set(running) == PRE_DEPLOY_CONTAINERS:
+        if not all_seen:
+            return [
+                Finding(
+                    "box",
+                    "stack",
+                    INFO,
+                    "no janasunani containers — stack not deployed yet",
+                )
+            ]
+        # Containers exist (docker ps -a saw them) but none are running --
+        # a full outage, not a pre-deploy box. Falls through to the
+        # per-container loop below, which CRITs every STACK_CONTAINERS
+        # member exactly because none of them are in the (empty) `running`.
+    elif set(running) == PRE_DEPLOY_CONTAINERS:
         # docs/DEPLOY.md's documented first-time bring-up: oltp only, up
         # before the app images are ever deployed. Scoring that against the
         # full STACK_CONTAINERS list below would CRIT three containers
@@ -547,22 +564,24 @@ def collect_box(host: str) -> tuple[
     Optional[list[str]],
     Optional[frozenset[str]],
     Optional[frozenset[str]],
+    Optional[list[str]],
 ]:
     """Disk free (GiB), running janasunani containers, which of those Docker
-    considers unhealthy, and which are still inside their HEALTHCHECK's
-    start_period, over SSH.
+    considers unhealthy, which are still inside their HEALTHCHECK's
+    start_period, and every janasunani container that exists regardless of
+    state, over SSH.
 
-    `docker ps` (no `-a`) already excludes exited containers, so a stopped
-    container correctly falls out of the `containers` list. The gap this
-    closes is the other direction: a container that is running but whose
-    HEALTHCHECK (oltp/api/frontend all define one, deploy/docker-compose.yml)
-    is failing, or has not finished its `start_period` yet (Docker's
-    `(health: starting)` -- the api's warm-up can take minutes) -- a
-    name-only list can't distinguish either from a genuinely healthy one, so
-    it still says OK.
+    Uses `docker ps -a`, not plain `docker ps`: without `-a`, an exited
+    container is indistinguishable from one that was never created at all --
+    both are simply absent from the output -- so a box where the whole stack
+    has crashed would read exactly like a box nothing has ever been deployed
+    to. `-a`'s Status field always starts with "Up" for a running container
+    (e.g. "Up 5 minutes (healthy)") and something else for anything not
+    running ("Exited (1) 2 hours ago", "Created", ...), which is what
+    separates `running` from the last return value below.
     """
     if shutil.which("ssh") is None:
-        return None, None, None, None
+        return None, None, None, None, None
     ssh = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host]
 
     free_gib = None
@@ -570,26 +589,31 @@ def collect_box(host: str) -> tuple[
     if raw and raw.strip().isdigit():
         free_gib = int(raw.strip()) / (1024 * 1024)
 
-    containers = None
+    running = None
     unhealthy = None
     starting = None
-    raw = _run([*ssh, "docker ps --format '{{.Names}}\t{{.Status}}'"], timeout=30)
+    all_seen = None
+    raw = _run([*ssh, "docker ps -a --format '{{.Names}}\t{{.Status}}'"], timeout=30)
     if raw is not None:
-        containers = []
+        running = []
+        all_seen = []
         unhealthy_set = set()
         starting_set = set()
         for line in raw.splitlines():
             name, _, status = line.strip().partition("\t")
             if not name.startswith("janasunani"):
                 continue
-            containers.append(name)
+            all_seen.append(name)
+            if not status.startswith("Up"):
+                continue
+            running.append(name)
             if "(unhealthy)" in status:
                 unhealthy_set.add(name)
             elif "(health: starting)" in status:
                 starting_set.add(name)
         unhealthy = frozenset(unhealthy_set)
         starting = frozenset(starting_set)
-    return free_gib, containers, unhealthy, starting
+    return free_gib, running, unhealthy, starting, all_seen
 
 
 def collect_health(site: Optional[str]) -> tuple[Optional[dict], Optional[str]]:
@@ -730,12 +754,14 @@ def main() -> int:
     if args.no_ssh:
         report.add("box", "ssh", INFO, "skipped (--no-ssh)")
     else:
-        free_gib, containers, unhealthy, starting = collect_box(args.host)
+        free_gib, containers, unhealthy, starting, all_seen = collect_box(args.host)
         if free_gib is None and containers is None:
             report.add("box", "ssh", INFO, f"{args.host} unreachable — box checks skipped")
         else:
             report.findings.append(evaluate_disk(free_gib))
-            report.findings.extend(evaluate_containers(containers, unhealthy, starting))
+            report.findings.extend(
+                evaluate_containers(containers, unhealthy, starting, all_seen)
+            )
 
     payload, error = collect_health(args.site)
     if args.site:
