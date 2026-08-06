@@ -44,7 +44,7 @@ The portion of the backlog is not yet fixed. We will settle it after a brainstor
 
 | Stage | Earlier figure, and what it was measured on | 14 August |
 |---|---|---|
-| Personal information removal | 80.6% of items found, on a 106-sentence English validation split | Re-measured on our corrected 85-page set, by data type and by language |
+| Personal information removal | 80.6% of items found, on a 106-sentence English validation split | **49.6% measured**, on our corrected 89-page set, by data type. English only: no Odia labelled set exists. Separately, a scan of all 55,544 redacted complaints in the demo slice found **no** mobile number, Aadhaar, PAN or non-government email left in clear text |
 | Text extraction from scans | 77.9% of pages passed three plausibility checks, on 96,469 English pages. Not transcription accuracy: there was no ground truth | **No accuracy figure.** No transcription sample was commissioned, so there is still no ground truth. Reported as divergence from Sarvam Vision, handwritten and printed separately, with no verdict on which is right |
 | Duplicate detection | Not attempted | Recall against the 34,000 duplicates officers have already identified |
 | Page type | 67% accurate, on the earlier team's own 1,500-page sample | Historical context only. No labelled set exists for August |
@@ -54,6 +54,16 @@ The portion of the backlog is not yet fixed. We will settle it after a brainstor
 The first three rows are measurements we will produce. The last three are the earlier team's numbers, reported so the record is complete, and we are not claiming to have re-measured them. Committing otherwise would be promising evidence the plan contains no step to produce.
 
 The earlier figures come from different samples, different splits and almost entirely English text. They are historical reference, not a target, and several are not like-for-like with anything we will measure. Where we come in lower we will say so and say why.
+
+**We come in lower on personal information, and this is the honest account of it.** 49.6% against a historical 80.6% is not a regression: the two numbers are not measuring the same thing. The old figure counted an untyped model finding *something* in 106 sentences. Ours counts typed spans against 529 hand-corrected labels over 89 real scanned pages, and a span only counts as found if it lands on the right characters.
+
+The gap is almost entirely names. Phone numbers score 0.83, Aadhaar 0.86, email 0.75. Names score 0.44, and names are 404 of the 529 labels, so they set the headline. spaCy's English model was not built for Odia personal names and it shows.
+
+Two things about that number a reader should have.
+
+It is measured on a **50-document sample**, which is small enough that a few pages move it. And it cannot see the identifier classes we added this week: bank account and government scheme numbers have no labels in the gold, so they score nothing either way. The evidence for those is the corpus scan in the row above, not this figure.
+
+What the corpus scan supports and the sample does not: across every complaint in the demonstration slice, **no mobile number, Aadhaar number, PAN or non-government email address survives redaction**. That is a weaker claim than an accuracy figure, because it checks shapes we know how to look for rather than everything a human would catch. It is also the claim that holds at 55,544 rather than 89.
 
 Per-class results matter more than the averages. Category accuracy of 71% spans 0.85 for police cases and 0.51 for social welfare. We report the spread, not the headline.
 
