@@ -731,6 +731,27 @@ def test_caddyfile_deployed_snapshot_is_gitignored_and_versioned():
     assert rollback_fn_start < caddyfile_restore < tag_decision
 
 
+def test_deploy_doc_preflight_uses_the_host_visible_oltp_dsn():
+    """The strict-preflight command in docs/DEPLOY.md's box bring-up runs on
+    the host, not inside a container, so it needs the 127.0.0.1:5432 form
+    the oltp service publishes to the host (its own ports comment says so)
+    -- not the oltp:5432 compose-internal hostname the api container's own
+    OLTP_DB_URL uses, which only the compose network resolves. Codex review
+    on #88: following the doc as written pointed the new strict connectivity
+    probe (#88, _oltp_check) at a hostname the host can't reach, failing
+    against an otherwise-healthy database."""
+    doc_text = DEPLOY_DOC_PATH.read_text()
+    anchor = doc_text.index("Verify the box before the first deploy")
+    fence_start = doc_text.index("```bash", anchor)
+    fence_end = doc_text.index("```", fence_start + len("```bash"))
+    command_block = doc_text[fence_start:fence_end]
+    assert "127.0.0.1:5432" in command_block
+    assert "oltp:5432" not in command_block
+
+    api_dsn = _compose()["services"]["api"]["environment"]["OLTP_DB_URL"]
+    assert "oltp:5432" in api_dsn, "sanity: the compose-internal DSN really is oltp:5432"
+
+
 def test_migration_policy_is_documented():
     """A rollback re-deploys the previous image unchanged and never runs
     `alembic downgrade` -- every migration must be expand-only/backward-

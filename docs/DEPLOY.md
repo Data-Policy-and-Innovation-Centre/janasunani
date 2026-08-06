@@ -234,13 +234,23 @@ docker run --rm caddy:2-alpine caddy hash-password --plaintext '<a real password
 
 ```bash
 cd ~/janasunani
-OLTP_DB_URL="<the same URL compose gives the api>" \
+OLTP_DB_URL="postgresql+asyncpg://postgres:<PW>@127.0.0.1:5432/janasunani" \
   uv run --extra demo janasunani-demo-preflight --strict
 ```
 
-Loads no model weights, so it answers in milliseconds. Without `--strict`
-three checks report `WARN` rather than failing, because each one leaves the
-demo *running* — which is exactly why they are easy to miss:
+Host-visible, not the compose-internal DSN: this command runs on the host,
+not inside a container, so it needs the same `127.0.0.1:5432` form §2 used
+for `alembic upgrade head` above — not the `oltp:5432` service hostname
+`deploy/docker-compose.yml` gives the `api` container, which the compose
+network resolves and the host does not. `<PW>` is the same
+`POSTGRES_PASSWORD` from `deploy/.env`.
+
+Loads no model weights, so it answers in milliseconds — except the `oltp
+store` check as of #88, which opens a real, timeout-bounded connection when
+OLTP_DB_URL is set, so a wrong password/host/port here fails this command
+directly rather than passing quietly. Without `--strict` three checks report
+`WARN` rather than failing, because each one leaves the demo *running* —
+which is exactly why they are easy to miss:
 
 | Check | What you get if it is not OK |
 |---|---|
