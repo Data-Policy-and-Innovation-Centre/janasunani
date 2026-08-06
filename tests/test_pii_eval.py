@@ -264,3 +264,69 @@ def test_a_labelled_entity_still_reports_numeric_recall():
         "NAME", EntityMetrics(gold=404, predicted=497, overlap_hits=176, exact_hits=106)
     )
     assert "0.4356" in row
+
+
+class TestCorruptGoldIsRejectedOnTheScoringPath:
+    """#89. verify_pii_gold caught duplicate spans; pii_eval could not, and
+    pii_eval is the path that produces the published figure. A duplicated gold
+    span inflates the denominator while contributing at most one hit, so recall
+    is depressed and the output still looks plausible -- worse than a crash,
+    because nothing downstream can tell a corrupt gold from a bad model."""
+
+    TEXT = "Ravi Patra called 9876543210"
+
+    def _write(self, tmp_path, entities):
+        path = tmp_path / "gold.jsonl"
+        path.write_text(
+            json.dumps({"id": "t1_p1", "text": self.TEXT, "entities": entities}) + "\n",
+            encoding="utf-8",
+        )
+        return path
+
+    def test_exact_duplicate_span_is_rejected(self, tmp_path):
+        path = self._write(
+            tmp_path,
+            [
+                {"start": 0, "end": 10, "entity": "NAME"},
+                {"start": 0, "end": 10, "entity": "NAME"},
+            ],
+        )
+        with pytest.raises(ValueError, match="duplicate span"):
+            load_gold_jsonl(path)
+
+    def test_a_clean_file_still_loads(self, tmp_path):
+        path = self._write(
+            tmp_path,
+            [
+                {"start": 0, "end": 10, "entity": "NAME"},
+                {"start": 18, "end": 28, "entity": "PHONE"},
+            ],
+        )
+        assert len(load_gold_jsonl(path)) == 1
+
+    def test_nested_overlap_is_reported_not_rejected(self, tmp_path):
+        """A nested span is a labelling judgement, not file corruption."""
+        from janasunani.pipeline.pii_eval import overlapping_spans
+
+        path = self._write(
+            tmp_path,
+            [
+                {"start": 0, "end": 10, "entity": "NAME"},
+                {"start": 0, "end": 4, "entity": "NAME"},
+            ],
+        )
+        examples = load_gold_jsonl(path)
+        assert len(overlapping_spans(examples[0].entities)) == 1
+
+    def test_no_overlaps_reported_for_a_clean_file(self, tmp_path):
+        from janasunani.pipeline.pii_eval import overlapping_spans
+
+        path = self._write(
+            tmp_path,
+            [
+                {"start": 0, "end": 10, "entity": "NAME"},
+                {"start": 18, "end": 28, "entity": "PHONE"},
+            ],
+        )
+        examples = load_gold_jsonl(path)
+        assert overlapping_spans(examples[0].entities) == []
