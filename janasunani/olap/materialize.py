@@ -18,7 +18,15 @@ from janasunani.config import directories, settings
 
 # Tables exported from the OLTP store to the lake. pages/documents are the
 # document pipeline's outputs (empty until the exporter has run).
-LAKE_TABLES = ("complaints", "action_history", "pages", "documents")
+LAKE_TABLES = (
+    "complaints",
+    "action_history",
+    "pages",
+    "documents",
+    # The redaction of complaints.grievance. Hardcoded tuple, so a new table
+    # reaches Parquet only by being named here (ROADMAP §3.2).
+    "grievance_redactions",
+)
 
 # Columns held back from the lake.
 #

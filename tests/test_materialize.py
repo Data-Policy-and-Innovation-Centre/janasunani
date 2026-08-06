@@ -37,7 +37,13 @@ def test_materialize_sqlite_and_read_back(tmp_path):
     out = tmp_path / "interim"
 
     counts = materialize(oltp_url=f"sqlite+aiosqlite:///{oltp}", out_dir=out)
-    assert counts == {"complaints": 2, "action_history": 1, "pages": 0, "documents": 0}
+    assert counts == {
+        "complaints": 2,
+        "action_history": 1,
+        "pages": 0,
+        "documents": 0,
+        "grievance_redactions": 0,
+    }
     assert (out / "complaints.parquet").exists()
     assert (out / "pages.parquet").exists()  # pipeline tables ride along, empty pre-export
 

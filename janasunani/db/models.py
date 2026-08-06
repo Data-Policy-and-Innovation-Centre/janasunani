@@ -28,6 +28,7 @@ from sqlalchemy import (
     Integer,
     JSON,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
@@ -333,3 +334,33 @@ class ActionHistoryAPIRequestTracking(Base):
     __table_args__ = (
         UniqueConstraint("ticket_no", name="action_history_api_request_uniq"),
     )
+
+
+class GrievanceRedaction(Base):
+    """Presidio output for the historical ``complaints.grievance`` text.
+
+    ``complaints.grievance`` is citizen prose that has never met ``pii_tagger``
+    — it predates the document pipeline entirely. It is controlled by access
+    today, and ROADMAP §3.2 requires it to be controlled by redaction before it
+    reaches the lake. This table holds that redaction.
+
+    Written to a side table rather than a column on ``complaints`` so the
+    original is never overwritten: a redaction is a derived artifact of one
+    analyzer version, and re-running a better analyzer must not have destroyed
+    the input. ``analyzer_version`` records which one produced the row, so a
+    re-run can be scoped rather than total.
+    """
+
+    __tablename__ = "grievance_redactions"
+
+    # ticket_no is the PK, not a surrogate id: exactly one current redaction
+    # per complaint, and the upsert conflict target needs to be the identity.
+    ticket_no = Column(String, ForeignKey("complaints.ticket_no"), primary_key=True)
+
+    # Text, and deliberately not indexed anywhere. Postgres btree entries cap
+    # at roughly 2.7KB and grievance prose exceeds it; an index on this column
+    # broke the migration once already (see PipelinePage.extracted_text).
+    grievance_redacted = Column(Text, nullable=True)
+
+    redacted_at = Column(DateTime, nullable=False, server_default=func.now())
+    analyzer_version = Column(String, nullable=True)

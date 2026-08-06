@@ -1,0 +1,228 @@
+"""Redaction pass over complaints.grievance (real code path, SQLite OLTP).
+
+Synthetic complaint text only. The redactor itself is stubbed in most tests so
+they run without presidio; one test exercises the real analyzer and skips if
+pipeline-core is absent.
+"""
+
+import pytest
+from sqlalchemy import create_engine, insert, select, text
+
+from janasunani.db.models import Base, Complaint, GrievanceRedaction
+from janasunani.pipeline.redact_grievance import redact_grievances
+
+# Deliberately not real PII: these tests assert plumbing, not detection.
+ROWS = [
+    ("T1", "Khordha", 2024, "water supply broken since June"),
+    ("T2", "Khordha", 2024, "no pension for three months"),
+    ("T3", "Khordha", 2024, "street light not working"),
+    ("T4", "Khordha", 2023, "different year, must not be touched"),
+    ("T5", "Puri", 2024, "different district, must not be touched"),
+    ("T6", "Khordha", 2024, None),
+    ("T7", "Khordha", 2024, ""),
+]
+
+
+@pytest.fixture
+def oltp(tmp_path):
+    """A SQLite OLTP seeded with one district-year slice plus decoys."""
+    path = tmp_path / "oltp.db"
+    sync_url = f"sqlite:///{path}"
+    engine = create_engine(sync_url)
+    Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        for ticket, district, year, grievance in ROWS:
+            conn.execute(
+                insert(Complaint).values(
+                    ticket_no=ticket,
+                    district=district,
+                    created_year=year,
+                    grievance=grievance,
+                )
+            )
+    engine.dispose()
+    return f"sqlite+aiosqlite:///{path}", sync_url
+
+
+def redactions(sync_url: str) -> dict[str, str]:
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        rows = conn.execute(
+            select(GrievanceRedaction.ticket_no, GrievanceRedaction.grievance_redacted)
+        ).all()
+    engine.dispose()
+    return {r[0]: r[1] for r in rows}
+
+
+def stub(text_in: str) -> str:
+    return f"REDACTED::{text_in}"
+
+
+@pytest.fixture(autouse=True)
+def _stub_redactor(monkeypatch):
+    """Stub redact_text so plumbing tests do not need presidio.
+
+    Patched at its source module, which is where redact_grievances imports it
+    from at call time.
+    """
+    import sys
+    import types
+
+    module = types.ModuleType("janasunani.pipeline.stages.pii_tagger")
+    module.redact_text = stub
+    real = sys.modules.get("janasunani.pipeline.stages.pii_tagger")
+    sys.modules["janasunani.pipeline.stages.pii_tagger"] = module
+    yield
+    if real is not None:
+        sys.modules["janasunani.pipeline.stages.pii_tagger"] = real
+    else:
+        del sys.modules["janasunani.pipeline.stages.pii_tagger"]
+
+
+class TestSliceScoping:
+    """--district and --year have no defaults because redacting the wrong slice
+    means processing citizen text nobody authorised."""
+
+    def test_only_the_named_slice_is_processed(self, oltp):
+        async_url, sync_url = oltp
+        redact_grievances("Khordha", 2024, oltp_url=async_url)
+        assert set(redactions(sync_url)) == {"T1", "T2", "T3"}
+
+    def test_other_year_is_untouched(self, oltp):
+        async_url, sync_url = oltp
+        redact_grievances("Khordha", 2024, oltp_url=async_url)
+        assert "T4" not in redactions(sync_url)
+
+    def test_other_district_is_untouched(self, oltp):
+        async_url, sync_url = oltp
+        redact_grievances("Khordha", 2024, oltp_url=async_url)
+        assert "T5" not in redactions(sync_url)
+
+    def test_null_and_empty_grievances_are_skipped(self, oltp):
+        async_url, sync_url = oltp
+        redact_grievances("Khordha", 2024, oltp_url=async_url)
+        written = redactions(sync_url)
+        assert "T6" not in written and "T7" not in written
+
+
+class TestResumability:
+    """The pending predicate is the resume mechanism. If it regresses to an
+    offset, an interrupted run silently skips unprocessed rows."""
+
+    def test_counts_report_the_slice(self, oltp):
+        async_url, _ = oltp
+        counts = redact_grievances("Khordha", 2024, oltp_url=async_url)
+        assert counts == {"total": 3, "already_redacted": 0, "processed": 3}
+
+    def test_second_run_is_a_no_op(self, oltp):
+        async_url, _ = oltp
+        redact_grievances("Khordha", 2024, oltp_url=async_url)
+        second = redact_grievances("Khordha", 2024, oltp_url=async_url)
+        assert second == {"total": 3, "already_redacted": 3, "processed": 0}
+
+    def test_an_interrupted_run_resumes_where_it_stopped(self, oltp):
+        async_url, sync_url = oltp
+        first = redact_grievances("Khordha", 2024, oltp_url=async_url, limit=2)
+        assert first["processed"] == 2
+
+        second = redact_grievances("Khordha", 2024, oltp_url=async_url)
+        assert second["already_redacted"] == 2
+        assert second["processed"] == 1
+        assert set(redactions(sync_url)) == {"T1", "T2", "T3"}
+
+    def test_rerunning_does_not_duplicate_rows(self, oltp):
+        async_url, sync_url = oltp
+        redact_grievances("Khordha", 2024, oltp_url=async_url)
+        redact_grievances("Khordha", 2024, oltp_url=async_url)
+        engine = create_engine(sync_url)
+        with engine.begin() as conn:
+            total = conn.execute(text("SELECT COUNT(*) FROM grievance_redactions")).scalar()
+        engine.dispose()
+        assert total == 3
+
+
+class TestWhatIsWritten:
+    def test_redacted_text_is_the_redactor_output(self, oltp):
+        async_url, sync_url = oltp
+        redact_grievances("Khordha", 2024, oltp_url=async_url)
+        assert redactions(sync_url)["T1"] == stub("water supply broken since June")
+
+    def test_the_original_is_never_overwritten(self, oltp):
+        """A redaction is derived from one analyzer version. Losing the input
+        would make a re-run under a better analyzer impossible."""
+        async_url, sync_url = oltp
+        redact_grievances("Khordha", 2024, oltp_url=async_url)
+        engine = create_engine(sync_url)
+        with engine.begin() as conn:
+            original = conn.execute(
+                select(Complaint.grievance).where(Complaint.ticket_no == "T1")
+            ).scalar()
+        engine.dispose()
+        assert original == "water supply broken since June"
+
+    def test_analyzer_version_is_stamped(self, oltp):
+        async_url, sync_url = oltp
+        redact_grievances("Khordha", 2024, oltp_url=async_url)
+        engine = create_engine(sync_url)
+        with engine.begin() as conn:
+            stamp = conn.execute(
+                select(GrievanceRedaction.analyzer_version).where(
+                    GrievanceRedaction.ticket_no == "T1"
+                )
+            ).scalar()
+        engine.dispose()
+        assert stamp and "presidio-analyzer=" in stamp
+
+
+class TestSchemaGuards:
+    def test_grievance_redacted_is_in_no_index(self):
+        """Postgres btree entries cap at ~2.7KB and grievance prose exceeds it.
+        An index on a text column of this kind broke the first cloud migration."""
+        indexed = {
+            col.name
+            for index in GrievanceRedaction.__table__.indexes
+            for col in index.columns
+        }
+        assert "grievance_redacted" not in indexed
+
+    def test_primary_key_is_the_ticket(self):
+        assert [c.name for c in GrievanceRedaction.__table__.primary_key] == ["ticket_no"]
+
+    def test_table_reaches_the_lake(self):
+        """LAKE_TABLES is a hardcoded tuple; a new table reaches Parquet only by
+        being named in it."""
+        from janasunani.olap.materialize import LAKE_TABLES
+
+        assert "grievance_redactions" in LAKE_TABLES
+
+    def test_original_grievance_column_is_not_denylisted(self):
+        """Dropping complaints.grievance from the lake is Phase 18, not this
+        pass. Redaction is the control here, not column suppression."""
+        from janasunani.olap.materialize import LAKE_COLUMN_DENYLIST
+
+        assert "grievance" not in LAKE_COLUMN_DENYLIST.get("complaints", frozenset())
+
+
+class TestRealAnalyzer:
+    def test_real_redactor_removes_a_mobile_number(self, oltp, monkeypatch):
+        """One test on the real code path. Asserts only on PII that both the
+        pre- and post-#91 analyzer redact, so this does not go red when the
+        recognizers change."""
+        pytest.importorskip("presidio_analyzer")
+        import sys
+
+        sys.modules.pop("janasunani.pipeline.stages.pii_tagger", None)
+
+        async_url, sync_url = oltp
+        engine = create_engine(sync_url)
+        with engine.begin() as conn:
+            conn.execute(
+                text("UPDATE complaints SET grievance = :g WHERE ticket_no = 'T1'"),
+                {"g": "please call me on 9876543210 about the water supply"},
+            )
+        engine.dispose()
+
+        redact_grievances("Khordha", 2024, oltp_url=async_url)
+        out = redactions(sync_url)["T1"]
+        assert "9876543210" not in out
+        assert "water supply" in out

@@ -248,6 +248,9 @@ def test_synthetic_pipeline_end_to_end(tmp_path):
         "action_history": 0,
         "pages": len(_PAGES),
         "documents": len(_DOCUMENTS),
+        # Empty here: redacting the historical grievance text is its own job
+        # (#69), not a stage of the document pipeline this exercises.
+        "grievance_redactions": 0,
     }
 
     # hop 3: the lake reads back, and the pipeline's own output survived it
