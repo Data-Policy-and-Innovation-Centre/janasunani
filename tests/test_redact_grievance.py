@@ -320,3 +320,35 @@ class TestRefreshStale:
         counts = redact_grievances("Khordha", 2024, oltp_url=async_url, refresh_stale=True)
         assert counts["processed"] == 0
         assert counts["stale_at_start"] == 0
+
+
+def test_refresh_progress_does_not_exceed_the_slice(oltp, caplog):
+    """In a refresh run every row is already redacted, so adding `already` to
+    `processed` reported more rows than the slice contains."""
+    from loguru import logger as _logger
+
+    async_url, sync_url = oltp
+    redact_grievances("Khordha", 2024, oltp_url=async_url)
+    # Force a version mismatch, or there is nothing stale to reprocess and the
+    # run emits no progress lines at all.
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text("UPDATE grievance_redactions SET analyzer_version = :v"),
+            {"v": "presidio-analyzer=0.0.1 an-older-build"},
+        )
+    engine.dispose()
+
+    records: list[str] = []
+    sink = _logger.add(lambda m: records.append(str(m)), level="INFO", format="{message}")
+    try:
+        redact_grievances("Khordha", 2024, oltp_url=async_url, refresh_stale=True)
+    finally:
+        _logger.remove(sink)
+
+    progress = [r for r in records if "redacted" in r and " of " in r]
+    assert progress, "expected at least one progress line"
+    for line in progress:
+        done = int(line.split("redacted ")[1].split(" of ")[0])
+        total = int(line.split(" of ")[1].split(" ")[0])
+        assert done <= total, line

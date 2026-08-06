@@ -248,7 +248,12 @@ async def _redact_slice(
             )
 
         processed += len(batch)
-        logger.info("redacted {} of {} ({} this batch)", processed + already, total, len(batch))
+        # In a refresh run `already` is the whole slice, so adding it to
+        # `processed` reports more rows than exist ("62544 of 55544"). Count
+        # rows carrying a current redaction instead: that is what the progress
+        # figure means in both modes.
+        current = processed if refresh_stale else processed + already
+        logger.info("redacted {} of {} ({} this batch)", current, total, len(batch))
 
     return {
         "total": total,
