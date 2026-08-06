@@ -39,11 +39,40 @@ stages:
       md5: d4a066e526da37ae5d8e8ecf1777af68.dir
       size: 167765
       nfiles: 2
-    - path: janasunani/pipeline
+    - path: janasunani/pipeline/cli.py
       hash: md5
-      md5: 094d70d918c86af84dd9075a7aeea509.dir
-      size: 391304
-      nfiles: 65
+      md5: 00c2a54e86da52fe2eb2353930102f69
+      size: 4761
+    - path: janasunani/pipeline/config.py
+      hash: md5
+      md5: e508043ffe368506a97889aa950097de
+      size: 1303
+    - path: janasunani/pipeline/db.py
+      hash: md5
+      md5: 58a2065f49b310e21662075e7fafd1a8
+      size: 2721
+    - path: janasunani/pipeline/pipeline.py
+      hash: md5
+      md5: 0d7db5d06824fe6182e62189887d4c40
+      size: 2513
+    - path: janasunani/pipeline/stages/format_classifier
+      hash: md5
+      md5: 703c1c4d60b4fa0eba72d1d14a90cecd.dir
+      size: 89848
+      nfiles: 12
+    - path: janasunani/pipeline/stages/ocr_extraction
+      hash: md5
+      md5: aa8bb78d11a87f59e07f48b365408ca1.dir
+      size: 59037
+      nfiles: 11
+    - path: janasunani/pipeline/stages/pii_tagger.py
+      hash: md5
+      md5: a2208c0a7707bdb2a01fca1369fd46c3
+      size: 25139
+    - path: janasunani/pipeline/ticket.py
+      hash: md5
+      md5: d50437cc4d295c76e90d74bca601eec5
+      size: 3639
     - path: models/format_classifier/page_split_v3.0_doc_split.pkl
       hash: md5
       md5: a428d2b7b057c53e94890d1bc2ec69ce
@@ -51,5 +80,5 @@ stages:
     outs:
     - path: data/processed/pipeline-sample.sqlite
       hash: md5
-      md5: dd1d06328327de49ee9206015dc79cae
+      md5: 4a6c9f27c88b75d1d5d51781b8ef1006
       size: 81920
