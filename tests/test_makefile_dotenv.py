@@ -297,6 +297,135 @@ def test_setup_bypass_does_not_broaden_to_other_targets(isolated_dir):
     assert "could not be parsed" in result.stderr
 
 
+# --- Codex on #138, finding 2: the `setup` bypass above (needed so `setup`
+# can bootstrap `uv` in the first place) must not silently drop a .env-only
+# BOX_REMOTE -- `setup`'s own recipe still passes BOX_REMOTE to
+# scripts/setup.sh's ensure_box_remote, which selects/creates the rclone
+# remote from it. Exact repro from the review: a checkout with
+# `.env` containing `BOX_REMOTE=mybox` and no command-line override used to
+# make `make -n setup` print `BOX_REMOTE="box" bash scripts/setup.sh` (the
+# built-in default, silently ignoring .env) while `make box-paths` in the
+# same checkout correctly reported `BOX_REMOTE=mybox` -- two different
+# answers for the same setting depending on which target asked.
+#
+# The first fix here just hard-failed `setup` whenever .env mentioned
+# BOX_REMOTE at all -- but that put a *new* failure on the exact target
+# #114 exists to keep runnable ("the repair target can't run because the
+# environment is unrepaired"), and made the operator open .env, read the
+# value, and retype it before `setup` would run at all, even for the
+# common, perfectly safe case. The tightened fix passes a .env-only
+# BOX_REMOTE straight through when it matches a narrow, conservative
+# bare-identifier pattern (`^[A-Za-z0-9_-]+:?$` -- no whitespace, quotes,
+# `$`, `#`, or backslash) via a bare `grep`/`sed`, not a second dotenv
+# parser: for a value in that shape, there is nothing left for dotenv's
+# quoting/escaping/comment rules to interpret differently, so there is
+# nothing for a from-scratch reader to get wrong or drift on. Only a value
+# outside that shape (quoted, spaced, commented, or more than one
+# `BOX_REMOTE=` line) still hits the loud $(error) -- that is exactly the
+# territory where dotenv's real rules matter and guessing would repeat
+# #60's mistake.
+
+
+def test_setup_passes_through_a_safe_dotenv_box_remote(isolated_dir):
+    """Exact repro from the follow-up: `.env` sets a plain, unquoted
+    BOX_REMOTE and there is no command-line override -- `uv` is fully
+    unresolvable here (unlike the fully-available case the first version of
+    this test used), proving the pass-through needs no uv/python-dotenv at
+    all, matching #114's whole point. `setup` must use the .env value, not
+    silently fall back to the `box` default."""
+    (isolated_dir / ".env").write_text("BOX_REMOTE=mybox\n")
+    env = {"HOME": os.environ.get("HOME", ""), "PATH": "/usr/bin:/bin"}
+    result = _make(
+        "-n", "USER_BIN=/nonexistent-dir-for-this-test", "MAKE=true", "setup",
+        cwd=isolated_dir, env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert 'BOX_REMOTE="mybox"' in result.stdout, result.stdout
+
+
+def test_setup_passes_through_a_dotenv_box_remote_with_hyphen_underscore_and_digit(
+    isolated_dir,
+):
+    """The safe pattern covers the realistic character set for an rclone
+    remote name, not just plain letters."""
+    (isolated_dir / ".env").write_text("BOX_REMOTE=my-box_2\n")
+    env = {"HOME": os.environ.get("HOME", ""), "PATH": "/usr/bin:/bin"}
+    result = _make(
+        "-n", "USER_BIN=/nonexistent-dir-for-this-test", "MAKE=true", "setup",
+        cwd=isolated_dir, env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert 'BOX_REMOTE="my-box_2"' in result.stdout, result.stdout
+
+
+def test_setup_fails_loudly_for_a_dotenv_box_remote_outside_the_safe_pattern(
+    isolated_dir,
+):
+    """A value the safe pattern does not cover (here: single-quoted, the
+    legacy-ish shape an operator might still write) must not be guessed at
+    -- dotenv's real quote-stripping rules would matter here, and this path
+    cannot run them (no uv yet), so it refuses instead of misreading it."""
+    (isolated_dir / ".env").write_text("BOX_REMOTE='mybox'\n")
+    result = _make("-n", "setup", cwd=isolated_dir)
+    assert result.returncode != 0
+    assert "BOX_REMOTE" in result.stderr
+    assert 'BOX_REMOTE="box"' not in result.stdout, (
+        "must not silently fall back to the default remote name"
+    )
+    assert 'BOX_REMOTE="' not in result.stdout, (
+        "must not silently guess at the quoted value either"
+    )
+
+
+def test_setup_fails_loudly_for_a_dotenv_box_remote_containing_a_space(isolated_dir):
+    """Same negative case, a different way outside the safe pattern:
+    whitespace in the value."""
+    (isolated_dir / ".env").write_text("BOX_REMOTE=my box\n")
+    result = _make("-n", "setup", cwd=isolated_dir)
+    assert result.returncode != 0
+    assert "BOX_REMOTE" in result.stderr
+
+
+def test_setup_fails_loudly_for_multiple_dotenv_box_remote_lines(isolated_dir):
+    """.env assigning BOX_REMOTE more than once is ambiguous regardless of
+    whether either individual value would otherwise be safe -- picking
+    either one silently would be a guess, so this still refuses."""
+    (isolated_dir / ".env").write_text("BOX_REMOTE=one\nBOX_REMOTE=two\n")
+    result = _make("-n", "setup", cwd=isolated_dir)
+    assert result.returncode != 0
+    assert "BOX_REMOTE" in result.stderr
+    assert "more than once" in result.stderr
+
+
+def test_setup_with_command_line_box_remote_still_wins_over_dotenv(
+    isolated_dir,
+):
+    """Control: the guard only fires when BOX_REMOTE's origin is the plain
+    `?=` default (`file`) with a .env present -- README's documented
+    workaround (`make setup BOX_REMOTE=<remote-name>`) sets BOX_REMOTE's
+    origin to `command line`, which must still win even when .env's own
+    value is one the safe pattern would have rejected. `MAKE=true` swaps
+    out the recursive `$(MAKE) install-hooks` call the same way
+    test_setup_bypasses_dotenv_extraction_when_uv_is_unresolvable does, for
+    the same reason (a real -n here would otherwise actually re-invoke
+    install-hooks)."""
+    (isolated_dir / ".env").write_text("BOX_REMOTE='fromdotenv'\n")
+    result = _make(
+        "-n", "setup", "BOX_REMOTE=fromcli", "MAKE=true", cwd=isolated_dir
+    )
+    assert result.returncode == 0, result.stderr
+    assert 'BOX_REMOTE="fromcli"' in result.stdout, result.stdout
+
+
+def test_setup_without_dotenv_box_remote_is_unaffected_by_the_guard(isolated_dir):
+    """Control: no .env at all (or one that never mentions BOX_REMOTE) must
+    not trip the new guard -- `setup` keeps working the way #114 fixed it
+    to, using the built-in `box` default."""
+    result = _make("-n", "setup", "MAKE=true", cwd=isolated_dir)
+    assert result.returncode == 0, result.stderr
+    assert 'BOX_REMOTE="box"' in result.stdout, result.stdout
+
+
 def test_parse_time_call_fails_fast_instead_of_hanging_when_sync_needs_network(
     isolated_dir,
 ):
@@ -413,15 +542,27 @@ def test_dotenv_supplied_box_project_root_propagates_to_derived_remotes(isolated
 def test_dotenv_supplied_incoming_and_exhibits_remote_override_directly(isolated_dir):
     """README.md: "If a derived path doesn't match your Box layout, override
     the full endpoint (INCOMING_REMOTE / EXHIBITS_REMOTE) in .env" -- these
-    must be settable independently of BOX_REMOTE/BOX_PROJECT_ROOT."""
+    must be settable independently of BOX_REMOTE/BOX_PROJECT_ROOT.
+
+    Written with the bare form README.md documents (no manual shell quoting
+    around the path) -- NOT the old hand-quoted `customremote:'Custom/Path/'`
+    form this test used to write, which Codex on #138 (finding 1) flagged:
+    #118's sh_quote now wraps the whole value as one shell word, so that old
+    form would reach rclone with the apostrophes taken literally instead of
+    consumed by the shell, silently misdirecting `ingest`/`deliver`. The
+    Makefile now rejects that old form outright (see
+    test_incoming_remote_with_legacy_hand_quoting_is_rejected_loudly and
+    test_exhibits_remote_with_legacy_hand_quoting_is_rejected_loudly below)
+    rather than reinterpreting it, so this test's job is now to prove the
+    *documented* (bare) form still round-trips, not the retired one."""
     (isolated_dir / ".env").write_text(
-        "INCOMING_REMOTE=customremote:'Custom/Path/'\n"
-        "EXHIBITS_REMOTE=customremote:'Other/Path/'\n"
+        "INCOMING_REMOTE=customremote:Custom/Path/\n"
+        "EXHIBITS_REMOTE=customremote:Other/Path/\n"
     )
     result = _make("box-paths", cwd=isolated_dir)
     assert result.returncode == 0, result.stderr
-    assert "INCOMING_REMOTE=customremote:'Custom/Path/'" in result.stdout
-    assert "EXHIBITS_REMOTE=customremote:'Other/Path/'" in result.stdout
+    assert "INCOMING_REMOTE=customremote:Custom/Path/" in result.stdout
+    assert "EXHIBITS_REMOTE=customremote:Other/Path/" in result.stdout
     # BOX_REMOTE/BOX_PROJECT_ROOT untouched by .env here -- still the `?=` defaults.
     assert "BOX_REMOTE=box" in result.stdout
 
@@ -484,17 +625,23 @@ def test_dotenv_value_containing_sentinel_substring_survives_for_other_box_keys(
     isolated_dir,
 ):
     """Representative coverage across the other keys sharing dotenv_get's
-    extraction: BOX_REMOTE, INCOMING_REMOTE, EXHIBITS_REMOTE."""
+    extraction: BOX_REMOTE, INCOMING_REMOTE, EXHIBITS_REMOTE.
+
+    INCOMING_REMOTE/EXHIBITS_REMOTE use the bare (documented) form here, not
+    the old hand-quoted `customremote:'DOTENV_OK:...'` shape this test used
+    to write -- that shape is now rejected outright (finding 1 on #138; see
+    test_incoming_remote_with_legacy_hand_quoting_is_rejected_loudly below),
+    so it would no longer reach box-paths at all."""
     (isolated_dir / ".env").write_text(
         "BOX_REMOTE=my-DOTENV_OK:-remote\n"
-        "INCOMING_REMOTE=customremote:'DOTENV_OK:/Incoming/'\n"
-        "EXHIBITS_REMOTE=customremote:'DOTENV_OK:/Exhibits/'\n"
+        "INCOMING_REMOTE=customremote:DOTENV_OK:/Incoming/\n"
+        "EXHIBITS_REMOTE=customremote:DOTENV_OK:/Exhibits/\n"
     )
     result = _make("box-paths", cwd=isolated_dir)
     assert result.returncode == 0, result.stderr
     assert "BOX_REMOTE=my-DOTENV_OK:-remote" in result.stdout, result.stdout
-    assert "INCOMING_REMOTE=customremote:'DOTENV_OK:/Incoming/'" in result.stdout
-    assert "EXHIBITS_REMOTE=customremote:'DOTENV_OK:/Exhibits/'" in result.stdout
+    assert "INCOMING_REMOTE=customremote:DOTENV_OK:/Incoming/" in result.stdout
+    assert "EXHIBITS_REMOTE=customremote:DOTENV_OK:/Exhibits/" in result.stdout
 
 
 def test_dotenv_value_containing_sentinel_substring_survives_for_oltp_db_url(
@@ -707,6 +854,79 @@ def test_incoming_remote_value_containing_a_literal_quote_reaches_rclone_intact(
     ], argv
 
 
+# --- Codex on #138, finding 1: #118's sh_quote wraps the *whole*
+# INCOMING_REMOTE/EXHIBITS_REMOTE value as one shell word, which is correct
+# for the bare form README.md documents but regresses the old hand-quoted
+# form README.md used to recommend (`box:'Custom/Path/'`): main's unquoted
+# recipe let the shell consume those inner quotes (`box:Custom/Path/`);
+# this branch, before this fix, handed them to rclone literally
+# (`box:'Custom/Path/'`), a different -- and likely wrong or nonexistent --
+# path. `ingest` would read nothing there and `publish-raw` could publish
+# raw citizen data into an unintended apostrophe-named Box folder, silently.
+# The Makefile now rejects the old form with a loud $(error) instead of
+# reinterpreting it. test_incoming_remote_value_containing_a_literal_quote_
+# reaches_rclone_intact above is the control proving a *genuine* embedded
+# apostrophe (not the legacy wrapping shape) still flows through untouched.
+
+
+def test_incoming_remote_with_legacy_hand_quoting_is_rejected_loudly(isolated_dir):
+    """Exact repro from the review: `INCOMING_REMOTE=box:'Custom/Path/'` in
+    .env, the precise value README.md used to recommend. Must fail loudly
+    at parse time -- before ever reaching rclone -- rather than silently
+    reading from (`ingest`) or publishing to (`publish-raw`) an
+    apostrophe-named Box path nobody intended."""
+    (isolated_dir / ".env").write_text("INCOMING_REMOTE=box:'Custom/Path/'\n")
+    result = _make("-n", "ingest", cwd=isolated_dir)
+    assert result.returncode != 0
+    assert "INCOMING_REMOTE" in result.stderr
+    assert "box:'Custom/Path/'" in result.stderr
+
+
+def test_exhibits_remote_with_legacy_hand_quoting_is_rejected_loudly(isolated_dir):
+    """Same repro, for EXHIBITS_REMOTE/`deliver` -- the review asked this be
+    applied to both endpoints, not just INCOMING_REMOTE."""
+    (isolated_dir / ".env").write_text("EXHIBITS_REMOTE=box:'Other/Path/'\n")
+    result = _make("-n", "deliver", cwd=isolated_dir)
+    assert result.returncode != 0
+    assert "EXHIBITS_REMOTE" in result.stderr
+    assert "box:'Other/Path/'" in result.stderr
+
+
+def test_command_line_incoming_remote_with_legacy_hand_quoting_is_also_rejected(
+    isolated_dir,
+):
+    """The legacy shape is rejected regardless of which precedence tier it
+    arrives through -- a command-line override written the old way is the
+    same trap as a .env one."""
+    result = _make(
+        "-n", "INCOMING_REMOTE=box:'Custom/Path/'", "ingest", cwd=isolated_dir
+    )
+    assert result.returncode != 0
+    assert "INCOMING_REMOTE" in result.stderr
+
+
+def test_incoming_remote_ending_in_a_genuine_apostrophe_is_not_mistaken_for_legacy_quoting(
+    isolated_dir,
+):
+    """Negative control the review called out explicitly: a real Box folder
+    ending in an apostrophe (not wrapped in one) must not be rejected --
+    only the exact `remote:'...'` wrapping shape is. Distinct from
+    test_incoming_remote_value_containing_a_literal_quote_reaches_rclone_
+    intact above (that one's folder ends in `/`, after the apostrophe;
+    this one's folder ends in the apostrophe itself, closer to the
+    legacy-quoting shape's own last character)."""
+    (isolated_dir / ".env").write_text(
+        "INCOMING_REMOTE=box:My Grandmother's\n"
+    )
+    argv = _rclone_argv(isolated_dir, "ingest")
+    assert argv == [
+        "copy",
+        "box:My Grandmother's",
+        "data/raw/",
+        "--progress",
+    ], argv
+
+
 def test_command_line_box_remote_containing_dollar_survives_to_rclone(isolated_dir):
     """Regression guard for the $(origin ...)/$(value ...) treatment #118
     also gives BOX_REMOTE (mirroring OLTP_DB_URL_RAW, per the comment above
@@ -721,6 +941,36 @@ def test_command_line_box_remote_containing_dollar_survives_to_rclone(isolated_d
         "copy",
         "a$b:2. Projects/21. Governance//Data/Raw/",
         "data/raw/",
+        "--progress",
+    ], argv
+
+
+def test_command_line_raw_local_containing_dollar_survives_to_rclone(isolated_dir):
+    """The same #60/#103/#118 bug class, found one key further out while
+    fixing box-paths for Codex's finding 3 on #138: RAW_LOCAL/EXHIBITS_LOCAL
+    never got the _RAW/$(origin ...) treatment (the Makefile's own comment
+    above RAW_LOCAL_RAW explains why they were originally exempted, and why
+    that turned out to be wrong). Verified directly against the real
+    (pre-fix) recipe: `make RAW_LOCAL='data$raw/' ingest` silently
+    truncated the rclone argument to `dataaw/` even though it already went
+    through sh_quote -- the bare `$(RAW_LOCAL)` reference inside sh_quote's
+    own $(subst ...) re-scanned the command-line-origin value for `$`."""
+    argv = _rclone_argv(isolated_dir, "RAW_LOCAL=data$raw/", "ingest")
+    assert argv == [
+        "copy",
+        "box:2. Projects/21. Governance//Data/Raw/",
+        "data$raw/",
+        "--progress",
+    ], argv
+
+
+def test_command_line_exhibits_local_containing_dollar_survives_to_rclone(isolated_dir):
+    """Same regression, for EXHIBITS_LOCAL/`deliver`."""
+    argv = _rclone_argv(isolated_dir, "EXHIBITS_LOCAL=out$puts/", "deliver")
+    assert argv == [
+        "copy",
+        "out$puts/",
+        "box:2. Projects/21. Governance//Analysis/Exhibits/",
         "--progress",
     ], argv
 
@@ -760,3 +1010,61 @@ def test_box_paths_still_reports_incoming_remote_without_stray_quote_characters(
     assert "'" not in [
         line for line in result.stdout.splitlines() if line.startswith("INCOMING_REMOTE=")
     ][0]
+
+
+# --- Codex on #138, finding 3: box-paths interpolated the _RAW values
+# straight into a double-quoted `echo "KEY=$(...)"` shell string, which put
+# them in a position the shell itself re-scans for `$` -- so a value
+# containing a literal `$` lost everything from that `$` onward in
+# box-paths' output specifically, even though the same value survives
+# intact into the real ingest/publish-raw/deliver recipes (which already
+# went through sh_quote via #118). The diagnostic disagreed with what the
+# recipes actually do -- exactly the drift the comment above box-paths
+# claims it prevents. On the GNU Make 3.81 this repo targets, .SHELLFLAGS
+# is not honored (it postdates 3.81), so the failure is silent truncation,
+# not the "unbound variable" abort a `set -u` shell would otherwise give --
+# confirmed directly (see the Makefile's comment above box-paths) before
+# fixing it, per the review's own instruction not to trust the predicted
+# mechanism uncritically.
+
+
+def test_box_paths_does_not_truncate_a_value_containing_a_dollar_sign(isolated_dir):
+    """Exact repro from the review: `make BOX_REMOTE='a$b' box-paths` used
+    to print `BOX_REMOTE=a` (silently dropping `$b`), while `make
+    BOX_REMOTE='a$b' ingest` correctly preserved `a$b` in the rclone
+    argument -- the same value, two different answers depending on which
+    target asked."""
+    result = _make("BOX_REMOTE=a$b", "box-paths", cwd=isolated_dir)
+    assert result.returncode == 0, result.stderr
+    assert "BOX_REMOTE=a$b" in result.stdout, result.stdout
+    # The derived endpoints inherit BOX_REMOTE and must not be truncated either.
+    assert "INCOMING_REMOTE=a$b:2. Projects/21. Governance//Data/Raw/" in result.stdout
+    assert "EXHIBITS_REMOTE=a$b:2. Projects/21. Governance//Analysis/Exhibits/" in result.stdout
+
+
+def test_box_paths_does_not_truncate_dotenv_box_project_root_containing_a_dollar_sign(
+    isolated_dir,
+):
+    """Same bug, reached through the .env tier instead of the command line
+    -- BOX_PROJECT_ROOT is exactly as .env-populated as BOX_REMOTE (#104)."""
+    (isolated_dir / ".env").write_text("BOX_PROJECT_ROOT=Archive$2026\n")
+    result = _make("box-paths", cwd=isolated_dir)
+    assert result.returncode == 0, result.stderr
+    assert "BOX_PROJECT_ROOT=Archive$2026" in result.stdout, result.stdout
+
+
+def test_box_paths_does_not_truncate_raw_local_or_exhibits_local_containing_a_dollar_sign(
+    isolated_dir,
+):
+    """RAW_LOCAL/EXHIBITS_LOCAL are plain local-directory `?=` defaults, not
+    part of the .env-extraction machinery, but box-paths' echo of them went
+    through the same vulnerable double-quoted interpolation and must be
+    fixed the same way (the review asked for RAW_LOCAL/EXHIBITS_LOCAL
+    coverage explicitly)."""
+    result = _make(
+        "RAW_LOCAL=data$raw/", "EXHIBITS_LOCAL=out$puts/", "box-paths",
+        cwd=isolated_dir,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "RAW_LOCAL=data$raw/" in result.stdout, result.stdout
+    assert "EXHIBITS_LOCAL=out$puts/" in result.stdout, result.stdout

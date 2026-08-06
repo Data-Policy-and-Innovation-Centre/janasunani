@@ -129,8 +129,13 @@ API_URL        ?= http://127.0.0.1:$(API_PORT)
 # `ifneq (,$(wildcard .env))` block immediately below only runs when
 # `setup` is *not* among the requested goals (`$(MAKECMDGOALS)`, populated
 # by Make from the command line before any makefile is read); `setup`
-# itself never touches OLTP_DB_URL or the Box keys, so skipping the
-# extraction for it costs nothing. `$(MAKE) install-hooks`, which `setup`
+# itself never touches OLTP_DB_URL, BOX_PROJECT_ROOT, INCOMING_REMOTE or
+# EXHIBITS_REMOTE, so skipping the extraction for those four costs nothing.
+# BOX_REMOTE is the one exception -- `setup`'s own recipe below passes it to
+# scripts/setup.sh's ensure_box_remote -- and a uv-free guard right after
+# this block's `endif endif` handles that one case on its own (a Codex
+# finding on #138 caught this extraction skipping it silently). `$(MAKE)
+# install-hooks`, which `setup`
 # shells out to once scripts/setup.sh has installed `uv` and run `uv
 # sync`, is a *separate* `make` invocation with its own `MAKECMDGOALS`
 # (`install-hooks`, not `setup`) and re-parses this file normally, by
@@ -237,6 +242,72 @@ EXHIBITS_REMOTE := $(_DOTENV_RAW_EXHIBITS_REMOTE)
 endif
 endif
 endif
+# Codex on #138 (finding 2): `setup`'s own recipe below still does
+# `BOX_REMOTE="$(BOX_REMOTE)" bash scripts/setup.sh`, and scripts/setup.sh's
+# ensure_box_remote uses that to select or create the rclone remote -- so
+# the bypass above, which is correct for the four keys the .env block
+# extracts, silently starves `setup` of a .env-only BOX_REMOTE and lets it
+# configure the wrong (or a needless extra) rclone remote instead.
+#
+# The fix cannot just run the .env extraction for BOX_REMOTE anyway: that
+# extraction's whole reason for existing here is `uv run python-dotenv`,
+# and `uv` is exactly what may not be resolvable yet at this point in a
+# fresh checkout (#114's bootstrap cycle again, one key narrower).
+#
+# A first pass here just detected the key's presence and hard-failed
+# unconditionally -- but #114 exists precisely so `setup` (the
+# install/repair target) stays runnable when the environment is broken,
+# and turning *every* .env-configured BOX_REMOTE into a hard stop put a
+# new failure on that exact path: an operator recovering a broken checkout
+# now had to open .env, read the value, and retype it on the command line
+# before `setup` would run at all, for the common case where the value was
+# perfectly safe to use directly.
+#
+# rclone remote names are simple identifiers in practice -- there is
+# nothing for python-dotenv's quoting/escaping/comment rules to interpret
+# differently about a value matching `^[A-Za-z0-9_-]+:?$` (no whitespace,
+# no quotes, no `$`, no `#`, no backslash: none of the characters dotenv
+# treats specially). That pattern is deliberately narrower than what
+# dotenv accepts as a whole -- it is not attempting to reproduce dotenv's
+# rules, only to recognize the subset of inputs for which dotenv's rules
+# are a no-op. So a value of that shape is read with a bare `grep`/`sed`
+# and passed straight through; this is still not a second dotenv parser
+# and cannot drift from one, because there is nothing for it to
+# potentially parse differently -- unlike the #60-class bugs this file has
+# already been bitten by four times, which all involved dotenv's real
+# quoting/escaping/comment handling. Anything outside that narrow shape
+# (quoted, containing `$`/`#`/whitespace/a backslash, or more than one
+# `BOX_REMOTE=` line in .env) is exactly where dotenv's rules genuinely
+# matter and guessing would repeat #60's mistake, so that still hits the
+# loud $(error) below rather than being silently misread.
+#
+# A command-line/environment override (`make setup BOX_REMOTE=...`,
+# already README's documented workaround) needs none of this: it reaches
+# BOX_REMOTE the normal Make way with no .env parsing involved, which is
+# exactly what `$(origin BOX_REMOTE)` being anything other than `file`
+# below detects, and always wins over whatever .env says.
+ifneq (,$(filter setup,$(MAKECMDGOALS)))
+ifeq ($(origin BOX_REMOTE),file)
+ifneq (,$(wildcard .env))
+_SETUP_BOX_REMOTE_DOTENV_LINES := $(shell grep -Ec '^[[:space:]]*(export[[:space:]]+)?BOX_REMOTE[[:space:]]*=' .env 2>/dev/null)
+ifeq (1,$(_SETUP_BOX_REMOTE_DOTENV_LINES))
+# Exactly one candidate line: strip the `[export ]BOX_REMOTE=` prefix and
+# keep the remainder only if it is the whole line (`grep -x`) and matches
+# the narrow safe-identifier pattern above -- anything left over (a
+# quote, a space, a `$`, a trailing comment) means this is empty and the
+# ifneq below falls through to the loud error.
+_SETUP_BOX_REMOTE_SAFE_VALUE := $(shell grep -E '^[[:space:]]*(export[[:space:]]+)?BOX_REMOTE[[:space:]]*=' .env | sed -E 's/^[[:space:]]*(export[[:space:]]+)?BOX_REMOTE[[:space:]]*=//' | grep -Ex '[A-Za-z0-9_-]+:?')
+ifneq (,$(_SETUP_BOX_REMOTE_SAFE_VALUE))
+BOX_REMOTE := $(_SETUP_BOX_REMOTE_SAFE_VALUE)
+else
+$(error .env sets BOX_REMOTE, but not to a value 'make setup' can safely read without uv (not installed yet -- #114) -- it must be a bare identifier with no quotes, spaces, '$$', '#', or backslash (e.g. BOX_REMOTE=mybox). Re-run with the value on the command line instead: make setup BOX_REMOTE=<value from .env>)
+endif
+else ifneq (0,$(_SETUP_BOX_REMOTE_DOTENV_LINES))
+$(error .env sets BOX_REMOTE more than once -- 'make setup' cannot safely pick one without uv (not installed yet -- #114). Re-run with the intended value on the command line instead: make setup BOX_REMOTE=<value>)
+endif
+endif
+endif
+endif
 # A fourth instance of the same bug class, in the one place the .env fix
 # above does not reach: OLTP_DB_URL from `make OLTP_DB_URL=...` (command
 # line) or a shell-exported OLTP_DB_URL is stored by Make as a *recursively*
@@ -339,15 +410,41 @@ EXHIBITS_REMOTE_RAW := $(value EXHIBITS_REMOTE)
 else
 EXHIBITS_REMOTE_RAW := $(EXHIBITS_REMOTE)
 endif
-# RAW_LOCAL/EXHIBITS_LOCAL (below, at the ingest/publish-raw/deliver recipes)
-# get sh_quote at the recipe boundary too -- a local path can contain spaces
-# just as easily as a Box one -- but not this _RAW/$(origin ...) treatment:
+# RAW_LOCAL/EXHIBITS_LOCAL get this same _RAW/$(origin ...) treatment too,
+# as of Codex on #138 (finding 3): they were exempted originally because
 # neither is ever populated from .env (they are plain local-directory `?=`
 # defaults, not part of the dotenv_get extraction above), so the only way
-# either becomes a recursively-expanded value with attacker-shaped content is
-# an operator directly typing `make RAW_LOCAL='...'`, a much narrower path
-# than the four keys above (which a shared team .env or a copy-pasted Box URL
-# routinely populates).
+# either becomes a recursively-expanded value with attacker-shaped content
+# was thought to be an operator directly typing `make RAW_LOCAL='...'` -- a
+# narrower path than the four keys above, but not a nonexistent one, and
+# the #138 box-paths fix below exposed it directly: fixing box-paths'
+# display bug for a command-line RAW_LOCAL containing `$` surfaced that
+# `$(call sh_quote,$(RAW_LOCAL))` in ingest/publish-raw/deliver already had
+# the identical bug one layer down -- `$(RAW_LOCAL)` is a plain reference,
+# so a command-line-origin value gets re-scanned for `$`/`$(...)` inside
+# sh_quote's own $(subst ...) expansion, the same #60/#103/#118 bug class,
+# just never fixed for these two. Verified directly: `make
+# RAW_LOCAL='data$raw/' ingest` silently truncated to `dataaw/` before this
+# fix (tests/test_makefile_dotenv.py).
+ifeq ($(origin RAW_LOCAL),command line)
+RAW_LOCAL_RAW := $(value RAW_LOCAL)
+else ifeq ($(origin RAW_LOCAL),environment)
+RAW_LOCAL_RAW := $(value RAW_LOCAL)
+else ifeq ($(origin RAW_LOCAL),environment override)
+RAW_LOCAL_RAW := $(value RAW_LOCAL)
+else
+RAW_LOCAL_RAW := $(RAW_LOCAL)
+endif
+
+ifeq ($(origin EXHIBITS_LOCAL),command line)
+EXHIBITS_LOCAL_RAW := $(value EXHIBITS_LOCAL)
+else ifeq ($(origin EXHIBITS_LOCAL),environment)
+EXHIBITS_LOCAL_RAW := $(value EXHIBITS_LOCAL)
+else ifeq ($(origin EXHIBITS_LOCAL),environment override)
+EXHIBITS_LOCAL_RAW := $(value EXHIBITS_LOCAL)
+else
+EXHIBITS_LOCAL_RAW := $(EXHIBITS_LOCAL)
+endif
 # Embeds an arbitrary value (e.g. $(OLTP_DB_URL_RAW)) as a single shell word
 # safe from further expansion: single-quoted, with each embedded `'` replaced
 # by `'\''` (close the quote, an escaped literal quote outside it, reopen the
@@ -358,12 +455,64 @@ endif
 # quoted, so call sites do not wrap it in quotes themselves, and always via
 # OLTP_DB_URL_RAW, never the plain $(OLTP_DB_URL) reference, per the origin
 # note above. #118 reuses this same macro for INCOMING_REMOTE_RAW/
-# EXHIBITS_REMOTE_RAW/RAW_LOCAL/EXHIBITS_LOCAL at the ingest/publish-raw/
-# deliver recipes below -- a Box endpoint or local path needs exactly the same
-# single-shell-word guarantee a DSN does, just against spaces (BOX_PROJECT_
+# EXHIBITS_REMOTE_RAW/RAW_LOCAL_RAW/EXHIBITS_LOCAL_RAW at the
+# ingest/publish-raw/deliver recipes below -- a Box endpoint or local path
+# needs exactly the same single-shell-word guarantee a DSN does, just
+# against spaces (BOX_PROJECT_
 # ROOT's own default has one: "2. Projects/21. Governance/") rather than a
 # generated password's character set.
 sh_quote = '$(subst ','\'',$(1))'
+# Codex on #138 (finding 1): before #118, ingest/publish-raw/deliver
+# interpolated INCOMING_REMOTE/EXHIBITS_REMOTE bare (unquoted), so an
+# operator who followed this repo's *old* README advice and hand-quoted the
+# path portion -- `INCOMING_REMOTE=box:'Custom/Path/'` -- got away with it
+# by accident: python-dotenv only strips OUTER `.env` quotes (the value
+# text itself keeps whatever it was written with), so the inner `'`s
+# reached the unquoted recipe as literal shell syntax and the shell itself
+# consumed them, producing `box:Custom/Path/`. #118's sh_quote now wraps
+# the *whole* value as one shell word instead (correctly, for the
+# unquoted/documented form -- see the #118 comment above), so those same
+# inner `'`s instead reach rclone as literal apostrophes:
+# `box:'Custom/Path/'`, a different (and likely nonexistent, or wrong)
+# path. `ingest` would then read nothing, and `publish-raw` could publish
+# raw citizen data into an unintended apostrophe-named Box directory --
+# silent, and exactly the "wrong Box folder" hazard #104/#118's own
+# comments say must never happen. README.md now documents the bare form
+# only (`box:My Custom Path/`, never hand-quoted); this rejects a `.env` or
+# command-line value still written the old way instead of silently
+# misinterpreting it.
+#
+# is_legacy_quoted_endpoint detects the specific *wrapping* shape the old
+# advice produced -- a `'` landing immediately after the endpoint's first
+# `:` and again as the value's very last character -- not "contains a
+# quote anywhere". That distinction matters: a real Box folder can
+# genuinely contain an apostrophe (`box:Governor's Office/`), and that
+# value must keep flowing through sh_quote to rclone as intended. It does
+# not match here because its path does not *start* right after the colon
+# with a quote and does not *end* in one -- it ends in `/` (or whatever
+# ordinary character the folder name ends with). Implemented as a real
+# shell regex (not Make's $(filter)/$(patsubst), which word-split on
+# whitespace and would misjudge a space-bearing value -- BOX_PROJECT_ROOT's
+# own default has one) via the same sh_quote used everywhere else in this
+# file, so the value reaches grep as one safe shell word rather than a
+# second ad hoc quoting mechanism. Verified against both shapes -- the
+# legacy-quoted case and the genuine-apostrophe case -- in
+# tests/test_makefile_dotenv.py.
+#
+# BOX_REMOTE/BOX_PROJECT_ROOT never carried this legacy quoting: README's
+# history (git log -p on README.md) shows only the full `remote:'path'`
+# endpoint form was ever recommended hand-quoted, never BOX_REMOTE or
+# BOX_PROJECT_ROOT alone -- so only INCOMING_REMOTE/EXHIBITS_REMOTE need
+# this check.
+is_legacy_quoted_endpoint = $(strip $(shell printf '%s' $(call sh_quote,$(1)) | grep -Eq "^[^:]*:'.*'$$" && printf yes))
+ifeq ($(filter setup,$(MAKECMDGOALS)),)
+ifneq (,$(call is_legacy_quoted_endpoint,$(INCOMING_REMOTE_RAW)))
+$(error INCOMING_REMOTE=$(INCOMING_REMOTE_RAW) still uses the old hand-quoted form (box:'Custom/Path/') that README used to recommend. Remove the surrounding quote marks and write the bare value instead (e.g. INCOMING_REMOTE=box:Custom/Path/) -- ingest/publish-raw already quote it for you at the point they hand it to rclone (#118), so the hand-quoting no longer means what it used to and would silently target the wrong Box path)
+endif
+ifneq (,$(call is_legacy_quoted_endpoint,$(EXHIBITS_REMOTE_RAW)))
+$(error EXHIBITS_REMOTE=$(EXHIBITS_REMOTE_RAW) still uses the old hand-quoted form (box:'Custom/Path/') that README used to recommend. Remove the surrounding quote marks and write the bare value instead (e.g. EXHIBITS_REMOTE=box:Custom/Path/) -- deliver already quotes it for you at the point it hands it to rclone (#118), so the hand-quoting no longer means what it used to and would silently target the wrong Box path)
+endif
+endif
 SHELL          := /bin/bash
 .SHELLFLAGS    := -euo pipefail -c
 export PATH    := $(USER_BIN):$(PATH)
@@ -424,12 +573,12 @@ pull: _check_git_clean
 # $(INCOMING_REMOTE), per the origin note above its definition.
 ingest:
 	@echo "Copying all original source files from Box..."
-	rclone copy $(call sh_quote,$(INCOMING_REMOTE_RAW)) $(call sh_quote,$(RAW_LOCAL)) --progress
+	rclone copy $(call sh_quote,$(INCOMING_REMOTE_RAW)) $(call sh_quote,$(RAW_LOCAL_RAW)) --progress
 	@echo "Ingested raw data. The original Box files were not modified."
 
 publish-raw:
 	@echo "Publishing all local raw files to Box..."
-	rclone copy $(call sh_quote,$(RAW_LOCAL)) $(call sh_quote,$(INCOMING_REMOTE_RAW)) --progress
+	rclone copy $(call sh_quote,$(RAW_LOCAL_RAW)) $(call sh_quote,$(INCOMING_REMOTE_RAW)) --progress
 	@echo "Published raw data. Existing Box files with other names were not deleted."
 
 push: _check_git_clean
@@ -456,7 +605,7 @@ exhibits:
 # #118: sh_quote for the same reason as ingest/publish-raw above.
 deliver:
 	@echo "Delivering exhibits to Box..."
-	rclone copy $(call sh_quote,$(EXHIBITS_LOCAL)) $(call sh_quote,$(EXHIBITS_REMOTE_RAW)) --progress
+	rclone copy $(call sh_quote,$(EXHIBITS_LOCAL_RAW)) $(call sh_quote,$(EXHIBITS_REMOTE_RAW)) --progress
 	@echo "Exhibits delivered. Existing Box files were not deleted."
 
 .PHONY: docs docs-clean infra status
@@ -479,13 +628,28 @@ docs-clean:
 # actually use (see the #118 block above) rather than the plain variable,
 # which -- for a command-line/environment-origin value containing `$` -- can
 # differ from it (the plain reference re-scans; the _RAW one does not).
+#
+# Codex on #138 (finding 3): interpolating a _RAW value straight into a
+# double-quoted `echo "KEY=$(...)"` string put it in a position the shell
+# itself re-scans for `$`, so a value containing a literal `$` (e.g.
+# `BOX_REMOTE='a$b'`) lost everything from that `$` onward here -- silently
+# printing a truncated value instead of the one ingest/publish-raw/deliver
+# actually use (this Makefile targets GNU Make 3.81, which predates
+# `.SHELLFLAGS`, so `-u` above is not in effect for recipes either; the
+# failure mode is silent truncation, not an "unbound variable" abort).
+# `printf '%s\n'` with the value passed through sh_quote -- the same
+# mechanism ingest/publish-raw/deliver already use to hand these values to
+# rclone -- fixes this the same way: single-quoted, so the shell does not
+# re-scan it for `$`, and printf substitutes it into `%s` without printing
+# the quote marks themselves, so the normal (unquoted) case still displays
+# with no stray `'` characters.
 box-paths:
-	@echo "BOX_REMOTE=$(BOX_REMOTE_RAW)"
-	@echo "BOX_PROJECT_ROOT=$(BOX_PROJECT_ROOT_RAW)"
-	@echo "RAW_LOCAL=$(RAW_LOCAL)"
-	@echo "EXHIBITS_LOCAL=$(EXHIBITS_LOCAL)"
-	@echo "INCOMING_REMOTE=$(INCOMING_REMOTE_RAW)"
-	@echo "EXHIBITS_REMOTE=$(EXHIBITS_REMOTE_RAW)"
+	@printf 'BOX_REMOTE=%s\n' $(call sh_quote,$(BOX_REMOTE_RAW))
+	@printf 'BOX_PROJECT_ROOT=%s\n' $(call sh_quote,$(BOX_PROJECT_ROOT_RAW))
+	@printf 'RAW_LOCAL=%s\n' $(call sh_quote,$(RAW_LOCAL_RAW))
+	@printf 'EXHIBITS_LOCAL=%s\n' $(call sh_quote,$(EXHIBITS_LOCAL_RAW))
+	@printf 'INCOMING_REMOTE=%s\n' $(call sh_quote,$(INCOMING_REMOTE_RAW))
+	@printf 'EXHIBITS_REMOTE=%s\n' $(call sh_quote,$(EXHIBITS_REMOTE_RAW))
 
 
 # Read-only pass over the cloud infra (EC2 boxes, SSH exposure, disk,
