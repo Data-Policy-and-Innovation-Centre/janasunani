@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -13,8 +14,10 @@ pytest.importorskip("pytesseract")
 
 import pytesseract  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy import create_engine  # noqa: E402
 
 from janasunani.config import Settings  # noqa: E402
+from janasunani.db.models import Base  # noqa: E402
 from janasunani.inference import serve  # noqa: E402
 from janasunani.inference import service  # noqa: E402
 from janasunani.inference.service import (  # noqa: E402
@@ -232,7 +235,10 @@ def test_preflight_all_ok_when_dependencies_present(tmp_path, monkeypatch):
     checks = preflight(tmp_path)
 
     assert checks, "preflight must report at least one dependency"
-    assert all(check.ok for check in checks)
+    # Only the required checks: the advisory ones (routing mappings, history
+    # lake, OLTP store) depend on DVC data and environment, not on this
+    # fixture, and are exercised separately below.
+    assert all(check.ok for check in checks if check.required)
 
 
 def test_preflight_reports_missing_artifacts_without_raising(tmp_path, monkeypatch):
@@ -244,7 +250,11 @@ def test_preflight_reports_missing_artifacts_without_raising(tmp_path, monkeypat
 
     checks = preflight(tmp_path)  # empty models dir -> artifacts absent
 
-    model_checks = [c for c in checks if c.name != "tesseract" and "pdf" not in c.name]
+    model_checks = [
+        c
+        for c in checks
+        if c.required and c.name != "tesseract" and "pdf" not in c.name
+    ]
     assert model_checks and all(not c.ok for c in model_checks)
 
 
@@ -288,10 +298,11 @@ def test_preflight_reports_every_shared_required_model_file(tmp_path):
     guards preflight's *use* of the shared list; the companion test below
     guards `build_processor`'s use of it -- together they close the
     green-preflight-then-failed-startup drift gap."""
-    reported = {c.detail for c in preflight(tmp_path) if c.name not in {
-        "tesseract",
-        "pdfinfo/pdftoppm",
-    }}
+    reported = {
+        c.detail
+        for c in preflight(tmp_path)
+        if c.required and c.name not in {"tesseract", "pdfinfo/pdftoppm"}
+    }
     required = {
         " | ".join(str(path) for path in candidates)
         for candidates, _ in _required_model_files(Path(tmp_path))
@@ -433,7 +444,9 @@ def test_live_app_uses_database_store_for_dotenv_only_oltp(tmp_path, monkeypatch
     env_file.write_text("OLTP_DB_URL=postgresql+asyncpg://user:pass@db/janasunani\n")
 
     monkeypatch.delenv("OLTP_DB_URL", raising=False)  # never exported in the shell
-    monkeypatch.setattr(serve, "Settings", lambda: Settings(_env_file=env_file))
+    # `create_live_app` resolves the URL through `service.resolve_explicit_oltp_url`,
+    # which is also what preflight reports — one definition, so the two cannot drift.
+    monkeypatch.setattr(service, "Settings", lambda: Settings(_env_file=env_file))
     monkeypatch.setattr(serve, "build_processor", object)
     monkeypatch.setattr(serve, "LakeHistory", object)
     monkeypatch.setattr(
@@ -480,3 +493,318 @@ def test_live_app_always_uses_lake_history_regardless_of_real_history_flag(
     monkeypatch.setenv("JANASUNANI_REAL_HISTORY", "0")
     serve.create_live_app()
     assert captured["history"] is history
+
+
+# --- advisory readiness checks (#30 bring-up) --------------------------------
+#
+# These three fail in ways the running demo does not surface: routing quietly
+# on method:"fallback", /history empty rather than erroring, submissions kept
+# in memory and lost on restart. They are advisory by default so local
+# `make up` still works, and fatal under --strict for a box bring-up.
+#
+# Each is exercised in both directions with the environment stubbed, so the
+# result does not depend on whether this machine has run `dvc pull`.
+
+
+def _advisory(checks, name):
+    by_name = {c.name: c for c in checks}
+    assert name in by_name, f"{name} missing from preflight; got {sorted(by_name)}"
+    check = by_name[name]
+    assert not check.required, f"{name} must be advisory, not required"
+    return check
+
+
+def test_preflight_flags_absent_routing_mappings(tmp_path, monkeypatch):
+    """Without the master CSVs the router silently answers `method:"fallback"`
+    while the API stays healthy — the exact state #30 warns about for a box
+    that skipped the scoped `dvc pull`."""
+    monkeypatch.setattr(
+        service, "_routing_mappings_check", service._routing_mappings_check
+    )
+    monkeypatch.setattr(
+        "janasunani.routing.mappings.load_mapping_tables", lambda *a, **k: None
+    )
+    check = _advisory(preflight(tmp_path), "routing mappings")
+    assert check.ok is False
+    assert "fallback" in check.detail
+
+
+def test_preflight_passes_when_routing_mappings_load(tmp_path, monkeypatch):
+    class _Tables:
+        categories = ("a", "b", "c")
+        category_to_department = {"1": "5"}
+
+    monkeypatch.setattr(
+        "janasunani.routing.mappings.load_mapping_tables", lambda *a, **k: _Tables()
+    )
+    check = _advisory(preflight(tmp_path), "routing mappings")
+    assert check.ok is True
+    assert "3 categories" in check.detail
+
+
+def test_preflight_flags_mapping_tables_that_load_empty(tmp_path, monkeypatch):
+    """A header-only or truncated CSV pull parses without error -- `tables` is
+    not None -- but MappingRouter has nothing to route with and falls back
+    exactly as it would with no tables at all. Present-but-empty must not
+    read as a healthy strict preflight (Codex review on #88)."""
+
+    class _EmptyTables:
+        categories = ()
+        category_to_department = {}
+
+    monkeypatch.setattr(
+        "janasunani.routing.mappings.load_mapping_tables", lambda *a, **k: _EmptyTables()
+    )
+    check = _advisory(preflight(tmp_path), "routing mappings")
+    assert check.ok is False
+    assert "fallback" in check.detail
+
+
+def test_preflight_flags_mapping_tables_with_no_derivable_department(tmp_path, monkeypatch):
+    """Categories present but every one lacking a department is the same
+    dead end for routing as no categories at all."""
+
+    class _NoDepartments:
+        categories = ("a", "b", "c")
+        category_to_department = {}
+
+    monkeypatch.setattr(
+        "janasunani.routing.mappings.load_mapping_tables", lambda *a, **k: _NoDepartments()
+    )
+    check = _advisory(preflight(tmp_path), "routing mappings")
+    assert check.ok is False
+
+
+def test_preflight_flags_unmaterialized_lake(tmp_path, monkeypatch):
+    """`LakeHistory` returns an empty page for a missing lake, so the UI shows
+    'no results' rather than an error. Preflight must say which it is."""
+    monkeypatch.setattr(
+        "janasunani.olap.lake.lake_path",
+        lambda table, lake_dir=None: tmp_path / f"{table}.parquet",
+    )
+    check = _advisory(preflight(tmp_path), "history lake")
+    assert check.ok is False
+    assert "empty page" in check.detail
+
+
+_HISTORY_ROW_SQL = (
+    "SELECT 'T1' AS ticket_no, DATE '2024-01-01' AS created_on, 'Khordha' AS district, "
+    "'Roads' AS category, 'Pothole' AS subcategory, 'Works' AS dept, 'Pending' AS status, "
+    "'Collector Office' AS office, 'A pothole' AS grievance "
+    "UNION ALL "
+    "SELECT 'T2', DATE '2024-01-02', 'Cuttack', 'Water', 'Leak', 'RWSS', 'Resolved', "
+    "'Collector Office', 'A leak'"
+)
+
+
+def test_preflight_reports_lake_row_count(tmp_path, monkeypatch):
+    """A materialized lake reports its size, so an operator can tell a real
+    lake from an empty-but-present Parquet."""
+    pytest.importorskip("duckdb")
+    import duckdb
+
+    parquet = tmp_path / "complaints.parquet"
+    duckdb.connect().execute(f"COPY ({_HISTORY_ROW_SQL}) TO '{parquet.as_posix()}' (FORMAT parquet)")
+    monkeypatch.setattr(
+        "janasunani.olap.lake.lake_path", lambda table, lake_dir=None: parquet
+    )
+    check = _advisory(preflight(tmp_path), "history lake")
+    assert check.ok is True
+    assert "2 complaints" in check.detail
+
+
+def test_preflight_flags_lake_missing_a_column_history_selects(tmp_path, monkeypatch):
+    """Rows present but a column `LakeHistory.search()` actually selects is
+    missing -- a stale or malformed lake -- must not pass strict preflight
+    just because the row count is nonzero; it would only surface once a real
+    `/history` request hit the missing column. Codex review on #88."""
+    pytest.importorskip("duckdb")
+    import duckdb
+
+    parquet = tmp_path / "complaints.parquet"
+    duckdb.connect().execute(
+        f"COPY (SELECT 'T1' AS ticket_no UNION ALL SELECT 'T2') "
+        f"TO '{parquet.as_posix()}' (FORMAT parquet)"
+    )
+    monkeypatch.setattr(
+        "janasunani.olap.lake.lake_path", lambda table, lake_dir=None: parquet
+    )
+    check = _advisory(preflight(tmp_path), "history lake")
+    assert check.ok is False
+    assert "unreadable" in check.detail
+
+
+def test_preflight_flags_unconfigured_oltp(tmp_path, monkeypatch):
+    """No explicit OLTP_DB_URL means InMemoryResultStore: the demo accepts
+    submissions, returns 201, and loses them on restart."""
+    monkeypatch.setattr(service, "resolve_explicit_oltp_url", lambda: None)
+    check = _advisory(preflight(tmp_path), "oltp store")
+    assert check.ok is False
+    assert "lost on restart" in check.detail
+
+
+def test_preflight_verifies_oltp_connectivity_not_just_presence(tmp_path, monkeypatch):
+    """DatabaseResultStore (janasunani/serving/store.py) only creates its
+    async engine at startup and never actually connects until the first
+    save, so a wrong password/host/database/migration would otherwise pass
+    preflight and only fail on a citizen's first submission. Stubs
+    `_probe_oltp_connection` rather than touching a real database or the
+    network -- the same split infra_status.py's AWS/SSH tests use. Codex
+    review on #88."""
+    monkeypatch.setattr(
+        service, "resolve_explicit_oltp_url", lambda: "postgresql+asyncpg://u:p@h/db"
+    )
+    monkeypatch.setattr(service, "_probe_oltp_connection", lambda url, timeout=5.0: None)
+    check = _advisory(preflight(tmp_path), "oltp store")
+    assert check.ok is True
+    assert "live_grievances" in check.detail
+    assert "verified" in check.detail
+
+
+def test_preflight_flags_an_explicit_but_unreachable_oltp(tmp_path, monkeypatch):
+    """A configured OLTP_DB_URL that cannot actually be connected to must not
+    read as ready -- exactly the gap that lets /health report
+    processor=pipeline while the first submission fails on save."""
+    monkeypatch.setattr(
+        service, "resolve_explicit_oltp_url", lambda: "postgresql+asyncpg://u:p@h/db"
+    )
+
+    def _boom(url, timeout=5.0):
+        raise ConnectionRefusedError("nope")
+
+    monkeypatch.setattr(service, "_probe_oltp_connection", _boom)
+    check = _advisory(preflight(tmp_path), "oltp store")
+    assert check.ok is False
+    assert "unreachable" in check.detail
+    assert "ConnectionRefusedError" in check.detail
+
+
+def test_preflight_never_leaks_the_oltp_url_on_success(tmp_path, monkeypatch):
+    """The URL carries a DB password; the report must never print it."""
+    secret = "postgresql+asyncpg://user:hunter2@db.internal/janasunani"
+    monkeypatch.setattr(service, "resolve_explicit_oltp_url", lambda: secret)
+    monkeypatch.setattr(service, "_probe_oltp_connection", lambda url, timeout=5.0: None)
+    check = _advisory(preflight(tmp_path), "oltp store")
+    assert check.ok is True
+    assert "hunter2" not in check.detail
+    assert secret not in check.detail
+
+
+def test_preflight_never_leaks_the_oltp_url_on_connection_failure(tmp_path, monkeypatch):
+    """The likelier leak vector: some DBAPI errors embed the DSN -- and its
+    password -- in their own exception message. Only the exception's type
+    name may be reported, never str(exc)."""
+    secret = "postgresql+asyncpg://user:hunter2@db.internal/janasunani"
+    monkeypatch.setattr(service, "resolve_explicit_oltp_url", lambda: secret)
+
+    def _boom(url, timeout=5.0):
+        raise RuntimeError(f"could not connect to {secret}")
+
+    monkeypatch.setattr(service, "_probe_oltp_connection", _boom)
+    check = _advisory(preflight(tmp_path), "oltp store")
+    assert check.ok is False
+    assert "hunter2" not in check.detail
+    assert secret not in check.detail
+
+
+def test_preflight_never_opens_a_real_connection_even_with_ambient_oltp_db_url(
+    tmp_path, monkeypatch
+):
+    """#119: preflight() must not silently follow whatever OLTP_DB_URL the
+    ambient environment (a shell-exported var, or a root .env via Settings)
+    happens to name. AGENTS.md/tests/README.md are explicit pytest must
+    never point at production Postgres; the live probe added in aab4d8e/
+    c97bdb6 is read-only, so this is not that table-dropping hazard, but a
+    routine `pytest` run should still never attempt to reach whatever
+    database a developer's own .env happens to configure, silently, while
+    testing something unrelated.
+
+    Deliberately does NOT stub `resolve_explicit_oltp_url` or
+    `_probe_oltp_connection` itself -- doing either would test this file's
+    own mocking, not whether the autouse `_no_ambient_oltp_probe` fixture in
+    conftest.py actually neutralizes the real code path. Sets OLTP_DB_URL to
+    a host confirmed (empirically, in this environment) to hang rather than
+    fail fast, so a real connection attempt would consume the probe's own
+    5s internal timeout (_OLTP_PROBE_TIMEOUT_S) -- comfortably distinguishing
+    "the neutralized probe returned instantly" from "a real attempt was
+    made" without depending on exactly how a given network path fails.
+    """
+    monkeypatch.setenv(
+        "OLTP_DB_URL", "postgresql+asyncpg://nope:nope@10.255.255.1:5432/nope"
+    )
+    started = time.monotonic()
+    checks = preflight(tmp_path)
+    elapsed = time.monotonic() - started
+    check = _advisory(checks, "oltp store")
+    assert check.ok is True, "the neutralized probe should report success, not attempt IO"
+    assert elapsed < 2.0, (
+        f"preflight() took {elapsed:.1f}s -- long enough to suggest a real "
+        "connection was attempted despite the autouse neutralization"
+    )
+
+
+def _sqlite_url_with_live_grievances(tmp_path) -> str:
+    """A throwaway sqlite file with the real schema (Base.metadata, same as
+    tests/test_serving_persistence.py's _make_oltp) -- test setup, not an
+    Alembic migration; no migration is authored or run anywhere in this
+    file."""
+    url = f"sqlite+aiosqlite:///{tmp_path}/probe.db"
+    sync = create_engine(url.replace("+aiosqlite", ""))
+    Base.metadata.create_all(sync)
+    sync.dispose()
+    return url
+
+
+@pytest.mark.real_oltp_probe
+def test_probe_oltp_connection_succeeds_when_live_grievances_exists(tmp_path):
+    """Exercises the real probe (not the preflight wiring above, which stubs
+    it) against an actual database with the real schema, so both the
+    SELECT 1 round trip and the live_grievances existence check are proven
+    to work end to end without needing network or a real Postgres.
+
+    Marked real_oltp_probe (#119) to opt out of conftest.py's autouse
+    neutralization of `service._probe_oltp_connection` -- this test's entire
+    point is calling the real implementation, against a throwaway sqlite
+    file it builds itself, never a real/ambient database."""
+    service._probe_oltp_connection(_sqlite_url_with_live_grievances(tmp_path))
+
+
+@pytest.mark.real_oltp_probe
+def test_probe_oltp_connection_raises_when_live_grievances_is_missing(tmp_path):
+    """A reachable database whose Alembic migration never ran must fail this
+    probe, not just a connection failure -- otherwise --strict passes clean
+    and the first real DatabaseResultStore.save() is what discovers the
+    missing table, against a citizen's actual submission. Codex re-review on
+    #88; deliberately existence-only (SELECT ... LIMIT 0), no migration is
+    run or authored here."""
+    db_path = tmp_path / "empty.db"  # no Base.metadata.create_all -- no tables at all
+    with pytest.raises(Exception):
+        service._probe_oltp_connection(f"sqlite+aiosqlite:///{db_path}")
+
+
+@pytest.mark.real_oltp_probe
+def test_probe_oltp_connection_raises_for_an_unreachable_target():
+    """127.0.0.1 loopback on a closed port refuses instantly -- no DNS, no
+    real network needed -- which is what _oltp_check's except clause and the
+    timeout bound both depend on being a real `raise`, not a hang."""
+    with pytest.raises(Exception):
+        service._probe_oltp_connection(
+            "postgresql+asyncpg://u:p@127.0.0.1:1/nonexistent", timeout=2.0
+        )
+
+
+def test_advisory_failures_do_not_fail_preflight_by_default(tmp_path, monkeypatch):
+    """`make up` must keep working on a dev box with no DVC data."""
+    _write_dummy_model_artifacts(tmp_path)
+    monkeypatch.setattr(service.shutil, "which", lambda _binary: "/usr/bin/fake")
+    monkeypatch.setattr(page_renderer, "POPPLER_PATH", None)
+    monkeypatch.setattr(service, "resolve_explicit_oltp_url", lambda: None)
+    monkeypatch.setattr(
+        "janasunani.routing.mappings.load_mapping_tables", lambda *a, **k: None
+    )
+
+    checks = preflight(tmp_path)
+    assert any(not c.ok for c in checks), "test setup should produce advisory failures"
+    assert all(c.ok for c in checks if c.required), (
+        "no required check may fail here — only advisory ones"
+    )

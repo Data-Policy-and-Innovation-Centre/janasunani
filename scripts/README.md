@@ -11,6 +11,53 @@ as scripts rather than DVC stages. Each is safe to re-run.
 | `bootstrap_pii_gold.py` | OCR a bundle + pre-annotate with the production analyzer → draft gold JSONL for the PII eval (below). |
 | `evaluate_pii_redaction.py` | Thin wrapper over `janasunani-evaluate-pii` (the PII gold-JSONL gate). |
 | `setup.sh` | Workspace setup backing `make setup` (uv, rclone, AWS CLI, hooks). |
+| `infra_status.py` | Read-only health pass over the cloud infra, behind `make infra` (below). |
+
+## infra_status.py
+
+One pass answering "is anything wrong right now" across the CPU box (which
+holds production Postgres, the models, the lake and the `pg_dump` target), the
+on-demand GPU box, the deployed stack, and the backups.
+
+```bash
+make infra                                          # AWS + box over SSH
+make infra SITE=52-66-116-80.nip.io SG_ID=sg-0abc    # + health + SSH exposure
+make infra ARGS="--no-ssh"                          # AWS only
+make infra ARGS="--json"                            # machine-readable
+```
+
+**Read-only by construction.** Every command is a query (`aws ec2 describe-*`,
+`aws s3api list-objects-v2`, `df`, `docker ps`, an unauthenticated
+`GET /api/health`). It never starts, stops, deploys or prunes anything, and a
+test asserts no mutating invocation appears in the source. This points at the
+box holding real citizen data, so a status tool that *can* mutate is one that
+eventually will, at the worst moment. It also never prints the OLTP URL, which
+carries a password.
+
+Thresholds come from the repo, not from taste:
+
+| Check | Threshold | Source |
+|---|---|---|
+| Disk free | CRIT < 20 GiB | `deploy.sh`'s own `MIN_FREE_KIB`; that volume also holds prod Postgres |
+| Backup age | WARN > 26 h, CRIT > 48 h | nightly cadence, §5 of [DEPLOY.md](../docs/DEPLOY.md). The cron lives only on the box (#31), so a rebuilt box loses it silently |
+| Port 22 ingress | WARN on any, CRIT on `0.0.0.0/0`/`::/0` or a rule covering all ports/protocols; OK on the standing maintainer rule *if it is a single host* | the deploy opens 22 to the runner's /32 and revokes it; a leftover rule is #32. Covers `IpProtocol="-1"`, wide TCP port ranges and IPv6 sources, not just a literal `FromPort==22`. The maintainer-rule description alone is not trusted — `admin_cidr`'s terraform validation only rejects `0.0.0.0/0`, so a `/24` keeping that description still gets WARN |
+| Container health | CRIT if failing its HEALTHCHECK, WARN if still in `start_period` | oltp/api/frontend all define one (deploy/docker-compose.yml); a name-only `docker ps` can't tell "running" from "running but unhealthy" or "running but not confirmed healthy yet" (the api's warm-up can take minutes) |
+| Instance identity | exact `Name` tag + `Project=janasunani` | deploy/terraform's provider `default_tags` plus each instance's own `Name`; a substring match could let an unrelated instance in a shared account stand in for a missing box |
+| GPU box running | WARN | on-demand and billed hourly |
+| `processor` not `pipeline` | WARN | `mock` is up but serving canned results; anything else isn't a value the app produces at all — deploy.sh's own smoke gate greps for `"processor":"pipeline"` and would still be waiting on either |
+
+Exit code is 0 unless something is CRIT, so it is cron-safe. Two deliberate
+behaviours: skipped or unreachable checks report as `--`, never as healthy, and
+a run where *nothing* was checked prints `NOTHING CHECKED` rather than
+`all clear`. AWS and SSH failures degrade to "not checked" instead of aborting
+the run, so one missing credential does not hide the checks that did work; this
+applies to the `describe-instances`/`describe-security-groups`/
+`list-objects-v2` calls failing outright, not just to being skipped by a flag.
+
+AWS queries are pinned to `--region ap-south-1` (`--region` to override) rather
+than left to the caller's default CLI profile — a profile pointed at another
+region gets a successful, *empty* response, which otherwise reads as "the CPU
+box is gone" rather than "wrong region".
 
 ## sample_english_complaints.py
 

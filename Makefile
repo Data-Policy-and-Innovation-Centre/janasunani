@@ -32,7 +32,167 @@ OLTP_DB_URL    ?= $(DEMO_OLTP_URL)
 #   ssh -L $(FRONTEND_PORT):127.0.0.1:$(FRONTEND_PORT) -L $(API_PORT):127.0.0.1:$(API_PORT) <box>
 # API_URL/API_HOST remain overridable for advanced setups.
 API_URL        ?= http://127.0.0.1:$(API_PORT)
--include .env
+# Deliberately NOT `-include .env`: that makes GNU Make parse the file as
+# Makefile syntax, not key=value (#60). `$` starts a variable reference (a
+# password's `pa$word` silently loses `word`) and `#` starts a comment (drops
+# the rest of the line); a stray `$(` with no matching `)` is worse — it is a
+# hard parse error that aborts `make` for every target, not just this one, so
+# a single unlucky character in a generated password can brick the Makefile
+# entirely.
+#
+# Two earlier attempts at this extraction (`grep`/`sed` for the key, then for
+# one layer of matching quotes) each closed one character class and left
+# another: `$`/`#`, then an embedded `'`, then a valid dotenv inline comment
+# (`KEY=value # note`, which `sed`'s quote-stripping never accounted for --
+# `Settings` strips it via python-dotenv, so the Make wrapper silently kept it
+# and passed a corrupted DSN). Patching one more character each round is how
+# this stayed a live bug through three reviews. This shells out to
+# `python-dotenv` itself -- the exact parser `Settings` uses
+# (janasunani/config.py) -- instead of re-deriving its quoting/comment rules
+# by hand, so the two can no longer drift: whatever `.env` value `Settings`
+# resolves is what Make resolves too. `uv run` only runs when `.env` exists
+# (the `ifneq` below), so a checkout with no `.env` (CI, a fresh clone) pays
+# nothing.
+#
+# `:=` (not `?=`), so a value here overrides both the `?=` default and a
+# shell-exported value, matching the OLTP_DB_URL precedence documented above
+# (the same precedence applies to every key below). A `make KEY=...`
+# command-line value still wins regardless: Make locks in command-line
+# variables before reading any of the makefile, and no plain assignment
+# (only `override`, unused here) can replace them -- verified for OLTP_DB_URL
+# with `make OLTP_DB_URL=... db` against a conflicting `.env` (see PR
+# description).
+#
+# Two things fixed for OLTP_DB_URL (#103, a regression this extraction
+# itself introduced): first, `uv` is looked up with PATH widened by
+# $(USER_BIN) directly on *this* command, not via the `export PATH` line
+# below -- that only reaches recipe subprocesses, not a $(shell ...) call
+# evaluated here at Make-parse time (confirmed directly: an `export`ed PATH
+# change does not reach an immediately-following $(shell ...) in GNU Make).
+# Without this, a `uv` installed only under $(USER_BIN) -- the repo's own
+# documented install location -- would not resolve here even though every
+# recipe below finds it fine. Second, dotenv_get below always prints a
+# `DOTENV_OK:` prefix on success, even with an empty value, so a genuine
+# parse failure (uv still not found, python-dotenv missing, any other error)
+# is distinguishable from "this key is not set in .env" by that prefix's
+# *absence* -- never by empty output alone. A failure is a hard
+# `$(error ...)`, not a silent fallback: for OLTP_DB_URL specifically,
+# silently keeping the throwaway demo default while an operator's .env names
+# a real database is exactly the wrong outcome `make OLTP_DB_URL=... db`'s
+# guard exists to prevent, reached by a different route.
+#
+# OLTP_DB_URL was the only key extracted here until #104: the audit done
+# when this extraction landed (17bad32) checked that no other `?=`
+# variable's *name* collided with a .env.example key -- the wrong direction.
+# The actual question is which variables README.md's "Box paths and data
+# ops" section tells operators to persist in .env: BOX_REMOTE,
+# BOX_PROJECT_ROOT, INCOMING_REMOTE and EXHIBITS_REMOTE, none of which
+# collide with a .env.example key but all of which `-include .env` used to
+# supply before #60. Dropping them silently turned `make ingest`/`make
+# deliver` into reading from or publishing to the wrong Box folder with no
+# indication the operator's own .env was ignored -- the same "silently wrong
+# instead of loudly wrong" shape as #103, just for these four keys instead
+# of the database URL. They are not secrets (unlike OLTP_DB_URL, never
+# printed and read via `sh_quote`/OLTP_DB_URL_RAW below), so they get the
+# same safe *parsing* but no additional quoting machinery beyond what
+# `ingest`/`publish-raw`/`deliver`/`box-paths` already did before #60.
+define dotenv_get
+$(shell PATH="$(USER_BIN):$$PATH" uv run python -c "from dotenv import dotenv_values; import sys; v = dotenv_values('.env').get('$(1)'); sys.stdout.write('DOTENV_OK:' + (v if v is not None else ''))" 2>$(_DOTENV_STDERR))
+endef
+_DOTENV_STDERR := /tmp/.janasunani-makefile-dotenv-stderr-$(shell whoami 2>/dev/null)
+ifneq (,$(wildcard .env))
+_DOTENV_RAW_OLTP_DB_URL := $(call dotenv_get,OLTP_DB_URL)
+ifeq ($(findstring DOTENV_OK:,$(_DOTENV_RAW_OLTP_DB_URL)),)
+$(error .env exists but OLTP_DB_URL could not be parsed from it (#103) -- refusing to silently fall back to the throwaway demo default. 'uv run python' stderr: $(shell cat $(_DOTENV_STDERR) 2>/dev/null))
+endif
+_DOTENV_OLTP_DB_URL := $(subst DOTENV_OK:,,$(_DOTENV_RAW_OLTP_DB_URL))
+ifneq (,$(_DOTENV_OLTP_DB_URL))
+OLTP_DB_URL := $(_DOTENV_OLTP_DB_URL)
+endif
+
+_DOTENV_RAW_BOX_REMOTE := $(call dotenv_get,BOX_REMOTE)
+ifeq ($(findstring DOTENV_OK:,$(_DOTENV_RAW_BOX_REMOTE)),)
+$(error .env exists but BOX_REMOTE could not be parsed from it (#104) -- refusing to silently fall back to the default. 'uv run python' stderr: $(shell cat $(_DOTENV_STDERR) 2>/dev/null))
+endif
+_DOTENV_BOX_REMOTE := $(subst DOTENV_OK:,,$(_DOTENV_RAW_BOX_REMOTE))
+ifneq (,$(_DOTENV_BOX_REMOTE))
+BOX_REMOTE := $(_DOTENV_BOX_REMOTE)
+endif
+
+_DOTENV_RAW_BOX_PROJECT_ROOT := $(call dotenv_get,BOX_PROJECT_ROOT)
+ifeq ($(findstring DOTENV_OK:,$(_DOTENV_RAW_BOX_PROJECT_ROOT)),)
+$(error .env exists but BOX_PROJECT_ROOT could not be parsed from it (#104) -- refusing to silently fall back to the default. 'uv run python' stderr: $(shell cat $(_DOTENV_STDERR) 2>/dev/null))
+endif
+_DOTENV_BOX_PROJECT_ROOT := $(subst DOTENV_OK:,,$(_DOTENV_RAW_BOX_PROJECT_ROOT))
+ifneq (,$(_DOTENV_BOX_PROJECT_ROOT))
+BOX_PROJECT_ROOT := $(_DOTENV_BOX_PROJECT_ROOT)
+endif
+
+_DOTENV_RAW_INCOMING_REMOTE := $(call dotenv_get,INCOMING_REMOTE)
+ifeq ($(findstring DOTENV_OK:,$(_DOTENV_RAW_INCOMING_REMOTE)),)
+$(error .env exists but INCOMING_REMOTE could not be parsed from it (#104) -- refusing to silently fall back to the default. 'uv run python' stderr: $(shell cat $(_DOTENV_STDERR) 2>/dev/null))
+endif
+_DOTENV_INCOMING_REMOTE := $(subst DOTENV_OK:,,$(_DOTENV_RAW_INCOMING_REMOTE))
+ifneq (,$(_DOTENV_INCOMING_REMOTE))
+INCOMING_REMOTE := $(_DOTENV_INCOMING_REMOTE)
+endif
+
+_DOTENV_RAW_EXHIBITS_REMOTE := $(call dotenv_get,EXHIBITS_REMOTE)
+ifeq ($(findstring DOTENV_OK:,$(_DOTENV_RAW_EXHIBITS_REMOTE)),)
+$(error .env exists but EXHIBITS_REMOTE could not be parsed from it (#104) -- refusing to silently fall back to the default. 'uv run python' stderr: $(shell cat $(_DOTENV_STDERR) 2>/dev/null))
+endif
+_DOTENV_EXHIBITS_REMOTE := $(subst DOTENV_OK:,,$(_DOTENV_RAW_EXHIBITS_REMOTE))
+ifneq (,$(_DOTENV_EXHIBITS_REMOTE))
+EXHIBITS_REMOTE := $(_DOTENV_EXHIBITS_REMOTE)
+endif
+endif
+# A fourth instance of the same bug class, in the one place the .env fix
+# above does not reach: OLTP_DB_URL from `make OLTP_DB_URL=...` (command
+# line) or a shell-exported OLTP_DB_URL is stored by Make as a *recursively*
+# expanded value -- the raw text, re-scanned for `$`/`$(...)` on every
+# reference, not just once. Referencing plain $(OLTP_DB_URL) below (even
+# inside sh_quote's $(subst ...)) re-triggers that scan, so `pa$word` loses
+# `word` the same way an un-fixed `.env` value once did -- this is exactly
+# #60's bug, just arriving through the command-line/environment tier instead
+# of the .env tier, and it is precisely the tier `make OLTP_DB_URL=... db`
+# depends on to force a database for one run (the guard #60's own precedence
+# note above exists to protect).
+#
+# $(value OLTP_DB_URL) reads the raw stored text without expanding it, which
+# is exactly right for a command-line/environment value (a literal string,
+# never intended as a nested Make macro) but wrong for anything else: the
+# untouched default chain's raw text is the literal, unexpanded macro
+# reference `$(DEMO_OLTP_URL)`, and $(value ...) on that returns exactly
+# that string -- not the demo URL -- which would hand the shell a bare
+# `$(DEMO_OLTP_URL)` (itself a *shell* command-substitution token). So
+# $(value ...) is used only when $(origin OLTP_DB_URL) says the value came
+# from the command line or the environment; every other origin (the plain
+# `?=` default, or our own `:=` reassignment from .env above, already a
+# fully-resolved simply-expanded string) goes through normal `$(OLTP_DB_URL)`
+# expansion instead. Command-line values lock their origin regardless of
+# this file's later `:=` attempt (Make ignores plain reassignment of a
+# command-line variable), so this still resolves to "command line" even
+# after the .env block above runs.
+ifeq ($(origin OLTP_DB_URL),command line)
+OLTP_DB_URL_RAW := $(value OLTP_DB_URL)
+else ifeq ($(origin OLTP_DB_URL),environment)
+OLTP_DB_URL_RAW := $(value OLTP_DB_URL)
+else ifeq ($(origin OLTP_DB_URL),environment override)
+OLTP_DB_URL_RAW := $(value OLTP_DB_URL)
+else
+OLTP_DB_URL_RAW := $(OLTP_DB_URL)
+endif
+# Embeds an arbitrary value (e.g. $(OLTP_DB_URL_RAW)) as a single shell word
+# safe from further expansion: single-quoted, with each embedded `'` replaced
+# by `'\''` (close the quote, an escaped literal quote outside it, reopen the
+# quote) -- the standard POSIX idiom for putting a quote inside a quoted
+# string. Plain single-quoting handles `$`/`#` (#60) but a DSN containing a
+# literal `'` would otherwise still break the recipe's shell string; this
+# closes that gap. Use as `$(call sh_quote,$(OLTP_DB_URL_RAW))` -- already
+# quoted, so call sites do not wrap it in quotes themselves, and always via
+# OLTP_DB_URL_RAW, never the plain $(OLTP_DB_URL) reference, per the origin
+# note above.
+sh_quote = '$(subst ','\'',$(1))'
 SHELL          := /bin/bash
 .SHELLFLAGS    := -euo pipefail -c
 export PATH    := $(USER_BIN):$(PATH)
@@ -51,10 +211,11 @@ help:
 	@echo "  make docs            Render docs/*.md to DPIC-branded Word files"
 	@echo "  make box-paths       Show resolved local and Box paths"
 	@echo "  make status          Show what has changed"
+	@echo "  make infra           Read-only health pass over the cloud infra"
 	@echo ""
 	@echo "  Live demo (real-inference API — see docs/DEMO.md):"
 	@echo "  make models          DVC-pull ONLY the demo model artifacts"
-	@echo "  make preflight       Fast readiness check (models + OCR binaries)"
+	@echo "  make preflight       Fast readiness check (models, OCR binaries, mappings/lake/OLTP)"
 	@echo "  make db              Start throwaway Postgres + run migrations"
 	@echo "  make api             Run the live real-inference API"
 	@echo "  make frontend        Run the Next.js UI against the live API"
@@ -121,7 +282,7 @@ deliver:
 	rclone copy $(EXHIBITS_LOCAL) $(EXHIBITS_REMOTE) --progress
 	@echo "Exhibits delivered. Existing Box files were not deleted."
 
-.PHONY: docs docs-clean
+.PHONY: docs docs-clean infra status
 
 # Word renders of the planning docs, for circulation outside the repo.
 # Outputs are gitignored (docs/*.docx): the Markdown is the source of truth.
@@ -144,6 +305,24 @@ box-paths:
 	@echo "EXHIBITS_LOCAL=$(EXHIBITS_LOCAL)"
 	@echo "INCOMING_REMOTE=$(INCOMING_REMOTE)"
 	@echo "EXHIBITS_REMOTE=$(EXHIBITS_REMOTE)"
+
+
+# Read-only pass over the cloud infra (EC2 boxes, SSH exposure, disk,
+# containers, backups, demo health). Nothing here mutates; see
+# scripts/infra_status.py.
+#
+# CPU_BOX_SSH is the EC2 instance, NOT `BOX_REMOTE` above — that one is the
+# rclone Box.com remote. Two unrelated things both called "box"; do not wire
+# one to the other.
+#
+#   make infra
+#   make infra SITE=52-66-116-80.nip.io SG_ID=sg-0abc123
+#   make infra ARGS="--no-ssh"
+CPU_BOX_SSH    ?= ubuntu@52.66.116.80
+
+infra:
+	@uv run python scripts/infra_status.py --host "$(CPU_BOX_SSH)" \
+	  $(if $(SITE),--site "$(SITE)") $(if $(SG_ID),--sg-id "$(SG_ID)") $(ARGS)
 
 status:
 	@echo "=== Git ==="
@@ -169,8 +348,14 @@ models:
 	uv run dvc pull models/categorizer.dvc models/page_type_classifier/vit_type_classifier.dvc
 
 # `@` so the OLTP DSN (may carry a password) is not echoed into terminal logs.
+# $(call sh_quote,...): double quotes would hand a `$` in the password to
+# *this* shell to re-expand (the same class of bug as #60, one layer down,
+# since Make's own textual substitution here does not re-parse the value it
+# pastes in -- only the shell that receives it would); a bare single-quoted
+# `'$(OLTP_DB_URL)'` fixes that but then breaks on an embedded `'` instead.
+# sh_quote handles both.
 preflight:
-	@OLTP_DB_URL="$(OLTP_DB_URL)" uv run --extra demo janasunani-demo-preflight
+	@OLTP_DB_URL=$(call sh_quote,$(OLTP_DB_URL_RAW)) uv run --extra demo janasunani-demo-preflight
 
 # Idempotent: create the throwaway Postgres only if missing, start it if stopped,
 # always (re-)apply migrations (alembic upgrade head is a no-op when current).
@@ -179,7 +364,7 @@ preflight:
 # another, and never provisions/migrates an operator's own (local or off-box) DB.
 db:
 	@set -e; \
-	if [ "$(OLTP_DB_URL)" != "$(DEMO_OLTP_URL)" ]; then \
+	if [ $(call sh_quote,$(OLTP_DB_URL_RAW)) != $(call sh_quote,$(DEMO_OLTP_URL)) ]; then \
 	  echo "OLTP_DB_URL is not the throwaway demo default; skipping provisioning — create and migrate that database yourself."; \
 	  exit 0; \
 	fi; \
@@ -198,12 +383,20 @@ db:
 	  docker exec $(PG_CONTAINER) pg_isready -U postgres -d janasunani >/dev/null 2>&1 && break; \
 	  sleep 1; \
 	done; \
-	OLTP_DB_URL="$(OLTP_DB_URL)" uv run alembic upgrade head; \
+	OLTP_DB_URL=$(call sh_quote,$(OLTP_DB_URL_RAW)) uv run alembic upgrade head; \
 	echo "Demo DB ready."
 
 # `@` so the OLTP DSN is not echoed. API_HOST=0.0.0.0 to serve off-box.
+# OLTP_DB_URL quoted via sh_quote for the same reason as `preflight` above.
+# Note: `preflight` now opens a real, timeout-bounded connection to
+# OLTP_DB_URL when one is set (janasunani/inference/service.py's
+# _oltp_check). On a fresh box that means it can WARN "unreachable" here,
+# before `db` (next) has started the throwaway Postgres it is pointed at --
+# non-fatal (advisory, not --strict) and self-resolving once `db` runs, kept
+# in this order rather than `db preflight` so the cheap model/OCR-binary
+# checks still fail fast ahead of provisioning a container.
 api: preflight db
-	@OLTP_DB_URL="$(OLTP_DB_URL)" JANASUNANI_API_HOST="$(API_HOST)" \
+	@OLTP_DB_URL=$(call sh_quote,$(OLTP_DB_URL_RAW)) JANASUNANI_API_HOST="$(API_HOST)" \
 	  JANASUNANI_API_PORT="$(API_PORT)" uv run --extra demo janasunani-api-live
 
 frontend:
@@ -216,10 +409,13 @@ frontend:
 # a UI against a dead backend. The trap reaps only the API process we launched
 # (its PID + children) -- never a global `pkill` that could hit an unrelated
 # live API on the same box. A single Ctrl-C on the frontend stops both.
+# See `api`'s comment above re: preflight's OLTP connectivity probe possibly
+# WARNing here on a fresh box, before `db` (next) has started the throwaway
+# Postgres -- non-fatal and self-resolving.
 up: preflight db
 	@set -e; \
 	echo "Starting live API (:$(API_PORT)) in the background..."; \
-	OLTP_DB_URL="$(OLTP_DB_URL)" JANASUNANI_API_HOST="$(API_HOST)" \
+	OLTP_DB_URL=$(call sh_quote,$(OLTP_DB_URL_RAW)) JANASUNANI_API_HOST="$(API_HOST)" \
 	  JANASUNANI_API_PORT="$(API_PORT)" uv run --extra demo janasunani-api-live & \
 	API_PID=$$!; \
 	trap 'pkill -P $$API_PID 2>/dev/null; kill $$API_PID 2>/dev/null || true' EXIT INT TERM; \
