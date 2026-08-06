@@ -1101,9 +1101,11 @@ building, this moves fast).
 
 | Model / API | ID | What it does | Price | Limits |
 |---|---|---|---|---|
-| Sarvam Vision | `sarvam-vision-v1` | 3B vision-language model for document digitisation. Text extraction, **table structure**, layout preservation, and **schema-driven structured extraction**. Out: HTML / Markdown / JSON. In: PDF, PNG, JPG, ZIP | **₹0.50 / page** | 10 pages per PDF, 200 MB, **10 req/min** |
-| Sarvam-30B | `sarvam-30b` | MoE, 30B total / 2.4B active, 128 experts, **64K context**. Native tool calling. OpenAI-compatible | ₹2.5 / ₹1.5 cached / ₹10 per 1M tokens (in / cached / out) | Tiered, below |
-| Sarvam-105B | `sarvam-105b` | Flagship, ~9B active, 128K context | ₹4 / ₹2.5 / ₹16 per 1M tokens | Tiered, below |
+| Sarvam Vision | `sarvam-vision-v1` | 3B vision-language model for document digitisation. **Digitise** (text, tables, layout; HTML or Markdown out) and **Extract** (schema-driven structured fields; JSON, CSV or XLSX out) are separate endpoints and bill separately. In: PDF, PNG, JPG, ZIP | **₹0.50 / page digitise, ₹1.00 / page extract.** Per page, not per field | 10 pages per PDF, 200 MB, **10 req/min** |
+| ~~Sarvam-30B~~ | ~~`sarvam-30b`~~ | **Withdrawn.** Absent from the billing page as of 2026-08-07, so not callable. Superseded by 105B | — | — |
+| Sarvam-105B | `sarvam-105b` | Flagship, ~9B active, 128K context. Also `sarvam-105b-chat` | **₹29.28 / ₹10.98 / ₹73.20 per 1M tokens** (in / cached / out) | Tiered, below |
+| GLM 5.2 | third-party, billed via Sarvam | Available on the same account. **Not a Sarvam model** — see the authorization note below | ₹128.10 / ₹23.79 / ₹402.60 per 1M tokens | Tiered, below |
+| Gemma-4 31B | third-party, billed via Sarvam | Available on the same account. **Not a Sarvam model** | ₹36.60 / ₹13.73 / ₹91.50 per 1M tokens | Tiered, below |
 | Transliteration | text API | Roman ↔ native script, bidirectional. **Odia is `od-IN`** | Text pricing | 1,000 chars per request |
 | Sarvam Translate / Mayura | translate API | 22 scheduled languages (Translate); colloquial and code-mixed (Mayura) | Text pricing | Tiered |
 | Saaras v3 / Saarika v2.5 | speech APIs | ASR with transcribe / translate / **transliterate** / codemix output modes | ₹30 per hour (₹45 diarised) | Tiered |
@@ -1124,10 +1126,35 @@ limits, 2026-07-28.
 languages plus English, Odia among them explicitly, which is more than our current
 OCR can honestly claim.
 
-**Cost is not the constraint either.** A 500-page benchmark is **₹250**. Running
-Sarvam-30B over all 1.37M grievance subjects is roughly 275M input tokens, on the
-order of **₹700**. These numbers are small enough that cost should not shape the
-benchmark design; latency, rate limits, and quality should.
+**Cost is not the constraint for the benchmark. It is for the corpus.** Corrected
+2026-08-07 against the dashboard billing page; the earlier figures costed
+Sarvam-30B, which has been withdrawn.
+
+| Run | Figure |
+|---|---|
+| 500-page benchmark, digitise only | **₹250** |
+| 500-page benchmark, digitise + extract | **₹750** |
+| 1.37M grievance subjects, ~275M input tokens, on 105B | **₹8,050** (was quoted as ₹700 on 30B) |
+| 96,469-page English corpus, digitise only | **₹48,000** |
+| 96,469-page English corpus, both endpoints | **₹145,000** |
+
+Sarvam-105B is **11.7x the input rate and 7.3x the output rate** that Sarvam-30B
+was costed at, so the ₹700 estimate was low by an order of magnitude. Output
+pricing is the one to watch for summarisation, where output volume drives the
+bill rather than input.
+
+The benchmark numbers remain small enough that cost should not shape its design;
+latency, rate limits and quality should. **The corpus numbers are not.** At
+₹0.50-₹1.50 a page and 10 req/min — roughly ten days of continuous calling for
+the full corpus — Doc AI is a measurement instrument, not a production backfill
+path. Any proposal to run it over the corpus is its own decision and needs its
+own approval, rather than being absorbed into a backfill ticket.
+
+⚠️ **The account also bills GLM 5.2 and Gemma-4 31B, which are not Sarvam
+models.** "Route through Sarvam" and "use a Sarvam model" are therefore different
+decisions. The MoU covers Sarvam; it should not be assumed to extend to a
+third-party model reached through the same key. The per-call audit log's model id
+is what makes the distinction auditable after the fact (§Phase 17, #83).
 
 Four things to check before relying on any of it:
 
