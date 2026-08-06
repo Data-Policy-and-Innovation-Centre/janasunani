@@ -98,18 +98,29 @@ def _analyzer_version() -> str:
 
 
 async def _load_pending_batch(
-    conn, district: str, year: int, limit: int
+    conn,
+    district: str,
+    year: int,
+    limit: int,
+    version: str | None = None,
 ) -> list[tuple[str, str]]:
-    """Complaints in the slice with grievance text and no redaction row yet.
+    """Complaints in the slice with grievance text and no current redaction.
 
     The pending predicate *is* the resume mechanism, so it must stay a NOT
     EXISTS against the output table rather than an offset: rows land in
     ``grievance_redactions`` as the run proceeds, and an offset would skip
     unprocessed rows once earlier ones stopped matching.
+
+    When ``version`` is given, a row stamped with a *different*
+    ``analyzer_version`` also counts as pending (#130). Without this the
+    stamp is write-only: a completed slice is excluded forever, so a better
+    analyzer can never reach the rows it was built to fix.
     """
     done = select(GrievanceRedaction.ticket_no).where(
         GrievanceRedaction.ticket_no == Complaint.ticket_no
     )
+    if version is not None:
+        done = done.where(GrievanceRedaction.analyzer_version == version)
     stmt = (
         select(Complaint.ticket_no, Complaint.grievance)
         .where(
@@ -150,18 +161,41 @@ async def _count_slice(conn, district: str, year: int) -> tuple[int, int]:
     return int(total or 0), int(done or 0)
 
 
+async def _count_stale(conn, district: str, year: int, version: str) -> int:
+    """Rows in the slice redacted by a different analyzer than the current one.
+
+    Reported by every run whether or not it acts on them, so the need for a
+    refresh is visible rather than something you have to think to check.
+    """
+    return int(
+        await conn.scalar(
+            select(func.count())
+            .select_from(GrievanceRedaction)
+            .join(Complaint, Complaint.ticket_no == GrievanceRedaction.ticket_no)
+            .where(
+                Complaint.district == district,
+                Complaint.created_year == year,
+                GrievanceRedaction.analyzer_version != version,
+            )
+        )
+        or 0
+    )
+
+
 async def _redact_slice(
     engine: AsyncEngine,
     district: str,
     year: int,
     redact: Any,
     limit: Optional[int] = None,
+    refresh_stale: bool = False,
 ) -> dict[str, int]:
     version = _analyzer_version()
     processed = 0
 
     async with engine.begin() as conn:
         total, already = await _count_slice(conn, district, year)
+        stale = await _count_stale(conn, district, year, version)
     logger.info(
         "slice {}/{}: {} complaints with grievance text, {} already redacted",
         district,
@@ -169,6 +203,15 @@ async def _redact_slice(
         total,
         already,
     )
+    if stale:
+        logger.warning(
+            "{} row(s) were redacted by a different analyzer than this one. "
+            "{}",
+            stale,
+            "Reprocessing them (--refresh-stale)."
+            if refresh_stale
+            else "Leaving them as they are; pass --refresh-stale to reprocess.",
+        )
 
     while True:
         remaining = None if limit is None else limit - processed
@@ -177,7 +220,9 @@ async def _redact_slice(
         size = BATCH_SIZE if remaining is None else min(BATCH_SIZE, remaining)
 
         async with engine.begin() as conn:
-            batch = await _load_pending_batch(conn, district, year, size)
+            batch = await _load_pending_batch(
+                conn, district, year, size, version=version if refresh_stale else None
+            )
             if not batch:
                 break
 
@@ -205,7 +250,12 @@ async def _redact_slice(
         processed += len(batch)
         logger.info("redacted {} of {} ({} this batch)", processed + already, total, len(batch))
 
-    return {"total": total, "already_redacted": already, "processed": processed}
+    return {
+        "total": total,
+        "already_redacted": already,
+        "processed": processed,
+        "stale_at_start": stale,
+    }
 
 
 def redact_grievances(
@@ -213,6 +263,7 @@ def redact_grievances(
     year: int,
     oltp_url: Optional[str] = None,
     limit: Optional[int] = None,
+    refresh_stale: bool = False,
 ) -> dict[str, int]:
     """Redact one district-year slice. Returns per-run counts."""
     # Imported here, not at module scope: pipeline-core is an optional extra,
@@ -224,7 +275,14 @@ def redact_grievances(
 
     async def run() -> dict[str, int]:
         try:
-            return await _redact_slice(engine, district, year, redact_text, limit=limit)
+            return await _redact_slice(
+                engine,
+                district,
+                year,
+                redact_text,
+                limit=limit,
+                refresh_stale=refresh_stale,
+            )
         finally:
             await engine.dispose()
 
@@ -249,10 +307,23 @@ def main() -> None:
         type=int,
         help="Stop after this many complaints. For a smoke test before the full run.",
     )
+    parser.add_argument(
+        "--refresh-stale",
+        action="store_true",
+        help=(
+            "Also reprocess rows redacted by a different analyzer version. "
+            "Off by default: a backfill over citizen text should not silently "
+            "change scope because an unrelated commit landed."
+        ),
+    )
     args = parser.parse_args()
 
     counts = redact_grievances(
-        args.district, args.year, oltp_url=args.oltp_url, limit=args.limit
+        args.district,
+        args.year,
+        oltp_url=args.oltp_url,
+        limit=args.limit,
+        refresh_stale=args.refresh_stale,
     )
     logger.info(
         "done: {} processed this run, {} of {} redacted in slice {}/{}",
