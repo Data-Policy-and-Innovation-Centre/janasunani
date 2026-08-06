@@ -1155,17 +1155,36 @@ Four things to check before relying on any of it:
   make. **Benchmark the model, name the surface in the artifact, and state which
   one was called.** The Doc AI endpoint takes `model: "sarvam-vision-v1"`, so the
   model id is what the API accepts and Akshar is the surface around it.
-- ⚠️ **The Doc AI endpoint is an async job API and takes a `schema`, so it is not a
-  drop-in OCR call.** `POST /doc-ai/v1/job/extract` returns a `job_id` and a
-  status; results are polled. Two consequences that are easy to get wrong once
-  and expensive to fix. **The `Idempotency-Key` must be derived deterministically
-  from document identity, never randomly** — a random key means a crashed backfill
-  reprocesses and re-bills every page it retries, and at 10 req/min a re-run is
-  not cheap in time either. And given a JSON `schema` the endpoint returns
-  *structured fields rather than text*, which is a different task from OCR:
-  pytesseract cannot do it, so a schema-driven run is a capability demonstration
-  and not a comparison. **Pin which of the two runs the scorecard reports before
-  the run, not after.**
+- ⚠️ **Doc AI is an async job API with two distinct endpoints, not a drop-in OCR
+  call.** `POST /doc-ai/v1/job/digitise` is the transcription path (`output_format`
+  `html` default or `md`, no schema); `POST /doc-ai/v1/job/extract` is the
+  structured path (`schema` or a saved `config_id` in, `json`/`csv`/`xlsx` out).
+  Both return a `job_id`, polled at `GET /doc-ai/v1/job/{id}/status`. Separate
+  submissions, separate results endpoints, presumably separate billing, so the
+  provider interface must cover both operations rather than one with an optional
+  schema. Odia is `od-IN`. Limits: 10 req/min on all plans, 10 PDF pages or 10 ZIP
+  images per submission, 200 MB.
+- ⚠️ **`partially_completed` is a terminal state, so outcomes are per page.**
+  Terminal states are `completed`, `partially_completed`, `failed`, `rejected`,
+  and the status response carries `pages_total` / `pages_succeeded` /
+  `pages_failed`. An adapter that treats a job as success-or-failure silently
+  drops the failed pages inside a partially completed job and reports the batch as
+  done — at a 10-page cap, one bad page is a 10% loss. **Reconcile
+  `pages_succeeded` against `pages_total` per job and record the delta.**
+- ⚠️ **Idempotency is undocumented, so our own submission log is the control.**
+  The dashboard sample sends an `Idempotency-Key` header; the API reference
+  documents no idempotency parameter. Send a deterministic key derived from
+  document identity anyway, but **do not depend on undocumented dedup semantics
+  to prevent double-billing**: write the job id to the audit log at submission and
+  check it before resubmitting. At 10 req/min a re-run is expensive in time as
+  well as money.
+- ⚠️ **A schema run and a Digitise run answer different questions.** Given a
+  schema, Extract returns structured fields rather than text, which is a task
+  pytesseract cannot attempt — so a schema-driven run is a capability
+  demonstration, not a comparison. Use Digitise for the scorecard. **Digitise
+  returns Markdown, not plain text**, so comparing it against pytesseract's flat
+  character stream needs a normaliser whose aggressiveness moves the headline
+  number. Write and freeze that normaliser before looking at any output.
 - ⚠️ **Structured extraction is not PII detection, and the gap is the redaction
   case.** A schema field like `complainant_name` returns the one salient name;
   the n50 gold holds ~4.5 NAME spans per page, the rest being officials,
