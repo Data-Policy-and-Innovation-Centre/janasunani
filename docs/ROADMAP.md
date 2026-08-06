@@ -895,6 +895,19 @@ whole point.
 - **The insight.** 86.65% of resolved complaints close on a templated remark, so
   "share of closures recording no action" is an exact string match for roughly seven
   cases in eight. Deliverable is the view definition, handed over.
+  - **Built** as the `closure` mart in
+    [`janasunani/analytics`](../janasunani/analytics/README.md), with the
+    findings wrapper behind `janasunani-closure-finding` and fixture tests in
+    `tests/test_closure_finding.py`. Portable SQL, so the same file runs against
+    our DuckDB lake and against the department's PostgreSQL.
+  - **It did not need the S3 template lookup after all.** §5.6 A lists template
+    labelling as gating this view, on the assumption the ladder had to come out
+    of the top-500 labelling pass. The ladder is six strings, enumerated above,
+    and the mart matches them directly. S3 still gates the *other* action-type
+    work; it no longer gates this.
+  - Run `closure_off_ladder_templates` before quoting the figure on any corpus
+    this has not been run against. An unmatched ladder string does not error,
+    it moves complaints into `off_ladder` and silently shrinks the denominator.
 - **State the denominator explicitly; it moves the number by half.** Of the 792,038
   complaints whose closing remark is one of the disposal templates, **60.8%** are on
   the bare rung (481,268 bare vs 310,770 claiming action). Measured against *all*

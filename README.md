@@ -81,6 +81,16 @@ lake.query("SELECT category, count(*) AS n FROM complaints GROUP BY 1 ORDER BY n
 lake.read("complaints")       # whole table as a Polars DataFrame
 ```
 
+### 2b · Findings over the lake (marts → presentable numbers)
+
+```bash
+uv run janasunani-closure-finding              # → outputs/findings/
+uv run janasunani-closure-finding --print-sql  # the view definitions, for handover
+```
+
+Governed SQL marts plus the findings built on them, with the caveats each number
+must be quoted with: [janasunani/analytics/README.md](janasunani/analytics/README.md).
+
 ### 3 · Document pipeline (scanned docs → text/redaction/summary/category)
 
 Heavy deps live in three mutually-conflicting extras (`pipeline-core`,
