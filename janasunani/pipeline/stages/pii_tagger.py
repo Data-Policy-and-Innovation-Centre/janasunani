@@ -177,10 +177,7 @@ _IDENTIFIER_CLASSES = (
     (
         "IN_BANK_ACCOUNT",
         re.compile(
-            r"(?:a/?c|acc(?:oun)?t|account|bank|ifsc|passbook|khata)"
-            # Qualifiers repeat: "account no.", "bank a/c number", "khata no".
-            r"(?:[^0-9A-Za-z]{0,4}(?:a/?c|n[o0]\.?|number|num|is))*"
-            r"[^0-9A-Za-z]{0,4}$",
+            r"(?:a/?c|acc(?:oun)?t|account|bank|ifsc|passbook|khata)",
             re.IGNORECASE,
         ),
         (9, 18),
@@ -189,10 +186,7 @@ _IDENTIFIER_CLASSES = (
         "IN_SCHEME_ID",
         re.compile(
             r"(?:ration|job\s*card|jobcard|mgnrega|nrega|registration|regd|"
-            r"epic|voter|udise|pension|scholarship|beneficiary|applicant)"
-            # Qualifiers repeat and stack: "ration card no", "job card number".
-            r"(?:[^0-9A-Za-z]{0,4}(?:i?d|n[o0]\.?|number|num|card|is))*"
-            r"[^0-9A-Za-z]{0,4}$",
+            r"epic|voter|udise|pension|scholarship|beneficiary|applicant)",
             re.IGNORECASE,
         ),
         (8, 18),
@@ -209,9 +203,28 @@ _BARE_ACCOUNT_MAX = 18
 
 _DIGIT_RUN_RE = re.compile(r"(?<!\d)\d{8,18}(?!\d)")
 
-# How far back to look for the context word. Long enough to span "bank account
+# How far back to look for the context word.
+#
+# The keyword is matched anywhere in this window rather than adjacent to the
+# digits. Requiring adjacency missed 48 of the 304 identifiers left after the
+# first pass over Sambalpur 2024: real text separates the two ("ration card
+# issued 2019, number 12345678901"), and no adjacency rule survives contact
+# with how people actually write.
+#
+# 40 characters is roughly one clause -- long enough to span "bank account
 # number is", short enough that an unrelated earlier mention does not leak in.
 _CONTEXT_WINDOW = 40
+
+# ...but a keyword in the window is not enough on its own, because a case or
+# letter number can sit in the same clause as a scheme word ("ration shop
+# complaint, letter no 12345678901"). The same citation convention the PHONE
+# postfilter uses (#55/#91) wins over the keyword when it immediately precedes
+# the digits. Cited numbers are being quoted, not identified with.
+_CITATION_BEFORE_RE = re.compile(
+    r"(letter|case|file|order|reference|ref|memo|receipt|regd)\.?\s*"
+    r"(no|number)?\.?\s*[:\-]?\s*$",
+    re.IGNORECASE,
+)
 
 
 class _IndianIdentifierRecognizer:
@@ -245,8 +258,9 @@ class _IndianIdentifierRecognizer:
 
                     entity = None
                     score = 0.0
+                    cited = _CITATION_BEFORE_RE.search(before) is not None
                     for name, context_re, (low, high) in _IDENTIFIER_CLASSES:
-                        if low <= length <= high and context_re.search(before):
+                        if low <= length <= high and context_re.search(before) and not cited:
                             entity, score = name, 0.7
                             break
                     if entity is None and _BARE_ACCOUNT_MIN <= length <= _BARE_ACCOUNT_MAX:
