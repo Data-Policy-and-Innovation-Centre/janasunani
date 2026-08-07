@@ -534,6 +534,7 @@ help:
 	@echo ""
 	@echo "  make setup           First-time setup on a new machine"
 	@echo "  make install-hooks   Enable repository Git hooks"
+	@echo "  make standards       Re-sync DPIC agent conventions and skills"
 	@echo "  make pull            Get latest code, deps, and approved DVC data"
 	@echo "  make ingest          Copy all original source files from Box"
 	@echo "  make publish-raw     Copy all local raw files to Box"
@@ -560,6 +561,14 @@ setup:
 	perl -pi -e 's/\r$$//' scripts/setup.sh
 	BOX_REMOTE=$(call sh_quote,$(BOX_REMOTE_RAW)) bash scripts/setup.sh
 	$(MAKE) install-hooks
+	$(MAKE) standards
+
+# Refresh the org-owned trees the `dpic` package vendors into this repo:
+# .dpic/standards (agent conventions) and .opencode/skills (dpic-deck).
+# Both are consumed verbatim -- never hand-edit them here, propose the change
+# in dpic-org and re-run this. `--check` reports drift without writing.
+standards:
+	uv run dpic-sync-standards
 
 install-hooks:
 	git config core.hooksPath .githooks
