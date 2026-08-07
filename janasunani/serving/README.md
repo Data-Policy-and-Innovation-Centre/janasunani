@@ -44,10 +44,13 @@ There is still no auth/redaction on `/history`, so the real-history opt-in
 **`schemas.py` is the contract.** Field names mirror what already exists —
 pipeline artifact DB (`extracted_text`/`redacted_text`/`ocr_model`),
 `PIISpan` (entity/start/end over the *extracted* text), lake columns for
-history rows — so wire-up is plumbing, not renaming. Changing a field is an
-API break; the frontend is built against exactly these shapes, and
-`tests/test_serving_api.py` pins them (those tests must pass unchanged after
-wire-up).
+history rows, and Phase 14's advisory triage states. `RoutingResult` carries
+support and concentration when `method="learned"`; other routing methods
+cannot claim empirical evidence. `TriageResult` keeps resubmissions, campaigns,
+and low-signal review separate, including an explicit scorer abstention. None
+of these fields rejects a grievance. Changing a field is an API break; the
+frontend is built against exactly these shapes, and `tests/test_serving_api.py`
+plus `tests/test_serving_triage_contract.py` pin them.
 
 ## Mock and live modes
 
@@ -62,6 +65,12 @@ unusable documents (unsupported/corrupt, blank OCR, quality rejection,
 truncation, or no grievance-bearing pages). Unexpected model/runtime failures
 remain server errors. DeepSeek and MLflow runtime resolution are not part of
 this in-process live command.
+
+The mock emits deterministic illustrative resubmission, campaign, flagged, or
+abstained triage states so the frontend can be developed without a backfill.
+Until the live Phase 14 scorer is wired, the live processor returns
+`spam.decision="not_scored"` rather than presenting missing output as a
+negative result.
 
 Only synthetic demo submissions are allowed until the PII gold evaluation gate
 passes. The mock must never serve real citizen submissions.

@@ -24,7 +24,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class PIIEntity(BaseModel):
@@ -56,6 +56,23 @@ class ClassificationResult(BaseModel):
     language: str  # ISO-ish code the categorizer gate produced ("en", "or")
 
 
+class EmpiricalRoutingEvidence(BaseModel):
+    """Aggregate evidence behind an empirically observed destination.
+
+    The crosswalk describes where comparable cases were historically sent. It
+    does not assert that those destinations produced the best outcome.
+    """
+
+    support: int = Field(ge=1)
+    concentration: float = Field(ge=0.0, le=1.0)
+    width: Literal[
+        "category+subcategory+district",
+        "category+subcategory",
+        "category+district",
+        "category",
+    ]
+
+
 class RoutingResult(BaseModel):
     dept: str
     office: str
@@ -63,6 +80,66 @@ class RoutingResult(BaseModel):
     escalation_authority: Optional[str] = None
     confidence: float = Field(ge=0.0, le=1.0)
     method: Literal["rules", "learned", "fallback", "mock"]
+    empirical_evidence: Optional[EmpiricalRoutingEvidence] = None
+
+    @model_validator(mode="after")
+    def _empirical_evidence_matches_method(self) -> "RoutingResult":
+        if self.method == "learned" and self.empirical_evidence is None:
+            raise ValueError("learned routing requires empirical_evidence")
+        if self.method != "learned" and self.empirical_evidence is not None:
+            raise ValueError("only learned routing may carry empirical_evidence")
+        return self
+
+
+class DuplicateSignal(BaseModel):
+    """A possible resubmission or a collective campaign, never a disposition."""
+
+    duplicate_kind: Literal["resubmission", "campaign"]
+    duplicate_group_id: str = Field(min_length=1)
+    duplicate_ticket_no: Optional[str] = None
+    related_filings: Optional[int] = Field(default=None, ge=2)
+
+    @model_validator(mode="after")
+    def _kind_has_the_right_context(self) -> "DuplicateSignal":
+        if self.duplicate_kind == "resubmission":
+            if not self.duplicate_ticket_no:
+                raise ValueError("resubmission requires duplicate_ticket_no")
+            if self.related_filings is not None:
+                raise ValueError("resubmission must not carry related_filings")
+        elif self.duplicate_ticket_no is not None:
+            raise ValueError("campaign must not carry duplicate_ticket_no")
+        elif self.related_filings is None:
+            raise ValueError("campaign requires related_filings")
+        return self
+
+
+class SpamReview(BaseModel):
+    """Officer-review state for the optional low-signal scorer.
+
+    ``abstained`` is intentionally observable: absence of a flag is not
+    evidence that a scorer ran and found the filing actionable.
+    """
+
+    decision: Literal["flagged", "abstained", "not_scored"]
+    spam_reason: Optional[str] = None
+    spam_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def _decision_has_an_explanation(self) -> "SpamReview":
+        if self.decision in {"flagged", "abstained"} and not self.spam_reason:
+            raise ValueError(f"{self.decision} spam review requires a reason")
+        if self.decision == "not_scored" and (
+            self.spam_reason is not None or self.spam_score is not None
+        ):
+            raise ValueError("not_scored spam review must not imply a result")
+        return self
+
+
+class TriageResult(BaseModel):
+    """Advisory signals only; none changes whether a grievance is accepted."""
+
+    duplicate: Optional[DuplicateSignal] = None
+    spam: SpamReview = Field(default_factory=lambda: SpamReview(decision="not_scored"))
 
 
 class GrievanceResult(BaseModel):
@@ -77,6 +154,7 @@ class GrievanceResult(BaseModel):
     classification: ClassificationResult
     summary: str
     routing: RoutingResult
+    triage: TriageResult = Field(default_factory=TriageResult)
 
 
 class HistoryItem(BaseModel):

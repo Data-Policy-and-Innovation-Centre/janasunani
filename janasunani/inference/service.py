@@ -24,6 +24,7 @@ from janasunani.serving.schemas import (
     PIIEntity,
     RedactionResult,
     RoutingResult,
+    TriageResult,
 )
 
 # Derived from the canonical label->class map (class 1 = grievance-bearing)
@@ -204,6 +205,10 @@ class PipelineGrievanceProcessor:
             ),
             summary=summary,
             routing=routing,
+            # Phase 14 scoring is not wired into the live processor yet. The
+            # explicit state prevents the frontend from mistaking no result for
+            # a negative low-signal decision.
+            triage=TriageResult(),
         )
 
 

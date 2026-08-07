@@ -437,6 +437,11 @@ class TestWiredIntoTheDefaultRouter:
         assert result.method == "learned"
         assert result.dept == "PHED"
         assert 0.0 < result.confidence <= MAX_CONFIDENCE
+        assert result.empirical_evidence.model_dump() == {
+            "support": 4000,
+            "concentration": 0.9,
+            "width": "category+subcategory+district",
+        }
 
     def test_no_crosswalk_falls_through_to_the_existing_router(self, monkeypatch):
         import janasunani.routing.crosswalk as cw

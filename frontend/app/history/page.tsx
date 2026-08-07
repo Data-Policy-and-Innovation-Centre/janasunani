@@ -1,6 +1,13 @@
 import { HistoryView } from "@/components/HistoryView";
 
-export default function HistoryPageRoute() {
+export default async function HistoryPageRoute({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string | string[] }>;
+}) {
+  const q = (await searchParams).q;
+  const initialQuery = Array.isArray(q) ? (q[0] ?? "") : (q ?? "");
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1">
@@ -10,7 +17,7 @@ export default function HistoryPageRoute() {
           district, or category.
         </p>
       </div>
-      <HistoryView />
+      <HistoryView initialQuery={initialQuery} />
     </div>
   );
 }
