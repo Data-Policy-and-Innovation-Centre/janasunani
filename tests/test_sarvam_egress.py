@@ -702,7 +702,60 @@ def test_submission_limiter_enforces_ten_requests_per_rolling_minute(tmp_path):
         assert outcome.ocr_model == "pytesseract"
 
     assert [method for method, _, _ in transport.calls].count("POST") == 11
-    assert clock.sleeps == [60.0]
+
+    # The 10/min budget is shared between submissions and status polls: Sarvam
+    # bills a poll the same as a submission, which is why their guidance is a
+    # five-second poll interval. Each of the 11 jobs here is one POST plus one
+    # poll, so 22 calls cross the rolling window twice.
+    assert [method for method, _, _ in transport.calls].count("GET") == 11
+    assert clock.sleeps == [60.0, 60.0]
+
+
+def test_status_polls_consume_the_shared_rate_limit_budget(tmp_path):
+    """A single job's poll loop must not exhaust the quota unmetered.
+
+    Before this was counted, one job polling at the old one-second default
+    issued up to 60 requests a minute against a ten-per-minute budget, so the
+    first live job would rate-limit itself before a second could be submitted.
+    """
+    clock = FakeClock()
+    responses = [RecordedResponse(202, {"job_id": "job-poll", "status": "pending"})]
+    # Nine polls that stay pending, then a terminal one: 1 POST + 10 GETs, so
+    # the eleventh call is the one that has to wait for the window.
+    responses.extend(
+        RecordedResponse(200, {"job_id": "job-poll", "status": "pending"})
+        for _ in range(9)
+    )
+    responses.append(RecordedResponse(200, {"job_id": "job-poll", "status": "failed"}))
+
+    adapter = SarvamVisionAdapter(
+        enabled=True,
+        api_key="recorded-test-key",
+        audit_log=SqliteAuditLog(tmp_path / "audit.sqlite"),
+        route=_verified_test_route(),
+        transport=RecordedTransport(responses),
+        max_poll_attempts=10,
+        poll_interval_seconds=0,
+        sleep=clock.sleep,
+        monotonic=clock.monotonic,
+    )
+
+    outcome = adapter.digitise_or_fallback(
+        b"fixture-png", "page.png", "en-IN", _context(), lambda: "local OCR"
+    )
+
+    assert outcome.ocr_model == "pytesseract"
+    # 1 submission + 10 polls = 11 metered calls, so the window is hit once
+    # even though only one job was ever submitted. The zero-length sleeps are
+    # the poll interval itself, set to 0 here to isolate the limiter.
+    assert [pause for pause in clock.sleeps if pause] == [60.0]
+
+
+def test_default_poll_interval_matches_the_documented_guidance():
+    """Sarvam documents a five-second poll interval for this rate limit."""
+    from janasunani.egress.sarvam import DEFAULT_POLL_INTERVAL_SECONDS
+
+    assert DEFAULT_POLL_INTERVAL_SECONDS == 5.0
 
 
 def test_429_retries_after_provider_delay_and_can_succeed(tmp_path):

@@ -40,6 +40,16 @@ AUTHORIZATION_REFERENCE = "GoO-Sarvam MoU; ACS Vishal Dev (IT) sign-off"
 TERMINAL_STATUSES = frozenset({"completed", "partially_completed", "failed", "rejected"})
 VISION_SUBMISSIONS_PER_MINUTE = 10
 SUBMISSION_WINDOW_SECONDS = 60.0
+
+# Sarvam documents 10 req/min for Document Intelligence, uniform across the
+# Starter, Pro and Business plans -- upgrading does not raise it -- and status
+# polls are billed against that same budget. Their guidance is an explicit
+# five-second poll interval. A one-second default polls a single job at up to
+# 60 req/min, so the first live job would rate-limit itself before any second
+# job could be submitted. Recorded-transport tests pass an explicit smaller
+# value, so this default only governs real calls.
+# https://docs.sarvam.ai/api/getting-started/ratelimits
+DEFAULT_POLL_INTERVAL_SECONDS = 5.0
 MAX_SUBMISSION_ATTEMPTS = 3
 MAX_RETRY_DELAY_SECONDS = 60.0
 
@@ -367,7 +377,7 @@ class SarvamVisionAdapter:
         audit_log: AuditLog,
         route: ProviderRoute | None = None,
         transport: HttpTransport | None = None,
-        poll_interval_seconds: float = 1.0,
+        poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
         max_poll_attempts: int = 60,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
@@ -622,6 +632,7 @@ class SarvamVisionAdapter:
         for attempt in range(self.max_poll_attempts):
             if attempt:
                 self.sleep(self.poll_interval_seconds)
+            self._wait_for_submission_slot()
             status = self._get_json(
                 url=f"{self.route.endpoint}/doc-ai/v1/job/{job_id}/status",
                 headers={"api-subscription-key": self.api_key},
@@ -789,7 +800,12 @@ class SarvamVisionAdapter:
         raise AssertionError("bounded Sarvam submission loop did not return or raise")
 
     def _wait_for_submission_slot(self) -> None:
-        """Enforce the documented ten Vision submissions per rolling minute."""
+        """Enforce the documented ten Document Intelligence calls per minute.
+
+        The budget is shared: a status poll is billed the same as a submission,
+        so both take a slot. Counting submissions alone let a single job's poll
+        loop exhaust the quota and then rate-limit the next submission.
+        """
         now = self.monotonic()
         while self._submission_times and (
             now - self._submission_times[0] >= SUBMISSION_WINDOW_SECONDS
