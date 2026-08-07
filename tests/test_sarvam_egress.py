@@ -31,6 +31,7 @@ class RecordedResponse:
     payload: Any = None
     text: str = ""
     content: bytes = b""
+    headers: dict[str, str] | None = None
 
     def json(self) -> Any:
         return self.payload
@@ -50,6 +51,19 @@ class RecordedTransport:
     def get(self, url: str, **kwargs: Any) -> RecordedResponse:
         self.calls.append(("GET", url, kwargs))
         return self.responses.pop(0)
+
+
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.sleeps: list[float] = []
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.now += seconds
 
 
 def _context() -> SarvamAuditContext:
@@ -272,6 +286,74 @@ def test_partially_completed_job_is_rejected_and_audited_as_fallback(tmp_path, u
     ]
 
 
+@pytest.mark.parametrize("terminal_status", ["failed", "rejected", "partially_completed"])
+def test_terminal_unsuccessful_job_is_not_resumed_on_retry(tmp_path, terminal_status):
+    audit_path = tmp_path / "audit.sqlite"
+    audit_log = SqliteAuditLog(audit_path)
+    first_transport = RecordedTransport(
+        [
+            RecordedResponse(202, {"job_id": "job-failed", "status": "pending"}),
+            RecordedResponse(
+                200,
+                {
+                    "job_id": "job-failed",
+                    "status": terminal_status,
+                    "usage": {
+                        "pages_total": 1,
+                        "pages_succeeded": 0,
+                        "pages_failed": 1,
+                    },
+                },
+            ),
+        ]
+    )
+    first = SarvamVisionAdapter(
+        enabled=True,
+        api_key="recorded-test-key",
+        audit_log=audit_log,
+        route=_verified_test_route(),
+        transport=first_transport,
+        poll_interval_seconds=0,
+        sleep=lambda _seconds: None,
+    )
+    first_outcome = first.digitise_or_fallback(
+        b"fixture-png", "page.png", "en-IN", _context(), lambda: "local OCR"
+    )
+    assert first_outcome.ocr_model == "pytesseract"
+
+    retry_transport = RecordedTransport(
+        [
+            RecordedResponse(202, {"job_id": "job-retry", "status": "pending"}),
+            RecordedResponse(200, {"job_id": "job-retry", "status": "completed"}),
+            RecordedResponse(200, {"download_url": "https://download.example/job-retry"}),
+            RecordedResponse(200, content=_zip_output(**{"result.md": "retry OCR"})),
+        ]
+    )
+    retry = SarvamVisionAdapter(
+        enabled=True,
+        api_key="recorded-test-key",
+        audit_log=audit_log,
+        route=_verified_test_route(),
+        transport=retry_transport,
+        poll_interval_seconds=0,
+        sleep=lambda _seconds: None,
+    )
+
+    retry_outcome = retry.digitise_or_fallback(
+        b"fixture-png", "page.png", "en-IN", _context(), lambda: "local OCR"
+    )
+
+    assert retry_outcome.text == "retry OCR"
+    assert retry_outcome.ocr_model == SARVAM_OCR_MODEL
+    assert [method for method, _, _ in retry_transport.calls] == [
+        "POST",
+        "GET",
+        "GET",
+        "GET",
+    ]
+    assert [row[8] for row in _audit_rows(audit_path)].count("submission") == 2
+
+
 def test_recorded_submission_is_resumed_instead_of_resubmitted_and_rebilled(tmp_path):
     audit_path = tmp_path / "audit.sqlite"
     audit_log = SqliteAuditLog(audit_path)
@@ -317,6 +399,57 @@ def test_recorded_submission_is_resumed_instead_of_resubmitted_and_rebilled(tmp_
     assert resumed.digitise(b"fixture-png", "page.png", "en-IN", _context()) == "resumed markdown"
     assert [method for method, _, _ in resumed_transport.calls] == ["GET", "GET", "GET"]
     assert "resume" in [row[8] for row in _audit_rows(audit_path)]
+
+
+def test_completed_job_is_resumed_without_a_new_submission(tmp_path):
+    audit_path = tmp_path / "audit.sqlite"
+    audit_log = SqliteAuditLog(audit_path)
+    completed_transport = RecordedTransport(
+        [
+            RecordedResponse(202, {"job_id": "job-completed", "status": "pending"}),
+            RecordedResponse(200, {"job_id": "job-completed", "status": "completed"}),
+            RecordedResponse(
+                200, {"download_url": "https://download.example/job-completed"}
+            ),
+            RecordedResponse(200, content=_zip_output(**{"result.md": "first result"})),
+        ]
+    )
+    completed = SarvamVisionAdapter(
+        enabled=True,
+        api_key="recorded-test-key",
+        audit_log=audit_log,
+        route=_verified_test_route(),
+        transport=completed_transport,
+        poll_interval_seconds=0,
+        sleep=lambda _seconds: None,
+    )
+    assert completed.digitise(
+        b"fixture-png", "page.png", "en-IN", _context()
+    ) == "first result"
+
+    resume_transport = RecordedTransport(
+        [
+            RecordedResponse(200, {"job_id": "job-completed", "status": "completed"}),
+            RecordedResponse(
+                200, {"download_url": "https://download.example/job-completed"}
+            ),
+            RecordedResponse(200, content=_zip_output(**{"result.md": "cached result"})),
+        ]
+    )
+    resumed = SarvamVisionAdapter(
+        enabled=True,
+        api_key="recorded-test-key",
+        audit_log=audit_log,
+        route=_verified_test_route(),
+        transport=resume_transport,
+        poll_interval_seconds=0,
+        sleep=lambda _seconds: None,
+    )
+
+    result = resumed.digitise(b"fixture-png", "page.png", "en-IN", _context())
+
+    assert result == "cached result"
+    assert [method for method, _, _ in resume_transport.calls] == ["GET", "GET", "GET"]
 
 
 def test_extract_resume_key_is_stable_across_schema_dict_order(tmp_path):
@@ -495,6 +628,137 @@ def test_idempotency_key_canonicalizes_the_complete_request_form():
         {**base_form, "future_option": {"beta": False}},
     ):
         assert key(changed) != key(base_form)
+
+
+def test_submission_limiter_enforces_ten_requests_per_rolling_minute(tmp_path):
+    clock = FakeClock()
+    responses = []
+    for index in range(11):
+        job_id = f"job-{index}"
+        responses.extend(
+            [
+                RecordedResponse(202, {"job_id": job_id, "status": "pending"}),
+                RecordedResponse(200, {"job_id": job_id, "status": "failed"}),
+            ]
+        )
+    transport = RecordedTransport(responses)
+    adapter = SarvamVisionAdapter(
+        enabled=True,
+        api_key="recorded-test-key",
+        audit_log=SqliteAuditLog(tmp_path / "audit.sqlite"),
+        route=_verified_test_route(),
+        transport=transport,
+        max_poll_attempts=1,
+        poll_interval_seconds=0,
+        sleep=clock.sleep,
+        monotonic=clock.monotonic,
+    )
+
+    for index in range(11):
+        context = SarvamAuditContext(
+            ticket=f"T-{index}",
+            stage="ocr_extraction",
+            document_id=f"doc:{index}",
+        )
+        outcome = adapter.digitise_or_fallback(
+            f"fixture-{index}".encode(),
+            f"page-{index}.png",
+            "en-IN",
+            context,
+            lambda: "local OCR",
+        )
+        assert outcome.ocr_model == "pytesseract"
+
+    assert [method for method, _, _ in transport.calls].count("POST") == 11
+    assert clock.sleeps == [60.0]
+
+
+def test_429_retries_after_provider_delay_and_can_succeed(tmp_path):
+    clock = FakeClock()
+    audit_path = tmp_path / "audit.sqlite"
+    transport = RecordedTransport(
+        [
+            RecordedResponse(429, {"error": "rate limited"}, headers={"Retry-After": "2.5"}),
+            RecordedResponse(202, {"job_id": "job-retried", "status": "pending"}),
+            RecordedResponse(200, {"job_id": "job-retried", "status": "completed"}),
+            RecordedResponse(200, {"download_url": "https://download.example/job-retried"}),
+            RecordedResponse(200, content=_zip_output(**{"result.md": "remote OCR"})),
+        ]
+    )
+    adapter = SarvamVisionAdapter(
+        enabled=True,
+        api_key="recorded-test-key",
+        audit_log=SqliteAuditLog(audit_path),
+        route=_verified_test_route(),
+        transport=transport,
+        poll_interval_seconds=0,
+        sleep=clock.sleep,
+        monotonic=clock.monotonic,
+    )
+
+    outcome = adapter.digitise_or_fallback(
+        b"fixture-png", "page.png", "en-IN", _context(), lambda: "local OCR"
+    )
+
+    assert outcome.text == "remote OCR"
+    assert outcome.ocr_model == SARVAM_OCR_MODEL
+    assert [method for method, _, _ in transport.calls] == [
+        "POST",
+        "POST",
+        "GET",
+        "GET",
+        "GET",
+    ]
+    assert clock.sleeps == [2.5]
+    assert [row[8] for row in _audit_rows(audit_path)] == [
+        "submission_rate_limited",
+        "submission",
+        "poll",
+        "result_lookup",
+        "download",
+    ]
+    assert [row[4] for row in _audit_rows(audit_path)][:2] == [
+        len(b"fixture-png"),
+        len(b"fixture-png"),
+    ]
+
+
+def test_429_exhaustion_falls_back_after_bounded_backoff(tmp_path):
+    clock = FakeClock()
+    audit_path = tmp_path / "audit.sqlite"
+    transport = RecordedTransport(
+        [
+            RecordedResponse(429, {"error": "rate limited"}),
+            RecordedResponse(429, {"error": "rate limited"}),
+            RecordedResponse(429, {"error": "rate limited"}),
+        ]
+    )
+    adapter = SarvamVisionAdapter(
+        enabled=True,
+        api_key="recorded-test-key",
+        audit_log=SqliteAuditLog(audit_path),
+        route=_verified_test_route(),
+        transport=transport,
+        sleep=clock.sleep,
+        monotonic=clock.monotonic,
+        submission_backoff_seconds=6.0,
+    )
+
+    outcome = adapter.digitise_or_fallback(
+        b"fixture-png", "page.png", "en-IN", _context(), lambda: "local OCR"
+    )
+
+    assert outcome.text == "local OCR"
+    assert outcome.ocr_model == "pytesseract"
+    assert [method for method, _, _ in transport.calls] == ["POST", "POST", "POST"]
+    assert clock.sleeps == [6.0, 12.0]
+    assert [row[8] for row in _audit_rows(audit_path)] == [
+        "submission_rate_limited",
+        "submission_rate_limited",
+        "submission_rate_limit_exhausted",
+        "fallback",
+    ]
+    assert len(set(_audit_keys(audit_path))) == 1
 
 
 def test_failed_submission_is_audited_with_only_its_actual_upload_bytes(tmp_path):

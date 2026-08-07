@@ -17,6 +17,7 @@ import os
 import sqlite3
 import time
 import zipfile
+from collections import deque
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from io import BytesIO
@@ -37,6 +38,10 @@ TRUST_TIER = "authorized-external"
 AUTHORIZATION_REFERENCE = "GoO-Sarvam MoU; ACS Vishal Dev (IT) sign-off"
 
 TERMINAL_STATUSES = frozenset({"completed", "partially_completed", "failed", "rejected"})
+VISION_SUBMISSIONS_PER_MINUTE = 10
+SUBMISSION_WINDOW_SECONDS = 60.0
+MAX_SUBMISSION_ATTEMPTS = 3
+MAX_RETRY_DELAY_SECONDS = 60.0
 
 
 @dataclass(frozen=True)
@@ -193,6 +198,7 @@ class HttpResponse(Protocol):
     status_code: int
     text: str
     content: bytes
+    headers: Any
 
     def json(self) -> Any: ...
 
@@ -270,12 +276,14 @@ class SqliteAuditLog:
     def submitted_job(
         self, context: SarvamAuditContext, operation: str, idempotency_key: str
     ) -> str | None:
-        """Return a previously recorded job before issuing a billable retry.
+        """Return a resumable recorded job before issuing a billable retry.
 
         Sarvam's Idempotency-Key semantics are undocumented.  This local log,
         not that header, is therefore the duplicate-billing control.  A
         completed job is also returned: its result can be downloaded again
-        without submitting the same document a second time.
+        without submitting the same document a second time.  Terminal
+        unsuccessful jobs are deliberately excluded so a later call may make
+        a fresh submission.
         """
         with sqlite3.connect(self.db_path) as connection:
             row = connection.execute(
@@ -295,7 +303,31 @@ class SqliteAuditLog:
                     idempotency_key,
                 ),
             ).fetchone()
-        return row[0] if row else None
+            if not row:
+                return None
+            job_id = row[0]
+            metadata_rows = connection.execute(
+                """
+                SELECT response_metadata
+                FROM authorized_external_audit
+                WHERE job_id = ? AND idempotency_key = ?
+                ORDER BY id DESC
+                """,
+                (job_id, idempotency_key),
+            ).fetchall()
+
+        for (raw_metadata,) in metadata_rows:
+            if not raw_metadata:
+                continue
+            try:
+                status = json.loads(raw_metadata).get("status")
+            except (AttributeError, json.JSONDecodeError):
+                continue
+            if status in {"failed", "rejected", "partially_completed"}:
+                return None
+            if status:
+                return job_id
+        return job_id
 
 
 class SarvamDocumentProvider(Protocol):
@@ -338,7 +370,14 @@ class SarvamVisionAdapter:
         poll_interval_seconds: float = 1.0,
         max_poll_attempts: int = 60,
         sleep: Callable[[float], None] = time.sleep,
+        monotonic: Callable[[], float] = time.monotonic,
+        max_submission_attempts: int = MAX_SUBMISSION_ATTEMPTS,
+        submission_backoff_seconds: float = 6.0,
     ) -> None:
+        if max_submission_attempts < 1:
+            raise ValueError("max_submission_attempts must be at least 1")
+        if submission_backoff_seconds < 0:
+            raise ValueError("submission_backoff_seconds must be non-negative")
         self.enabled = enabled
         self.api_key = api_key if api_key is not None else (
             os.getenv("SARVAM_API_KEY") or os.getenv("SARVAM_API_SUBSCRIPTION_KEY")
@@ -349,6 +388,10 @@ class SarvamVisionAdapter:
         self.poll_interval_seconds = poll_interval_seconds
         self.max_poll_attempts = max_poll_attempts
         self.sleep = sleep
+        self.monotonic = monotonic
+        self.max_submission_attempts = max_submission_attempts
+        self.submission_backoff_seconds = submission_backoff_seconds
+        self._submission_times: deque[float] = deque()
 
     def digitise(
         self,
@@ -663,37 +706,115 @@ class SarvamVisionAdapter:
         job_id: str | None,
         idempotency_key: str,
     ) -> dict[str, Any]:
-        try:
-            response = self._transport().post(url, headers=headers, files=files, data=data)
-            payload = self._json_response(response, label)
-        except Exception as exc:
+        for attempt in range(1, self.max_submission_attempts + 1):
+            self._wait_for_submission_slot()
+            try:
+                response = self._transport().post(
+                    url, headers=headers, files=files, data=data
+                )
+            except Exception as exc:
+                self._audit(
+                    context,
+                    operation,
+                    f"{label}_error",
+                    language,
+                    bytes_sent,
+                    job_id,
+                    {"error": type(exc).__name__, "attempt": attempt},
+                    idempotency_key,
+                )
+                raise SarvamError(f"Sarvam {label} request failed") from exc
+
+            if response.status_code == 429:
+                exhausted = attempt == self.max_submission_attempts
+                retry_delay = self._retry_delay_seconds(response, attempt)
+                self._audit(
+                    context,
+                    operation,
+                    f"{label}_rate_limit_exhausted"
+                    if exhausted
+                    else f"{label}_rate_limited",
+                    language,
+                    bytes_sent,
+                    job_id,
+                    {
+                        "http_status": 429,
+                        "attempt": attempt,
+                        "retry_after_seconds": retry_delay,
+                    },
+                    idempotency_key,
+                )
+                if exhausted:
+                    raise SarvamError(
+                        f"Sarvam {label} remained rate limited after "
+                        f"{self.max_submission_attempts} attempts"
+                    )
+                self.sleep(retry_delay)
+                continue
+
+            try:
+                payload = self._json_response(response, label)
+            except Exception as exc:
+                self._audit(
+                    context,
+                    operation,
+                    f"{label}_error",
+                    language,
+                    bytes_sent,
+                    job_id,
+                    {"error": type(exc).__name__, "attempt": attempt},
+                    idempotency_key,
+                )
+                if isinstance(exc, SarvamError):
+                    raise
+                raise SarvamError(f"Sarvam {label} request failed") from exc
+
+            returned_job_id = payload.get("job_id")
             self._audit(
                 context,
                 operation,
-                f"{label}_error",
+                label,
                 language,
                 bytes_sent,
-                job_id,
-                {"error": type(exc).__name__},
+                returned_job_id if isinstance(returned_job_id, str) else job_id,
+                {
+                    **self._response_metadata(payload, response.status_code),
+                    "attempt": attempt,
+                },
                 idempotency_key,
             )
-            if isinstance(exc, SarvamError):
-                raise
-            raise SarvamError(f"Sarvam {label} request failed") from exc
-        returned_job_id = payload.get("job_id")
-        self._audit(
-            context,
-            operation,
-            label,
-            language,
-            bytes_sent,
-            returned_job_id if isinstance(returned_job_id, str) else job_id,
-            self._response_metadata(payload, response.status_code),
-            idempotency_key,
-        )
-        if label == "submission" and not isinstance(returned_job_id, str):
-            raise SarvamError("Sarvam submission did not return a job_id")
-        return payload
+            if label == "submission" and not isinstance(returned_job_id, str):
+                raise SarvamError("Sarvam submission did not return a job_id")
+            return payload
+        raise AssertionError("bounded Sarvam submission loop did not return or raise")
+
+    def _wait_for_submission_slot(self) -> None:
+        """Enforce the documented ten Vision submissions per rolling minute."""
+        now = self.monotonic()
+        while self._submission_times and (
+            now - self._submission_times[0] >= SUBMISSION_WINDOW_SECONDS
+        ):
+            self._submission_times.popleft()
+        if len(self._submission_times) >= VISION_SUBMISSIONS_PER_MINUTE:
+            wait_seconds = SUBMISSION_WINDOW_SECONDS - (
+                now - self._submission_times[0]
+            )
+            self.sleep(max(0.0, wait_seconds))
+            now = self.monotonic()
+            while self._submission_times and (
+                now - self._submission_times[0] >= SUBMISSION_WINDOW_SECONDS
+            ):
+                self._submission_times.popleft()
+        self._submission_times.append(now)
+
+    def _retry_delay_seconds(self, response: HttpResponse, attempt: int) -> float:
+        headers = getattr(response, "headers", {})
+        retry_after = headers.get("Retry-After") if headers is not None else None
+        try:
+            delay = float(retry_after)
+        except (TypeError, ValueError):
+            delay = self.submission_backoff_seconds * (2 ** (attempt - 1))
+        return min(MAX_RETRY_DELAY_SECONDS, max(0.0, delay))
 
     def _get_json(
         self,
