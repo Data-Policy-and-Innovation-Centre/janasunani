@@ -206,6 +206,10 @@ REPRESENTATIVE_COMPARISON_CAP = 200
 # linear-work budget for campaign buckets.
 LARGE_BUCKET_ANCHOR_COUNT = 32
 
+# Stable provenance marker for the bounded grouping policy. Increment this
+# when the algorithm changes even if the cap/anchor defaults do not.
+GROUPING_ALGORITHM = "fixed-anchor-v1"
+
 # Odia Unicode block. Presence, not majority: any real Odia content in a
 # filing is enough to route it to the Odia-script partition rather than the
 # Latin one, and typed PII placeholders / stray punctuation are ASCII
@@ -255,12 +259,26 @@ def _salt_marker(salt: str) -> str:
     return hashlib.blake2b(salt.encode("utf-8"), digest_size=6).hexdigest()
 
 
-def _index_version(window_days: int, threshold: float, salt: str) -> str:
+def _index_version(
+    window_days: int,
+    threshold: float,
+    salt: str,
+    *,
+    grouping_algorithm: Optional[str] = None,
+    representative_cap: Optional[int] = None,
+    anchor_count: Optional[int] = None,
+) -> str:
     """Stamp identifying the parameters a signature/group row was produced
     under — same purpose as `redact_grievance._analyzer_version`, scaled down:
     `dedup.py` is stdlib-only with no third-party package versions to track,
     but its own constants and this runner's blocking/verification parameters
     can still change what the index contains.
+
+    With no grouping keywords, this returns the original signature provenance
+    format unchanged. Group rows supply all three grouping keywords, appending
+    the stable algorithm marker and effective bounded-policy parameters. This
+    lets signatures remain current when only grouping changes, while group
+    outputs from exhaustive and bounded policies cannot share a version stamp.
 
     The salt marker is included because rotating the salt changes every
     identity hash. Without it a rotation is undetectable: the compromised
@@ -268,10 +286,19 @@ def _index_version(window_days: int, threshold: float, salt: str) -> str:
     ones keep the old, so same-citizen linkage silently stops working across
     the boundary with no error and no visible symptom (#136).
     """
-    return (
+    base = (
         f"shingle_size={DEFAULT_SHINGLE_SIZE} num_hashes={DEFAULT_NUM_HASHES} "
         f"num_bands={DEFAULT_NUM_BANDS} window_days={window_days} "
         f"threshold={threshold} salt={_salt_marker(salt)}"
+    )
+    grouping_values = (grouping_algorithm, representative_cap, anchor_count)
+    if all(value is None for value in grouping_values):
+        return base
+    if any(value is None for value in grouping_values):
+        raise ValueError("grouping provenance requires algorithm, cap, and anchor count")
+    return (
+        f"{base} grouping_algorithm={grouping_algorithm} "
+        f"representative_cap={representative_cap} anchor_count={anchor_count}"
     )
 
 
@@ -719,6 +746,7 @@ async def _group_duplicates(
     threshold: float,
     salt: str,
     representative_cap: int = REPRESENTATIVE_COMPARISON_CAP,
+    anchor_count: int = LARGE_BUCKET_ANCHOR_COUNT,
 ) -> dict[str, int]:
     async with engine.begin() as conn:
         rows = await _load_slice_signatures(conn, district, year)
@@ -785,7 +813,13 @@ async def _group_duplicates(
     for buckets_in_block in band_buckets_by_block.values():
         for members in buckets_in_block:
             matches, checked, used_large_policy = _verify_bucket(
-                members, text_by_ticket, shingle_cache, parent, threshold, representative_cap
+                members,
+                text_by_ticket,
+                shingle_cache,
+                parent,
+                threshold,
+                representative_cap,
+                anchor_count,
             )
             verified += matches
             comparisons += checked
@@ -795,7 +829,13 @@ async def _group_duplicates(
     # share the same candidate-text/shingle cache as LSH buckets above.
     for members in identity_buckets:
         matches, checked, used_large_policy = _verify_bucket(
-            members, text_by_ticket, shingle_cache, parent, threshold, representative_cap
+            members,
+            text_by_ticket,
+            shingle_cache,
+            parent,
+            threshold,
+            representative_cap,
+            anchor_count,
         )
         verified += matches
         comparisons += checked
@@ -806,7 +846,14 @@ async def _group_duplicates(
     groups = {ticket: _find(parent, ticket) for ticket in all_tickets}
     group_sizes = Counter(groups.values())
 
-    version = _index_version(window_days, threshold, salt)
+    version = _index_version(
+        window_days,
+        threshold,
+        salt,
+        grouping_algorithm=GROUPING_ALGORITHM,
+        representative_cap=representative_cap,
+        anchor_count=anchor_count,
+    )
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     block_key_by_ticket = {row.ticket_no: row.block_key for row in rows}
     group_rows = [
@@ -852,6 +899,7 @@ def build_dedup_index(
     limit: Optional[int] = None,
     refresh_stale: bool = False,
     representative_cap: int = REPRESENTATIVE_COMPARISON_CAP,
+    anchor_count: int = LARGE_BUCKET_ANCHOR_COUNT,
 ) -> dict[str, int]:
     """Index one district-year slice and (re)compute its duplicate groups.
 
@@ -911,6 +959,7 @@ def build_dedup_index(
                 threshold,
                 effective_salt,
                 representative_cap=representative_cap,
+                anchor_count=anchor_count,
             )
             return {**signature_counts, **group_counts}
         finally:
@@ -983,12 +1032,14 @@ def main() -> None:
     )
     logger.info(
         "done: {} processed this run, {} of {} indexed, {} duplicate groups "
-        "over {} signatures in slice {}/{}",
+        "over {} signatures (comparison_pairs={}, large_buckets={}) in slice {}/{}",
         counts["processed"],
         counts["already_indexed"] + counts["processed"],
         counts["total"],
         counts["groups"],
         counts["slice_signatures"],
+        counts["comparison_pairs"],
+        counts["large_buckets"],
         args.district,
         args.year,
     )

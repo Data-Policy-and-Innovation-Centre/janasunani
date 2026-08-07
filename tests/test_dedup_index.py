@@ -315,6 +315,16 @@ class TestSignatureContents:
         row = _signature_rows(sync_url)["T1"]
         assert row.index_version and "num_hashes=" in row.index_version
 
+    def test_signature_version_format_does_not_include_grouping_policy(self, oltp):
+        from janasunani.pipeline.dedup_index import _index_version
+
+        async_url, sync_url = oltp
+        build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT)
+        version = _signature_rows(sync_url)["T1"].index_version
+
+        assert version == _index_version(30, 0.5, _SALT)
+        assert "grouping_algorithm=" not in version
+
 
 # --- large fixture: duplicate detection, blocking, cross-script, identity -
 
@@ -741,6 +751,59 @@ class TestReconciliation:
         assert "T6" not in _signature_rows(sync_url)
 
 
+class TestGroupVersionProvenance:
+    def test_group_version_records_effective_bounded_policy(self, dup_oltp):
+        from janasunani.pipeline.dedup_index import GROUPING_ALGORITHM, _index_version
+
+        async_url, sync_url = dup_oltp
+        build_dedup_index(
+            "Sambalpur",
+            2024,
+            oltp_url=async_url,
+            salt=_SALT,
+            representative_cap=7,
+            anchor_count=3,
+        )
+
+        expected = _index_version(
+            30,
+            0.5,
+            _SALT,
+            grouping_algorithm=GROUPING_ALGORITHM,
+            representative_cap=7,
+            anchor_count=3,
+        )
+        assert {row.index_version for row in _group_rows(sync_url).values()} == {expected}
+        assert expected.endswith(
+            "grouping_algorithm=fixed-anchor-v1 representative_cap=7 anchor_count=3"
+        )
+
+    def test_policy_change_restamps_groups_but_not_signatures(self, dup_oltp):
+        async_url, sync_url = dup_oltp
+        build_dedup_index(
+            "Sambalpur",
+            2024,
+            oltp_url=async_url,
+            salt=_SALT,
+            representative_cap=7,
+            anchor_count=3,
+        )
+        signature_before = _signature_rows(sync_url)["T1"].index_version
+        group_before = _group_rows(sync_url)["T1"].index_version
+
+        build_dedup_index(
+            "Sambalpur",
+            2024,
+            oltp_url=async_url,
+            salt=_SALT,
+            representative_cap=8,
+            anchor_count=4,
+        )
+
+        assert _signature_rows(sync_url)["T1"].index_version == signature_before
+        assert _group_rows(sync_url)["T1"].index_version != group_before
+
+
 class TestSchemaGuards:
     def test_dedup_tables_do_not_reach_the_lake(self):
         """Redaction lowers exposure; it does not declassify what is
@@ -924,3 +987,40 @@ class TestGroupingStreamsBucketsInsteadOfMaterialisingPairs:
         counts = build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt="s")
         assert counts["groups"] > 0
         assert counts["slice_signatures"] > 0
+
+
+class TestCLIReporting:
+    def test_main_logs_comparison_and_large_bucket_counts(self, oltp, monkeypatch):
+        """Exercise argparse -> build -> final Loguru message, not just the
+        build helper's returned dictionary."""
+        from loguru import logger as loguru_logger
+
+        import janasunani.pipeline.dedup_index as di
+
+        async_url, _ = oltp
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "janasunani-dedup-index",
+                "--district",
+                "Khordha",
+                "--year",
+                "2024",
+                "--oltp-url",
+                async_url,
+                "--salt",
+                _SALT,
+            ],
+        )
+        messages = []
+        sink = loguru_logger.add(
+            lambda message: messages.append(str(message)), level="INFO", format="{message}"
+        )
+        try:
+            di.main()
+        finally:
+            loguru_logger.remove(sink)
+
+        final = next(message for message in messages if message.startswith("done:"))
+        assert "comparison_pairs=0" in final
+        assert "large_buckets=0" in final
