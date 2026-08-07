@@ -18,6 +18,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 PYPROJECT_PATH = ROOT_DIR / "pyproject.toml"
 UV_LOCK_PATH = ROOT_DIR / "uv.lock"
 DVC_PATH = ROOT_DIR / "dvc.yaml"
+PRESIDIO_ANALYZER_REQUIREMENT = "presidio-analyzer==2.2.363"
 
 
 def _pyproject() -> dict:
@@ -31,8 +32,8 @@ def test_pii_extra_is_separate_from_the_legacy_numpy_pipeline_contract():
     pipeline_core = set(extras["pipeline-core"])
 
     assert pii == {
-        "numpy>=2",
-        "presidio-analyzer>=2.2,<3",
+        "numpy>=2,<2.5",
+        PRESIDIO_ANALYZER_REQUIREMENT,
         "presidio-anonymizer>=2.2,<3",
         "spacy>=3.8,<3.9",
         (
@@ -43,12 +44,24 @@ def test_pii_extra_is_separate_from_the_legacy_numpy_pipeline_contract():
     }
     assert "numpy<2" in pipeline_core, "the legacy non-PII pin is intentional"
     assert pii.isdisjoint(pipeline_core)
-    assert pii - {"numpy>=2"} <= set(extras["demo"]), (
+    assert pii - {"numpy>=2,<2.5"} <= set(extras["demo"]), (
         "the live demo must retain Presidio/spaCy"
     )
     conflicts = _pyproject()["tool"]["uv"]["conflicts"]
     assert [{"extra": "pii"}, {"extra": "pipeline-core"}] in conflicts
     assert [{"extra": "pii"}, {"extra": "demo"}] in conflicts
+
+
+@pytest.mark.skipif(shutil.which("uv") is None, reason="uv not on PATH")
+def test_pii_and_demo_use_the_same_frozen_analyzer_release():
+    """Gold evaluation and production redaction must run identical analyzer code."""
+    extras = _pyproject()["project"]["optional-dependencies"]
+    assert PRESIDIO_ANALYZER_REQUIREMENT in extras["pii"]
+    assert PRESIDIO_ANALYZER_REQUIREMENT in extras["demo"]
+
+    pii_version = _requirements_for_linux("pii").get("presidio-analyzer")
+    demo_version = _requirements_for_linux("demo").get("presidio-analyzer")
+    assert pii_version == demo_version == "2.2.363"
 
 
 def _option(tokens: list[str], name: str) -> str:
@@ -86,15 +99,15 @@ def test_dvc_sample_runs_each_stage_in_its_compatible_extra():
     }
 
 
-def _pii_requirements_for_linux() -> dict[str, str]:
-    """Evaluate the frozen PII lock selection for the Python 3.13 CPU box."""
+def _requirements_for_linux(extra: str) -> dict[str, str]:
+    """Evaluate a frozen extra's lock selection for the Python 3.13 CPU box."""
     proc = subprocess.run(
         [
             "uv",
             "export",
             "--frozen",
             "--extra",
-            "pii",
+            extra,
             "--no-dev",
             "--no-hashes",
             "--no-emit-project",
@@ -140,7 +153,7 @@ def _locked_package(lock: str, name: str, version: str) -> str:
 @pytest.mark.skipif(shutil.which("uv") is None, reason="uv not on PATH")
 def test_pii_extra_uses_a_linux_cp313_numpy_wheel():
     """Frozen PII dependencies must install on the compiler-free CPU box."""
-    resolved = _pii_requirements_for_linux()
+    resolved = _requirements_for_linux("pii")
     numpy_version = resolved.get("numpy")
     assert numpy_version and numpy_version != "1.26.4", (
         "the PII extra selected numpy 1.26.4, which has no CPython 3.13 wheel"
