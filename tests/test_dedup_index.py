@@ -26,7 +26,15 @@ from janasunani.db.models import (
     DedupSignature,
     GrievanceRedaction,
 )
-from janasunani.pipeline.dedup import identity_key, minhash_signature, shingles
+from janasunani.pipeline.dedup import (
+    DEDUP_SOURCE_NAME,
+    DedupSourceSnapshotMismatch,
+    assert_group_source_snapshot,
+    identity_key,
+    minhash_signature,
+    shingles,
+    source_snapshot_id,
+)
 from janasunani.pipeline.dedup_index import (
     DEFAULT_NUM_HASHES,
     _script_of,
@@ -215,6 +223,183 @@ class TestNaiveUTCTimestamps:
         row = _group_rows(sync_url)["T1"]
         assert row.grouped_at is not None
         assert row.grouped_at.tzinfo is None
+
+
+class TestGroupSourceSnapshotProvenance:
+    """#137. Groups stay in OLTP for the short redaction -> index chain, but
+    #72-style lake analytics must be able to prove their source slice matches
+    before treating a group id as a denominator."""
+
+    @staticmethod
+    def _source_records():
+        return [
+            {
+                "ticket_no": ticket_no,
+                "district": district,
+                "created_year": year,
+                "created_on": created_on,
+                "petitioner_mobile": mobile,
+                "petitioner_email": None,
+                "grievance_redacted": redacted,
+            }
+            for ticket_no, district, year, created_on, mobile, redacted in _SMALL_ROWS
+            if district == "Khordha" and year == 2024 and redacted is not None
+        ]
+
+    def test_groups_record_the_recomputable_oltp_source_snapshot(self, oltp):
+        async_url, sync_url = oltp
+        build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT)
+
+        source_records = self._source_records()
+        expected = source_snapshot_id(source_records)
+        groups = _group_rows(sync_url)
+        assert {row.source_name for row in groups.values()} == {DEDUP_SOURCE_NAME}
+        assert {row.source_snapshot_id for row in groups.values()} == {expected}
+
+        # This is the direct downstream guard: source-row ordering is irrelevant,
+        # while a different/incomplete lake source would fail before aggregation.
+        assert (
+            assert_group_source_snapshot(
+                [
+                    {
+                        "source_name": row.source_name,
+                        "source_snapshot_id": row.source_snapshot_id,
+                    }
+                    for row in groups.values()
+                ],
+                reversed(source_records),
+            )
+            == expected
+        )
+
+    def test_changed_oltp_source_fails_until_refresh_then_recertifies(self, oltp):
+        async_url, sync_url = oltp
+        build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT)
+        before = _group_rows(sync_url)["T1"].source_snapshot_id
+
+        engine = create_engine(sync_url)
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE grievance_redactions SET grievance_redacted = :text "
+                    "WHERE ticket_no = 'T1'"
+                ),
+                {"text": "water supply now broken for eight months"},
+            )
+        engine.dispose()
+
+        # Candidate generation would use the old signature while Jaccard
+        # verification would read the new redacted text. Do not write a newly
+        # certified group from those mixed inputs.
+        with pytest.raises(ValueError, match="old candidates with current redacted text"):
+            build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT)
+        groups = _group_rows(sync_url)
+        assert groups["T1"].source_snapshot_id == before
+        changed_source = self._source_records()
+        changed_source[0]["grievance_redacted"] = "water supply now broken for eight months"
+        with pytest.raises(DedupSourceSnapshotMismatch, match="does not match"):
+            assert_group_source_snapshot(
+                [
+                    {
+                        "source_name": row.source_name,
+                        "source_snapshot_id": row.source_snapshot_id,
+                    }
+                    for row in groups.values()
+                ],
+                changed_source,
+            )
+
+        refreshed = build_dedup_index(
+            "Khordha",
+            2024,
+            oltp_url=async_url,
+            salt=_SALT,
+            refresh_stale=True,
+        )
+        groups = _group_rows(sync_url)
+        assert refreshed["source_mismatches_at_start"] == 1
+        assert groups["T1"].source_snapshot_id != before
+        assert (
+            assert_group_source_snapshot(
+                [
+                    {
+                        "source_name": row.source_name,
+                        "source_snapshot_id": row.source_snapshot_id,
+                    }
+                    for row in groups.values()
+                ],
+                changed_source,
+            )
+            == groups["T1"].source_snapshot_id
+        )
+
+    def test_legacy_signature_without_a_source_digest_is_rebuilt(self, oltp):
+        async_url, sync_url = oltp
+        build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT)
+        engine = create_engine(sync_url)
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE dedup_signatures SET source_record_digest = NULL"))
+        engine.dispose()
+
+        counts = build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT)
+        assert counts["processed"] == counts["total"]
+        assert all(row.source_record_digest for row in _signature_rows(sync_url).values())
+
+    def test_source_membership_change_fails_closed_even_with_refresh(self, oltp):
+        async_url, sync_url = oltp
+        build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT)
+        before = _group_rows(sync_url)["T1"].source_snapshot_id
+        engine = create_engine(sync_url)
+        with engine.begin() as conn:
+            conn.execute(
+                text("UPDATE complaints SET created_year = 2023 WHERE ticket_no = 'T1'")
+            )
+        engine.dispose()
+
+        with pytest.raises(ValueError, match="moved outside this district-year"):
+            build_dedup_index(
+                "Khordha",
+                2024,
+                oltp_url=async_url,
+                salt=_SALT,
+                refresh_stale=True,
+            )
+        assert _group_rows(sync_url)["T1"].source_snapshot_id == before
+
+    def test_missing_current_source_row_fails_closed(self, oltp):
+        async_url, sync_url = oltp
+        build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT)
+        engine = create_engine(sync_url)
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM grievance_redactions WHERE ticket_no = 'T1'"))
+        engine.dispose()
+
+        with pytest.raises(ValueError, match="no longer have a current complaint/redaction"):
+            build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT)
+
+    def test_source_refresh_rejects_limit_instead_of_exceeding_it(self, oltp):
+        async_url, sync_url = oltp
+        build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT)
+        engine = create_engine(sync_url)
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE grievance_redactions SET grievance_redacted = :text "
+                    "WHERE ticket_no = 'T1'"
+                ),
+                {"text": "water supply now broken for eight months"},
+            )
+        engine.dispose()
+
+        with pytest.raises(ValueError, match="--limit cannot be combined"):
+            build_dedup_index(
+                "Khordha",
+                2024,
+                oltp_url=async_url,
+                salt=_SALT,
+                refresh_stale=True,
+                limit=1,
+            )
 
 
 class TestSaltRequirement:

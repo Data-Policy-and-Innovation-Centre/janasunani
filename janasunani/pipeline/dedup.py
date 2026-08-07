@@ -82,10 +82,12 @@ Six things that shape every function below:
 from __future__ import annotations
 
 import hashlib
+import json
 import random
 import re
 import unicodedata
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from datetime import date, datetime
 
 # Typed PII placeholder tokens look like "[PHONE]", "[NAME]", "[AADHAAR]"
 # (see janasunani/pipeline/stages/pii_tagger.py:ENTITY_TOKENS) — a bracketed
@@ -139,6 +141,147 @@ _MERSENNE_PRIME = (1 << 61) - 1
 # runs, not unpredictable). Changing this value changes every signature
 # ever produced; don't.
 _PERMUTATION_SEED = 0x4A53_6465_6475_70  # "JSdedup" packed into hex, arbitrary
+
+# The historical backfill currently reads its inputs directly from the OLTP
+# tables below, not from a materialized Parquet lake.  Keep the source name and
+# the canonical record format here, in the stdlib-only module, so a downstream
+# analytics job can calculate exactly the same identifier from either source.
+# A group row stores this source name plus the digest returned by
+# `source_snapshot_id()`.  That makes a lake/OLTP mismatch an explicit error,
+# not a slightly wrong duplicate-adjusted count (#137).
+DEDUP_SOURCE_NAME = "oltp:complaints+grievance_redactions"
+_SOURCE_SNAPSHOT_FORMAT = "janasunani-dedup-source-v1"
+
+
+class DedupSourceSnapshotMismatch(ValueError):
+    """Raised when duplicate groups do not describe the asserted source slice."""
+
+
+def _snapshot_value(value: object) -> str | int | None:
+    """Canonical JSON value for one source-snapshot field.
+
+    SQLite returns ``datetime`` values while a Parquet/DuckDB consumer can
+    return ``date``/``datetime`` values with a different concrete type.  ISO
+    text makes the provenance digest source-independent; all other fields are
+    intentionally kept as their actual scalar values so e.g. ``None`` does
+    not collapse into an empty string.
+    """
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if value is None or isinstance(value, (str, int)):
+        return value
+    raise TypeError(f"unsupported dedup source snapshot value: {type(value)!r}")
+
+
+def _canonical_source_record(record: Mapping[str, object]) -> tuple[str, bytes]:
+    """Return the ticket and canonical bytes of one dedup index input."""
+    fields = (
+        "ticket_no",
+        "district",
+        "created_year",
+        "created_on",
+        "petitioner_mobile",
+        "petitioner_email",
+        "grievance_redacted",
+    )
+    try:
+        payload = {field: _snapshot_value(record[field]) for field in fields}
+    except KeyError as exc:
+        raise ValueError(f"dedup source snapshot record is missing {exc.args[0]!r}") from exc
+    ticket_no = payload["ticket_no"]
+    if not isinstance(ticket_no, str) or not ticket_no:
+        raise ValueError("dedup source snapshot requires a non-blank ticket_no")
+    return (
+        ticket_no,
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8"),
+    )
+
+
+def source_record_digest(record: Mapping[str, object]) -> str:
+    """Stable digest of the exact source values used for one signature row.
+
+    This is persisted beside a DedupSignature at indexing time. A later
+    grouping run must describe the rows that were actually indexed, rather
+    than re-read current OLTP values and accidentally relabel stale signatures
+    as current (#137).
+    """
+    _, payload = _canonical_source_record(record)
+    return _source_record_digest_from_payload(payload)
+
+
+def _source_record_digest_from_payload(payload: bytes) -> str:
+    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
+
+
+def source_snapshot_id_from_record_digests(
+    record_digests: Iterable[tuple[str, str]],
+) -> str:
+    """Stable slice manifest from (ticket_no, source_record_digest) pairs."""
+    canonical = sorted(record_digests, key=lambda item: item[0])
+    digest = hashlib.sha256()
+    digest.update(f"{_SOURCE_SNAPSHOT_FORMAT}\n".encode("ascii"))
+    previous_ticket: str | None = None
+    for ticket_no, record_digest in canonical:
+        if not isinstance(ticket_no, str) or not ticket_no:
+            raise ValueError("dedup source snapshot requires a non-blank ticket_no")
+        if ticket_no == previous_ticket:
+            raise ValueError(f"dedup source snapshot has duplicate ticket_no {ticket_no!r}")
+        if not isinstance(record_digest, str) or not record_digest.startswith("sha256:"):
+            raise ValueError(f"invalid source record digest for {ticket_no!r}")
+        digest.update(ticket_no.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(record_digest.encode("ascii"))
+        digest.update(b"\n")
+        previous_ticket = ticket_no
+    return f"sha256:{digest.hexdigest()}"
+
+
+def source_snapshot_id(records: Iterable[Mapping[str, object]]) -> str:
+    """Stable manifest of the exact historical inputs used for a dedup slice.
+
+    Each record must carry these OLTP/lake columns: ``ticket_no``, ``district``,
+    ``created_year``, ``created_on``, ``petitioner_mobile``,
+    ``petitioner_email``, and ``grievance_redacted``.  They are every source
+    value that changes the runner's membership, blocking, text signature, or
+    identity candidates.  The digest contains no reversible text or identity
+    value, but remains ``dpic-infra`` provenance because it is derived from
+    citizen data.
+
+    Records are sorted by ticket and a duplicate ticket is rejected.  Therefore
+    the result is stable across SQL/Parquet row order and cannot quietly treat
+    an accidental duplicated join as the same snapshot.
+    """
+    record_digests = []
+    for record in records:
+        ticket_no, payload = _canonical_source_record(record)
+        record_digests.append((ticket_no, _source_record_digest_from_payload(payload)))
+    return source_snapshot_id_from_record_digests(record_digests)
+
+
+def assert_group_source_snapshot(
+    group_rows: Iterable[Mapping[str, object]], source_records: Iterable[Mapping[str, object]]
+) -> str:
+    """Assert that persisted groups and a prospective analytics source agree.
+
+    ``source_records`` is normally the district-year join of lake
+    ``complaints`` and ``grievance_redactions``.  A #72-style consumer calls
+    this before duplicate-adjusted aggregation; a changed or incomplete lake,
+    legacy rows without provenance, and a mix of group runs all raise instead
+    of being combined silently.  The verified digest is returned for callers
+    that need to record it in their own output provenance.
+    """
+    expected = source_snapshot_id(source_records)
+    observed: set[tuple[object, object]] = set()
+    for row in group_rows:
+        observed.add((row.get("source_name"), row.get("source_snapshot_id")))
+
+    required = {(DEDUP_SOURCE_NAME, expected)}
+    if observed != required:
+        raise DedupSourceSnapshotMismatch(
+            "dedup group provenance does not match the asserted source snapshot: "
+            f"expected {required!r}, observed {observed!r}"
+        )
+    return expected
 
 
 def strip_placeholders(text: str) -> str:
