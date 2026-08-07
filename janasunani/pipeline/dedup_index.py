@@ -135,7 +135,6 @@ from janasunani.pipeline.dedup import (
     lsh_bands,
     minhash_signature,
     shingles,
-    union_find_groups,
 )
 
 # Reuses the exporter's helper rather than writing a third upsert — same
@@ -144,11 +143,6 @@ from janasunani.pipeline.export import _dialect_upsert
 
 BATCH_SIZE = 500
 
-# Candidate pairs verified per round trip. Bounds peak memory: only the
-# redacted text and shingle sets for the tickets in one chunk are held, rather
-# than every ticket involved in any candidate pair. 20,000 pairs touch at most
-# 40,000 tickets and in practice far fewer, since sorting clusters them.
-VERIFY_CHUNK_PAIRS = 20_000
 
 # Time-window blocking width. Campaigns and resubmissions cluster within
 # days to a few weeks of each other (a citizen re-files, or many filers
@@ -527,6 +521,46 @@ def _identity_candidate_pairs(rows) -> set[tuple[str, str]]:
     return pairs
 
 
+def _candidate_buckets(rows, num_bands: int) -> list[list[str]]:
+    """Candidate buckets as membership lists, band and identity together.
+
+    Returns buckets rather than the pairs inside them. A bucket is quadratic
+    in its membership, so materialising its pairs is what exhausted memory on
+    the Sambalpur slice; the caller streams each bucket and unions as it goes.
+
+    Band buckets are keyed by block, so they respect district/script/time
+    blocking. Identity buckets deliberately are not: a resubmission can land
+    months later and a phone number carries no script (module docstring).
+    Singleton buckets are dropped -- no pairs, and they would only cost a
+    round trip.
+
+    ``_text_candidate_pairs`` and ``_identity_candidate_pairs`` are retained
+    as the pure, directly-testable statement of what a bucket means, including
+    the all-pairs invariant from #101. This function is the streaming path
+    that production uses.
+    """
+    band_buckets: dict[tuple[str, int, int], list[str]] = defaultdict(list)
+    for row in rows:
+        if row.signature is None:
+            continue
+        signature = tuple(row.signature)
+        for band_index, band_hash in enumerate(lsh_bands(signature, num_bands=num_bands)):
+            band_buckets[(row.block_key, band_index, band_hash)].append(row.ticket_no)
+
+    identity_buckets: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for row in rows:
+        for kind, key in (
+            ("mobile", row.identity_key_mobile),
+            ("email", row.identity_key_email),
+        ):
+            if key is not None:
+                identity_buckets[(kind, key)].append(row.ticket_no)
+
+    return [m for m in band_buckets.values() if len(set(m)) > 1] + [
+        m for m in identity_buckets.values() if len(set(m)) > 1
+    ]
+
+
 async def _group_duplicates(
     engine: AsyncEngine,
     district: str,
@@ -546,42 +580,50 @@ async def _group_duplicates(
     # docstring point 6), and so does an identity-key match, which means
     # "same citizen", not "same issue" (see _identity_candidate_pairs). One
     # verification pass covers both.
-    candidate_pairs = _text_candidate_pairs(rows, DEFAULT_NUM_BANDS) | _identity_candidate_pairs(
-        rows
-    )
-
-    # Verification is batched, and this is a memory fix rather than a
-    # preference. Loading every involved ticket's redacted text at once put
-    # the Sambalpur 2024 run at 7.4 GB RSS and the kernel OOM-killed it on an
-    # 8 GB box after all 55,544 signatures had been written. Candidate
-    # generation above is safe to keep global -- it touches only band hashes
-    # and identity hashes, which are small, and identity pairs legitimately
-    # cross blocks so partitioning there would change the answer.
+    # Pairs are streamed per bucket and unioned immediately, never collected.
     #
-    # Pairs are sorted first so both members of consecutive pairs tend to
-    # repeat, which makes the per-chunk shingle cache actually hit.
-    verified_pairs: list[tuple[str, str]] = []
-    ordered_pairs = sorted(candidate_pairs)
-    for start in range(0, len(ordered_pairs), VERIFY_CHUNK_PAIRS):
-        chunk = ordered_pairs[start : start + VERIFY_CHUNK_PAIRS]
-        tickets = sorted({ticket for pair in chunk for ticket in pair})
-        async with engine.begin() as conn:
-            text_by_ticket = await _load_redacted_text(conn, tickets)
+    # The Sambalpur 2024 run OOM-killed twice at 7.4 GB on an 8 GB box, after
+    # all 55,544 signatures had been written. The allocation was the pair set,
+    # not the text: a bucket is quadratic in its membership and this slice has
+    # a 9,405-row block, so one campaign bucket alone is tens of millions of
+    # pairs. Grievance subjects are a couple of hundred characters, so every
+    # text in the slice together is only megabytes.
+    #
+    # Union-find also lets an already-connected pair skip verification. That
+    # cannot change the grouping: components are what union-find computes, and
+    # a pair whose endpoints are already connected cannot alter connectivity
+    # whatever it verifies to. It is what makes a large campaign bucket cheap
+    # after its first few unions.
+    parent: dict[str, str] = {}
 
-        # Shingling dominates the CPU here and the same ticket appears in many
-        # pairs, so cache within the chunk. The cache is rebound each
-        # iteration rather than accumulated, which is what keeps the ceiling
-        # flat instead of growing across the run.
+    def find(item: str) -> str:
+        parent.setdefault(item, item)
+        root = item
+        while parent[root] != root:
+            root = parent[root]
+        while parent[item] != root:
+            parent[item], item = root, parent[item]
+        return root
+
+    verified = 0
+    for members in _candidate_buckets(rows, DEFAULT_NUM_BANDS):
+        unique = sorted(set(members))
+        async with engine.begin() as conn:
+            text_by_ticket = await _load_redacted_text(conn, unique)
         shingle_cache: dict[str, set[str]] = {}
-        for a, b in chunk:
+        for a, b in combinations(unique, 2):
+            if find(a) == find(b):
+                continue
             for ticket in (a, b):
                 if ticket not in shingle_cache:
                     shingle_cache[ticket] = shingles(text_by_ticket.get(ticket, ""))
             if jaccard_similarity(shingle_cache[a], shingle_cache[b]) >= threshold:
-                verified_pairs.append((a, b))
+                parent[find(a)] = find(b)
+                verified += 1
 
     all_tickets = [row.ticket_no for row in rows]
-    groups = union_find_groups(verified_pairs, items=all_tickets)
+    # Singletons still need a group id, so every ticket is seeded through find().
+    groups = {ticket: find(ticket) for ticket in all_tickets}
     group_sizes = Counter(groups.values())
 
     version = _index_version(window_days, threshold, salt)
@@ -610,7 +652,7 @@ async def _group_duplicates(
 
     return {
         "slice_signatures": len(rows),
-        "verified_pairs": len(verified_pairs),
+        "verified_pairs": verified,
         "groups": len(group_sizes),
     }
 
