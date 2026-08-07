@@ -625,7 +625,9 @@ deliver:
 
 # Word renders of the planning docs, for circulation outside the repo.
 # Outputs are gitignored (docs/*.docx): the Markdown is the source of truth.
-DOC_SOURCES ?= docs/DELIVERY.md docs/ROADMAP.md
+# FINDINGS.md is the artifact that leaves the room (#108), so it renders with
+# the planning docs rather than by hand.
+DOC_SOURCES ?= docs/DELIVERY.md docs/ROADMAP.md docs/FINDINGS.md
 DOC_TARGETS := $(DOC_SOURCES:.md=.docx)
 
 docs: $(DOC_TARGETS)
