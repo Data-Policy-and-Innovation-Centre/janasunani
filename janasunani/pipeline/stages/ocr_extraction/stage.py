@@ -26,7 +26,6 @@ from typing import Any
 from ...config import PipelineConfig, validate_sarvam_sharding
 from ...db import connect
 from .executors import pick_executor, shard_work_items
-from .page_renderer import render_page
 from loguru import logger
 
 DB_BATCH_SIZE = 50
@@ -211,6 +210,11 @@ def _process_page(item: dict[str, Any]) -> dict[str, Any]:
         "error": None,
     }
     try:
+        # Lazy, like every other backend import in this module: page_renderer
+        # pulls pdf2image/poppler, which the DB-reading half of this stage does
+        # not need and which is absent wherever OCR is not installed.
+        from .page_renderer import render_page
+
         image = render_page(Path(item["file_path"]), item["page_number"])
     except Exception as e:
         result["error"] = f"render failed: {e}"
