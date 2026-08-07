@@ -12,7 +12,7 @@ import sqlite3
 import pytest
 
 from janasunani.config import directories
-from janasunani.pipeline.cli import build_parser
+from janasunani.pipeline.cli import build_parser, main
 from janasunani.pipeline.config import PipelineConfig
 from janasunani.pipeline.db import connect, initialize_database
 from janasunani.pipeline.pipeline import STAGE_ORDER, run_pipeline
@@ -120,6 +120,28 @@ def test_sarvam_engine_is_disabled_unless_explicitly_enabled():
 
     enabled = build_parser().parse_args(["run", "--ocr-engine", "sarvam", "--enable-sarvam"])
     assert enabled.enable_sarvam is True
+
+
+def test_cli_rejects_enabled_sarvam_cross_machine_sharding(monkeypatch):
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "janasunani-pipeline",
+            "run",
+            "--ocr-engine",
+            "sarvam",
+            "--enable-sarvam",
+            "--num-workers",
+            "2",
+        ],
+    )
+    monkeypatch.setattr(
+        "janasunani.pipeline.cli.run_pipeline",
+        lambda _config: pytest.fail("pipeline must not start"),
+    )
+
+    with pytest.raises(SystemExit, match="--num-workers 1"):
+        main()
 
 
 def test_cli_rejects_unknown_stage():

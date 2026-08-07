@@ -949,8 +949,8 @@ class SarvamVisionAdapter:
     def _digitise_form(language: str) -> dict[str, str]:
         return {"language": language, "output_format": "md"}
 
-    @staticmethod
     def _idempotency_key(
+        self,
         context: SarvamAuditContext,
         operation: str,
         document_bytes: bytes,
@@ -975,6 +975,9 @@ class SarvamVisionAdapter:
                 context.document_id,
                 context.stage,
                 operation,
+                self.route.provider,
+                self.route.model_id,
+                self.route.endpoint,
                 filename,
                 normalized_form,
                 content_hash,

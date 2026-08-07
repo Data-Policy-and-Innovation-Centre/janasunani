@@ -581,22 +581,26 @@ def test_digitise_rejects_invalid_or_ambiguous_zip_results(archive, message):
         SarvamVisionAdapter._primary_markdown(archive)
 
 
-def test_idempotency_key_includes_the_actual_uploaded_bytes():
+def test_idempotency_key_includes_the_actual_uploaded_bytes(tmp_path):
     same_context = _context()
     request = {
         "filename": "page.png",
         "form": {"language": "en-IN", "output_format": "md"},
     }
-    assert SarvamVisionAdapter._idempotency_key(
+    adapter = SarvamVisionAdapter(
+        audit_log=SqliteAuditLog(tmp_path / "audit.sqlite"),
+        route=_verified_test_route(),
+    )
+    assert adapter._idempotency_key(
         same_context, "digitise", b"first", **request
     ) != (
-        SarvamVisionAdapter._idempotency_key(
+        adapter._idempotency_key(
             same_context, "digitise", b"changed", **request
         )
     )
 
 
-def test_idempotency_key_canonicalizes_the_complete_request_form():
+def test_idempotency_key_canonicalizes_the_complete_request_form(tmp_path):
     base_form = {
         "language": "en-IN",
         "output_format": "json",
@@ -610,8 +614,13 @@ def test_idempotency_key_canonicalizes_the_complete_request_form():
         "language": "en-IN",
     }
 
+    adapter = SarvamVisionAdapter(
+        audit_log=SqliteAuditLog(tmp_path / "audit.sqlite"),
+        route=_verified_test_route(),
+    )
+
     def key(form):
-        return SarvamVisionAdapter._idempotency_key(
+        return adapter._idempotency_key(
             _context(),
             "extract",
             b"fixture-png",
@@ -628,6 +637,62 @@ def test_idempotency_key_canonicalizes_the_complete_request_form():
         {**base_form, "future_option": {"beta": False}},
     ):
         assert key(changed) != key(base_form)
+
+
+@pytest.mark.parametrize("route_field", ["provider", "model_id", "endpoint"])
+def test_idempotency_key_includes_route_identity(tmp_path, route_field):
+    route = _verified_test_route()
+    original = SarvamVisionAdapter(
+        audit_log=SqliteAuditLog(tmp_path / "original.sqlite"),
+        route=route,
+    )
+    changed = SarvamVisionAdapter(
+        audit_log=SqliteAuditLog(tmp_path / "changed.sqlite"),
+        route=replace(route, **{route_field: f"changed-{route_field}"}),
+    )
+    request = {
+        "filename": "page.png",
+        "form": {"language": "en-IN", "output_format": "md"},
+    }
+
+    assert original._idempotency_key(
+        _context(), "digitise", b"fixture-png", **request
+    ) != changed._idempotency_key(
+        _context(), "digitise", b"fixture-png", **request
+    )
+
+
+def test_enabled_sarvam_rejects_cross_machine_sharding_before_loading_work(tmp_path):
+    from janasunani.pipeline.config import PipelineConfig
+    from janasunani.pipeline.stages.ocr_extraction.stage import run_ocr_extraction
+
+    config = PipelineConfig(
+        input_dir=tmp_path,
+        db_path=tmp_path / "missing.sqlite",
+        models_dir=tmp_path,
+        ocr_engine="sarvam",
+        sarvam_enabled=True,
+        num_workers=2,
+    )
+
+    with pytest.raises(ValueError, match="num_workers=1"):
+        run_ocr_extraction(config)
+
+
+def test_disabled_sarvam_allows_local_fallback_sharding(tmp_path):
+    from janasunani.pipeline.config import PipelineConfig
+    from janasunani.pipeline.stages.ocr_extraction.stage import run_ocr_extraction
+
+    config = PipelineConfig(
+        input_dir=tmp_path,
+        db_path=tmp_path / "missing.sqlite",
+        models_dir=tmp_path,
+        ocr_engine="sarvam",
+        sarvam_enabled=False,
+        num_workers=2,
+    )
+
+    run_ocr_extraction(config)
 
 
 def test_submission_limiter_enforces_ten_requests_per_rolling_minute(tmp_path):

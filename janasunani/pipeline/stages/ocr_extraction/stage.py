@@ -49,6 +49,11 @@ def run_ocr_extraction(config: PipelineConfig) -> None:
             f"unknown ocr_engine: {backend!r}. "
             "must be 'pytesseract', 'deepseek', or 'sarvam'."
         )
+    if backend == "sarvam" and config.sarvam_enabled and config.num_workers != 1:
+        raise ValueError(
+            "enabled Sarvam OCR requires num_workers=1 because its "
+            "10-RPM limiter is process-local"
+        )
 
     work_items = _load_pending_pages(
         db_path=config.db_path,

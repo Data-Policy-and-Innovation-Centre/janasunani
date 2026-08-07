@@ -127,6 +127,15 @@ def main() -> int:
             raise SystemExit(
                 f"--worker-id ({args.worker_id}) must be in [0, --num-workers={args.num_workers})"
             )
+        if (
+            args.ocr_engine == "sarvam"
+            and args.enable_sarvam
+            and args.num_workers != 1
+        ):
+            raise SystemExit(
+                "enabled Sarvam OCR requires --num-workers 1 because its "
+                "10-RPM limiter is process-local"
+            )
 
         config = PipelineConfig(
             input_dir=args.input,
