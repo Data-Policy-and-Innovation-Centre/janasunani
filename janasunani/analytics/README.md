@@ -18,6 +18,41 @@ way that means anything, by running the mart over a fixture lake in `tests/`.
 | Mart | What it defines |
 |---|---|
 | `closure` | The disposal ladder, each resolved complaint's rung and trajectory, and the closure finding's aggregate views (#76). |
+| `action_type` | The 7-class action-type lookup over high-frequency `action_taken_remark` templates, built **per status** (#75). |
+
+### `action_type`: what the officer did (#75)
+
+```bash
+uv run python -m janasunani.analytics.action_type   # print lookup stats
+# SQL hand-over:
+uv run python -c "from janasunani.analytics.marts import mart_sql; print(mart_sql('action_type'))"
+```
+
+The cheapest intelligence-layer item: no OCR, no document ingest, no GPU, and no
+dependency on the dedup index. Ten distinct strings cover 45% of 6.5M action rows;
+top 500 buys 62%. The August contract is **exact-match lookup over high-frequency
+templates only** — the free-text tail (1.16M singletons, 17.8% of rows) is
+Post-demo and is a privacy boundary.
+
+**Taxonomy (7 + admin noise).** `forwarded_delegated` · `reported_back` ·
+`disposed_no_claim` · `disposed_with_action` · `benefit_delivered` ·
+`discarded_with_reason` · `reopened_escalated` plus `admin_noise` (".", "ok",
+scheme names typed into the remark field). LLM-assisted drafting, human
+adjudication (ROADMAP §5.6 A). The Python module
+`janasunani.analytics.action_type` is the source of truth; `sql/action_type.sql`
+mirrors it for lake / PostgreSQL hand-over and they are tested row-for-row.
+
+**Per status, not corpus-wide.** Status #3 is dropdown-driven (1.18M rows,
+15,390 distinct remarks), status #2 is near free text; 301 of the top 500
+templates span >1 status, one spanning 12 of 15. So the lookup is keyed by
+`(template, status)` with a corpus-wide fallback, not by template alone.
+
+**Consistent with #76.** The six closure ladder strings are a subset of this
+lookup: `bare` → `disposed_no_claim`, `with_action` → `disposed_with_action`,
+`benefit` → `benefit_delivered`, same normalisation.
+
+**Privacy.** `action_type_unclassified_templates` (the drift diagnostic) emits
+only high-volume (≥1000) normalised templates, never free citizen prose.
 
 ## Findings (`findings/`)
 
