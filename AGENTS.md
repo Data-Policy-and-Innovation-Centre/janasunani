@@ -43,6 +43,32 @@ Then [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the system overview.
 - Console scripts (`janasunani-*`) are listed in `pyproject.toml`; the root
   `main.py` is a legacy stub, not the entrypoint.
 
+### Where a new module goes
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the full package table and is
+the place to look first. Keep it current: a new package that is not in that
+table sends the next person to the wrong place.
+
+The distinctions that have actually caused drift, in the order they bite:
+
+- **Gate or report.** Does the code fail a run when the number is bad? A gate
+  lives with the thing it gates (`pipeline/pii_eval.py`). A harness that
+  measures and prints goes in `evaluation/`.
+- **Batch or single-item.** The same model called over a corpus belongs in
+  `pipeline/`; called once for a live request, in `inference/`.
+- **Lake or OLTP.** Read-only analysis over Parquet goes in `analytics/`.
+  Anything writing to the OLTP database is `pipeline/` or `db/`.
+- **Leaving DPIC control.** Any call carrying citizen data to a third party
+  goes in `egress/` and nowhere else. This one is enforced by CI, not
+  convention.
+
+Prefer an existing package. A new top-level package is a real decision: say so
+in the PR body, and add it to the ARCHITECTURE table in the same PR.
+
+When two branches in one sprint could both plausibly add the same module,
+check what is already on the other branch before choosing. Three of the Sprint
+3 collisions (duplicate branches, an empty PR, two packages disagreeing about
+where scorecards live) were parallel work that never looked sideways.
+
 ## Commands
 - Install/sync: `uv sync` (add `--extra …` as needed).
 - Lint: `uv run ruff check .`
