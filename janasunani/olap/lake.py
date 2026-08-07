@@ -5,6 +5,7 @@ with DuckDB SQL via :func:`query`, or pull a whole table as a Polars DataFrame v
 :func:`read`. This is the analytics + ML + demo-history read path.
 """
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -44,3 +45,26 @@ def query(sql: str, lake_dir: Optional[Path] = None) -> pl.DataFrame:
 def read(table: str, lake_dir: Optional[Path] = None) -> pl.DataFrame:
     """Read a whole lake table as a Polars DataFrame."""
     return pl.read_parquet(lake_path(table, lake_dir))
+
+
+def lake_freshness(lake_dir: Optional[Path] = None) -> dict[str, datetime]:
+    """When each lake table was last (re-)materialized, keyed by table name.
+
+    This is the Parquet file's mtime, i.e. when ``janasunani-materialize`` last
+    wrote it -- not a value read out of the data. ``GET /history`` and the
+    metrics layer (:mod:`janasunani.olap.metrics`) both read this lake, and a
+    live grievance lands in OLTP immediately but is invisible here until the
+    next materialization run (#36 schedules that; this just reports the gap so
+    a consumer never assumes "as of now").
+
+    Naive UTC, matching every other timestamp this codebase hands to a caller
+    (see the ``dedup_remark``/asyncpg note in ``db/models.py``): a tz-aware
+    value survives SQLite in tests and breaks on the deployed Postgres.
+    """
+    base = Path(lake_dir) if lake_dir else directories.INTERIM
+    return {
+        path.stem: datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).replace(
+            tzinfo=None
+        )
+        for path in sorted(base.glob("*.parquet"))
+    }

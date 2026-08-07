@@ -88,7 +88,7 @@ The only place phase status is recorded.
 | 12 | II | Demo integration & cloud deployment | 🔄 |
 | 13 | II | **Pipeline completion**: PII gold set, Presidio tuning, end-to-end run *(a)* | 🔄 *(gold set underway, #15)* |
 | 14 | II | **Spam & duplicate detection** *(b)* | 🔄 *(dedup index backfill runner merged, #71 — no real slice run yet, spam scoring not started)* |
-| 15 | II | **Structured analytics I**: metrics layer, dashboards, spikes *(c)* | ⬜ |
+| 15 | II | **Structured analytics I**: metrics layer, dashboards, spikes *(c)* — metric-registry slice: governed total-filings definition and protected grouped releases; cluster/citizen metrics remain unavailable pending dedup lake artifacts | 🔄 |
 | 16 | II | **A/B instrumentation + retrospective impact evidence** *(d)* | ⬜ |
 | 17 | II | **Sarvam benchmark + provider registry + egress control** *(e)* | ⬜ |
 | 18 | III | Evaluation harness & operational safety (RBAC, restore, observability) | ⬜ |
