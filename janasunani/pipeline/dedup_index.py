@@ -59,8 +59,9 @@ created_on, petitioner_mobile/email); it never selects `complaints.grievance`.
    `itertools.combinations`, because a star topology (compare everything to
    one arbitrary first member) can leave two genuine near-duplicates
    elsewhere in the bucket uncompared with each other. At or above the cap,
-   it instead compares every member against a fixed, deterministic set of
-   anchor tickets — O(members), with a hard, auditable comparison bound.
+   it instead exhaustively compares a fixed, deterministic set of anchor
+   tickets, then compares every non-anchor against every anchor — O(members),
+   with a hard, auditable comparison bound.
    **This is a real, accepted recall loss, not just a constant-factor
    trade:** a member that would verify only against another non-anchor ticket
    is missed and stays in its own group (or merges into a different one)
@@ -665,12 +666,14 @@ def _verify_bucket(
 
     At ``cap`` members or more: fixed-anchor comparison (#158; see the module
     docstring for the full rationale and the accepted recall trade). The first
-    ``anchor_count`` sorted tickets are deterministic anchors. Every remaining
-    member is scored against every anchor, including when it already matched
-    another anchor, so the work is at most ``anchor_count * len(members)``.
-    This is deliberately not an adaptive representative list: an adversarial
-    bucket of unrelated filings must not quietly turn the large-bucket path
-    back into quadratic work.
+    ``anchor_count`` sorted tickets are deterministic anchors. Every unordered
+    anchor pair is scored once, then every remaining member is scored against
+    every anchor, including when it already matched another anchor. Exact work
+    is ``C(anchor_count, 2) + anchor_count * (members - anchor_count)``, at most
+    ``anchor_count * len(members)``. Only non-anchor/non-anchor pairs are
+    omitted. This is deliberately not an adaptive representative list: an
+    adversarial bucket of unrelated filings must not quietly turn the
+    large-bucket path back into quadratic work.
     """
 
     def shingles_for(ticket: str) -> set[str]:
@@ -694,6 +697,11 @@ def _verify_bucket(
     # Leave at least one non-anchor to score. This also keeps the test-only
     # ability to lower ``cap`` useful for a two-member bucket.
     anchors = members[: min(anchor_count, len(members) - 1)]
+    for a, b in combinations(anchors, 2):
+        comparisons += 1
+        if jaccard_similarity(shingles_for(a), shingles_for(b)) >= threshold:
+            _union(parent, a, b)
+            verified += 1
     for member in members[len(anchors) :]:
         for anchor in anchors:
             comparisons += 1

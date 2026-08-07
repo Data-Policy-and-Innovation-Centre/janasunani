@@ -546,9 +546,42 @@ class TestBucketVerificationPolicy:
 
         assert matches == 0
         assert used_large_policy is True
-        assert comparisons == anchor_count * (len(members) - anchor_count)
+        expected = (
+            anchor_count * (anchor_count - 1) // 2
+            + anchor_count * (len(members) - anchor_count)
+        )
+        assert comparisons == expected
         assert len(calls) == comparisons
         assert comparisons < len(members) * (len(members) - 1) // 100
+
+    def test_large_bucket_scores_and_unions_anchor_pairs(self, monkeypatch):
+        import janasunani.pipeline.dedup_index as di
+
+        monkeypatch.setattr(di, "shingles", lambda text: {text})
+        compared = []
+
+        def similarity(left, right):
+            pair = frozenset((*left, *right))
+            compared.append(pair)
+            return 1.0 if pair == frozenset({"a", "b"}) else 0.0
+
+        monkeypatch.setattr(di, "jaccard_similarity", similarity)
+        parent = {}
+        matches, comparisons, used_large_policy = di._verify_bucket(
+            ["a", "b", "c", "d"],
+            {ticket: ticket for ticket in "abcd"},
+            {},
+            parent,
+            threshold=0.5,
+            cap=4,
+            anchor_count=2,
+        )
+
+        assert used_large_policy is True
+        assert comparisons == 5  # C(2, 2) + 2 * (4 - 2)
+        assert compared.count(frozenset({"a", "b"})) == 1
+        assert matches == 1
+        assert di._find(parent, "a") == di._find(parent, "b")
 
     def test_overlapping_bands_fetch_each_candidate_text_once(self, dup_oltp, monkeypatch):
         import janasunani.pipeline.dedup_index as di
