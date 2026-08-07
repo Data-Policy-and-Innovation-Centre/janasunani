@@ -47,16 +47,22 @@ an explanatory note, not as an error.
 
 ## Structure
 
-- `app/` — routes: `/` (submit a grievance) and `/history` (browse/search).
+- `app/` — routes: `/` (submit a grievance), `/history` (browse/search), and
+  `/supervisor` (aggregate-only Phase 15 briefing).
 - `components/` — `SubmitForm`, `ResultView` (the five-step result cards),
-  `HistoryView`, and `ui.tsx` (Card/Field/Badge primitives).
+  `HistoryView`, `SupervisorView`, and `ui.tsx` (Card/Field/Badge primitives).
 - `lib/api.ts` — the fetch client (`submitGrievance`, `fetchHistory`).
 - `lib/types.ts` — TypeScript mirror of `janasunani/serving/schemas.py`. Do
   not rename these fields without a matching backend contract change.
+- `lib/supervisor.ts` — typed, aggregate-only supervisor response contract.
+  Until an analytics endpoint exists, workload and spike values are visibly
+  mocked and the closure insight fails closed rather than publishing a prose-only
+  number without its numerator, denominator, as-of date, source, and caveat.
 
 ## Gate
 
 ```bash
+npm test
 npm run lint
 npm run build
 ```

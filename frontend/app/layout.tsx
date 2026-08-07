@@ -39,6 +39,12 @@ function Header() {
             >
               History
             </Link>
+            <Link
+              href="/supervisor"
+              className="text-text-body transition-colors hover:text-maroon"
+            >
+              Supervisor
+            </Link>
           </div>
         </div>
       </nav>
