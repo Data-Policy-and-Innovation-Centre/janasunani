@@ -1,5 +1,4 @@
-import { SupervisorView } from "@/components/SupervisorView";
-import { MOCK_SUPERVISOR_RESPONSE } from "@/lib/supervisor";
+import { SupervisorDashboard } from "@/components/SupervisorDashboard";
 
 export default function SupervisorPage() {
   return (
@@ -14,7 +13,7 @@ export default function SupervisorPage() {
           finding on its stated denominator.
         </p>
       </div>
-      <SupervisorView data={MOCK_SUPERVISOR_RESPONSE} />
+      <SupervisorDashboard />
     </div>
   );
 }

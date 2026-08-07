@@ -1,9 +1,11 @@
 import type {
   AggregateCount,
-  MockProvenance,
+  RecordedArtifactProvenance,
   SliceLabel,
   SupervisorDashboard,
   UnavailableProvenance,
+  WorkloadPanel,
+  SpikePanel,
 } from "@/lib/supervisor";
 import { Badge, Card } from "./ui";
 
@@ -44,11 +46,26 @@ function CountTile({ count }: { count: AggregateCount }) {
   );
 }
 
-function MockNotice({ provenance }: { provenance: MockProvenance }) {
+function artifactTimestamp(value: string): string {
+  return value
+    .replace("T", " ")
+    .replace(/\.\d+/, "")
+    .replace("+00:00", " UTC");
+}
+
+function RecordedNotice({
+  provenance,
+}: {
+  provenance: RecordedArtifactProvenance;
+}) {
   return (
-    <div className="rounded-sm border border-maroon/40 bg-maroon/5 px-3 py-2 text-sm text-text-body">
-      <Badge tone="maroon">{provenance.label}</Badge>{" "}
-      {provenance.note}
+    <div className="rounded-sm border border-hair bg-panel px-3 py-2 text-sm text-text-body">
+      <Badge tone="neutral">{provenance.label}</Badge>{" "}
+      {provenance.artifact}
+      <span className="block mt-1 text-xs text-text-secondary">
+        Artifact written {artifactTimestamp(provenance.artifactWrittenAt)}. This
+        is an artifact timestamp, not a claim about source-data freshness.
+      </span>
     </div>
   );
 }
@@ -66,14 +83,77 @@ function UnavailableNotice({
   );
 }
 
+function WorkloadFinding({ data }: { data: WorkloadPanel }) {
+  if ("totalFilings" in data) {
+    return (
+      <div className="flex flex-col gap-3">
+        <RecordedNotice provenance={data.provenance} />
+        <Slice value={data.slice} />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <CountTile count={data.totalFilings} />
+          <CountTile count={data.distinctProblems} />
+          <CountTile count={data.duplicateAdjustment} />
+        </div>
+        <p className="text-sm leading-relaxed text-text-body">
+          This slice contains{" "}
+          <strong>{data.totalFilings.value.toLocaleString("en-IN")}</strong>{" "}
+          filings representing{" "}
+          <strong>{data.distinctProblems.value.toLocaleString("en-IN")}</strong>{" "}
+          distinct problems. The adjustment changes the workload reading; it
+          does not suppress repeat grievances or campaigns.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <UnavailableNotice provenance={data.provenance} />
+      <p className="rounded-sm border border-hair bg-panel px-3 py-2 text-sm leading-relaxed text-text-body">
+        <strong>Required before display:</strong> {data.requirement}
+      </p>
+    </div>
+  );
+}
+
+function SpikeFinding({ data }: { data: SpikePanel }) {
+  if ("counts" in data) {
+    return (
+      <div className="flex flex-col gap-3">
+        <RecordedNotice provenance={data.provenance} />
+        <Slice value={data.slice} />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {data.counts.map((count) => (
+            <CountTile key={count.label} count={count} />
+          ))}
+        </div>
+        <div className="border-l-4 border-maroon bg-panel px-3 py-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-maroon">
+            How to read it
+          </p>
+          <p className="mt-1 text-sm leading-relaxed text-text-body">
+            {data.interpretation}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <UnavailableNotice provenance={data.provenance} />
+      <p className="rounded-sm border border-hair bg-panel px-3 py-2 text-sm leading-relaxed text-text-body">
+        <strong>Required before display:</strong> {data.requirement}
+      </p>
+    </div>
+  );
+}
+
 function ClosureFinding({ data }: { data: SupervisorDashboard["closure"] }) {
   if ("primarySharePct" in data) {
     return (
       <div className="flex flex-col gap-3">
-        <div className="rounded-sm border border-hair bg-panel px-3 py-2 text-sm text-text-body">
-          <Badge tone="neutral">{data.provenance.label}</Badge>{" "}
-          As of {data.provenance.asOf} · source: {data.provenance.source}
-        </div>
+        <RecordedNotice provenance={data.provenance} />
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="rounded-sm border border-hair bg-surface p-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-maroon">
@@ -83,8 +163,10 @@ function ClosureFinding({ data }: { data: SupervisorDashboard["closure"] }) {
               {data.primarySharePct.toFixed(1)}%
             </p>
             <p className="mt-1 text-xs text-text-secondary">
-              {data.numerator.toLocaleString("en-IN")} {data.numeratorLabel.toLowerCase()}{" "}
-              / {data.primaryDenominator.toLocaleString("en-IN")} {data.primaryDenominatorLabel.toLowerCase()}
+              {data.numerator.toLocaleString("en-IN")}{" "}
+              {data.numeratorLabel.toLowerCase()} /{" "}
+              {data.primaryDenominator.toLocaleString("en-IN")}{" "}
+              {data.primaryDenominatorLabel.toLowerCase()}
             </p>
           </div>
           <div className="rounded-sm border border-hair bg-panel p-3">
@@ -96,7 +178,8 @@ function ClosureFinding({ data }: { data: SupervisorDashboard["closure"] }) {
             </p>
             <p className="mt-1 text-xs text-text-secondary">
               {data.numerator.toLocaleString("en-IN")} /{" "}
-              {data.secondaryDenominator.toLocaleString("en-IN")} {data.secondaryDenominatorLabel.toLowerCase()}
+              {data.secondaryDenominator.toLocaleString("en-IN")}{" "}
+              {data.secondaryDenominatorLabel.toLowerCase()}
             </p>
           </div>
         </div>
@@ -117,8 +200,8 @@ function ClosureFinding({ data }: { data: SupervisorDashboard["closure"] }) {
           </p>
           <p className="mt-1 text-3xl font-bold text-text-secondary">—</p>
           <p className="mt-1 text-xs text-text-secondary">
-            No numerator, denominator, as-of date, and source are available
-            together, so no figure is rendered.
+            No numerator, denominator, artifact timestamp, and source are
+            available together, so no figure is rendered.
           </p>
         </div>
         <dl className="rounded-sm border border-hair bg-panel p-3 text-sm">
@@ -165,23 +248,7 @@ export function SupervisorView({ data }: { data: SupervisorDashboard }) {
           <div>
             <Badge tone="maroon">{data.workload.kind}</Badge>
           </div>
-          <MockNotice provenance={data.workload.provenance} />
-          <Slice value={data.workload.slice} />
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <CountTile count={data.workload.totalFilings} />
-            <CountTile count={data.workload.distinctProblems} />
-            <CountTile count={data.workload.duplicateAdjustment} />
-          </div>
-          <p className="text-sm leading-relaxed text-text-body">
-            This slice contains{" "}
-            <strong>{data.workload.totalFilings.value.toLocaleString("en-IN")}</strong>{" "}
-            filings representing{" "}
-            <strong>
-              {data.workload.distinctProblems.value.toLocaleString("en-IN")}
-            </strong>{" "}
-            distinct problems. The adjustment changes the workload reading; it
-            does not suppress repeat grievances or campaigns.
-          </p>
+          <WorkloadFinding data={data.workload} />
         </div>
       </Card>
 
@@ -190,21 +257,7 @@ export function SupervisorView({ data }: { data: SupervisorDashboard }) {
           <div>
             <Badge tone="maroon">{data.spike.kind}</Badge>
           </div>
-          <MockNotice provenance={data.spike.provenance} />
-          <Slice value={data.spike.slice} />
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            {data.spike.counts.map((count) => (
-              <CountTile key={count.label} count={count} />
-            ))}
-          </div>
-          <div className="border-l-4 border-maroon bg-panel px-3 py-2">
-            <p className="text-xs font-semibold uppercase tracking-wide text-maroon">
-              How to read it
-            </p>
-            <p className="mt-1 text-sm leading-relaxed text-text-body">
-              {data.spike.interpretation}
-            </p>
-          </div>
+          <SpikeFinding data={data.spike} />
         </div>
       </Card>
 

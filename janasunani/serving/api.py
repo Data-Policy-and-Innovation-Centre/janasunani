@@ -6,6 +6,7 @@ Endpoints (the full surface; shapes in schemas.py are the frozen contract):
                             ``district``) -> full ``GrievanceResult``, 201
 - ``GET  /grievance/{id}``  a previously submitted result
 - ``GET  /history``         browse/search historical complaints (lake shape)
+- ``GET  /supervisor``      published aggregate findings or explicit gaps
 - ``GET  /health``          liveness + which processor is mounted
 
 Skeleton wiring (swapped at Phase 8/9 wire-up, endpoints unchanged):
@@ -47,11 +48,16 @@ from starlette.concurrency import run_in_threadpool
 
 from janasunani.inference.service import InferenceInputError
 from janasunani.serving.history import HistoryProvider, LakeHistory, MockHistory
+from janasunani.serving.intelligence import (
+    SupervisorProvider,
+    supervisor_provider_from_env,
+)
 from janasunani.serving.processor import GrievanceProcessor, MockGrievanceProcessor
 from janasunani.serving.schemas import (
     GrievanceResult,
     HealthResponse,
     HistoryPage,
+    SupervisorDashboard,
 )
 from janasunani.serving.store import InMemoryResultStore, ResultStore
 
@@ -66,11 +72,13 @@ def create_app(
     processor: Optional[GrievanceProcessor] = None,
     history: Optional[HistoryProvider] = None,
     result_store: Optional[ResultStore] = None,
+    supervisor: Optional[SupervisorProvider] = None,
 ) -> FastAPI:
     """App factory; tests and the wire-up inject their own processor/history."""
     processor = processor or MockGrievanceProcessor()
     history = history or MockHistory()
     result_store = result_store or InMemoryResultStore()
+    supervisor = supervisor if supervisor is not None else supervisor_provider_from_env()
 
     app = FastAPI(title="Janasunani 2.0 API", version="0.1.0")
     app.add_middleware(
@@ -151,6 +159,12 @@ def create_app(
         return history.search(
             q=q, district=district, category=category, limit=limit, offset=offset
         )
+
+    @app.get("/supervisor", response_model=SupervisorDashboard)
+    def get_supervisor_dashboard() -> SupervisorDashboard:
+        """Return only validated aggregate findings, otherwise explicit gaps."""
+
+        return supervisor.dashboard()
 
     return app
 

@@ -1,42 +1,49 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const { MOCK_SUPERVISOR_RESPONSE } = await import("../lib/supervisor.ts");
+const {
+  parseSupervisorDashboard,
+  unavailableSupervisorDashboard,
+} = await import("../lib/supervisor.ts");
 
-test("the mock panels are labelled and carry all three spike counts", () => {
-  assert.equal(MOCK_SUPERVISOR_RESPONSE.workload.provenance.state, "mocked");
-  assert.equal(MOCK_SUPERVISOR_RESPONSE.spike.provenance.state, "mocked");
-  assert.equal(
-    MOCK_SUPERVISOR_RESPONSE.workload.totalFilings.value -
-      MOCK_SUPERVISOR_RESPONSE.workload.distinctProblems.value,
-    MOCK_SUPERVISOR_RESPONSE.workload.duplicateAdjustment.value,
+test("the initial supervisor response fails closed for every unpublished panel", () => {
+  const dashboard = unavailableSupervisorDashboard(
+    "No validated aggregate artifact is available.",
   );
-  assert.deepEqual(
-    MOCK_SUPERVISOR_RESPONSE.spike.counts.map((count) => count.label),
-    ["Filings", "Distinct problems", "Distinct citizens"],
-  );
+
+  assert.equal(dashboard.workload.provenance.state, "unavailable");
+  assert.equal(dashboard.spike.provenance.state, "unavailable");
+  assert.equal(dashboard.closure.provenance.state, "unavailable");
+  assert.match(dashboard.workload.requirement, /total filings/i);
+  assert.match(dashboard.spike.requirement, /same period last year/i);
+  assert.match(dashboard.closure.caveat, /not a failure rate/i);
+
+  const serialized = JSON.stringify(dashboard).toLowerCase();
+  assert.equal(serialized.includes('"value"'), false);
 });
 
-test("closure fails closed without a publishable snapshot", () => {
-  const closure = MOCK_SUPERVISOR_RESPONSE.closure;
-  assert.equal(closure.provenance.state, "unavailable");
-  assert.match(closure.numeratorLabel, /bare disposal rung/i);
-  assert.match(closure.primaryDenominatorLabel, /six disposal templates/i);
-  assert.match(closure.secondaryDenominatorLabel, /all resolved complaints/i);
-  assert.match(closure.caveat, /not a failure rate/i);
-  assert.equal("value" in closure, false);
+test("the browser accepts only the aggregate-only unavailable DTO shape", () => {
+  const dashboard = unavailableSupervisorDashboard(
+    "No validated aggregate artifact is available.",
+  );
+
+  const parsed = parseSupervisorDashboard(JSON.parse(JSON.stringify(dashboard)));
+
+  assert.deepEqual(parsed, dashboard);
 });
 
-test("the payload is aggregate-only", () => {
-  const serialized = JSON.stringify(MOCK_SUPERVISOR_RESPONSE).toLowerCase();
-  for (const forbiddenKey of [
-    '"grievance"',
-    '"raw_text"',
-    '"ticket_no"',
-    '"mobile"',
-    '"email"',
-    '"identity_key"',
-  ]) {
-    assert.equal(serialized.includes(forbiddenKey), false, forbiddenKey);
-  }
+test("the browser rejects a response carrying a row-level field", () => {
+  const dashboard = JSON.parse(
+    JSON.stringify(
+      unavailableSupervisorDashboard(
+        "No validated aggregate artifact is available.",
+      ),
+    ),
+  );
+  dashboard.closure.grievance = "synthetic-only-content";
+
+  assert.throws(
+    () => parseSupervisorDashboard(dashboard),
+    /aggregate-only contract/i,
+  );
 });

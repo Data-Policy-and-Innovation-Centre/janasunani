@@ -50,14 +50,17 @@ an explanatory note, not as an error.
 - `app/` — routes: `/` (submit a grievance), `/history` (browse/search), and
   `/supervisor` (aggregate-only Phase 15 briefing).
 - `components/` — `SubmitForm`, `ResultView` (the five-step result cards),
-  `HistoryView`, `SupervisorView`, and `ui.tsx` (Card/Field/Badge primitives).
-- `lib/api.ts` — the fetch client (`submitGrievance`, `fetchHistory`).
+  `HistoryView`, `SupervisorDashboard`, `SupervisorView`, and `ui.tsx`
+  (Card/Field/Badge primitives).
+- `lib/api.ts` — the fetch client (`submitGrievance`, `fetchHistory`,
+  `fetchSupervisorDashboard`).
 - `lib/types.ts` — TypeScript mirror of `janasunani/serving/schemas.py`. Do
   not rename these fields without a matching backend contract change.
 - `lib/supervisor.ts` — typed, aggregate-only supervisor response contract.
-  Until an analytics endpoint exists, workload and spike values are visibly
-  mocked and the closure insight fails closed rather than publishing a prose-only
-  number without its numerator, denominator, as-of date, source, and caveat.
+  The browser accepts only the backend's narrow DTO and rejects row-level
+  fields. Until a validated artifact exists, each panel fails closed with its
+  own requirement; it never turns a manual duplicate baseline into the dedup
+  capability or a placeholder into a worked spike.
 
 ## Gate
 
