@@ -13,7 +13,7 @@ import pytest
 
 from janasunani.config import directories
 from janasunani.pipeline.cli import build_parser, main
-from janasunani.pipeline.config import PipelineConfig
+from janasunani.pipeline.config import PipelineConfig, validate_sarvam_sharding
 from janasunani.pipeline.db import connect, initialize_database
 from janasunani.pipeline.pipeline import STAGE_ORDER, run_pipeline
 
@@ -142,6 +142,19 @@ def test_cli_rejects_enabled_sarvam_cross_machine_sharding(monkeypatch):
 
     with pytest.raises(SystemExit, match="--num-workers 1"):
         main()
+
+
+def test_enabled_sarvam_rejects_cross_machine_sharding_without_ocr_dependencies():
+    with pytest.raises(ValueError, match="num_workers=1"):
+        validate_sarvam_sharding(
+            ocr_engine="sarvam", sarvam_enabled=True, num_workers=2
+        )
+
+
+def test_disabled_sarvam_allows_local_fallback_sharding():
+    validate_sarvam_sharding(
+        ocr_engine="sarvam", sarvam_enabled=False, num_workers=2
+    )
 
 
 def test_cli_rejects_unknown_stage():

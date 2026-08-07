@@ -1,7 +1,7 @@
 import argparse
 from pathlib import Path
 
-from janasunani.pipeline.config import PipelineConfig
+from janasunani.pipeline.config import PipelineConfig, validate_sarvam_sharding
 from janasunani.pipeline.db import initialize_database
 from janasunani.pipeline.pipeline import STAGE_ORDER, run_pipeline
 
@@ -127,15 +127,14 @@ def main() -> int:
             raise SystemExit(
                 f"--worker-id ({args.worker_id}) must be in [0, --num-workers={args.num_workers})"
             )
-        if (
-            args.ocr_engine == "sarvam"
-            and args.enable_sarvam
-            and args.num_workers != 1
-        ):
-            raise SystemExit(
-                "enabled Sarvam OCR requires --num-workers 1 because its "
-                "10-RPM limiter is process-local"
+        try:
+            validate_sarvam_sharding(
+                ocr_engine=args.ocr_engine,
+                sarvam_enabled=args.enable_sarvam,
+                num_workers=args.num_workers,
             )
+        except ValueError as exc:
+            raise SystemExit(str(exc).replace("num_workers=1", "--num-workers 1")) from exc
 
         config = PipelineConfig(
             input_dir=args.input,

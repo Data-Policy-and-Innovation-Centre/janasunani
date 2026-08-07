@@ -2,6 +2,22 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+def validate_sarvam_sharding(
+    *, ocr_engine: str, sarvam_enabled: bool, num_workers: int
+) -> None:
+    """Reject enabled hosted Sarvam runs whose limiter cannot be global.
+
+    Cross-machine workers are separate processes, while the adapter's rolling
+    10-RPM limiter is process-local. Disabled Sarvam is safe to shard because
+    it makes no remote calls and uses the maintained local fallback instead.
+    """
+    if ocr_engine == "sarvam" and sarvam_enabled and num_workers != 1:
+        raise ValueError(
+            "enabled Sarvam OCR requires num_workers=1 because its "
+            "10-RPM limiter is process-local"
+        )
+
+
 @dataclass(frozen=True)
 class PipelineConfig:
     input_dir: Path

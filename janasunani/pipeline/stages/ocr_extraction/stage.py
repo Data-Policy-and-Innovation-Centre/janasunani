@@ -23,7 +23,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from ...config import PipelineConfig
+from ...config import PipelineConfig, validate_sarvam_sharding
 from ...db import connect
 from .executors import pick_executor, shard_work_items
 from .page_renderer import render_page
@@ -49,11 +49,11 @@ def run_ocr_extraction(config: PipelineConfig) -> None:
             f"unknown ocr_engine: {backend!r}. "
             "must be 'pytesseract', 'deepseek', or 'sarvam'."
         )
-    if backend == "sarvam" and config.sarvam_enabled and config.num_workers != 1:
-        raise ValueError(
-            "enabled Sarvam OCR requires num_workers=1 because its "
-            "10-RPM limiter is process-local"
-        )
+    validate_sarvam_sharding(
+        ocr_engine=backend,
+        sarvam_enabled=config.sarvam_enabled,
+        num_workers=config.num_workers,
+    )
 
     work_items = _load_pending_pages(
         db_path=config.db_path,

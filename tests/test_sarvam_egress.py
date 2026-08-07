@@ -662,39 +662,6 @@ def test_idempotency_key_includes_route_identity(tmp_path, route_field):
     )
 
 
-def test_enabled_sarvam_rejects_cross_machine_sharding_before_loading_work(tmp_path):
-    from janasunani.pipeline.config import PipelineConfig
-    from janasunani.pipeline.stages.ocr_extraction.stage import run_ocr_extraction
-
-    config = PipelineConfig(
-        input_dir=tmp_path,
-        db_path=tmp_path / "missing.sqlite",
-        models_dir=tmp_path,
-        ocr_engine="sarvam",
-        sarvam_enabled=True,
-        num_workers=2,
-    )
-
-    with pytest.raises(ValueError, match="num_workers=1"):
-        run_ocr_extraction(config)
-
-
-def test_disabled_sarvam_allows_local_fallback_sharding(tmp_path):
-    from janasunani.pipeline.config import PipelineConfig
-    from janasunani.pipeline.stages.ocr_extraction.stage import run_ocr_extraction
-
-    config = PipelineConfig(
-        input_dir=tmp_path,
-        db_path=tmp_path / "missing.sqlite",
-        models_dir=tmp_path,
-        ocr_engine="sarvam",
-        sarvam_enabled=False,
-        num_workers=2,
-    )
-
-    run_ocr_extraction(config)
-
-
 def test_submission_limiter_enforces_ten_requests_per_rolling_minute(tmp_path):
     clock = FakeClock()
     responses = []
