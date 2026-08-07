@@ -113,10 +113,13 @@ migration change): **1,371,288 complaints / 6,556,171 action-history rows**.
 ## Environments and the dependency split
 
 Python ≥ 3.13, managed by **uv**. Base deps are light; heavy ML stacks live in
-three **optional extras** (`pyproject.toml`):
+four **optional extras** (`pyproject.toml`):
 
-- `pipeline-core` — format classifier, pytesseract OCR, Presidio PII, page-type
-  ViT, summarizer (`transformers>=4.57,<5`)
+- `pipeline-core` — format classifier, pytesseract OCR, page-type ViT,
+  summarizer (`transformers>=4.57,<5`); its inherited `numpy<2` pin remains
+  isolated from the standalone `pii` extra
+- `pii` — Presidio, spaCy, and the English model; a numpy 2.x floor gives the
+  standalone redaction/evaluation environment CPython 3.13 wheels
 - `ocr-deepseek` — DeepSeek OCR only (`transformers==4.46.3` — **conflicts** with
   the others; declared in `[tool.uv].conflicts`)
 - `categorizer` — MuRIL categorizer
@@ -296,7 +299,14 @@ enforcement and the model registry (Phase 17), the first analytics increments
 ## Gates
 
 Every feature ships with real-code-path pytest tests, run before "done":
-`uv run --extra pipeline-core pytest && uv run ruff check .`. CI
+
+```bash
+uv run --extra serving --extra pipeline-core pytest
+uv run --extra pii pytest tests/test_pii_extra_contract.py tests/test_pii_redaction.py tests/test_redact_grievance.py tests/test_rederive_pii_draft.py tests/test_bootstrap_pii_gold.py
+uv run ruff check .
+```
+
+CI
 (`.github/workflows/`) runs ruff, the test suite against a service-container
 Postgres plus `dvc status` validation, and the raw-data-in-git guard. CI installs
 **no heavy extras** — anything imported by tests must live in a light module

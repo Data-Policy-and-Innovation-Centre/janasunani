@@ -17,18 +17,23 @@ stages:
   # via the OLTP exporter + materialize.
   pipeline-sample:
     desc: >-
-      Core document-pipeline stages (format classifier + pytesseract OCR +
-      Presidio PII redaction) over
+      Format classification, pytesseract OCR, and Presidio PII redaction over
       data/raw/documents-sample -> a versioned pipeline SQLite artifact.
-      Needs the pipeline-core extra and the tesseract binary (+ tesseract-lang
-      for Odia).
+      Runs sequentially in the pipeline-core and PII environments; needs the
+      tesseract binary (+ tesseract-lang for Odia).
     cmd: >-
       uv run --extra pipeline-core janasunani-pipeline run
       --input data/raw/documents-sample
       --db data/processed/pipeline-sample.sqlite
       --models models
       --ocr-engine pytesseract
-      --stages format_classifier ocr_extraction pii_tagger
+      --stages format_classifier ocr_extraction
+      --workers 1 &&
+      uv run --extra pii janasunani-pipeline run
+      --input data/raw/documents-sample
+      --db data/processed/pipeline-sample.sqlite
+      --models models
+      --stages pii_tagger
       --workers 1
     # File-level deps, not the whole `janasunani/pipeline` tree (#87). The
     # directory hash changed on every merge into that package -- dedup, the
@@ -38,16 +43,12 @@ stages:
     # which validates structure and never compares anything.
     #
     # Listed here: the entrypoint and its plumbing, plus exactly the three
-    # stages named in `--stages` above. Adding a stage to that flag means
+    # stages named across the invocations above. Adding a stage means
     # adding it here, which is the point -- the dep list and the command
     # should disagree loudly rather than silently.
     #
-    # cli.py imports the summarizer, categorizer and page-type stages too, and
-    # they are deliberately NOT deps: they do not execute under this --stages
-    # list, so they cannot change the artifact. If one of them breaks the
-    # import the run fails outright, which is the loud failure. What DVC deps
-    # exist to prevent is the quiet one -- a cached artifact that looks current
-    # and was produced by different code.
+    # cli.py knows about the later page-type, summarizer, and categorizer stages,
+    # but they are deliberately not deps: this regression stage stops after PII.
     deps:
       - data/raw/documents-sample
       - models/format_classifier/page_split_v3.0_doc_split.pkl

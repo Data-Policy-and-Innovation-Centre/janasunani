@@ -5,7 +5,9 @@
 SQLite artifact DBs) — not mocks of our own code. Gate before "done":
 
 ```bash
-uv run --extra pipeline-core pytest && uv run ruff check .
+uv run --extra serving --extra pipeline-core pytest
+uv run --extra pii pytest tests/test_pii_extra_contract.py tests/test_pii_redaction.py tests/test_redact_grievance.py tests/test_rederive_pii_draft.py tests/test_bootstrap_pii_gold.py
+uv run ruff check .
 ```
 
 ## Where tests run

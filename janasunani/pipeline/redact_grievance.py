@@ -17,7 +17,7 @@ wrong. Re-running after the slice is complete is a no-op.
 
 Run:
 
-    uv run --extra pipeline-core janasunani-redact-grievance \\
+    uv run --extra pii janasunani-redact-grievance \\
         --district Khordha --year 2024
 
 ``--district`` and ``--year`` have no defaults on purpose: the slice is a

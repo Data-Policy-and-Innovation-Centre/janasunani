@@ -132,10 +132,14 @@ Turns an English complaints bundle into labeling material for the PII eval
 backfill ships redacted pages).
 
 ```bash
-uv run --extra pipeline-core python scripts/bootstrap_pii_gold.py \
+uv run --extra demo python scripts/bootstrap_pii_gold.py \
     [--bundle data/output/english_complaints_sample.zip] \
     [--out data/output/pii_gold_draft.jsonl] [--max-pages-per-doc N]
 ```
+
+This combines OCR and PII in one process, so it needs `demo` and retains that
+environment's legacy `numpy<2` contract; it is not the compiler-free PII
+backfill path.
 
 For every document page it runs pytesseract OCR and pre-annotates the text
 with the **production** Presidio analyzer, writing two files:
@@ -151,7 +155,7 @@ measurement: **add** the PII the analyzer missed (these become the recall
 misses), **delete** false hits, **fix** boundaries/labels. Then:
 
 ```bash
-uv run --extra pipeline-core janasunani-evaluate-pii --gold <corrected.jsonl>
+uv run --extra pii janasunani-evaluate-pii --gold <corrected.jsonl>
 ```
 
 ### Gold-file lifecycle
@@ -178,7 +182,7 @@ uv run --extra pipeline-core janasunani-evaluate-pii --gold <corrected.jsonl>
   ```
 
   Reproduce the eval anywhere with bucket access:
-  `dvc pull` → `janasunani-evaluate-pii --gold data/external/pii_gold.jsonl`.
+  `dvc pull` → `uv run --extra pii janasunani-evaluate-pii --gold data/external/pii_gold.jsonl`.
   When the gold set grows, `dvc add` again — each eval result stays diffable
   against the exact gold revision that produced it.
 

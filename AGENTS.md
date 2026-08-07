@@ -23,9 +23,10 @@ Then [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the system overview.
 - One Python package (`janasunani/`) managed by `uv`; `pyproject.toml` +
   `uv.lock` are the dependency source of truth. Python pinned via
   `.python-version`.
-- Heavy ML deps live in **mutually conflicting extras** (`pipeline-core`,
-  `ocr-deepseek`, `categorizer`; light `serving`) — see
-  `[tool.uv].conflicts`. Run per-env: `uv run --extra <name> …`.
+- Heavy ML deps live in per-stage extras (`pipeline-core`, standalone `pii`,
+  `ocr-deepseek`, `categorizer`; light `serving`) with incompatible pairs in
+  `[tool.uv].conflicts`. Run per-env: `uv run --extra <name> …`; redaction and
+  PII evaluation use `--extra pii` separately from `pipeline-core`.
 - Console scripts (`janasunani-*`) are listed in `pyproject.toml`; the root
   `main.py` is a legacy stub, not the entrypoint.
 
@@ -34,6 +35,8 @@ Then [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the system overview.
 - Lint: `uv run ruff check .`
 - Tests: `uv run --extra serving --extra pipeline-core pytest`
   — every change ships with real-code-path tests, green before "done".
+- PII gate: `uv run --extra pii pytest tests/test_pii_extra_contract.py tests/test_pii_redaction.py tests/test_redact_grievance.py tests/test_rederive_pii_draft.py tests/test_bootstrap_pii_gold.py`
+  — runs every Presidio-gated redaction, evaluation, and bootstrap test.
   **Never run pytest against the production Postgres** (fixtures drop
   tables); see `tests/README.md`.
 - Component run commands: root `README.md` §"Running the components".
