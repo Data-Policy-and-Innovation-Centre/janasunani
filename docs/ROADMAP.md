@@ -1143,12 +1143,12 @@ Sarvam is the most promising single quality lever available, because our weakest
 stage and their strongest capability are the same thing: Odia document
 understanding.
 
-**What Sarvam offers** (checked 2026-07-27 against their docs; re-check before
+**What Sarvam offers** (checked 2026-08-07 against their docs; re-check before
 building, this moves fast).
 
 | Model / API | ID | What it does | Price | Limits |
 |---|---|---|---|---|
-| Sarvam Vision | `sarvam-vision-v1` | 3B vision-language model for document digitisation. **Digitise** (text, tables, layout; HTML or Markdown out) and **Extract** (schema-driven structured fields; JSON, CSV or XLSX out) are separate endpoints and bill separately. In: PDF, PNG, JPG, ZIP | **₹0.50 / page digitise, ₹1.00 / page extract.** Per page, not per field | 10 pages per PDF, 200 MB, **10 req/min** |
+| Sarvam Vision 1.5 | Endpoint-selected; no request `model` field | Vision-language model for document digitisation. **Digitise** (text, tables, layout; HTML or Markdown out) and **Extract** (schema-driven structured fields; JSON, CSV or XLSX out) are separate endpoints and bill separately. In: PDF, PNG, JPG, ZIP | **₹0.50 / page digitise, ₹1.00 / page extract.** Per page, not per field | 10 pages per PDF, 200 MB, **10 req/min** |
 | ~~Sarvam-30B~~ | ~~`sarvam-30b`~~ | **Withdrawn.** Absent from the billing page as of 2026-08-07, so not callable. Superseded by 105B | — | — |
 | Sarvam-105B | `sarvam-105b` | Flagship, ~9B active, 128K context. Also `sarvam-105b-chat` | **₹29.28 / ₹10.98 / ₹73.20 per 1M tokens** (in / cached / out) | Tiered, below |
 | GLM 5.2 | third-party, billed via Sarvam | Available on the same account. **Not a Sarvam model** — see the authorization note below | ₹128.10 / ₹23.79 / ₹402.60 per 1M tokens | Tiered, below |
@@ -1218,17 +1218,18 @@ Four things to check before relying on any of it:
   separately** — not as a hedge against an unsupported case, but because the
   printed/handwritten split is the number nobody has published and the one our
   corpus turns on.
-- ⚠️ **"Akshar" is the product, `sarvam-vision` is still the model. Do not treat
-  them as the same thing when benchmarking.** Sarvam Akshar is a document
-  digitisation platform layered on Sarvam Vision, described as an intelligence
-  layer over it rather than a rename of it. The API model list still carries
-  Sarvam Vision for document intelligence and no Akshar entry. This matters for
-  what §Phase 17 actually measures: benchmarking the Akshar platform against
-  pytesseract compares a pipeline with its own reasoning and validation on top
-  against a bare OCR engine, which is not the comparison the scorecard claims to
-  make. **Benchmark the model, name the surface in the artifact, and state which
-  one was called.** The Doc AI endpoint takes `model: "sarvam-vision-v1"`, so the
-  model id is what the API accepts and Akshar is the surface around it.
+- ⚠️ **"Akshar" is the product surface; the current Doc AI API identifies the
+  underlying model as Sarvam Vision 1.5. Do not treat them as the same thing when
+  benchmarking.** Sarvam Akshar is a document digitisation platform layered on
+  Sarvam Vision, described as an intelligence layer over it rather than a rename
+  of it. This matters for what §Phase 17 actually measures: benchmarking the
+  Akshar platform against pytesseract compares a pipeline with its own reasoning
+  and validation on top against a bare OCR engine, which is not the comparison
+  the scorecard claims to make. **The async Doc AI Digitise and Extract request
+  contracts do not expose a caller-selected multipart `model` field.** Record
+  `Sarvam Vision 1.5` as reviewed provider provenance in the local audit and name
+  the called Doc AI surface in the benchmark artifact; do not send the stale
+  `sarvam-vision-v1` selector or imply that the endpoint is caller-pinned.
 - ⚠️ **Doc AI is an async job API with two distinct endpoints, not a drop-in OCR
   call.** `POST /doc-ai/v1/job/digitise` is the transcription path (`output_format`
   `html` default or `md`, no schema); `POST /doc-ai/v1/job/extract` is the
@@ -1244,7 +1245,9 @@ Four things to check before relying on any of it:
   `pages_failed`. An adapter that treats a job as success-or-failure silently
   drops the failed pages inside a partially completed job and reports the batch as
   done — at a 10-page cap, one bad page is a 10% loss. **Reconcile
-  `pages_succeeded` against `pages_total` per job and record the delta.**
+  `pages_succeeded` against `pages_total` per job and record the delta.** Until
+  the adapter exposes page-level result granularity, its safe contract is to
+  reject every `partially_completed` job and use the local fallback.
 - ⚠️ **Idempotency is undocumented, so our own submission log is the control.**
   The dashboard sample sends an `Idempotency-Key` header; the API reference
   documents no idempotency parameter. Send a deterministic key derived from

@@ -200,6 +200,7 @@ def _process_page(item: dict[str, Any]) -> dict[str, Any]:
         "page_number": item["page_number"],
         "file_path": item["file_path"],
         "text": None,
+        "ocr_model": None,
         "error": None,
     }
     try:
@@ -217,6 +218,7 @@ def _process_page(item: dict[str, Any]) -> dict[str, Any]:
             )
             from .deepseek_backend import extract_text as ds_extract
             text = ds_extract(image, tokenizer=_worker_ds_tokenizer, model=_worker_ds_model)
+            result["ocr_model"] = "deepseek"
             # DeepSeek's signature failure mode (per the DSI report): the
             # generation loops and one phrase fills the page. Store nothing —
             # record the page in unreadable_pages so resumes skip it.
@@ -241,11 +243,12 @@ def _process_page(item: dict[str, Any]) -> dict[str, Any]:
                 # A call without the required audit identity would be an
                 # untraceable egress route.  Preserve OCR behavior locally.
                 text = pt_extract(image, force_lang=pipeline_lang_to_tesseract(item.get("language")))
+                result["ocr_model"] = "pytesseract"
             else:
                 encoded = BytesIO()
                 image.save(encoded, format="PNG")
                 language = _pipeline_lang_to_sarvam(item.get("language"))
-                text = _worker_sarvam.digitise_or_fallback(
+                outcome = _worker_sarvam.digitise_or_fallback(
                     encoded.getvalue(),
                     f"{item['doc_id']}-{item['page_number']}.png",
                     language,
@@ -259,6 +262,8 @@ def _process_page(item: dict[str, Any]) -> dict[str, Any]:
                         force_lang=pipeline_lang_to_tesseract(item.get("language")),
                     ),
                 )
+                text = outcome.text
+                result["ocr_model"] = outcome.ocr_model
         else:
             from .pytesseract_backend import (
                 extract_text as pt_extract,
@@ -266,6 +271,7 @@ def _process_page(item: dict[str, Any]) -> dict[str, Any]:
             )
             force_lang = pipeline_lang_to_tesseract(item.get("language"))
             text = pt_extract(image, force_lang=force_lang)
+            result["ocr_model"] = "pytesseract"
     except Exception as e:
         result["error"] = f"ocr failed: {e}"
         return result
@@ -297,7 +303,7 @@ def _write_results_with_retry(
     params = [
         {
             "text": r["text"],
-            "model": backend,
+            "model": r.get("ocr_model") or backend,
             "date": today_iso,
             "page_id": r["page_id"],
         }

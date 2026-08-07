@@ -14,6 +14,7 @@ from janasunani.egress.sarvam import (
     AUTHORIZATION_REFERENCE,
     MODEL_ID,
     PROVIDER_REGISTRY,
+    SARVAM_OCR_MODEL,
     SarvamAuditContext,
     SarvamError,
     SarvamVisionAdapter,
@@ -106,9 +107,12 @@ def test_digitise_replays_submit_poll_and_download_with_an_auditable_job(tmp_pat
         sleep=lambda _seconds: None,
     )
 
-    actual = adapter.digitise(b"fixture-png", "page.png", "od-IN", _context())
+    actual = adapter.digitise_or_fallback(
+        b"fixture-png", "page.png", "od-IN", _context(), lambda: "local OCR"
+    )
 
-    assert actual == "# Water complaint\n\nName removed"
+    assert actual.text == "# Water complaint\n\nName removed"
+    assert actual.ocr_model == SARVAM_OCR_MODEL
     assert [method for method, _, _ in transport.calls] == ["POST", "GET", "GET", "GET", "GET"]
     submit = transport.calls[0]
     assert submit[1].endswith("/doc-ai/v1/job/digitise")
@@ -151,7 +155,8 @@ def test_kill_switch_never_constructs_or_calls_the_remote_transport(tmp_path):
         b"fixture-png", "page.png", "en-IN", _context(), lambda: "local pytesseract text"
     )
 
-    assert result == "local pytesseract text"
+    assert result.text == "local pytesseract text"
+    assert result.ocr_model == "pytesseract"
     assert transport.calls == []
     assert [row[8] for row in _audit_rows(tmp_path / "audit.sqlite")] == ["disabled"]
 
@@ -179,10 +184,56 @@ def test_nonterminating_recorded_job_falls_back_after_its_bounded_poll_loop(tmp_
         b"fixture-png", "page.png", "en-IN", _context(), lambda: "local text"
     )
 
-    assert actual == "local text"
+    assert actual.text == "local text"
+    assert actual.ocr_model == "pytesseract"
     assert [row[8] for row in _audit_rows(audit_path)] == [
         "submission",
         "poll",
+        "poll",
+        "fallback",
+    ]
+
+
+@pytest.mark.parametrize(
+    "usage",
+    [
+        {"pages_total": 3, "pages_succeeded": 2, "pages_failed": 1},
+        {"pages_total": 1, "pages_succeeded": 1, "pages_failed": 0},
+    ],
+)
+def test_partially_completed_job_is_rejected_and_audited_as_fallback(tmp_path, usage):
+    audit_path = tmp_path / "audit.sqlite"
+    transport = RecordedTransport(
+        [
+            RecordedResponse(202, {"job_id": "job-partial", "status": "pending"}),
+            RecordedResponse(
+                200,
+                {
+                    "job_id": "job-partial",
+                    "status": "partially_completed",
+                    "usage": usage,
+                },
+            ),
+        ]
+    )
+    adapter = SarvamVisionAdapter(
+        enabled=True,
+        api_key="recorded-test-key",
+        audit_log=SqliteAuditLog(audit_path),
+        transport=transport,
+        poll_interval_seconds=0,
+        sleep=lambda _seconds: None,
+    )
+
+    outcome = adapter.digitise_or_fallback(
+        b"fixture-png", "page.png", "en-IN", _context(), lambda: "local text"
+    )
+
+    assert outcome.text == "local text"
+    assert outcome.ocr_model == "pytesseract"
+    assert [method for method, _, _ in transport.calls] == ["POST", "GET"]
+    assert [row[8] for row in _audit_rows(audit_path)] == [
+        "submission",
         "poll",
         "fallback",
     ]
@@ -206,7 +257,11 @@ def test_recorded_submission_is_resumed_instead_of_resubmitted_and_rebilled(tmp_
         poll_interval_seconds=0,
         sleep=lambda _seconds: None,
     )
-    assert first.digitise_or_fallback(b"fixture-png", "page.png", "en-IN", _context(), lambda: "local") == "local"
+    first_result = first.digitise_or_fallback(
+        b"fixture-png", "page.png", "en-IN", _context(), lambda: "local"
+    )
+    assert first_result.text == "local"
+    assert first_result.ocr_model == "pytesseract"
 
     resumed_transport = RecordedTransport(
         [
@@ -258,9 +313,11 @@ def test_failed_submission_is_audited_with_only_its_actual_upload_bytes(tmp_path
         transport=RecordedTransport([RecordedResponse(503, {"error": "unavailable"})]),
     )
 
-    assert adapter.digitise_or_fallback(
+    outcome = adapter.digitise_or_fallback(
         b"fixture-png", "page.png", "en-IN", _context(), lambda: "local"
-    ) == "local"
+    )
+    assert outcome.text == "local"
+    assert outcome.ocr_model == "pytesseract"
     rows = _audit_rows(audit_path)
     assert [(row[8], row[4]) for row in rows] == [
         ("submission_error", len(b"fixture-png")),
@@ -291,33 +348,174 @@ def test_extract_is_a_distinct_operation_and_requires_one_pinned_schema_source(t
     assert route.authorization_reference == AUTHORIZATION_REFERENCE
 
 
-def test_pipeline_sarvam_switch_uses_the_existing_pytesseract_callback_when_disabled(
-    tmp_path, monkeypatch
+def test_extract_submission_omits_an_unsupported_model_field(tmp_path):
+    transport = RecordedTransport(
+        [
+            RecordedResponse(202, {"job_id": "job-extract", "status": "pending"}),
+            RecordedResponse(200, {"job_id": "job-extract", "status": "completed"}),
+            RecordedResponse(200, {"results": [{"complainant_name": "Example"}]}),
+        ]
+    )
+    adapter = SarvamVisionAdapter(
+        enabled=True,
+        api_key="recorded-test-key",
+        audit_log=SqliteAuditLog(tmp_path / "audit.sqlite"),
+        transport=transport,
+        poll_interval_seconds=0,
+        sleep=lambda _seconds: None,
+    )
+
+    result = adapter.extract(
+        b"fixture-png",
+        "page.png",
+        "en-IN",
+        _context(),
+        schema={"complainant_name": "string"},
+    )
+
+    assert result == {"results": [{"complainant_name": "Example"}]}
+    submission_data = transport.calls[0][2]["data"]
+    assert submission_data == {
+        "language": "en-IN",
+        "output_format": "json",
+        "schema": '{"complainant_name": "string"}',
+    }
+    assert "model" not in submission_data
+
+
+def _process_and_persist_stage_page(
+    *, stage, pytesseract_backend, adapter, db_path, monkeypatch, ticket
 ):
-    # Base CI deliberately excludes the heavy pipeline OCR stack.  Keep this
-    # integration assertion in the adapter module, but skip only this test
-    # there; the pipeline-core job exercises the real pytesseract fallback.
-    pytest.importorskip("pdf2image")
     from PIL import Image
 
-    from janasunani.pipeline.stages.ocr_extraction import stage
-    from janasunani.pipeline.stages.ocr_extraction import pytesseract_backend
+    from janasunani.pipeline.db import initialize_database
+
+    initialize_database(db_path)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "INSERT INTO pages "
+            "(doc_id, page_number, full_path, page_id, ticket_number) "
+            "VALUES ('doc-1', 1, 'page.png', 'page-1', ?)",
+            (ticket,),
+        )
 
     monkeypatch.setattr(stage, "render_page", lambda _path, _number: Image.new("RGB", (2, 2)))
-    monkeypatch.setattr(pytesseract_backend, "extract_text", lambda _image, force_lang=None: "local OCR")
-    stage._worker_init("sarvam", sarvam_enabled=False, db_path=tmp_path / "pipeline.sqlite")
+    monkeypatch.setattr(
+        pytesseract_backend,
+        "extract_text",
+        lambda _image, force_lang=None: "local OCR",
+    )
+    monkeypatch.setattr(stage, "_worker_backend", "sarvam")
+    monkeypatch.setattr(stage, "_worker_sarvam", adapter)
 
     result = stage._process_page(
         {
             "page_id": "page-1",
             "doc_id": "doc-1",
             "page_number": 1,
-            "file_path": str(tmp_path / "page.png"),
+            "file_path": str(db_path.parent / "page.png"),
             "language": "Odia",
-            "ticket": "T-1",
+            "ticket": ticket,
         }
+    )
+    with sqlite3.connect(db_path) as connection:
+        assert stage._write_results_with_retry(
+            connection, [result], "2026-08-07", "sarvam"
+        ) == 1
+        persisted = connection.execute(
+            "SELECT extracted_text, ocr_model FROM pages WHERE page_id = 'page-1'"
+        ).fetchone()
+    return result, persisted
+
+
+@pytest.mark.parametrize(
+    ("mode", "ticket", "expected_events"),
+    [
+        ("disabled", "T-1", ["disabled"]),
+        ("missing_ticket", None, []),
+        ("missing_credentials", "T-1", ["fallback"]),
+        ("request_error", "T-1", ["submission_error", "fallback"]),
+        ("timeout", "T-1", ["submission", "poll", "fallback"]),
+    ],
+)
+def test_sarvam_stage_fallback_persists_pytesseract_per_page(
+    tmp_path, monkeypatch, mode, ticket, expected_events
+):
+    # Base CI deliberately excludes the heavy pipeline OCR stack.  Keep this
+    # integration assertion in the adapter module, but skip only this test
+    # there; the pipeline-core job exercises the real pytesseract fallback.
+    pytest.importorskip("pdf2image")
+
+    from janasunani.pipeline.stages.ocr_extraction import stage
+    from janasunani.pipeline.stages.ocr_extraction import pytesseract_backend
+
+    db_path = tmp_path / "pipeline.sqlite"
+    responses = {
+        "request_error": [RecordedResponse(503, {"error": "unavailable"})],
+        "timeout": [
+            RecordedResponse(202, {"job_id": "job-stuck", "status": "pending"}),
+            RecordedResponse(200, {"job_id": "job-stuck", "status": "running"}),
+        ],
+    }.get(mode, [])
+    adapter = SarvamVisionAdapter(
+        enabled=mode != "disabled",
+        api_key="" if mode == "missing_credentials" else "recorded-test-key",
+        audit_log=SqliteAuditLog(db_path),
+        transport=RecordedTransport(responses),
+        poll_interval_seconds=0,
+        max_poll_attempts=1,
+        sleep=lambda _seconds: None,
+    )
+
+    result, persisted = _process_and_persist_stage_page(
+        stage=stage,
+        pytesseract_backend=pytesseract_backend,
+        adapter=adapter,
+        db_path=db_path,
+        monkeypatch=monkeypatch,
+        ticket=ticket,
     )
 
     assert result["text"] == "local OCR"
+    assert result["ocr_model"] == "pytesseract"
     assert result["error"] is None
-    assert [row[8] for row in _audit_rows(tmp_path / "pipeline.sqlite")] == ["disabled"]
+    assert persisted == ("local OCR", "pytesseract")
+    assert [row[8] for row in _audit_rows(db_path)] == expected_events
+
+
+def test_sarvam_stage_success_persists_remote_route_and_model(tmp_path, monkeypatch):
+    pytest.importorskip("pdf2image")
+
+    from janasunani.pipeline.stages.ocr_extraction import stage
+    from janasunani.pipeline.stages.ocr_extraction import pytesseract_backend
+
+    db_path = tmp_path / "pipeline.sqlite"
+    adapter = SarvamVisionAdapter(
+        enabled=True,
+        api_key="recorded-test-key",
+        audit_log=SqliteAuditLog(db_path),
+        transport=RecordedTransport(
+            [
+                RecordedResponse(202, {"job_id": "job-ok", "status": "pending"}),
+                RecordedResponse(200, {"job_id": "job-ok", "status": "completed"}),
+                RecordedResponse(200, {"download_url": "https://download.example/job-ok"}),
+                RecordedResponse(200, content=_zip_output(**{"result.md": "remote OCR"})),
+            ]
+        ),
+        poll_interval_seconds=0,
+        sleep=lambda _seconds: None,
+    )
+
+    result, persisted = _process_and_persist_stage_page(
+        stage=stage,
+        pytesseract_backend=pytesseract_backend,
+        adapter=adapter,
+        db_path=db_path,
+        monkeypatch=monkeypatch,
+        ticket="T-1",
+    )
+
+    assert result["text"] == "remote OCR"
+    assert result["ocr_model"] == SARVAM_OCR_MODEL
+    assert result["error"] is None
+    assert persisted == ("remote OCR", SARVAM_OCR_MODEL)

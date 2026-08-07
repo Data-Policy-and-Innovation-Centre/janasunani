@@ -29,6 +29,7 @@ PROVIDER_ID = "sarvam-hosted"
 # caller-selected model multipart field.  Record the reviewed provider model
 # locally instead of implying a request parameter that does not exist.
 MODEL_ID = "Sarvam Vision 1.5"
+SARVAM_OCR_MODEL = f"{PROVIDER_ID}:{MODEL_ID}"
 TRUST_TIER = "authorized-external"
 
 # This is documentation of the settled authorization, not a runtime approval
@@ -87,6 +88,14 @@ class SarvamAuditContext:
     def __post_init__(self) -> None:
         if not self.ticket.strip() or not self.stage.strip() or not self.document_id.strip():
             raise ValueError("ticket, stage, and document_id are required for Sarvam egress")
+
+
+@dataclass(frozen=True)
+class DigitiseOutcome:
+    """Digitise text paired with the OCR engine that actually produced it."""
+
+    text: str
+    ocr_model: str
 
 
 @dataclass(frozen=True)
@@ -331,9 +340,9 @@ class SarvamVisionAdapter:
         filename: str,
         language: str,
         context: SarvamAuditContext,
-        fallback: Callable[[], _Result],
-    ) -> str | _Result:
-        """Use Digitise only while enabled; otherwise preserve local OCR.
+        fallback: Callable[[], str],
+    ) -> DigitiseOutcome:
+        """Use Digitise only while enabled and report the actual OCR engine.
 
         Disabled means no remote request of any kind, including a resume/poll.
         Enabled runs may resume a recorded job rather than resubmitting it.
@@ -349,9 +358,12 @@ class SarvamVisionAdapter:
                 {},
                 self._idempotency_key(context, "digitise", document_bytes),
             )
-            return fallback()
+            return DigitiseOutcome(text=fallback(), ocr_model="pytesseract")
         try:
-            return self.digitise(document_bytes, filename, language, context)
+            return DigitiseOutcome(
+                text=self.digitise(document_bytes, filename, language, context),
+                ocr_model=SARVAM_OCR_MODEL,
+            )
         except SarvamError as exc:
             self._audit(
                 context,
@@ -363,7 +375,7 @@ class SarvamVisionAdapter:
                 {"reason": type(exc).__name__},
                 self._idempotency_key(context, "digitise", document_bytes),
             )
-            return fallback()
+            return DigitiseOutcome(text=fallback(), ocr_model="pytesseract")
 
     def _run_job(
         self,
@@ -447,7 +459,10 @@ class SarvamVisionAdapter:
     ) -> _Result:
         status = self._poll(job_id, context, operation, language, idempotency_key)
         final_status = status.get("status")
-        if final_status not in {"completed", "partially_completed"}:
+        # A partially completed archive cannot be reconciled to individual
+        # page results through the current adapter surface.  Treat the whole
+        # job as unusable rather than silently dropping failed pages.
+        if final_status != "completed":
             raise SarvamError(f"Sarvam job {job_id!r} ended with status {final_status!r}")
         result = result_reader(job_id, status, context, operation, language, idempotency_key)
         return result
