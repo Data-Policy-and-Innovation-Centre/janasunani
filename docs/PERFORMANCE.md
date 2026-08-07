@@ -100,7 +100,7 @@ is a floor on a known failure mode, not a coverage claim.
 
 ### What is not measured
 
-`janasunani-pipeline pii_scorecard` cannot yet report a missed-PII rate. It
+`janasunani.evaluation.pii_scorecard` cannot yet report a missed-PII rate. It
 passes empty predictions to the scorer, so every entity reads
 `overlap_recall=0.000`, `missed_rate=1.000` by construction. See #67. Its
 slicing, language split and thin-slice guard do work.
