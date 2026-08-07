@@ -245,20 +245,31 @@ class MappingRouter:
 
 
 class _LazyDefaultRouter:
-    """Construct the optional crosswalk and CSV-backed routers on first use.
+    """Construct the CSV-backed demo router and optional empirical crosswalk.
 
-    Order is crosswalk, then mapping tables, then the generic fallback inside
-    ``RuleRouter``. The crosswalk goes first because it is the only layer with
-    a measured accuracy (72.8% at its widest, #33) and the only one that covers
-    categories the masters cannot bridge at all -- ``intCategoryGrp`` is NULL on
-    every category, so name equality is all ``MappingRouter`` has.
+    The live default deliberately leaves ``enable_crosswalk`` false. The
+    empirical artifact describes historic dispatch rather than validated
+    routing correctness, and the routing gold set does not yet exist. This
+    preserves the committed demo behaviour (mapping/rules/fallback) while the
+    artifact and its synthetic-path tests can mature independently. Enabling
+    it requires an explicit code/configuration change made alongside routing
+    gold validation; it must never happen merely because an artifact appears
+    on disk.
+
+    When explicitly enabled for a validated deployment, order is crosswalk,
+    then mapping tables, then the generic fallback inside ``RuleRouter``. The
+    crosswalk goes first because it is the only layer with an empirical
+    estimate and the only one that covers categories the masters cannot bridge
+    at all -- ``intCategoryGrp`` is NULL on every category, so name equality
+    is all ``MappingRouter`` has.
 
     A missing or unreadable crosswalk artifact yields ``None`` and this falls
     straight through, which is #33's stated degradation: routing reverts to the
     placeholder and nothing else in the demo is affected.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, enable_crosswalk: bool = False) -> None:
+        self._enable_crosswalk = enable_crosswalk
         self._router: MappingRouter | None = None
         self._crosswalk = None
         self._crosswalk_loaded = False
@@ -288,14 +299,25 @@ class _LazyDefaultRouter:
         subcategory: Optional[str] = None,
         district: Optional[str] = None,
     ) -> RoutingResult:
-        crosswalk = self._get_crosswalk()
+        crosswalk = self._get_crosswalk() if self._enable_crosswalk else None
         if crosswalk is not None:
             hit = crosswalk.lookup(category, subcategory, district)
             if hit is not None:
                 district_name = _district(district)
+                # `hit.office` is the department's actual office, jointly
+                # aggregated with dept (crosswalk.OFFICE_MIN_SHARE) -- not
+                # asserted. When history is too fragmented across offices to
+                # name one, `hit.office` is None and the label names the
+                # department only, same pattern MappingRouter uses when its
+                # escalation chain carries no specific office.
+                office = (
+                    f"{hit.office}, {district_name}"
+                    if hit.office
+                    else f"{hit.dept} Department, {district_name}"
+                )
                 return RoutingResult(
                     dept=hit.dept,
-                    office=f"Office of the Collector, {district_name}",
+                    office=office,
                     designation=None,
                     escalation_authority=f"District Magistrate, {district_name}",
                     confidence=hit.confidence,

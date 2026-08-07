@@ -171,6 +171,7 @@
       "support": 433
     }
   },
+  "by_category_district": {},
   "by_full": {
     "accident|fire accident|baleswar": {
       "dept": "Revenue & Disaster Management",
@@ -2622,137 +2623,137 @@
       "share": 0.9268,
       "support": 190
     },
-    "education|higher secondary  education|angul": {
+    "education|higher secondary education|angul": {
       "dept": "Higher Education",
       "share": 0.5833,
       "support": 14
     },
-    "education|higher secondary  education|balangir": {
+    "education|higher secondary education|balangir": {
       "dept": "School & Mass Education",
       "share": 0.4444,
       "support": 12
     },
-    "education|higher secondary  education|baleswar": {
+    "education|higher secondary education|baleswar": {
       "dept": "School & Mass Education",
       "share": 0.3559,
       "support": 21
     },
-    "education|higher secondary  education|bargarh": {
+    "education|higher secondary education|bargarh": {
       "dept": "School & Mass Education",
       "share": 0.6,
       "support": 12
     },
-    "education|higher secondary  education|bhadrak": {
+    "education|higher secondary education|bhadrak": {
       "dept": "School & Mass Education",
       "share": 0.6667,
       "support": 6
     },
-    "education|higher secondary  education|boudh": {
+    "education|higher secondary education|boudh": {
       "dept": "School & Mass Education",
       "share": 0.7143,
       "support": 5
     },
-    "education|higher secondary  education|cuttack": {
+    "education|higher secondary education|cuttack": {
       "dept": "School & Mass Education",
       "share": 0.7826,
       "support": 18
     },
-    "education|higher secondary  education|dhenkanal": {
+    "education|higher secondary education|dhenkanal": {
       "dept": "School & Mass Education",
       "share": 0.52,
       "support": 13
     },
-    "education|higher secondary  education|gajapati": {
+    "education|higher secondary education|gajapati": {
       "dept": "Higher Education",
       "share": 0.5862,
       "support": 17
     },
-    "education|higher secondary  education|ganjam": {
+    "education|higher secondary education|ganjam": {
       "dept": "Higher Education",
       "share": 0.3696,
       "support": 17
     },
-    "education|higher secondary  education|jagatsinghapur": {
+    "education|higher secondary education|jagatsinghapur": {
       "dept": "School & Mass Education",
       "share": 0.6667,
       "support": 4
     },
-    "education|higher secondary  education|jajpur": {
+    "education|higher secondary education|jajpur": {
       "dept": "School & Mass Education",
       "share": 0.8571,
       "support": 24
     },
-    "education|higher secondary  education|jharsuguda": {
+    "education|higher secondary education|jharsuguda": {
       "dept": "School & Mass Education",
       "share": 0.9545,
       "support": 21
     },
-    "education|higher secondary  education|kalahandi": {
+    "education|higher secondary education|kalahandi": {
       "dept": "School & Mass Education",
       "share": 0.8182,
       "support": 18
     },
-    "education|higher secondary  education|kendrapara": {
+    "education|higher secondary education|kendrapara": {
       "dept": "School & Mass Education",
       "share": 0.6,
       "support": 3
     },
-    "education|higher secondary  education|kendujhar": {
+    "education|higher secondary education|kendujhar": {
       "dept": "School & Mass Education",
       "share": 0.5789,
       "support": 11
     },
-    "education|higher secondary  education|khordha": {
+    "education|higher secondary education|khordha": {
       "dept": "School & Mass Education",
       "share": 0.5556,
       "support": 20
     },
-    "education|higher secondary  education|koraput": {
+    "education|higher secondary education|koraput": {
       "dept": "School & Mass Education",
       "share": 0.8095,
       "support": 17
     },
-    "education|higher secondary  education|mayurbhanj": {
+    "education|higher secondary education|mayurbhanj": {
       "dept": "Higher Education",
       "share": 0.5833,
       "support": 7
     },
-    "education|higher secondary  education|nabarangpur": {
+    "education|higher secondary education|nabarangpur": {
       "dept": "School & Mass Education",
       "share": 0.6667,
       "support": 4
     },
-    "education|higher secondary  education|nayagarh": {
+    "education|higher secondary education|nayagarh": {
       "dept": "General Administration & Public Grievance",
       "share": 0.4815,
       "support": 13
     },
-    "education|higher secondary  education|nuapada": {
+    "education|higher secondary education|nuapada": {
       "dept": "School & Mass Education",
       "share": 0.8,
       "support": 8
     },
-    "education|higher secondary  education|puri": {
+    "education|higher secondary education|puri": {
       "dept": "Higher Education",
       "share": 0.5,
       "support": 8
     },
-    "education|higher secondary  education|rayagada": {
+    "education|higher secondary education|rayagada": {
       "dept": "School & Mass Education",
       "share": 0.5714,
       "support": 4
     },
-    "education|higher secondary  education|sambalpur": {
+    "education|higher secondary education|sambalpur": {
       "dept": "School & Mass Education",
       "share": 0.4737,
       "support": 9
     },
-    "education|higher secondary  education|subarnapur": {
+    "education|higher secondary education|subarnapur": {
       "dept": "School & Mass Education",
       "share": 0.5714,
       "support": 4
     },
-    "education|higher secondary  education|sundargarh": {
+    "education|higher secondary education|sundargarh": {
       "dept": "School & Mass Education",
       "share": 0.3846,
       "support": 5
@@ -25729,7 +25730,7 @@
       "share": 0.9322,
       "support": 7537
     },
-    "education|higher secondary  education|": {
+    "education|higher secondary education|": {
       "dept": "School & Mass Education",
       "share": 0.5162,
       "support": 286
