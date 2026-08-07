@@ -127,10 +127,13 @@ API_URL        ?= http://127.0.0.1:$(API_PORT)
 # `uv` to run *before* `setup` can even start is a bootstrap cycle: the
 # repair target can't run because the environment is unrepaired. So the
 # `ifneq (,$(wildcard .env))` block immediately below only runs when
-# `setup` is *not* among the requested goals (`$(MAKECMDGOALS)`, populated
+# the only requested goal is `setup` (`$(MAKECMDGOALS)`, populated
 # by Make from the command line before any makefile is read); `setup`
 # itself never touches OLTP_DB_URL, BOX_PROJECT_ROOT, INCOMING_REMOTE or
 # EXHIBITS_REMOTE, so skipping the extraction for those four costs nothing.
+# This must be exact: `make setup publish-raw` needs normal extraction before
+# it can publish, and must never use default Box paths merely because setup is
+# another requested goal.
 # BOX_REMOTE is the one exception -- `setup`'s own recipe below passes it to
 # scripts/setup.sh's ensure_box_remote -- and a uv-free guard right after
 # this block's `endif endif` handles that one case on its own (a Codex
@@ -193,17 +196,26 @@ API_URL        ?= http://127.0.0.1:$(API_PORT)
 # case this bug missed (a value containing spaces) and the one it hit (a
 # value containing the literal `DOTENV_OK:` substring): both now round-trip
 # unchanged (tests/test_makefile_dotenv.py).
+ifneq (,$(wildcard .env))
+ifneq ($(MAKECMDGOALS),setup)
+# A username-global status file races when two make processes parse different
+# .env files at once.  Use a private directory per invocation instead.
+# `mktemp -d` and `umask` work on GNU Make 3.81's supported macOS/Linux hosts,
+# unlike newer-Make-only .SHELLSTATUS and $(file).
+_DOTENV_TMPDIR := $(shell umask 077 && mktemp -d /tmp/janasunani-makefile-dotenv.XXXXXXXX 2>/dev/null)
+ifeq (,$(_DOTENV_TMPDIR))
+$(error could not create a private temporary directory for .env parsing)
+endif
+_DOTENV_STDERR := $(_DOTENV_TMPDIR)/stderr
+_DOTENV_STATUS := $(_DOTENV_TMPDIR)/status
 define dotenv_get
 $(shell PATH="$(USER_BIN):$$PATH" uv run --no-sync --offline python -c "from dotenv import dotenv_values; import sys; v = dotenv_values('.env').get('$(1)'); sys.stdout.write(v if v is not None else '')" 2>$(_DOTENV_STDERR); echo $$? >$(_DOTENV_STATUS))
 endef
-_DOTENV_STDERR := /tmp/.janasunani-makefile-dotenv-stderr-$(shell whoami 2>/dev/null)
-_DOTENV_STATUS := /tmp/.janasunani-makefile-dotenv-status-$(shell whoami 2>/dev/null)
-dotenv_status = $(shell cat $(_DOTENV_STATUS) 2>/dev/null)
-ifneq (,$(wildcard .env))
-ifeq ($(filter setup,$(MAKECMDGOALS)),)
+dotenv_status = $(shell cat $(_DOTENV_STATUS) 2>/dev/null; rm -f $(_DOTENV_STATUS))
+dotenv_cleanup = $(shell rm -f $(_DOTENV_STATUS) $(_DOTENV_STDERR); rmdir $(_DOTENV_TMPDIR) 2>/dev/null || true)
 _DOTENV_RAW_OLTP_DB_URL := $(call dotenv_get,OLTP_DB_URL)
 ifneq (0,$(dotenv_status))
-$(error .env exists but OLTP_DB_URL could not be parsed from it (#103) -- refusing to silently fall back to the throwaway demo default. 'uv run python' stderr: $(shell cat $(_DOTENV_STDERR) 2>/dev/null))
+$(error .env exists but OLTP_DB_URL could not be parsed from it (#103) -- refusing to silently fall back to the throwaway demo default. 'uv run python' stderr: $(shell cat $(_DOTENV_STDERR) 2>/dev/null)$(dotenv_cleanup))
 endif
 ifneq (,$(_DOTENV_RAW_OLTP_DB_URL))
 OLTP_DB_URL := $(_DOTENV_RAW_OLTP_DB_URL)
@@ -211,7 +223,7 @@ endif
 
 _DOTENV_RAW_BOX_REMOTE := $(call dotenv_get,BOX_REMOTE)
 ifneq (0,$(dotenv_status))
-$(error .env exists but BOX_REMOTE could not be parsed from it (#104) -- refusing to silently fall back to the default. 'uv run python' stderr: $(shell cat $(_DOTENV_STDERR) 2>/dev/null))
+$(error .env exists but BOX_REMOTE could not be parsed from it (#104) -- refusing to silently fall back to the default. 'uv run python' stderr: $(shell cat $(_DOTENV_STDERR) 2>/dev/null)$(dotenv_cleanup))
 endif
 ifneq (,$(_DOTENV_RAW_BOX_REMOTE))
 BOX_REMOTE := $(_DOTENV_RAW_BOX_REMOTE)
@@ -219,7 +231,7 @@ endif
 
 _DOTENV_RAW_BOX_PROJECT_ROOT := $(call dotenv_get,BOX_PROJECT_ROOT)
 ifneq (0,$(dotenv_status))
-$(error .env exists but BOX_PROJECT_ROOT could not be parsed from it (#104) -- refusing to silently fall back to the default. 'uv run python' stderr: $(shell cat $(_DOTENV_STDERR) 2>/dev/null))
+$(error .env exists but BOX_PROJECT_ROOT could not be parsed from it (#104) -- refusing to silently fall back to the default. 'uv run python' stderr: $(shell cat $(_DOTENV_STDERR) 2>/dev/null)$(dotenv_cleanup))
 endif
 ifneq (,$(_DOTENV_RAW_BOX_PROJECT_ROOT))
 BOX_PROJECT_ROOT := $(_DOTENV_RAW_BOX_PROJECT_ROOT)
@@ -227,7 +239,7 @@ endif
 
 _DOTENV_RAW_INCOMING_REMOTE := $(call dotenv_get,INCOMING_REMOTE)
 ifneq (0,$(dotenv_status))
-$(error .env exists but INCOMING_REMOTE could not be parsed from it (#104) -- refusing to silently fall back to the default. 'uv run python' stderr: $(shell cat $(_DOTENV_STDERR) 2>/dev/null))
+$(error .env exists but INCOMING_REMOTE could not be parsed from it (#104) -- refusing to silently fall back to the default. 'uv run python' stderr: $(shell cat $(_DOTENV_STDERR) 2>/dev/null)$(dotenv_cleanup))
 endif
 ifneq (,$(_DOTENV_RAW_INCOMING_REMOTE))
 INCOMING_REMOTE := $(_DOTENV_RAW_INCOMING_REMOTE)
@@ -235,11 +247,12 @@ endif
 
 _DOTENV_RAW_EXHIBITS_REMOTE := $(call dotenv_get,EXHIBITS_REMOTE)
 ifneq (0,$(dotenv_status))
-$(error .env exists but EXHIBITS_REMOTE could not be parsed from it (#104) -- refusing to silently fall back to the default. 'uv run python' stderr: $(shell cat $(_DOTENV_STDERR) 2>/dev/null))
+$(error .env exists but EXHIBITS_REMOTE could not be parsed from it (#104) -- refusing to silently fall back to the default. 'uv run python' stderr: $(shell cat $(_DOTENV_STDERR) 2>/dev/null)$(dotenv_cleanup))
 endif
 ifneq (,$(_DOTENV_RAW_EXHIBITS_REMOTE))
 EXHIBITS_REMOTE := $(_DOTENV_RAW_EXHIBITS_REMOTE)
 endif
+$(dotenv_cleanup)
 endif
 endif
 # Codex on #138 (finding 2): `setup`'s own recipe below still does
@@ -286,7 +299,7 @@ endif
 # BOX_REMOTE the normal Make way with no .env parsing involved, which is
 # exactly what `$(origin BOX_REMOTE)` being anything other than `file`
 # below detects, and always wins over whatever .env says.
-ifneq (,$(filter setup,$(MAKECMDGOALS)))
+ifeq ($(MAKECMDGOALS),setup)
 ifeq ($(origin BOX_REMOTE),file)
 ifneq (,$(wildcard .env))
 _SETUP_BOX_REMOTE_DOTENV_LINES := $(shell grep -Ec '^[[:space:]]*(export[[:space:]]+)?BOX_REMOTE[[:space:]]*=' .env 2>/dev/null)
@@ -505,7 +518,7 @@ sh_quote = '$(subst ','\'',$(1))'
 # BOX_PROJECT_ROOT alone -- so only INCOMING_REMOTE/EXHIBITS_REMOTE need
 # this check.
 is_legacy_quoted_endpoint = $(strip $(shell printf '%s' $(call sh_quote,$(1)) | grep -Eq "^[^:]*:'.*'$$" && printf yes))
-ifeq ($(filter setup,$(MAKECMDGOALS)),)
+ifneq ($(MAKECMDGOALS),setup)
 ifneq (,$(call is_legacy_quoted_endpoint,$(INCOMING_REMOTE_RAW)))
 $(error INCOMING_REMOTE=$(INCOMING_REMOTE_RAW) still uses the old hand-quoted form (box:'Custom/Path/') that README used to recommend. Remove the surrounding quote marks and write the bare value instead (e.g. INCOMING_REMOTE=box:Custom/Path/) -- ingest/publish-raw already quote it for you at the point they hand it to rclone (#118), so the hand-quoting no longer means what it used to and would silently target the wrong Box path)
 endif
@@ -545,7 +558,7 @@ help:
 
 setup:
 	perl -pi -e 's/\r$$//' scripts/setup.sh
-	BOX_REMOTE="$(BOX_REMOTE)" bash scripts/setup.sh
+	BOX_REMOTE=$(call sh_quote,$(BOX_REMOTE_RAW)) bash scripts/setup.sh
 	$(MAKE) install-hooks
 
 install-hooks:

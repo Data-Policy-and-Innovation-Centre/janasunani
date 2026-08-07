@@ -247,8 +247,8 @@ def test_setup_bypasses_dotenv_extraction_when_uv_is_unresolvable(isolated_dir):
     because the environment is unrepaired.
 
     `setup`'s own recipe never touches OLTP_DB_URL or the Box keys, so the
-    Makefile now skips the whole `ifneq (,$(wildcard .env))` extraction
-    whenever `setup` is among `$(MAKECMDGOALS)`. Proven here with `uv`
+    Makefile now skips the whole `ifneq (,$(wildcard .env))` extraction only
+    when `setup` is the sole `$(MAKECMDGOALS)` entry. Proven here with `uv`
     genuinely unresolvable (PATH stripped to /usr/bin:/bin, USER_BIN pointed
     at a nonexistent directory) and a `.env` present -- before the fix this
     combination hit the hard $(error) before printing anything.
@@ -340,7 +340,7 @@ def test_setup_passes_through_a_safe_dotenv_box_remote(isolated_dir):
         cwd=isolated_dir, env=env,
     )
     assert result.returncode == 0, result.stderr
-    assert 'BOX_REMOTE="mybox"' in result.stdout, result.stdout
+    assert "BOX_REMOTE='mybox'" in result.stdout, result.stdout
 
 
 def test_setup_passes_through_a_dotenv_box_remote_with_hyphen_underscore_and_digit(
@@ -355,7 +355,7 @@ def test_setup_passes_through_a_dotenv_box_remote_with_hyphen_underscore_and_dig
         cwd=isolated_dir, env=env,
     )
     assert result.returncode == 0, result.stderr
-    assert 'BOX_REMOTE="my-box_2"' in result.stdout, result.stdout
+    assert "BOX_REMOTE='my-box_2'" in result.stdout, result.stdout
 
 
 def test_setup_fails_loudly_for_a_dotenv_box_remote_outside_the_safe_pattern(
@@ -414,7 +414,7 @@ def test_setup_with_command_line_box_remote_still_wins_over_dotenv(
         "-n", "setup", "BOX_REMOTE=fromcli", "MAKE=true", cwd=isolated_dir
     )
     assert result.returncode == 0, result.stderr
-    assert 'BOX_REMOTE="fromcli"' in result.stdout, result.stdout
+    assert "BOX_REMOTE='fromcli'" in result.stdout, result.stdout
 
 
 def test_setup_without_dotenv_box_remote_is_unaffected_by_the_guard(isolated_dir):
@@ -423,7 +423,172 @@ def test_setup_without_dotenv_box_remote_is_unaffected_by_the_guard(isolated_dir
     to, using the built-in `box` default."""
     result = _make("-n", "setup", "MAKE=true", cwd=isolated_dir)
     assert result.returncode == 0, result.stderr
-    assert 'BOX_REMOTE="box"' in result.stdout, result.stdout
+    assert "BOX_REMOTE='box'" in result.stdout, result.stdout
+
+
+def test_setup_bypass_does_not_apply_to_mixed_goal_invocations(isolated_dir):
+    """`setup` is allowed to bootstrap an unavailable uv only by itself.
+    Adding a data-moving goal must select the ordinary dotenv parser, which
+    fails loudly here rather than letting `publish-raw` use its default Box
+    endpoint despite the operator's .env configuration."""
+    (isolated_dir / ".env").write_text("BOX_REMOTE=must-not-be-ignored\n")
+    env = {"HOME": os.environ.get("HOME", ""), "PATH": "/usr/bin:/bin"}
+    result = _make(
+        "-n",
+        "USER_BIN=/nonexistent-dir-for-this-test",
+        "MAKE=true",
+        "setup",
+        "publish-raw",
+        cwd=isolated_dir,
+        env=env,
+    )
+    assert result.returncode != 0
+    assert "could not be parsed" in result.stderr
+    assert "rclone copy" not in result.stdout
+
+
+@pytest.mark.parametrize("source", ["command_line", "environment"])
+def test_setup_passes_special_box_remote_to_script_byte_for_byte(
+    isolated_dir, source
+):
+    """The setup recipe must use BOX_REMOTE_RAW too.  Plain $(BOX_REMOTE)
+    re-scans a command-line or exported `$` as Make syntax before bash sees
+    it; this executes a harmless local setup stub to prove the child script
+    receives the exact original bytes for both relevant origins."""
+    remote = "remote$literal"
+    setup_dir = isolated_dir / "scripts"
+    setup_dir.mkdir()
+    received = isolated_dir / "setup_received.txt"
+    setup_script = setup_dir / "setup.sh"
+    setup_script.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s" "$BOX_REMOTE" > "{received}"\n'
+    )
+    setup_script.chmod(0o755)
+
+    env = dict(os.environ)
+    args = ["MAKE=true", "setup"]
+    if source == "command_line":
+        args.insert(0, f"BOX_REMOTE={remote}")
+    else:
+        env["BOX_REMOTE"] = remote
+
+    result = _make(*args, cwd=isolated_dir, env=env)
+    assert result.returncode == 0, result.stderr
+    assert received.read_text() == remote
+
+
+def _install_dotenv_uv_shim(bin_dir: Path, *, fail: bool = False) -> None:
+    """Install a no-network stand-in for the parse-time `uv run` command."""
+    bin_dir.mkdir(exist_ok=True)
+    shim = bin_dir / "uv"
+    if fail:
+        body = 'printf "%s\\n" "forced dotenv parse failure" >&2\nexit 1\n'
+    else:
+        body = (
+            'case "$*" in\n'
+            '  *"get(\'OLTP_DB_URL\')"*) printf "%s" "postgresql+asyncpg://postgres:shim@127.0.0.1:5544/janasunani" ;;\n'
+            '  *"get(\'BOX_REMOTE\')"*) printf "%s" "shim-box" ;;\n'
+            '  *"get(\'BOX_PROJECT_ROOT\')"*) printf "%s" "Shim Project" ;;\n'
+            '  *"get(\'INCOMING_REMOTE\')"*) printf "%s" "shim:incoming/" ;;\n'
+            '  *"get(\'EXHIBITS_REMOTE\')"*) printf "%s" "shim:exhibits/" ;;\n'
+            "esac\n"
+        )
+    shim.write_text("#!/bin/sh\n" + body)
+    shim.chmod(0o755)
+
+
+def _install_rmdir_recorder(bin_dir: Path) -> None:
+    """Record each cleanup directory while delegating to the real rmdir."""
+    real_rmdir = shutil.which("rmdir")
+    assert real_rmdir is not None, "test setup: rmdir must be installed"
+    recorder = bin_dir / "rmdir"
+    recorder.write_text(
+        "#!/bin/sh\n"
+        'printf "%s\\n" "$1" >> "$MAKEFILE_DOTENV_RMDIR_LOG"\n'
+        f'exec "{real_rmdir}" "$@"\n'
+    )
+    recorder.chmod(0o755)
+
+
+def _dotenv_make_command(isolated_dir: Path, fake_bin: Path) -> list[str]:
+    return [
+        "make",
+        "-C",
+        str(isolated_dir),
+        "-f",
+        str(MAKEFILE_PATH),
+        "-n",
+        f"USER_BIN={fake_bin}",
+        "box-paths",
+    ]
+
+
+def test_dotenv_temp_directories_are_per_make_and_cleaned_after_success(isolated_dir):
+    """Two concurrent parses use distinct private status directories and
+    remove them once all five values have been checked.  The rmdir shim is a
+    deterministic observation point: the old username-global files neither
+    made a private directory nor cleaned one up."""
+    (isolated_dir / ".env").write_text("BOX_REMOTE=ignored-by-shim\n")
+    fake_bin = isolated_dir / "fakebin"
+    _install_dotenv_uv_shim(fake_bin)
+    _install_rmdir_recorder(fake_bin)
+
+    processes = []
+    logs = []
+    for index in range(2):
+        log = isolated_dir / f"rmdir-{index}.log"
+        env = dict(os.environ)
+        env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+        env["MAKEFILE_DOTENV_RMDIR_LOG"] = str(log)
+        processes.append(
+            subprocess.Popen(
+                _dotenv_make_command(isolated_dir, fake_bin),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=env,
+            )
+        )
+        logs.append(log)
+
+    for process in processes:
+        stdout, stderr = process.communicate(timeout=30)
+        assert process.returncode == 0, stdout + stderr
+
+    removed = [log.read_text().splitlines() for log in logs]
+    assert all(len(paths) == 1 for paths in removed)
+    directories = [paths[0] for paths in removed]
+    assert len(set(directories)) == 2
+    assert all(path.startswith("/tmp/janasunani-makefile-dotenv.") for path in directories)
+    assert all(not Path(path).exists() for path in directories)
+
+
+def test_dotenv_temp_directory_is_cleaned_after_parse_failure(isolated_dir):
+    """The hard parse failure remains loud and also removes its private
+    status/stderr directory; a failed make must not leave sensitive stderr
+    behind in /tmp."""
+    (isolated_dir / ".env").write_text("BOX_REMOTE=ignored-by-shim\n")
+    fake_bin = isolated_dir / "fakebin"
+    _install_dotenv_uv_shim(fake_bin, fail=True)
+    _install_rmdir_recorder(fake_bin)
+    log = isolated_dir / "rmdir-failure.log"
+    env = dict(os.environ)
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+    env["MAKEFILE_DOTENV_RMDIR_LOG"] = str(log)
+
+    result = subprocess.run(
+        _dotenv_make_command(isolated_dir, fake_bin),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=env,
+    )
+    assert result.returncode != 0
+    assert "forced dotenv parse failure" in result.stderr
+    directories = log.read_text().splitlines()
+    assert len(directories) == 1
+    assert not Path(directories[0]).exists()
 
 
 def test_parse_time_call_fails_fast_instead_of_hanging_when_sync_needs_network(
