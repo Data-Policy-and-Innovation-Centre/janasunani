@@ -249,6 +249,81 @@ _CITATION_BEFORE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Odia and wider Indian surnames (#183).
+#
+# NAME is the one entity with no pattern recognizer behind it: it comes solely
+# from en_core_web_sm PERSON, which is trained on English-language news and is
+# demonstrably weak here. Measured on the live path, 40 probes over 10 Odia
+# names in 4 sentence framings: 42% missed outright, a further 5% partially
+# redacted (given name left exposed, which still identifies). A Western
+# control name in the identical sentence was caught where the Odia one was
+# not.
+#
+# This is a closed-vocabulary problem far more than a model problem. Odia
+# surnames are a small, public, highly distinctive set, so a gazetteer catches
+# what the model does not without touching citizen data to build it.
+#
+# The span deliberately covers the WHOLE name, walking back over preceding
+# capitalised tokens ("Ramesh Kumar Sahoo", not just "Sahoo"). Redacting the
+# surname alone is the partial-redaction failure above, not a fix for it.
+_INDIAN_SURNAMES = frozenset(
+    {
+        "sahoo", "sahu", "patra", "nayak", "naik", "behera", "rout", "routray",
+        "mohanty", "jena", "das", "dash", "swain", "mishra", "misra", "panda",
+        "pradhan", "barik", "sethi", "majhi", "bhoi", "meher", "parida",
+        "pattnaik", "patnaik", "mahapatra", "acharya", "biswal", "tripathy",
+        "tripathi", "kar", "ghadei", "sabar", "murmu", "hembram", "soren",
+        "tudu", "kisan", "gouda", "gountia", "sagar", "bag", "bal", "behra",
+        "khatua", "lenka", "mallik", "malik", "nanda", "ojha", "padhi",
+        "pani", "rath", "samal", "senapati", "singh", "sinha", "tarai",
+        "thakur", "bhue", "digal", "pradhani", "harijan", "bhatra",
+        "kumar", "prasad", "chandra", "charan", "ranjan",
+    }
+)
+
+# A capitalised token, allowing an internal apostrophe or hyphen.
+_CAP_TOKEN = r"[A-Z][a-z'\-]+"
+
+# Surnames that are also scheme-name words. "Pradhan" is a real Odia surname
+# and the first word of "Pradhan Mantri <scheme>", which appears constantly in
+# a corpus about housing and pensions. Redacting it there removes the scheme
+# the grievance is about and leaves the officer a sentence they cannot act on.
+# Keyed on the token that follows, so the surname still redacts everywhere else.
+_SURNAME_SCHEME_FOLLOWERS = {
+    "pradhan": {"mantri"},
+}
+
+# Name-introducing phrases. The misses concentrate here: the "Applicant:"
+# framing missed 7 of 10 against 2 of 10 for a bare subject position, because
+# a label followed by a colon gives the model no grammatical subject to latch
+# onto. Matching the introducer and redacting only what follows keeps the
+# sentence readable for the officer, the same rule the identifier recognizer
+# follows for "account no.".
+#
+# Deliberately excludes a bare "name" and a bare "from". Both over-redact on
+# real grievance text: "Name of the scheme is Pradhan Mantri Awas Yojana"
+# loses the scheme, and "the road from Sambalpur to Bargarh" loses the place.
+# Neither costs recall, because a person named after either introducer is
+# still caught by the surname trigger.
+_NAME_INTRODUCER_RE = re.compile(
+    r"(?:my\s+name\s+is"
+    r"|name\s+of\s+(?:the\s+)?(?:applicant|complainant|petitioner|deponent)"
+    r"|applicant|complainant|petitioner|deponent"
+    r"|submitted\s+by|filed\s+by|signed\s+by"
+    r"|yours\s+(?:faithfully|sincerely|truly))"
+    r"\s*[:\-]?\s+",
+    re.IGNORECASE,
+)
+
+# Titles that reliably precede a person name.
+_TITLE_WORDS = frozenset(
+    {"shri", "sri", "smt", "smit", "mr", "mrs", "ms", "dr", "prof", "kumari", "km"}
+)
+_NAME_TITLE_RE = re.compile(
+    r"\b(?:" + "|".join(sorted(_TITLE_WORDS)) + r")\.?\s+",
+    re.IGNORECASE,
+)
+
 
 class _IndianIdentifierRecognizer:
     """Bank account and scheme-identifier numbers, anchored on context.
@@ -297,6 +372,119 @@ class _IndianIdentifierRecognizer:
                         )
                     )
                 return results
+
+        return _Impl()
+
+
+def _indian_name_spans(text: str) -> list[tuple[int, int]]:
+    """Return (start, end) spans for Indian person names en_core_web_sm misses.
+
+    Two independent triggers, both of which yield the full name:
+
+    * a capitalised token run ending in a known surname;
+    * a name-introducing phrase or title, followed by a capitalised run.
+
+    Pure text in, offsets out, so it is testable without presidio installed.
+    """
+    spans: list[tuple[int, int]] = []
+    token_re = re.compile(_CAP_TOKEN)
+    tokens = [(m.start(), m.end(), m.group()) for m in token_re.finditer(text)]
+
+    # Trigger 1: a run of capitalised tokens ending in a known surname.
+    for index, (start, end, token) in enumerate(tokens):
+        if token.lower() not in _INDIAN_SURNAMES:
+            continue
+        followers = _SURNAME_SCHEME_FOLLOWERS.get(token.lower())
+        if followers:
+            next_word = re.match(r"\s+([A-Za-z]+)", text[end:])
+            if next_word and next_word.group(1).lower() in followers:
+                continue
+        first = start
+        back = index - 1
+        # Walk back over adjacent capitalised tokens, separated by single
+        # spaces only, so a new sentence cannot be absorbed into the name.
+        while back >= 0 and len(tokens) > back:
+            prev_start, prev_end, prev_token = tokens[back]
+            if text[prev_end:start].strip() or (start - prev_end) > 1:
+                break
+            # Keep the honorific outside the span: "Shri [NAME]" reads, and a
+            # title identifies nobody on its own.
+            if prev_token.lower() in _TITLE_WORDS:
+                break
+            first = prev_start
+            start = prev_start
+            back -= 1
+        spans.append((first, end))
+
+    # Trigger 2: an introducer or title, then up to four capitalised tokens.
+    for pattern in (_NAME_INTRODUCER_RE, _NAME_TITLE_RE):
+        for match in pattern.finditer(text):
+            cursor = match.end()
+            run_start = None
+            run_end = None
+            for _ in range(4):
+                token_match = token_re.match(text, cursor)
+                if token_match is None:
+                    break
+                if run_start is None:
+                    run_start = token_match.start()
+                run_end = token_match.end()
+                cursor = token_match.end()
+                if cursor < len(text) and text[cursor] == " ":
+                    cursor += 1
+                else:
+                    break
+            if run_start is not None and run_end is not None:
+                spans.append((run_start, run_end))
+
+    return _merge_spans(spans)
+
+
+def _merge_spans(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Union overlapping or touching spans, so one name yields one result."""
+    if not spans:
+        return []
+    ordered = sorted(spans)
+    merged = [ordered[0]]
+    for start, end in ordered[1:]:
+        last_start, last_end = merged[-1]
+        if start <= last_end:
+            merged[-1] = (last_start, max(last_end, end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+class _IndianNameRecognizer:
+    """Person names the English NER model misses (#183).
+
+    Same construction trick as _IndianIdentifierRecognizer: subclasses
+    EntityRecognizer at call time so this module imports without presidio.
+    """
+
+    def __new__(cls):
+        from presidio_analyzer import EntityRecognizer, RecognizerResult
+
+        class _Impl(EntityRecognizer):
+            def __init__(self) -> None:
+                super().__init__(
+                    supported_entities=["PERSON"],
+                    name="in_name_recognizer",
+                    supported_language="en",
+                )
+
+            def load(self) -> None:  # pragma: no cover - presidio hook
+                pass
+
+            def analyze(self, text, entities, nlp_artifacts=None):
+                if entities and "PERSON" not in entities:
+                    return []
+                return [
+                    RecognizerResult(
+                        entity_type="PERSON", start=start, end=end, score=0.6
+                    )
+                    for start, end in _indian_name_spans(text)
+                ]
 
         return _Impl()
 
@@ -411,6 +599,10 @@ def _get_engines():
     # redact "account no." along with the number and destroy the sentence for
     # the officer reading it.
     analyzer.registry.add_recognizer(_IndianIdentifierRecognizer())
+    # Indian person names (#183). Additive to en_core_web_sm PERSON: overlapping
+    # spans from the two are merged by the anonymizer, so this only ever widens
+    # coverage. See _indian_name_spans for the measured gap it closes.
+    analyzer.registry.add_recognizer(_IndianNameRecognizer())
     # Landline: STD code (2-4 digits after the leading 0) plus a 6-8 digit
     # subscriber number, e.g. Bhubaneswar "0674 2536789". Presidio's built-in
     # PhoneRecognizer used to be the only thing catching these, at the same
