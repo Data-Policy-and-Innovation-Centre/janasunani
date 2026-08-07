@@ -48,6 +48,16 @@ created_on, petitioner_mobile/email); it never selects `complaints.grievance`.
    incremental update would drift (a late resubmission can change a group id
    that already exists).
 
+   **Source provenance is persisted with every group row (#137).** The
+   current runner deliberately keeps the short redaction → index chain and
+   reads `complaints` + `grievance_redactions` directly from OLTP.  Before it
+   writes groups, it fingerprints the exact source records represented by the
+   signature slice.  The resulting `source_name` and `source_snapshot_id` are
+   deterministic and can be recomputed against a materialized lake by a
+   duplicate-adjusted analytics consumer.  That consumer must assert the
+   match before aggregation; a stale/incomplete lake or a mixture of group
+   runs is an error, not a number to publish.
+
    **Above `REPRESENTATIVE_COMPARISON_CAP` members, a bucket trades recall
    for time (#158).** A campaign-heavy district-year produces buckets in the
    thousands of members — 6,797 was the largest measured on Sambalpur 2024,
@@ -147,6 +157,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from janasunani.config import settings
 from janasunani.db.models import Complaint, DedupGroup, DedupSignature, GrievanceRedaction
 from janasunani.pipeline.dedup import (
+    DEDUP_SOURCE_NAME,
     DEFAULT_NUM_BANDS,
     DEFAULT_NUM_HASHES,
     DEFAULT_SHINGLE_SIZE,
@@ -154,6 +165,8 @@ from janasunani.pipeline.dedup import (
     jaccard_similarity,
     lsh_bands,
     minhash_signature,
+    source_record_digest,
+    source_snapshot_id_from_record_digests,
     shingles,
 )
 
@@ -363,7 +376,11 @@ async def _load_pending_signature_batch(
     must stay a NOT EXISTS against the output table, not an offset.
     """
     done = select(DedupSignature.ticket_no).where(
-        DedupSignature.ticket_no == GrievanceRedaction.ticket_no
+        DedupSignature.ticket_no == GrievanceRedaction.ticket_no,
+        # Existing rows from before #137 cannot truthfully be stamped with a
+        # current source manifest. Rebuild their signatures automatically;
+        # grouping fails closed if a missing digest survives for any reason.
+        DedupSignature.source_record_digest.isnot(None),
     )
     if version is not None:
         # A row stamped with different parameters counts as pending (#136).
@@ -376,6 +393,7 @@ async def _load_pending_signature_batch(
             GrievanceRedaction.ticket_no,
             GrievanceRedaction.grievance_redacted,
             Complaint.district,
+            Complaint.created_year,
             Complaint.created_on,
             Complaint.petitioner_mobile,
             Complaint.petitioner_email,
@@ -394,6 +412,174 @@ async def _load_pending_signature_batch(
     return result.all()
 
 
+def _source_record(
+    ticket_no: str,
+    redacted_text: str | None,
+    district: str,
+    created_year: int,
+    created_on: datetime | None,
+    mobile: str | None,
+    email: str | None,
+) -> dict[str, object]:
+    """The exact source fields captured by a signature provenance digest."""
+    return {
+        "ticket_no": ticket_no,
+        "district": district,
+        "created_year": created_year,
+        "created_on": created_on,
+        "petitioner_mobile": mobile,
+        "petitioner_email": email,
+        "grievance_redacted": redacted_text,
+    }
+
+
+def _signature_rows_for_source_batch(
+    batch,
+    *,
+    salt: str,
+    epoch: date,
+    window_days: int,
+    version: str,
+    now: datetime,
+) -> list[dict[str, object]]:
+    """Build persisted signature rows from the exact source batch supplied."""
+    rows = []
+    for (
+        ticket_no,
+        redacted_text,
+        row_district,
+        row_year,
+        created_on,
+        mobile,
+        email,
+    ) in batch:
+        text = redacted_text or ""
+        shingle_set = shingles(text)
+        signature = minhash_signature(shingle_set, num_hashes=DEFAULT_NUM_HASHES)
+        script = _script_of(text)
+        window_index = _window_index(created_on, epoch, window_days)
+        source = _source_record(
+            ticket_no, redacted_text, row_district, row_year, created_on, mobile, email
+        )
+        rows.append(
+            {
+                "ticket_no": ticket_no,
+                "district": row_district,
+                "created_year": row_year,
+                "script": script,
+                "window_index": window_index,
+                "block_key": _block_key(row_district, script, window_index),
+                "num_shingles": len(shingle_set),
+                "signature": list(signature) if signature is not None else None,
+                # A separate path from text above: computed from the complaints
+                # columns directly, never from redacted_text (dedup.py module
+                # docstring point 3).
+                "identity_key_mobile": identity_key(mobile, salt) if mobile else None,
+                "identity_key_email": identity_key(email, salt) if email else None,
+                "source_record_digest": source_record_digest(source),
+                "index_version": version,
+                "indexed_at": now,
+            }
+        )
+    return rows
+
+
+async def _source_digest_mismatches(conn, district: str, year: int):
+    """Current source records whose existing signature digest is no longer true.
+
+    This is deliberately a source read before grouping. Candidate generation
+    relies on persisted signatures while exact Jaccard verification reads the
+    current redacted text, so allowing these two inputs to differ would create
+    an unprovable mixed run. Missing legacy digests are handled separately as
+    pending signature rows; non-NULL disagreement requires --refresh-stale.
+    """
+    stmt = (
+        select(
+            DedupSignature.ticket_no,
+            DedupSignature.source_record_digest,
+            Complaint.district,
+            Complaint.created_year,
+            Complaint.created_on,
+            Complaint.petitioner_mobile,
+            Complaint.petitioner_email,
+            GrievanceRedaction.grievance_redacted,
+        )
+        .select_from(DedupSignature)
+        .outerjoin(Complaint, Complaint.ticket_no == DedupSignature.ticket_no)
+        .outerjoin(GrievanceRedaction, GrievanceRedaction.ticket_no == DedupSignature.ticket_no)
+        .where(
+            DedupSignature.district == district,
+            DedupSignature.created_year == year,
+        )
+        .order_by(DedupSignature.ticket_no)
+    )
+    result = await conn.execute(stmt)
+    mismatches = []
+    missing_source = []
+    for (
+        ticket_no,
+        stored_digest,
+        row_district,
+        row_year,
+        created_on,
+        mobile,
+        email,
+        redacted_text,
+    ) in result:
+        if row_district is None or row_year is None or redacted_text is None:
+            missing_source.append(ticket_no)
+            continue
+        current = source_record_digest(
+            _source_record(
+                ticket_no, redacted_text, row_district, row_year, created_on, mobile, email
+            )
+        )
+        if stored_digest is not None and stored_digest != current:
+            mismatches.append(
+                (ticket_no, redacted_text, row_district, row_year, created_on, mobile, email)
+            )
+    return mismatches, missing_source
+
+
+def _source_digest_mismatch_error(count: int) -> ValueError:
+    return ValueError(
+        f"{count} signature(s) no longer match their current OLTP source input. "
+        "Refusing to group old candidates with current redacted text; rerun "
+        "with --refresh-stale to rebuild them."
+    )
+
+
+def _missing_source_error(tickets: list[str]) -> ValueError:
+    return ValueError(
+        f"{len(tickets)} signature(s) no longer have a current complaint/redaction "
+        "source row. Refusing to group orphan signatures; reconcile the slice "
+        "before rebuilding it."
+    )
+
+
+def _source_membership_changed_error(count: int) -> ValueError:
+    return ValueError(
+        f"{count} signature(s) moved outside this district-year source slice. "
+        "Refusing to rewrite an old slice under --refresh-stale; reconcile both "
+        "affected slices explicitly before rebuilding."
+    )
+
+
+def _raise_if_source_is_not_current(
+    source_mismatches, missing_source: list[str], district: str, year: int
+) -> None:
+    """Fail grouping before a stored signature and current text can diverge."""
+    if missing_source:
+        raise _missing_source_error(missing_source)
+    moved_sources = [
+        row for row in source_mismatches if row[2] != district or row[3] != year
+    ]
+    if moved_sources:
+        raise _source_membership_changed_error(len(moved_sources))
+    if source_mismatches:
+        raise _source_digest_mismatch_error(len(source_mismatches))
+
+
 async def _index_signatures(
     engine: AsyncEngine,
     district: str,
@@ -407,10 +593,14 @@ async def _index_signatures(
     version = _index_version(window_days, threshold, salt)
     epoch = date(year, 1, 1)
     processed = 0
+    refreshed_tickets: set[str] = set()
 
     async with engine.begin() as conn:
         total, already = await _count_signature_slice(conn, district, year)
         stale = await _count_stale_signatures(conn, district, year, version)
+        source_mismatches, missing_source = await _source_digest_mismatches(
+            conn, district, year
+        )
     logger.info(
         "slice {}/{}: {} redacted complaints, {} already indexed",
         district,
@@ -429,6 +619,41 @@ async def _index_signatures(
             "rotation this is not optional -- the old identity hashes stay "
             "stored and linkage breaks across the boundary (#136).",
         )
+    if missing_source:
+        raise _missing_source_error(missing_source)
+    moved_sources = [
+        row for row in source_mismatches if row[2] != district or row[3] != year
+    ]
+    if moved_sources:
+        raise _source_membership_changed_error(len(moved_sources))
+    if source_mismatches and not refresh_stale:
+        raise _source_digest_mismatch_error(len(source_mismatches))
+    if source_mismatches:
+        if limit is not None:
+            raise ValueError(
+                "--limit cannot be combined with --refresh-stale when source "
+                "inputs changed; remove --limit to rebuild every mismatch."
+            )
+        logger.warning(
+            "{} signature(s) no longer match current OLTP source input; "
+            "rebuilding them because --refresh-stale was supplied.",
+            len(source_mismatches),
+        )
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        rows = _signature_rows_for_source_batch(
+            source_mismatches,
+            salt=salt,
+            epoch=epoch,
+            window_days=window_days,
+            version=version,
+            now=now,
+        )
+        async with engine.begin() as conn:
+            await conn.execute(
+                _dialect_upsert(DedupSignature, conn.dialect.name, rows, "ticket_no")
+            )
+        refreshed_tickets.update(row[0] for row in source_mismatches)
+        processed += len(rows)
 
     while True:
         remaining = None if limit is None else limit - processed
@@ -443,51 +668,57 @@ async def _index_signatures(
             if not batch:
                 break
 
+            batch_ticket_nos = [row[0] for row in batch]
+            existing_in_batch = set(
+                (
+                    await conn.execute(
+                        select(DedupSignature.ticket_no).where(
+                            DedupSignature.ticket_no.in_(batch_ticket_nos)
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
             # Naive UTC — every timestamp column in this schema is TIMESTAMP
             # WITHOUT TIME ZONE and asyncpg refuses a tz-aware value there,
             # while SQLite silently accepts one. Same normalisation as
             # redact_grievance.py / db/crud.py.
             now = datetime.now(timezone.utc).replace(tzinfo=None)
-            rows = []
-            for ticket_no, redacted_text, row_district, created_on, mobile, email in batch:
-                text = redacted_text or ""
-                shingle_set = shingles(text)
-                signature = minhash_signature(shingle_set, num_hashes=DEFAULT_NUM_HASHES)
-                script = _script_of(text)
-                window_index = _window_index(created_on, epoch, window_days)
-                rows.append(
-                    {
-                        "ticket_no": ticket_no,
-                        "district": row_district,
-                        "created_year": year,
-                        "script": script,
-                        "window_index": window_index,
-                        "block_key": _block_key(row_district, script, window_index),
-                        "num_shingles": len(shingle_set),
-                        "signature": list(signature) if signature is not None else None,
-                        # A separate path from `text` above: computed from
-                        # the complaints columns directly, never from
-                        # redacted_text (dedup.py module docstring point 3).
-                        "identity_key_mobile": identity_key(mobile, salt) if mobile else None,
-                        "identity_key_email": identity_key(email, salt) if email else None,
-                        "index_version": version,
-                        "indexed_at": now,
-                    }
-                )
+            rows = _signature_rows_for_source_batch(
+                batch,
+                salt=salt,
+                epoch=epoch,
+                window_days=window_days,
+                version=version,
+                now=now,
+            )
             await conn.execute(
                 _dialect_upsert(DedupSignature, conn.dialect.name, rows, "ticket_no")
             )
 
+        refreshed_tickets.update(existing_in_batch)
         processed += len(batch)
+        unchanged_existing = already - len(refreshed_tickets)
         logger.info(
-            "indexed {} of {} ({} this batch)", processed + already, total, len(batch)
+            "indexed {} of {} ({} this batch)",
+            unchanged_existing + processed,
+            total,
+            len(batch),
         )
 
+    unchanged_existing = already - len(refreshed_tickets)
     return {
         "total": total,
-        "already_indexed": already,
+        # Existing rows overwritten during this run belong in processed, not
+        # here. This keeps the reconciliation contract auditable:
+        # unchanged existing + inserted/refreshed <= total, including a
+        # one-row source refresh inside an otherwise complete slice.
+        "already_indexed": unchanged_existing,
         "processed": processed,
         "stale_at_start": stale,
+        "source_mismatches_at_start": len(source_mismatches),
     }
 
 
@@ -507,6 +738,39 @@ async def _load_slice_signatures(conn, district: str, year: int):
     )
     result = await conn.execute(stmt)
     return result.all()
+
+
+async def _source_snapshot_for_signature_slice(conn, district: str, year: int) -> str:
+    """Manifest the exact indexed inputs represented by this group run.
+
+    This intentionally reads the digest stored at signature time, never the
+    current redaction row. If OLTP changes without re-indexing, persisted
+    groups continue to identify their older actual input, and a prospective
+    lake join fails the public assertion rather than being stamped as current.
+    A partial signature run likewise has a manifest only for its actual subset
+    and cannot validate a full lake slice.
+    """
+    stmt = (
+        select(
+            DedupSignature.ticket_no,
+            DedupSignature.source_record_digest,
+        )
+        .where(
+            DedupSignature.district == district,
+            DedupSignature.created_year == year,
+        )
+        .order_by(DedupSignature.ticket_no)
+    )
+    result = await conn.execute(stmt)
+    row_digests = result.all()
+    missing = [ticket_no for ticket_no, digest in row_digests if digest is None]
+    if missing:
+        raise ValueError(
+            "dedup groups cannot be stamped with source provenance while "
+            f"{len(missing)} signature(s) lack source_record_digest; rerun "
+            "janasunani-dedup-index so #137 can rebuild them"
+        )
+    return source_snapshot_id_from_record_digests(row_digests)
 
 
 async def _load_redacted_text(conn, ticket_nos: list[str]) -> dict[str, str]:
@@ -750,6 +1014,13 @@ async def _group_duplicates(
 ) -> dict[str, int]:
     async with engine.begin() as conn:
         rows = await _load_slice_signatures(conn, district, year)
+        source_mismatches, missing_source = await _source_digest_mismatches(
+            conn, district, year
+        )
+        _raise_if_source_is_not_current(
+            source_mismatches, missing_source, district, year
+        )
+        snapshot_id = await _source_snapshot_for_signature_slice(conn, district, year)
 
     if not rows:
         return {
@@ -864,6 +1135,8 @@ async def _group_duplicates(
             "block_key": block_key_by_ticket[ticket_no],
             "duplicate_group_id": group_id,
             "group_size": group_sizes[group_id],
+            "source_name": DEDUP_SOURCE_NAME,
+            "source_snapshot_id": snapshot_id,
             "index_version": version,
             "grouped_at": now,
         }
@@ -871,6 +1144,16 @@ async def _group_duplicates(
     ]
 
     async with engine.begin() as conn:
+        # A source update can race the initial check while candidate text is
+        # being fetched and verified. Check again immediately before persisting
+        # a certified group assignment; this narrows the READ COMMITTED race
+        # window, though it is not a substitute for a transaction-wide lock.
+        source_mismatches, missing_source = await _source_digest_mismatches(
+            conn, district, year
+        )
+        _raise_if_source_is_not_current(
+            source_mismatches, missing_source, district, year
+        )
         for i in range(0, len(group_rows), BATCH_SIZE):
             chunk = group_rows[i : i + BATCH_SIZE]
             await conn.execute(
@@ -1012,10 +1295,12 @@ def main() -> None:
         action="store_true",
         help=(
             "Also rebuild signatures produced under different parameters "
-            "(salt, window, threshold, or dedup.py's own constants). Off by "
-            "default: a backfill over derived citizen data should not change "
-            "scope because an unrelated value moved. Required after a salt "
-            "rotation, or the old identity hashes stay stored."
+            "(salt, window, threshold, or dedup.py's own constants), or whose "
+            "current OLTP source record no longer matches its stored digest. "
+            "Off by default: a backfill over derived citizen data should not "
+            "change scope because an unrelated value moved. Required after a "
+            "salt rotation or redaction/source update; otherwise grouping fails "
+            "closed rather than mixing old candidates with current text."
         ),
     )
     args = parser.parse_args()

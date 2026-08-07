@@ -149,8 +149,13 @@ Three storage layers, deliberately distinct (detail in
   demo's history browse read this, never OLTP.
 - **Pipeline artifact DB.** A per-run SQLite database, the document pipeline's
   resumable working state. Reaches OLTP only through the exporter.
-- **Dedup index** *(Phase 14)*. Corpus-level MinHash/LSH state built from the
-  lake. The first thing a pipeline run needs beyond its own artifact DB.
+- **Dedup index** *(Phase 14)*. Corpus-level MinHash/LSH state currently built
+  directly from OLTP `complaints` + `grievance_redactions`, preserving the
+  short redaction → index chain. Each persisted group carries that source plus
+  a deterministic input-snapshot digest; a lake-based duplicate analytic must
+  assert the digest before joining, so materialization skew fails loudly rather
+  than becoming a mixed-snapshot count (#137). The first thing a pipeline run
+  needs beyond its own artifact DB.
 
 Live flow: raw input → extract → redact → triage → classify → summarize → route →
 persist to OLTP → view.
@@ -622,9 +627,11 @@ unbuilt.
 
 **Three firsts this stage introduces**, worth flagging:
 
-- The **first stage with a corpus-level dependency**. It needs a dedup index built
-  from the lake, not just the per-run artifact DB. That affects resumability and
-  the Phase 19 batch/live recipe convergence.
+- The **first stage with a corpus-level dependency**. It currently builds its
+  dedup index directly from the OLTP redaction tables, not just the per-run
+  artifact DB; each group records a deterministic source snapshot so a
+  lake-based analytic must prove it is joining the same materialization (#137).
+  That affects resumability and the Phase 19 batch/live recipe convergence.
 - Dedup keys derived from `petitioner_mobile` / `petitioner_email` must be
   **salted hashes**, held outside the redacted text path. A raw mobile number in a
   dedup index is a PII store by another name.

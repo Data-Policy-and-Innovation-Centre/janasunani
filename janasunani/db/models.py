@@ -425,6 +425,13 @@ class DedupSignature(Base):
     identity_key_mobile = Column(String, nullable=True, index=True)
     identity_key_email = Column(String, nullable=True, index=True)
 
+    # #137. Digest of the exact OLTP record that produced this signature.
+    # Group provenance aggregates these stored values instead of re-reading
+    # current source rows, which would silently relabel a stale signature as
+    # fresh after a redaction/source update. Existing rows stay NULL until the
+    # runner rebuilds them; groups fail closed while any are missing.
+    source_record_digest = Column(String, nullable=True)
+
     index_version = Column(String, nullable=True)
     indexed_at = Column(DateTime, nullable=False, server_default=func.now())
 
@@ -461,6 +468,15 @@ class DedupGroup(Base):
 
     duplicate_group_id = Column(String, nullable=False, index=True)
     group_size = Column(Integer, nullable=False)
+
+    # #137. The current runner reads the redacted historical slice directly
+    # from OLTP.  These two fields tell a downstream analytics consumer exactly
+    # which source and deterministic source manifest produced the grouping, so
+    # it can reject a mismatched Parquet materialization instead of combining
+    # different snapshots.  Existing pre-migration rows remain NULL in the DB
+    # until rebuilt and are intentionally not valid for such an assertion.
+    source_name = Column(String, nullable=True)
+    source_snapshot_id = Column(String, nullable=True)
 
     index_version = Column(String, nullable=True)
     grouped_at = Column(DateTime, nullable=False, server_default=func.now())
