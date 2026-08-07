@@ -30,7 +30,7 @@ from janasunani.routing.mappings import (
     _GENERIC_OFFICE_NAME,
     load_mapping_tables,
 )
-from janasunani.serving.schemas import RoutingResult
+from janasunani.serving.schemas import EmpiricalRoutingEvidence, RoutingResult
 
 
 @dataclass(frozen=True)
@@ -324,6 +324,11 @@ class _LazyDefaultRouter:
                     # "learned" rather than "rules": this came from what the
                     # record shows, not from a hand-written table.
                     method="learned",
+                    empirical_evidence=EmpiricalRoutingEvidence(
+                        support=hit.support,
+                        concentration=hit.share,
+                        width=hit.width,
+                    ),
                 )
         return self._get().route(
             category=category,

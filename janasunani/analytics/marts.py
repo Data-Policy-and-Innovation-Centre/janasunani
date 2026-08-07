@@ -11,7 +11,7 @@ accept, and let ``tests/`` prove the numbers on a fixture lake.
 """
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 import duckdb
 
@@ -45,10 +45,12 @@ def install(con: duckdb.DuckDBPyConnection, *names: str) -> None:
 
 
 def open_lake(
-    *names: str, lake_dir: Optional[Path] = None
+    *names: str,
+    lake_dir: Optional[Path] = None,
+    tables: Optional[Sequence[str]] = None,
 ) -> duckdb.DuckDBPyConnection:
     """A lake connection with the named marts installed. Caller closes it."""
-    con = connect(lake_dir)
+    con = connect(lake_dir, tables=tables)
     try:
         install(con, *names)
     except Exception:

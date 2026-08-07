@@ -24,7 +24,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 def _camel_case(name: str) -> str:
@@ -63,6 +63,23 @@ class ClassificationResult(BaseModel):
     language: str  # ISO-ish code the categorizer gate produced ("en", "or")
 
 
+class EmpiricalRoutingEvidence(BaseModel):
+    """Aggregate evidence behind an empirically observed destination.
+
+    The crosswalk describes where comparable cases were historically sent. It
+    does not assert that those destinations produced the best outcome.
+    """
+
+    support: int = Field(ge=1)
+    concentration: float = Field(ge=0.0, le=1.0)
+    width: Literal[
+        "category+subcategory+district",
+        "category+subcategory",
+        "category+district",
+        "category",
+    ]
+
+
 class RoutingResult(BaseModel):
     dept: str
     office: str
@@ -70,6 +87,184 @@ class RoutingResult(BaseModel):
     escalation_authority: Optional[str] = None
     confidence: float = Field(ge=0.0, le=1.0)
     method: Literal["rules", "learned", "fallback", "mock"]
+    empirical_evidence: Optional[EmpiricalRoutingEvidence] = None
+
+    @model_validator(mode="after")
+    def _empirical_evidence_matches_method(self) -> "RoutingResult":
+        if self.method == "learned" and self.empirical_evidence is None:
+            raise ValueError("learned routing requires empirical_evidence")
+        if self.method != "learned" and self.empirical_evidence is not None:
+            raise ValueError("only learned routing may carry empirical_evidence")
+        return self
+
+
+class DuplicateSignal(BaseModel):
+    """A possible resubmission or a collective campaign, never a disposition."""
+
+    duplicate_kind: Literal["resubmission", "campaign"]
+    duplicate_group_id: str = Field(min_length=1)
+    duplicate_ticket_no: Optional[str] = None
+    related_filings: Optional[int] = Field(default=None, ge=2)
+
+    @model_validator(mode="after")
+    def _kind_has_the_right_context(self) -> "DuplicateSignal":
+        if self.duplicate_kind == "resubmission":
+            if not self.duplicate_ticket_no:
+                raise ValueError("resubmission requires duplicate_ticket_no")
+            if self.related_filings is not None:
+                raise ValueError("resubmission must not carry related_filings")
+        elif self.duplicate_ticket_no is not None:
+            raise ValueError("campaign must not carry duplicate_ticket_no")
+        elif self.related_filings is None:
+            raise ValueError("campaign requires related_filings")
+        return self
+
+
+class DuplicateReview(BaseModel):
+    """Availability and outcome of the duplicate/campaign lookup.
+
+    An absent ``DuplicateSignal`` alone is ambiguous: it could mean a verified
+    no-match, a short submission the matcher declined to compare, or an index
+    that is unavailable.  Keep those states visible so neither an officer nor
+    the frontend turns missing evidence into a negative finding.
+    """
+
+    decision: Literal[
+        "matched", "no_match", "abstained", "not_indexed", "unavailable"
+    ]
+    reason: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _unavailable_states_explain_themselves(self) -> "DuplicateReview":
+        if self.decision in {"abstained", "not_indexed", "unavailable"} and not self.reason:
+            raise ValueError(f"{self.decision} duplicate review requires a reason")
+        if self.decision in {"matched", "no_match"} and self.reason is not None:
+            raise ValueError(f"{self.decision} duplicate review must not imply uncertainty")
+        return self
+
+
+class OcrQualityEvidence(BaseModel):
+    """A non-content observation from the established OCR quality guard.
+
+    This deliberately records only whether the existing repetition-collapse
+    guard fired.  It never serializes source text, a feature vector, or a
+    purported probability.
+    """
+
+    kind: Literal["repetition_collapse"]
+    observed: bool
+
+
+class SpamReview(BaseModel):
+    """Officer-review state for the deliberately narrow low-signal advisory.
+
+    ``review`` is reserved for a future, redacted human-adjudicated validation
+    release.  The current provider always abstains, even if the OCR quality
+    guard observes repetition collapse.  There is intentionally no score:
+    no calibrated or trained spam model has been authorized for this service.
+    """
+
+    decision: Literal["review", "abstained"]
+    reason_code: Literal[
+        "validated_low_signal_evidence",
+        "ocr_repetition_collapse_unvalidated",
+        "live_review_disabled_pending_redacted_adjudication",
+        "mock_low_signal_review_unavailable",
+        "advisory_provider_unavailable",
+    ]
+    evidence: tuple[OcrQualityEvidence, ...] = ()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _replace_legacy_score_contract(cls, value):
+        """Read pre-validation persisted results without retaining their score.
+
+        Prior demo responses could contain a mock ``flagged`` result or a
+        ``not_scored`` status plus a numeric ``spam_score``.  Neither is
+        defensible as a live decision, so old records become an explicit
+        abstention instead of preserving a pseudo-score on the new wire shape.
+        """
+
+        if not isinstance(value, dict):
+            return value
+        legacy_decision = value.get("decision")
+        if legacy_decision not in {"flagged", "not_scored", "abstained"}:
+            return value
+        if legacy_decision == "abstained" and "reason_code" in value:
+            return value
+        normalized = dict(value)
+        normalized.update(
+            decision="abstained",
+            reason_code="live_review_disabled_pending_redacted_adjudication",
+            evidence=(),
+        )
+        normalized.pop("spam_reason", None)
+        normalized.pop("spam_score", None)
+        return normalized
+
+    @model_validator(mode="after")
+    def _decision_matches_the_reason_code(self) -> "SpamReview":
+        if (
+            self.decision == "review"
+            and self.reason_code != "validated_low_signal_evidence"
+        ):
+            raise ValueError("review requires validated_low_signal_evidence")
+        if (
+            self.decision == "abstained"
+            and self.reason_code == "validated_low_signal_evidence"
+        ):
+            raise ValueError("validated_low_signal_evidence requires review")
+        if self.decision == "review" and not self.evidence:
+            raise ValueError("review requires auditable low-signal evidence")
+        return self
+
+
+class TriageResult(BaseModel):
+    """Advisory signals only; none changes whether a grievance is accepted."""
+
+    duplicate: Optional[DuplicateSignal] = None
+    duplicate_review: DuplicateReview = Field(
+        default_factory=lambda: DuplicateReview(
+            decision="not_indexed",
+            reason=(
+                "Duplicate matching has not been run for this submission because "
+                "the live submission path is not connected to a completed index."
+            ),
+        )
+    )
+    spam: SpamReview = Field(
+        default_factory=lambda: SpamReview(
+            decision="abstained",
+            reason_code="live_review_disabled_pending_redacted_adjudication",
+        )
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _derive_duplicate_review_for_persisted_contracts(cls, value):
+        """Read pre-#163 result JSON without mistaking a prior signal for absent.
+
+        Older persisted results carried ``duplicate`` directly, before the
+        lookup state existed.  A legacy signal is still a match; legacy
+        ``null`` stays explicitly not-indexed through the default above.
+        """
+        if not isinstance(value, dict) or "duplicate_review" in value:
+            return value
+        if value.get("duplicate") is None:
+            return value
+        derived = dict(value)
+        derived["duplicate_review"] = {"decision": "matched"}
+        return derived
+
+    @model_validator(mode="after")
+    def _duplicate_signal_matches_review_state(self) -> "TriageResult":
+        has_signal = self.duplicate is not None
+        is_match = self.duplicate_review.decision == "matched"
+        if has_signal != is_match:
+            raise ValueError(
+                "duplicate signal must be present exactly when duplicate review is matched"
+            )
+        return self
 
 
 class GrievanceResult(BaseModel):
@@ -84,6 +279,7 @@ class GrievanceResult(BaseModel):
     classification: ClassificationResult
     summary: str
     routing: RoutingResult
+    triage: TriageResult = Field(default_factory=TriageResult)
 
 
 class HistoryItem(BaseModel):

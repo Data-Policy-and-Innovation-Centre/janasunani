@@ -45,10 +45,15 @@ There is still no auth/redaction on `/history`, so the real-history opt-in
 **`schemas.py` is the contract.** Field names mirror what already exists —
 pipeline artifact DB (`extracted_text`/`redacted_text`/`ocr_model`),
 `PIISpan` (entity/start/end over the *extracted* text), lake columns for
-history rows — so wire-up is plumbing, not renaming. Changing a field is an
-API break; the frontend is built against exactly these shapes, and
-`tests/test_serving_api.py` pins them (those tests must pass unchanged after
-wire-up).
+history rows, and Phase 14's advisory triage states. `RoutingResult` carries
+support and concentration when `method="learned"`; other routing methods
+cannot claim empirical evidence. `TriageResult` keeps resubmissions, campaigns,
+and low-signal review separate, including an explicit scorer abstention. Its
+`duplicate_review` distinguishes unindexed, unavailable, and abstained
+lookups from a verified no-match, so absent evidence is never presented as a
+negative finding. None of these fields rejects a grievance. Changing a field is an API break; the
+frontend is built against exactly these shapes, and `tests/test_serving_api.py`
+plus `tests/test_serving_triage_contract.py` pin them.
 
 ## Supervisor aggregate artifacts
 
@@ -85,6 +90,17 @@ unusable documents (unsupported/corrupt, blank OCR, quality rejection,
 truncation, or no grievance-bearing pages). Unexpected model/runtime failures
 remain server errors. DeepSeek and MLflow runtime resolution are not part of
 this in-process live command.
+
+The mock emits deterministic illustrative resubmission and campaign states,
+but always abstains from low-signal review so a fixture cannot look like live
+evidence.
+The live processor calls its advisory triage seam only after PII redaction.
+Until the Phase 14 matcher is wired, it returns
+`duplicate_review.decision="not_indexed"`. Low-signal review records only the
+existing repetition-collapse observation and returns `spam.decision="abstained"`;
+no numeric score or review flag is enabled before redacted human-adjudicated
+validation. If an eventual provider is unavailable, the submission proceeds
+with explicit unavailable/abstained states.
 
 Only synthetic demo submissions are allowed until the PII gold evaluation gate
 passes. The mock must never serve real citizen submissions.

@@ -34,9 +34,10 @@ Two backends implement the same contract:
   store). First boot is slow (model warm-up); `/health` must report
   `{"processor":"pipeline"}`.
 - **Mock** — `uv run --extra serving janasunani-api`. Canned/regex responses,
-  useful for fast UI iteration without models loaded. Results from this API
-  come back with `routing.method: "mock"` and the UI marks them with a
-  "mock result" badge.
+useful for fast UI iteration without models loaded. Results from this API
+come back with `routing.method: "mock"` and the UI marks them with a
+  "mock result" badge. Its triage states are deterministic illustrations, not
+  findings about real grievances.
 
 Whichever backend is running, note that `routing.method` frequently comes
 back `"fallback"` (low confidence) rather than `"rules"` — the real
@@ -45,13 +46,22 @@ category→department crosswalk is still being built out (see
 grievance cell rather than failing. This is expected; the UI renders it with
 an explanatory note, not as an error.
 
+The result screen's triage banner is advisory only. Possible resubmissions link
+to the existing history search, campaigns use a distinct collective-grievance
+treatment with the related-filing count. Low-signal review currently exposes
+an explicit, reason-coded abstention and non-content OCR-quality evidence; it
+does not emit a score or a "clean" finding. Nothing in the banner
+blocks or rejects a submission. Learned routes show their aggregate support
+and destination concentration beside the existing confidence and escalation
+chain.
+
 ## Structure
 
 - `app/` — routes: `/` (submit a grievance), `/history` (browse/search), and
   `/supervisor` (aggregate-only Phase 15 briefing).
 - `components/` — `SubmitForm`, `ResultView` (the five-step result cards),
-  `HistoryView`, `SupervisorDashboard`, `SupervisorView`, and `ui.tsx`
-  (Card/Field/Badge primitives).
+  `TriageBanner`, `HistoryView`, `SupervisorDashboard`, `SupervisorView`, and
+  `ui.tsx` (Card/Field/Badge primitives).
 - `lib/api.ts` — the fetch client (`submitGrievance`, `fetchHistory`,
   `fetchSupervisorDashboard`).
 - `lib/types.ts` — TypeScript mirror of `janasunani/serving/schemas.py`. Do

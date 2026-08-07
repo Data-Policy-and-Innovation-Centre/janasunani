@@ -51,7 +51,7 @@ subsets/resume).
 
 Stages run in canonical order regardless of the order given to `--stages`.
 
-**Planned (Phase 14):** a seventh stage, `spam_duplicate`, inserted between
+**Future full Phase 14 design:** a seventh stage, `spam_duplicate`, inserted between
 `pii_tagger` and `page_type_classifier`. It reads **redacted** text, stripping or
 down-weighting the typed tokens first (every phone becomes the same `[PHONE]`, so
 leaving them in inflates similarity between unrelated documents), writes
@@ -60,6 +60,12 @@ leaving them in inflates similarity between unrelated documents), writes
 already gates the summarizer. It is the first stage needing corpus-level state (a
 MinHash/LSH index built from the lake), which the per-run artifact DB does not
 provide. See [ROADMAP.md](../../docs/ROADMAP.md) §5.2.
+
+The reduced August implementation deliberately does **not** add that stage or
+gate later stages. The live serving path observes the existing OCR
+repetition-collapse guard only after redaction and abstains from low-signal
+review until a redacted, human-adjudicated validation release authorizes a
+rule. It emits no numeric spam score and never changes submission status.
 
 ## The dependency split (why `--stages` and lazy imports exist)
 

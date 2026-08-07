@@ -24,6 +24,7 @@ from typing import Optional
 import polars as pl
 from loguru import logger
 
+from janasunani.analytics.findings.discards import TEMPLATES as DISCARD_TEMPLATES
 from janasunani.analytics.marts import mart_sql, open_lake
 from janasunani.config import OUTPUTS_DIR
 
@@ -70,6 +71,118 @@ DESCRIPTIVE_CAVEAT = (
 MIN_LADDER_COVERAGE_PCT = 50.0
 
 
+class ClosureReconciliationError(RuntimeError):
+    """The mart and an independently structured aggregate query disagree."""
+
+
+# Independent of closure.sql's window-ranked `closure_closing_action`: this
+# uses DuckDB's grouped `arg_max` to pick the latest eligible action. It is a
+# runtime reconciliation query, not the portable handover SQL.
+RECONCILIATION_SQL = r"""
+WITH resolved AS (
+    SELECT ticket_no, created_on, resolved_on
+    FROM complaints
+    WHERE resolved_on IS NOT NULL
+), independent_closing AS (
+    SELECT
+        a.ticket_no,
+        arg_max(
+            a.action_taken_remark,
+            struct_pack(action_date := a.action_taken_date, action_id := a.id)
+        ) AS action_taken_remark,
+        count(*) AS action_steps
+    FROM action_history a
+    INNER JOIN resolved r ON r.ticket_no = a.ticket_no
+    WHERE a.action_taken_date IS NOT NULL
+      AND CAST(a.action_taken_date AS DATE) <= CAST(r.resolved_on AS DATE)
+    GROUP BY a.ticket_no
+), classified AS (
+    SELECT
+        r.created_on,
+        r.resolved_on,
+        coalesce(c.action_steps, 0) AS action_steps,
+        CASE regexp_replace(
+            trim(regexp_replace(lower(c.action_taken_remark), '\s+', ' ', 'g')),
+            '\.+$', '', 'g'
+        )
+            WHEN 'the grievance has been disposed' THEN 'bare'
+            WHEN 'the grievance has been resolved' THEN 'bare'
+            WHEN 'the grievance has been disposed with appropriate action' THEN 'with_action'
+            WHEN 'the grievance has been resolved with appropriate action' THEN 'with_action'
+            WHEN 'the grievance has been disposed & beneficiary benefited' THEN 'benefit'
+            WHEN 'the grievance has been resolved & beneficiary benefited' THEN 'benefit'
+            ELSE 'off_ladder'
+        END AS rung
+    FROM resolved r
+    LEFT JOIN independent_closing c ON c.ticket_no = r.ticket_no
+)
+SELECT
+    count(*)::BIGINT AS resolved_complaints,
+    count(*) FILTER (WHERE rung <> 'off_ladder')::BIGINT AS ladder_closures,
+    count(*) FILTER (WHERE rung = 'bare')::BIGINT AS bare,
+    count(*) FILTER (WHERE rung = 'with_action')::BIGINT AS with_action,
+    count(*) FILTER (WHERE rung = 'benefit')::BIGINT AS benefit,
+    count(*) FILTER (WHERE rung IN ('with_action', 'benefit'))::BIGINT AS claims_action,
+    count(*) FILTER (WHERE rung = 'off_ladder')::BIGINT AS off_ladder,
+    count(*) FILTER (
+        WHERE rung = 'bare'
+          AND CAST(resolved_on AS DATE) - CAST(created_on AS DATE) BETWEEN 0 AND 2
+    )::BIGINT AS two_day_bare,
+    count(*) FILTER (
+        WHERE rung = 'bare'
+          AND CAST(resolved_on AS DATE) - CAST(created_on AS DATE) BETWEEN 0 AND 2
+          AND action_steps = 3
+    )::BIGINT AS two_day_bare_min_trajectory
+FROM classified
+""".strip()
+
+# High-volume closing templates verified on the 7 August snapshot as distinct
+# from the six disposal-ladder strings. This is only a drift allowlist: it does
+# not assign an action class or make an outcome claim. The governed discard
+# catalog is included separately below. Any new >=1,000-use off-ladder string
+# still fails closed until reviewed.
+KNOWN_HIGH_VOLUME_NON_LADDER_TEMPLATES = {
+    "as reported",
+    (
+        "advised to place the grievance for house before the collector in joint "
+        "hearing of grievances on monday"
+    ),
+    "thanks for the suggestions",
+    "resolved",
+    "will be considered as per rule in due course of time",
+    (
+        "ପ୍ରଧାନମନ୍ତ୍ରୀ ଆବାସ ଯୋଜନା (ଗ୍ରାମୀଣ) ରେ ନୂତନ ହିତାଧିକାରୀ ଚୟନ ନିମନ୍ତେ "
+        "ବର୍ତ୍ତମାନ ସର୍ଭେ ଚାଲୁଅଛି i ଆଶାୟୀ ପରିବାର awaasplus2024 ମୋବାଇଲ ଆପ୍ "
+        "ଜରିଆରେ ନିଜେ କିମ୍ବା ବ୍ଲକ ଅଧିକାରୀଙ୍କ ସହାୟତାରେ ନିଜ ନାମ ସର୍ଭେ "
+        "ତାଲିକାଭୁକ୍ତ କରିପାରିବେ i ବିସ୍ତୃତ ସୂଚନା https://pmayg.nic.in / "
+        "https://www.rhodisha.gov.in ରେ ଉପଲବ୍ଧ i ତାଲିକାଭୁକ୍ତ ପରିବାରଙ୍କୁ "
+        "ଯୋଗ୍ୟତା ମାନଦଣ୍ଡ ଅନୁଯାୟୀ ପକ୍କା ଘର ମଞ୍ଜୁର ହେବ i"
+    ),
+    "other",
+    "complaint details not legible",
+    "advised to go through the due recruitment process",
+    (
+        "you are requested to send your grievance/petition directly to vigilance "
+        "organisation for redressal of your grievance"
+    ),
+    (
+        "the grievance has been kept in priority category and shall be taken up "
+        "after due government approval"
+    ),
+}
+KNOWN_HIGH_VOLUME_NON_LADDER_TEMPLATES.update(
+    template for templates in DISCARD_TEMPLATES.values() for template in templates
+)
+
+
+def unexpected_off_ladder_templates(tables: dict[str, pl.DataFrame]) -> pl.DataFrame:
+    """High-volume closing strings not yet reviewed as non-ladder templates."""
+    table = tables["closure_off_ladder_templates"]
+    return table.filter(
+        ~pl.col("closing_remark").is_in(KNOWN_HIGH_VOLUME_NON_LADDER_TEMPLATES)
+    )
+
+
 def sql_text() -> str:
     """The view definitions, as handed over."""
     return mart_sql(MART)
@@ -77,14 +190,53 @@ def sql_text() -> str:
 
 def compute(lake_dir: Optional[Path] = None) -> dict[str, pl.DataFrame]:
     """Install the mart over the lake and return every reportable table."""
-    con = open_lake(MART, lake_dir=lake_dir)
+    con = open_lake(
+        MART,
+        lake_dir=lake_dir,
+        tables=("complaints", "action_history"),
+    )
     try:
-        return {
+        tables = {
             view: con.execute(f"SELECT * FROM {view}{_ORDER_BY.get(view, '')}").pl()  # noqa: S608
             for view in REPORT_VIEWS
         }
+        _assert_reconciled(tables, con.execute(RECONCILIATION_SQL).pl())
+        return tables
     finally:
         con.close()
+
+
+def _assert_reconciled(
+    tables: dict[str, pl.DataFrame], reconciliation: pl.DataFrame
+) -> None:
+    summary = tables["closure_finding_summary"].row(0, named=True)
+    two_day = tables["closure_two_day_bare"].row(0, named=True)
+    expected = reconciliation.row(0, named=True)
+    observed = {
+        key: int(summary[key])
+        for key in (
+            "resolved_complaints",
+            "ladder_closures",
+            "bare",
+            "with_action",
+            "benefit",
+            "claims_action",
+            "off_ladder",
+        )
+    }
+    observed.update(
+        {
+            "two_day_bare": int(two_day["two_day_bare"]),
+            "two_day_bare_min_trajectory": int(
+                two_day["two_day_bare_min_trajectory"]
+            ),
+        }
+    )
+    expected = {key: int(value) for key, value in expected.items()}
+    if observed != expected:
+        raise ClosureReconciliationError(
+            "closure mart disagrees with independent arg_max reconciliation"
+        )
 
 
 def _pct(value: Optional[float]) -> str:
@@ -201,6 +353,67 @@ def render_markdown(tables: dict[str, pl.DataFrame]) -> str:
     return "\n".join(lines)
 
 
+def render_headline_markdown(tables: dict[str, pl.DataFrame]) -> str:
+    """Finding 1 only: the closure headline with both required denominators."""
+    s = tables["closure_finding_summary"].row(0, named=True)
+    return "\n".join(
+        [
+            "## Share of closures recording no action",
+            "",
+            "**Insight.** Exact matches over the six disposal templates; no "
+            "model and no complaint text.",
+            "",
+            "| Base | Complaints | Bare disposal rung | Share |",
+            "|---|---:|---:|---:|",
+            (
+                "| Closed on one of the six disposal templates | "
+                f"{_n(s['ladder_closures'])} | {_n(s['bare'])} | "
+                f"**{_pct(s['bare_share_of_ladder_pct'])}** |"
+            ),
+            (
+                f"| All resolved complaints | {_n(s['resolved_complaints'])} | "
+                f"{_n(s['bare'])} | **{_pct(s['bare_share_of_resolved_pct'])}** |"
+            ),
+            "",
+            (
+                f"Quote the {_n(s['ladder_closures'])} templated-closure base "
+                f"whenever the {_pct(s['bare_share_of_ladder_pct'])} figure is used."
+            ),
+            "",
+            f"⚠️ {DESCRIPTIVE_CAVEAT}",
+            "",
+        ]
+    )
+
+
+def render_two_day_markdown(tables: dict[str, pl.DataFrame]) -> str:
+    """Finding 2 only: fast bare closures on both relevant denominators."""
+    t = tables["closure_two_day_bare"].row(0, named=True)
+    return "\n".join(
+        [
+            "## Cases created and closed within two days on a bare disposal",
+            "",
+            "**Insight.** An exact, aggregate subset of the governed closure "
+            "finding; no model and no complaint text.",
+            "",
+            (
+                f"**{_n(t['two_day_bare'])} complaints**: "
+                f"{_pct(t['share_of_bare_pct'])} of all bare disposals and "
+                f"{_pct(t['share_of_resolved_pct'])} of all resolved complaints."
+            ),
+            "",
+            (
+                f"{_n(t['two_day_bare_min_trajectory'])} closed on the shortest "
+                "trajectory that reaches a disposal at all. Two days is fast, "
+                "not proof that the closure was wrong."
+            ),
+            "",
+            f"⚠️ {DESCRIPTIVE_CAVEAT}",
+            "",
+        ]
+    )
+
+
 def _out_dir(out_dir: Optional[Path]) -> Path:
     return Path(out_dir) if out_dir else OUTPUTS_DIR / "findings"
 
@@ -228,6 +441,68 @@ def write(
     return written
 
 
+def write_single_finding(
+    tables: dict[str, pl.DataFrame],
+    finding: str,
+    out_dir: Optional[Path] = None,
+) -> dict[str, Path]:
+    """Write one #107 closure finding as one aggregate CSV + Markdown pair."""
+    definitions = {
+        "closure_recording_no_action": (
+            "closure_finding_summary",
+            render_headline_markdown,
+        ),
+        "two_day_bare_closures": (
+            "closure_two_day_bare",
+            render_two_day_markdown,
+        ),
+    }
+    try:
+        view, renderer = definitions[finding]
+    except KeyError:
+        raise ValueError(f"unknown closure finding {finding!r}") from None
+
+    out = _out_dir(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    csv_path = out / f"{finding}.csv"
+    md_path = out / f"{finding}.md"
+    tables[view].write_csv(csv_path)
+    md_path.write_text(renderer(tables))
+    return {"csv": csv_path, "markdown": md_path}
+
+
+def _single_finding_main(finding: str) -> None:
+    parser = argparse.ArgumentParser(description=f"Build the {finding} finding.")
+    parser.add_argument(
+        "--lake-dir", type=Path, default=None, help="Lake dir (default: data/interim)."
+    )
+    parser.add_argument(
+        "--out-dir", type=Path, default=None, help="Output dir (default: outputs/findings)."
+    )
+    args = parser.parse_args()
+    tables = compute(args.lake_dir)
+    drift = check_ladder_coverage(tables)
+    if drift:
+        out = _out_dir(args.out_dir)
+        for suffix in ("csv", "md"):
+            path = out / f"{finding}.{suffix}"
+            if path.is_file():
+                path.unlink()
+        logger.error(drift)
+        logger.error("Refusing to write the finding. Nothing was published.")
+        raise SystemExit(1)
+    for kind, path in write_single_finding(tables, finding, args.out_dir).items():
+        logger.success(f"{kind} -> {path}")
+
+
+def closure_headline_main() -> None:
+    _single_finding_main("closure_recording_no_action")
+
+
+def two_day_bare_main() -> None:
+    _single_finding_main("two_day_bare_closures")
+
+
 def write_diagnostics(
     tables: dict[str, pl.DataFrame], out_dir: Optional[Path] = None
 ) -> dict[str, Path]:
@@ -242,11 +517,25 @@ def write_diagnostics(
     for name in DIAGNOSTIC_VIEWS:
         path = out / f"{name}.csv"
         table = tables[name]
+        unexpected = unexpected_off_ladder_templates(tables)
         pl.DataFrame(
             {
-                "high_volume_off_ladder_remarks": [table.height],
-                "affected_resolved_complaints": [
-                    int(table["resolved_complaints"].sum()) if table.height else 0
+                "known_high_volume_non_ladder_templates": [
+                    table.height - unexpected.height
+                ],
+                "known_affected_resolved_complaints": [
+                    int(table["resolved_complaints"].sum())
+                    - (
+                        int(unexpected["resolved_complaints"].sum())
+                        if unexpected.height
+                        else 0
+                    )
+                ],
+                "unexpected_high_volume_off_ladder_templates": [unexpected.height],
+                "unexpected_affected_resolved_complaints": [
+                    int(unexpected["resolved_complaints"].sum())
+                    if unexpected.height
+                    else 0
                 ],
             }
         ).write_csv(path)
@@ -269,11 +558,12 @@ def check_ladder_coverage(tables: dict[str, pl.DataFrame]) -> Optional[str]:
             "complaints. Expected roughly two thirds. The template strings have "
             "probably drifted. Check the private source system before quoting anything."
         )
-    if tables["closure_off_ladder_templates"].height:
+    unexpected = unexpected_off_ladder_templates(tables)
+    if unexpected.height:
         return (
-            "High-volume off-ladder closing remarks were detected. The shareable "
-            "diagnostic contains aggregate counts only; validate the templates against "
-            "the private source system before quoting the headline."
+            "Previously unseen high-volume off-ladder closing remarks were detected. "
+            "The shareable diagnostic contains aggregate counts only; validate the "
+            "templates against the private source system before quoting the headline."
         )
     return None
 

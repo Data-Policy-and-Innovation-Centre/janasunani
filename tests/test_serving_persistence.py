@@ -20,6 +20,7 @@ from janasunani.serving.schemas import (  # noqa: E402
     GrievanceResult,
     RedactionResult,
     RoutingResult,
+    TriageResult,
 )
 from janasunani.serving.store import DatabaseResultStore  # noqa: E402
 
@@ -46,6 +47,7 @@ def _sample_result(grievance_id: str = "aware-1") -> GrievanceResult:
         classification=ClassificationResult(category="Roads", language="en"),
         summary="road is bad",
         routing=RoutingResult(dept="PWD", office="PWD Cuttack", confidence=0.5, method="mock"),
+        triage=TriageResult(),
     )
 
 

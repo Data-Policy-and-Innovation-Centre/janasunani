@@ -7,12 +7,15 @@ with DuckDB SQL via :func:`query`, or pull a whole table as a Polars DataFrame v
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+import re
+from typing import Optional, Sequence
 
 import duckdb
 import polars as pl
 
 from janasunani.config import directories
+
+_TABLE_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 
 
 def lake_path(table: str, lake_dir: Optional[Path] = None) -> Path:
@@ -21,21 +24,47 @@ def lake_path(table: str, lake_dir: Optional[Path] = None) -> Path:
     return base / f"{table}.parquet"
 
 
-def connect(lake_dir: Optional[Path] = None) -> duckdb.DuckDBPyConnection:
+def connect(
+    lake_dir: Optional[Path] = None, *, tables: Optional[Sequence[str]] = None
+) -> duckdb.DuckDBPyConnection:
     """A DuckDB connection with each lake Parquet registered as a view named after
-    the file stem (e.g. ``complaints``)."""
+    the file stem (e.g. ``complaints``).
+
+    ``tables`` narrows the connection to exact named files without enumerating
+    the rest of the directory. Analytics jobs over protected data should always
+    use it so their runtime access matches their declared DVC dependencies.
+    """
     con = duckdb.connect()
     base = Path(lake_dir) if lake_dir else directories.INTERIM
-    for path in sorted(base.glob("*.parquet")):
+    if tables is None:
+        paths = sorted(base.glob("*.parquet"))
+    else:
+        invalid = [table for table in tables if not _TABLE_NAME_RE.fullmatch(table)]
+        if invalid:
+            con.close()
+            raise ValueError(f"invalid lake table names: {invalid}")
+        paths = [base / f"{table}.parquet" for table in tables]
+        missing = [path for path in paths if not path.is_file()]
+        if missing:
+            con.close()
+            raise FileNotFoundError(
+                "Missing lake tables: " + ", ".join(path.name for path in missing)
+            )
+    for path in paths:
         con.execute(
             f"CREATE VIEW {path.stem} AS SELECT * FROM read_parquet('{path.as_posix()}')"
         )
     return con
 
 
-def query(sql: str, lake_dir: Optional[Path] = None) -> pl.DataFrame:
+def query(
+    sql: str,
+    lake_dir: Optional[Path] = None,
+    *,
+    tables: Optional[Sequence[str]] = None,
+) -> pl.DataFrame:
     """Run a DuckDB SQL query against the lake views; return a Polars DataFrame."""
-    con = connect(lake_dir)
+    con = connect(lake_dir, tables=tables)
     try:
         return con.execute(sql).pl()
     finally:

@@ -20,11 +20,15 @@ from typing import Optional, Protocol
 
 from janasunani.serving.schemas import (
     ClassificationResult,
+    DuplicateReview,
+    DuplicateSignal,
     ExtractionResult,
     GrievanceResult,
     PIIEntity,
     RedactionResult,
     RoutingResult,
+    SpamReview,
+    TriageResult,
 )
 
 
@@ -112,6 +116,9 @@ class MockGrievanceProcessor:
                 confidence=0.42,
                 method="mock",
             ),
+            # Triage receives only the mock-redacted representation too.  The
+            # mock is never a source of live low-signal evidence.
+            triage=_mock_triage(redaction.redacted_text),
         )
 
 
@@ -143,3 +150,34 @@ def _mock_summary(redacted_text: str, max_chars: int = 180) -> str:
     if len(flat) <= max_chars:
         return flat
     return flat[: max_chars - 1].rsplit(" ", 1)[0] + "…"
+
+
+def _mock_triage(text: str) -> TriageResult:
+    """Deterministic illustrative triage states for frontend contract work only."""
+    bucket = hashlib.sha256(text.encode()).digest()[1] % 4
+    group_id = hashlib.sha256(text.encode()).hexdigest()[:10]
+    mock_low_signal = SpamReview(
+        decision="abstained",
+        reason_code="mock_low_signal_review_unavailable",
+    )
+    if bucket == 0:
+        return TriageResult(
+            duplicate=DuplicateSignal(
+                duplicate_kind="resubmission",
+                duplicate_group_id=group_id,
+                duplicate_ticket_no="CMO202400042",
+            ),
+            duplicate_review=DuplicateReview(decision="matched"),
+            spam=mock_low_signal,
+        )
+    if bucket == 1:
+        return TriageResult(
+            duplicate=DuplicateSignal(
+                duplicate_kind="campaign",
+                duplicate_group_id=group_id,
+                related_filings=18,
+            ),
+            duplicate_review=DuplicateReview(decision="matched"),
+            spam=mock_low_signal,
+        )
+    return TriageResult(spam=mock_low_signal)

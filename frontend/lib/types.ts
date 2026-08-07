@@ -32,6 +32,56 @@ export interface RoutingResult {
   escalation_authority?: string | null;
   confidence: number; // 0..1
   method: "rules" | "learned" | "fallback" | "mock";
+  empirical_evidence?: EmpiricalRoutingEvidence | null;
+}
+
+export interface EmpiricalRoutingEvidence {
+  support: number;
+  concentration: number; // 0..1: historic destination share
+  width:
+    | "category+subcategory+district"
+    | "category+subcategory"
+    | "category+district"
+    | "category";
+}
+
+export interface DuplicateSignal {
+  duplicate_kind: "resubmission" | "campaign";
+  duplicate_group_id: string;
+  duplicate_ticket_no?: string | null;
+  related_filings?: number | null;
+}
+
+export interface DuplicateReview {
+  decision:
+    | "matched"
+    | "no_match"
+    | "abstained"
+    | "not_indexed"
+    | "unavailable";
+  reason?: string | null;
+}
+
+export interface OcrQualityEvidence {
+  kind: "repetition_collapse";
+  observed: boolean;
+}
+
+export interface SpamReview {
+  decision: "review" | "abstained";
+  reason_code:
+    | "validated_low_signal_evidence"
+    | "ocr_repetition_collapse_unvalidated"
+    | "live_review_disabled_pending_redacted_adjudication"
+    | "mock_low_signal_review_unavailable"
+    | "advisory_provider_unavailable";
+  evidence: OcrQualityEvidence[];
+}
+
+export interface TriageResult {
+  duplicate?: DuplicateSignal | null;
+  duplicate_review: DuplicateReview;
+  spam: SpamReview;
 }
 
 export interface GrievanceResult {
@@ -44,6 +94,7 @@ export interface GrievanceResult {
   classification: ClassificationResult;
   summary: string;
   routing: RoutingResult;
+  triage: TriageResult;
 }
 
 export interface HistoryItem {

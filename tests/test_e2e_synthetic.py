@@ -63,6 +63,7 @@ from janasunani.serving.schemas import (
     ExtractionResult,
     GrievanceResult,
     RedactionResult,
+    TriageResult,
 )
 from janasunani.serving.store import DatabaseResultStore
 
@@ -224,6 +225,7 @@ class _CanaryProcessor:
             classification=ClassificationResult(category="Energy", language="en"),
             summary="Canary submission.",
             routing=self._router.route(category="Energy", district=district),
+            triage=TriageResult(),
         )
 
 

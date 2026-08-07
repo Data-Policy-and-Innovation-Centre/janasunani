@@ -620,15 +620,24 @@ operation and must not share one similarity function.
   is the step-0 pass in §3.2, and the index is built from `grievance_redacted`. Two
   entry points, one index.
 
-New stage order for documents:
+Future full Phase 14 stage order for documents:
 `format_classifier → ocr_extraction → pii_tagger → spam_duplicate →
 page_type_classifier → summarizer → categorizer`.
 
 Backfill order for history:
 `janasunani-redact-grievance → dedup index build (janasunani-dedup-index, #71) → spam_duplicate scoring`.
-The runner exists and is tested on synthetic fixtures; no real district-year
-slice has been run through it yet, and spam_duplicate scoring is still
+The runner exists and is tested on synthetic fixtures; no complete, accepted
+district-year dedup report exists yet, and `spam_duplicate` scoring is still
 unbuilt.
+
+**Reduced August low-signal contract.** The live serving seam runs only after
+PII redaction and records whether the existing OCR repetition-collapse guard
+fired. It returns a reason-coded abstention in every case: no score, no
+"clean" result, no auto-rejection, and no gate on summarization or
+categorization. A review flag remains disabled until a redacted,
+human-adjudicated validation release reports sample size, flag and abstention
+rates, false positives, and PPV by language and input mode. This is deliberately
+separate from the future seventh stage above.
 
 **Three firsts this stage introduces**, worth flagging:
 
@@ -642,8 +651,10 @@ unbuilt.
   dedup index is a PII store by another name.
 - Deduplication is document-level. The artifact DB is page-level.
 
-**Outputs:** `spam_score`, `spam_reason`, `duplicate_group_id`, `duplicate_kind`
-(`resubmission` | `campaign` | `none`).
+**Future full-stage outputs:** `spam_score`, `spam_reason`,
+`duplicate_group_id`, `duplicate_kind` (`resubmission` | `campaign` | `none`).
+The reduced August serving contract emits only a reason-coded low-signal
+abstention plus a boolean, non-content OCR-quality observation.
 
 **Corpus study.** Run the detector over the chosen slice of the 1.37M history, on
 `grievance_redacted`; report prevalence by district, category, mode, year. What share
