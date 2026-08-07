@@ -113,6 +113,29 @@ class DuplicateSignal(BaseModel):
         return self
 
 
+class DuplicateReview(BaseModel):
+    """Availability and outcome of the duplicate/campaign lookup.
+
+    An absent ``DuplicateSignal`` alone is ambiguous: it could mean a verified
+    no-match, a short submission the matcher declined to compare, or an index
+    that is unavailable.  Keep those states visible so neither an officer nor
+    the frontend turns missing evidence into a negative finding.
+    """
+
+    decision: Literal[
+        "matched", "no_match", "abstained", "not_indexed", "unavailable"
+    ]
+    reason: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _unavailable_states_explain_themselves(self) -> "DuplicateReview":
+        if self.decision in {"abstained", "not_indexed", "unavailable"} and not self.reason:
+            raise ValueError(f"{self.decision} duplicate review requires a reason")
+        if self.decision in {"matched", "no_match"} and self.reason is not None:
+            raise ValueError(f"{self.decision} duplicate review must not imply uncertainty")
+        return self
+
+
 class SpamReview(BaseModel):
     """Officer-review state for the optional low-signal scorer.
 
@@ -139,7 +162,43 @@ class TriageResult(BaseModel):
     """Advisory signals only; none changes whether a grievance is accepted."""
 
     duplicate: Optional[DuplicateSignal] = None
+    duplicate_review: DuplicateReview = Field(
+        default_factory=lambda: DuplicateReview(
+            decision="not_indexed",
+            reason=(
+                "Duplicate matching has not been run for this submission because "
+                "the live submission path is not connected to a completed index."
+            ),
+        )
+    )
     spam: SpamReview = Field(default_factory=lambda: SpamReview(decision="not_scored"))
+
+    @model_validator(mode="before")
+    @classmethod
+    def _derive_duplicate_review_for_persisted_contracts(cls, value):
+        """Read pre-#163 result JSON without mistaking a prior signal for absent.
+
+        Older persisted results carried ``duplicate`` directly, before the
+        lookup state existed.  A legacy signal is still a match; legacy
+        ``null`` stays explicitly not-indexed through the default above.
+        """
+        if not isinstance(value, dict) or "duplicate_review" in value:
+            return value
+        if value.get("duplicate") is None:
+            return value
+        derived = dict(value)
+        derived["duplicate_review"] = {"decision": "matched"}
+        return derived
+
+    @model_validator(mode="after")
+    def _duplicate_signal_matches_review_state(self) -> "TriageResult":
+        has_signal = self.duplicate is not None
+        is_match = self.duplicate_review.decision == "matched"
+        if has_signal != is_match:
+            raise ValueError(
+                "duplicate signal must be present exactly when duplicate review is matched"
+            )
+        return self
 
 
 class GrievanceResult(BaseModel):

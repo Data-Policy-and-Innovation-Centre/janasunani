@@ -20,6 +20,7 @@ from typing import Optional, Protocol
 
 from janasunani.serving.schemas import (
     ClassificationResult,
+    DuplicateReview,
     DuplicateSignal,
     ExtractionResult,
     GrievanceResult,
@@ -159,7 +160,8 @@ def _mock_triage(text: str) -> TriageResult:
                 duplicate_kind="resubmission",
                 duplicate_group_id=group_id,
                 duplicate_ticket_no="CMO202400042",
-            )
+            ),
+            duplicate_review=DuplicateReview(decision="matched"),
         )
     if bucket == 1:
         return TriageResult(
@@ -167,7 +169,8 @@ def _mock_triage(text: str) -> TriageResult:
                 duplicate_kind="campaign",
                 duplicate_group_id=group_id,
                 related_filings=18,
-            )
+            ),
+            duplicate_review=DuplicateReview(decision="matched"),
         )
     if bucket == 2:
         return TriageResult(

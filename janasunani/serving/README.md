@@ -47,8 +47,10 @@ pipeline artifact DB (`extracted_text`/`redacted_text`/`ocr_model`),
 history rows, and Phase 14's advisory triage states. `RoutingResult` carries
 support and concentration when `method="learned"`; other routing methods
 cannot claim empirical evidence. `TriageResult` keeps resubmissions, campaigns,
-and low-signal review separate, including an explicit scorer abstention. None
-of these fields rejects a grievance. Changing a field is an API break; the
+and low-signal review separate, including an explicit scorer abstention. Its
+`duplicate_review` distinguishes unindexed, unavailable, and abstained
+lookups from a verified no-match, so absent evidence is never presented as a
+negative finding. None of these fields rejects a grievance. Changing a field is an API break; the
 frontend is built against exactly these shapes, and `tests/test_serving_api.py`
 plus `tests/test_serving_triage_contract.py` pin them.
 
@@ -68,9 +70,12 @@ this in-process live command.
 
 The mock emits deterministic illustrative resubmission, campaign, flagged, or
 abstained triage states so the frontend can be developed without a backfill.
-Until the live Phase 14 scorer is wired, the live processor returns
-`spam.decision="not_scored"` rather than presenting missing output as a
-negative result.
+The live processor calls its advisory triage seam only after PII redaction.
+Until the Phase 14 matcher is wired, it returns
+`duplicate_review.decision="not_indexed"` and `spam.decision="not_scored"`
+rather than presenting missing output as a negative result. If an eventual
+provider is unavailable, the submission proceeds with the explicit
+`duplicate_review.decision="unavailable"` state.
 
 Only synthetic demo submissions are allowed until the PII gold evaluation gate
 passes. The mock must never serve real citizen submissions.

@@ -8,6 +8,7 @@ component exactly once.
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 from datetime import UTC, datetime
@@ -24,8 +25,15 @@ from janasunani.serving.schemas import (
     PIIEntity,
     RedactionResult,
     RoutingResult,
-    TriageResult,
 )
+from janasunani.serving.triage import (
+    TriageProvider,
+    TriageUnavailableError,
+    UnwiredTriageProvider,
+    unavailable_triage,
+)
+
+logger = logging.getLogger(__name__)
 
 # Derived from the canonical label->class map (class 1 = grievance-bearing)
 # instead of a parallel hardcoded literal, so the two can't drift apart.
@@ -79,6 +87,7 @@ class PipelineGrievanceProcessor:
         router: _Router,
         is_english_compatible: Callable[[str], bool],
         detect_language: Callable[[str], str],
+        triage_provider: TriageProvider | None = None,
         now: Callable[[], datetime] | None = None,
     ) -> None:
         self._ocr = ocr
@@ -89,6 +98,7 @@ class PipelineGrievanceProcessor:
         self._router = router
         self._is_english_compatible = is_english_compatible
         self._detect_language = detect_language
+        self._triage_provider = triage_provider or UnwiredTriageProvider()
         self._now = now or (lambda: datetime.now(UTC))
 
     def process(
@@ -174,6 +184,21 @@ class PipelineGrievanceProcessor:
             redacted_text=redacted_text,
             entities=pii_entities,
         )
+        submitted_on = self._now()
+        try:
+            # The provider is intentionally called after redaction, never on
+            # raw OCR or typed citizen text.  Its result is advisory only.
+            triage = self._triage_provider.assess(
+                redacted_text=redaction.redacted_text,
+                district=district,
+                submitted_on=submitted_on,
+            )
+        except TriageUnavailableError:
+            # A triage outage cannot reject or delay a grievance.  Do not
+            # surface the provider exception: it may contain infrastructure
+            # details and is not an officer-facing explanation.
+            logger.warning("advisory triage unavailable; accepting grievance without it")
+            triage = unavailable_triage()
 
         classifier_text = (
             redacted_text if extraction.source == "text" else model_text_source
@@ -196,7 +221,7 @@ class PipelineGrievanceProcessor:
             id=grievance_id,
             ticket_no=ticket_no,
             status="Submitted",
-            submitted_on=self._now(),
+            submitted_on=submitted_on,
             extraction=extraction,
             redaction=redaction,
             classification=ClassificationResult(
@@ -205,10 +230,7 @@ class PipelineGrievanceProcessor:
             ),
             summary=summary,
             routing=routing,
-            # Phase 14 scoring is not wired into the live processor yet. The
-            # explicit state prevents the frontend from mistaking no result for
-            # a negative low-signal decision.
-            triage=TriageResult(),
+            triage=triage,
         )
 
 

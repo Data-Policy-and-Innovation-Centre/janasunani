@@ -7,10 +7,7 @@ import { Badge } from "./ui";
  * action: a triage signal must never change whether a grievance is received.
  */
 export function TriageBanner({ triage }: { triage: TriageResult }) {
-  const { duplicate, spam } = triage;
-  const hasSpamReview = spam.decision !== "not_scored";
-
-  if (!duplicate && !hasSpamReview) return null;
+  const { duplicate, duplicate_review, spam } = triage;
 
   return (
     <section
@@ -29,6 +26,48 @@ export function TriageBanner({ triage }: { triage: TriageResult }) {
       </p>
 
       <div className="flex flex-col gap-2">
+        {duplicate_review.decision === "not_indexed" && (
+          <article className="rounded-sm border border-hair bg-surface px-3 py-2">
+            <Badge tone="neutral">duplicate check not indexed</Badge>
+            <p className="mt-1 text-sm text-text-body">
+              {duplicate_review.reason}
+            </p>
+            <p className="mt-1 text-xs text-text-secondary">
+              This is not a finding that there are no related filings.
+            </p>
+          </article>
+        )}
+
+        {duplicate_review.decision === "unavailable" && (
+          <article className="rounded-sm border border-hair bg-surface px-3 py-2">
+            <Badge tone="neutral">duplicate check unavailable</Badge>
+            <p className="mt-1 text-sm text-text-body">
+              {duplicate_review.reason}
+            </p>
+          </article>
+        )}
+
+        {duplicate_review.decision === "abstained" && (
+          <article className="rounded-sm border border-hair bg-surface px-3 py-2">
+            <Badge tone="neutral">duplicate check abstained</Badge>
+            <p className="mt-1 text-sm text-text-body">
+              {duplicate_review.reason}
+            </p>
+            <p className="mt-1 text-xs text-text-secondary">
+              No duplicate finding was made.
+            </p>
+          </article>
+        )}
+
+        {duplicate_review.decision === "no_match" && (
+          <article className="rounded-sm border border-hair bg-surface px-3 py-2">
+            <Badge tone="neutral">duplicate check complete</Badge>
+            <p className="mt-1 text-sm text-text-body">
+              No verified related filing was found in the checked index.
+            </p>
+          </article>
+        )}
+
         {duplicate?.duplicate_kind === "resubmission" &&
           duplicate.duplicate_ticket_no && (
             <article className="rounded-sm border border-hair bg-surface px-3 py-2">
@@ -80,6 +119,19 @@ export function TriageBanner({ triage }: { triage: TriageResult }) {
             <p className="mt-1 text-sm text-text-body">{spam.spam_reason}</p>
             <p className="mt-1 text-xs text-text-secondary">
               No low-signal flag was assigned.
+            </p>
+          </article>
+        )}
+
+        {spam.decision === "not_scored" && (
+          <article className="rounded-sm border border-hair bg-surface px-3 py-2">
+            <Badge tone="neutral">low-signal review unavailable</Badge>
+            <p className="mt-1 text-sm text-text-body">
+              Low-signal scoring has not run for this submission.
+            </p>
+            <p className="mt-1 text-xs text-text-secondary">
+              This is neither a low-signal flag nor a finding that the
+              grievance is actionable.
             </p>
           </article>
         )}

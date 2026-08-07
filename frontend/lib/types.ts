@@ -52,6 +52,16 @@ export interface DuplicateSignal {
   related_filings?: number | null;
 }
 
+export interface DuplicateReview {
+  decision:
+    | "matched"
+    | "no_match"
+    | "abstained"
+    | "not_indexed"
+    | "unavailable";
+  reason?: string | null;
+}
+
 export interface SpamReview {
   decision: "flagged" | "abstained" | "not_scored";
   spam_reason?: string | null;
@@ -60,6 +70,7 @@ export interface SpamReview {
 
 export interface TriageResult {
   duplicate?: DuplicateSignal | null;
+  duplicate_review: DuplicateReview;
   spam: SpamReview;
 }
 

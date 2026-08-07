@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from janasunani.serving.schemas import (
     ClassificationResult,
+    DuplicateReview,
     DuplicateSignal,
     EmpiricalRoutingEvidence,
     ExtractionResult,
@@ -45,6 +46,48 @@ def test_resubmission_and_campaign_context_cannot_be_conflated():
         )
 
 
+def test_duplicate_review_keeps_absence_distinct_from_a_no_match():
+    not_indexed = DuplicateReview(
+        decision="not_indexed",
+        reason="The live submission is outside every completed index slice.",
+    )
+    abstained = DuplicateReview(
+        decision="abstained",
+        reason="The redacted text is too short to compare safely.",
+    )
+    unavailable = DuplicateReview(
+        decision="unavailable",
+        reason="The duplicate provider could not be reached.",
+    )
+
+    assert not_indexed.decision == "not_indexed"
+    assert abstained.decision == "abstained"
+    assert unavailable.decision == "unavailable"
+
+    with pytest.raises(ValidationError, match="not_indexed duplicate review requires"):
+        DuplicateReview(decision="not_indexed")
+    with pytest.raises(ValidationError, match="no_match duplicate review must not"):
+        DuplicateReview(decision="no_match", reason="not needed")
+
+
+def test_duplicate_signal_requires_a_matched_review_state():
+    signal = DuplicateSignal(
+        duplicate_kind="resubmission",
+        duplicate_group_id="g-resubmission",
+        duplicate_ticket_no="CMO202400042",
+    )
+    legacy_shape = TriageResult(duplicate=signal)
+    assert legacy_shape.duplicate_review.decision == "matched"
+
+    with pytest.raises(ValidationError, match="duplicate signal must be present"):
+        TriageResult(
+            duplicate=signal,
+            duplicate_review=DuplicateReview(decision="no_match"),
+        )
+    with pytest.raises(ValidationError, match="duplicate signal must be present"):
+        TriageResult(duplicate_review=DuplicateReview(decision="matched"))
+
+
 def test_spam_abstention_is_visible_and_explained():
     review = SpamReview(
         decision="abstained",
@@ -63,6 +106,13 @@ def test_unwired_live_triage_is_explicitly_not_scored():
     triage = TriageResult()
     assert triage.model_dump() == {
         "duplicate": None,
+        "duplicate_review": {
+            "decision": "not_indexed",
+            "reason": (
+                "Duplicate matching has not been run for this submission because "
+                "the live submission path is not connected to a completed index."
+            ),
+        },
         "spam": {
             "decision": "not_scored",
             "spam_reason": None,
@@ -89,6 +139,23 @@ def test_older_persisted_result_gets_the_explicit_not_scored_default():
         ),
     )
     assert result.triage.spam.decision == "not_scored"
+    assert result.triage.duplicate_review.decision == "not_indexed"
+
+
+def test_legacy_persisted_duplicate_signal_gets_the_matched_review_state():
+    triage = TriageResult.model_validate(
+        {
+            "duplicate": {
+                "duplicate_kind": "campaign",
+                "duplicate_group_id": "g-campaign",
+                "related_filings": 18,
+            },
+            "spam": {"decision": "not_scored"},
+        }
+    )
+
+    assert triage.duplicate is not None
+    assert triage.duplicate_review.decision == "matched"
 
 
 def test_mock_contract_exercises_every_advisory_state():
