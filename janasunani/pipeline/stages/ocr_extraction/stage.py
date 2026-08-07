@@ -28,6 +28,23 @@ from ...db import connect
 from .executors import pick_executor, shard_work_items
 from loguru import logger
 
+
+def render_page(path: Path, page_number: int) -> Any:
+    """Render one page, importing the renderer on use.
+
+    page_renderer pulls pdf2image/poppler at import time, which the DB-reading
+    half of this stage does not need and which is absent wherever OCR is not
+    installed — that is why the ambiguous-column bug below could never be
+    caught on CI. Every other backend here (deepseek, sarvam, pytesseract) is
+    already imported inside the function that uses it.
+
+    This stays a module-level attribute rather than a local import so tests can
+    still monkeypatch ``stage.render_page``.
+    """
+    from .page_renderer import render_page as _render_page
+
+    return _render_page(path, page_number)
+
 DB_BATCH_SIZE = 50
 DB_LOCK_RETRIES = 5
 
@@ -210,11 +227,6 @@ def _process_page(item: dict[str, Any]) -> dict[str, Any]:
         "error": None,
     }
     try:
-        # Lazy, like every other backend import in this module: page_renderer
-        # pulls pdf2image/poppler, which the DB-reading half of this stage does
-        # not need and which is absent wherever OCR is not installed.
-        from .page_renderer import render_page
-
         image = render_page(Path(item["file_path"]), item["page_number"])
     except Exception as e:
         result["error"] = f"render failed: {e}"
