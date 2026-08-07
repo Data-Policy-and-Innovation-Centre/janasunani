@@ -301,11 +301,15 @@ Six stages in a fixed order:
 summarizer → categorizer`. Phase 14 inserts a seventh, `spam_duplicate`, after
 `pii_tagger`.
 
-Each stage imports its heavy dependencies lazily to work around a hard conflict:
-`ocr-deepseek` pins `transformers==4.46.3`, everything else needs `>=4.57`. The uv
-extras `pipeline-core` / `ocr-deepseek` / `categorizer` are mutually exclusive, one
-Docker image per group. The pipeline keeps its own resumable SQLite artifact DB and
-reaches OLTP through the exporter.
+Each stage imports its heavy dependencies lazily. The four heavy extras are
+`pipeline-core`, `pii`, `ocr-deepseek`, and `categorizer`: DeepSeek pins
+`transformers==4.46.3`, while the newer model stacks need `>=4.57`; standalone
+PII uses numpy 2.x so it can install from CPython 3.13 wheels, while
+`pipeline-core` retains the inherited `numpy<2` contract. Conflicting extras run
+as sequential `uv run --extra ...` invocations against the same resumable SQLite
+artifact DB, which reaches OLTP through the exporter. For the CPU path, run
+format/OCR under `pipeline-core`, PII under `pii`, page type/summary under
+`pipeline-core`, and the final category stage under `categorizer`.
 
 - PII was rebuilt on **Presidio** after the DSI CRF weights were lost: in-process,
   custom Indian recognizers (mobile / Aadhaar / PAN), spaCy NER for names, typed
@@ -457,7 +461,8 @@ in the repo: real citizen PII, annotated and concentrated.
 - Compare to the DSI reference: 80.56% any-overlap, 50.00% exact-span. Reference,
   not threshold, and English-only.
 
-**End-to-end run.** The three extras are mutually exclusive, so this is not one
+**End-to-end run.** The heavy stages span four extras (`pipeline-core`, `pii`,
+`ocr-deepseek`, and `categorizer`) with incompatible pairs, so this is not one
 pytest.
 
 - `scripts/e2e_pipeline.sh`: a scripted multi-environment run over a fixed sample.
@@ -1901,9 +1906,16 @@ Self-host on Docker. S3 is the only stateful AWS dependency. Terraform
 ### Testing policy (every phase)
 
 Real-code-path pytest, green before "done":
-`uv run --extra pipeline-core pytest && uv run ruff check .`. OLTP tests run on
-**both** SQLite and Postgres. Never run pytest against the production container
-(fixtures drop tables), and never read or recurse into `data/` (real citizen PII).
+
+```bash
+uv run --extra serving --extra pipeline-core pytest
+uv run --extra pii pytest tests/test_pii_extra_contract.py tests/test_pii_redaction.py tests/test_redact_grievance.py tests/test_rederive_pii_draft.py tests/test_bootstrap_pii_gold.py
+uv run ruff check .
+```
+
+OLTP tests run on **both** SQLite and Postgres. Never run pytest against the
+production container (fixtures drop tables), and never read or recurse into
+`data/` (real citizen PII).
 
 ### Data & schema
 

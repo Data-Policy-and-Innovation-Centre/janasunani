@@ -19,6 +19,18 @@ uv run --extra pii janasunani-pipeline run \
   --db data/processed/pipeline.sqlite \
   --models models \
   --stages pii_tagger
+
+uv run --extra pipeline-core janasunani-pipeline run \
+  --input data/raw/documents-sample \
+  --db data/processed/pipeline.sqlite \
+  --models models \
+  --stages page_type_classifier summarizer
+
+uv run --extra categorizer janasunani-pipeline run \
+  --input data/raw/documents-sample \
+  --db data/processed/pipeline.sqlite \
+  --models models \
+  --stages categorizer
 ```
 
 `--stages` exists because of the dependency split (below). Other key flags:
@@ -97,6 +109,7 @@ rewrite the pipeline onto the ORM — the split is a decision, not an accident.
 
 ## Regression anchor
 
-The `pipeline-sample` DVC stage runs format + pytesseract OCR + PII over the
-2-file DVC-tracked sample into a versioned SQLite — a cheap end-to-end check
-that the CPU path still works (`dvc repro pipeline-sample`).
+The `pipeline-sample` DVC stage runs format classification, pytesseract OCR,
+and PII over the 2-file DVC-tracked sample into a versioned SQLite. Its
+sequential pipeline-core and PII invocations are a cheap regression check that
+the split CPU path works through redaction (`dvc repro pipeline-sample`).

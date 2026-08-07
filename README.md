@@ -108,9 +108,22 @@ uv run --extra pipeline-core janasunani-pipeline run \
   --stages format_classifier ocr_extraction  # deepseek needs CUDA (the GPU box)
 
 uv run --extra pii janasunani-pipeline run \
+  --input data/raw/documents-sample \
   --db data/processed/pipeline.sqlite \
   --models models \
   --stages pii_tagger
+
+uv run --extra pipeline-core janasunani-pipeline run \
+  --input data/raw/documents-sample \
+  --db data/processed/pipeline.sqlite \
+  --models models \
+  --stages page_type_classifier summarizer
+
+uv run --extra categorizer janasunani-pipeline run \
+  --input data/raw/documents-sample \
+  --db data/processed/pipeline.sqlite \
+  --models models \
+  --stages categorizer
 
 dvc repro pipeline-sample           # the 2-doc end-to-end regression stage
 bash scripts/gpu_smoke.sh           # on the GPU box: DeepSeek OCR smoke
@@ -173,7 +186,7 @@ Contract details: [janasunani/serving/README.md](janasunani/serving/README.md).
 
 ```bash
 uv run --extra serving --extra pipeline-core pytest
-uv run --extra pii pytest tests/test_pii_extra_contract.py tests/test_pii_redaction.py tests/test_redact_grievance.py
+uv run --extra pii pytest tests/test_pii_extra_contract.py tests/test_pii_redaction.py tests/test_redact_grievance.py tests/test_rederive_pii_draft.py tests/test_bootstrap_pii_gold.py
 uv run ruff check .
 ```
 

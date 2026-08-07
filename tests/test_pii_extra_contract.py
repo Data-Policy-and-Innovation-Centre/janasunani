@@ -3,18 +3,21 @@
 from __future__ import annotations
 
 import re
+import shlex
 import shutil
 import subprocess
 import tomllib
 from pathlib import Path
 
 import pytest
+import yaml
 from packaging.markers import Marker
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 PYPROJECT_PATH = ROOT_DIR / "pyproject.toml"
 UV_LOCK_PATH = ROOT_DIR / "uv.lock"
+DVC_PATH = ROOT_DIR / "dvc.yaml"
 
 
 def _pyproject() -> dict:
@@ -46,6 +49,41 @@ def test_pii_extra_is_separate_from_the_legacy_numpy_pipeline_contract():
     conflicts = _pyproject()["tool"]["uv"]["conflicts"]
     assert [{"extra": "pii"}, {"extra": "pipeline-core"}] in conflicts
     assert [{"extra": "pii"}, {"extra": "demo"}] in conflicts
+
+
+def _option(tokens: list[str], name: str) -> str:
+    return tokens[tokens.index(name) + 1]
+
+
+def _stages(tokens: list[str]) -> list[str]:
+    start = tokens.index("--stages") + 1
+    end = tokens.index("--workers", start)
+    return tokens[start:end]
+
+
+def test_dvc_sample_runs_each_stage_in_its_compatible_extra():
+    """The DVC sample must cross env boundaries via one shared artifact DB."""
+    pipeline_sample = yaml.safe_load(DVC_PATH.read_text())["stages"]["pipeline-sample"]
+    commands = [shlex.split(command) for command in pipeline_sample["cmd"].split("&&")]
+
+    expected = [
+        ("pipeline-core", ["format_classifier", "ocr_extraction"]),
+        ("pii", ["pii_tagger"]),
+    ]
+    assert [(_option(command, "--extra"), _stages(command)) for command in commands] == expected
+    assert {_option(command, "--db") for command in commands} == {
+        "data/processed/pipeline-sample.sqlite"
+    }
+    assert {_option(command, "--input") for command in commands} == {
+        "data/raw/documents-sample"
+    }
+    assert {_option(command, "--models") for command in commands} == {"models"}
+
+    assert set(pipeline_sample["deps"]) >= {
+        "janasunani/pipeline/stages/format_classifier",
+        "janasunani/pipeline/stages/ocr_extraction",
+        "janasunani/pipeline/stages/pii_tagger.py",
+    }
 
 
 def _pii_requirements_for_linux() -> dict[str, str]:

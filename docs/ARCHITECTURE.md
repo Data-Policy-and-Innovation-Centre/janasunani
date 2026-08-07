@@ -299,7 +299,14 @@ enforcement and the model registry (Phase 17), the first analytics increments
 ## Gates
 
 Every feature ships with real-code-path pytest tests, run before "done":
-`uv run --extra pipeline-core pytest && uv run ruff check .`. CI
+
+```bash
+uv run --extra serving --extra pipeline-core pytest
+uv run --extra pii pytest tests/test_pii_extra_contract.py tests/test_pii_redaction.py tests/test_redact_grievance.py tests/test_rederive_pii_draft.py tests/test_bootstrap_pii_gold.py
+uv run ruff check .
+```
+
+CI
 (`.github/workflows/`) runs ruff, the test suite against a service-container
 Postgres plus `dvc status` validation, and the raw-data-in-git guard. CI installs
 **no heavy extras** — anything imported by tests must live in a light module
