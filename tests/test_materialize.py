@@ -1,7 +1,9 @@
 """Tests for the OLTP → Parquet materialization and the lake read helpers."""
 
 import os
+from datetime import datetime, timezone
 
+import polars as pl
 import pytest
 from sqlalchemy import create_engine, insert
 
@@ -102,6 +104,39 @@ def test_raw_ocr_text_never_reaches_the_lake(tmp_path):
     raw = (out / "pages.parquet").read_bytes()
     assert b"Ramesh Kumar" not in raw
     assert b"9876543210" not in raw
+
+
+def test_lake_freshness_reports_naive_utc_mtimes(tmp_path):
+    """`/history` and the metrics layer both read the lake, and a live
+    grievance is invisible there until the next materialization run (#36) --
+    this is how a caller finds out the snapshot is stale. Mtimes must come
+    back naive: a tz-aware value passes SQLite in tests and fails asyncpg
+    against the deployed Postgres (this has bitten twice already)."""
+    pl.DataFrame({"ticket_no": ["T1"]}).write_parquet(tmp_path / "complaints.parquet")
+    pl.DataFrame({"ticket_no": ["T1"]}).write_parquet(tmp_path / "action_history.parquet")
+
+    stat_before = (tmp_path / "complaints.parquet").stat().st_mtime
+    freshness = lake.lake_freshness(tmp_path)
+
+    assert set(freshness) == {"complaints", "action_history"}
+    expected = datetime.fromtimestamp(stat_before, tz=timezone.utc).replace(tzinfo=None)
+    assert freshness["complaints"] == expected
+    assert freshness["complaints"].tzinfo is None
+
+
+def test_lake_freshness_distinguishes_stale_tables_by_mtime(tmp_path):
+    pl.DataFrame({"ticket_no": ["T1"]}).write_parquet(tmp_path / "complaints.parquet")
+    pl.DataFrame({"ticket_no": ["T1"]}).write_parquet(tmp_path / "action_history.parquet")
+
+    older = (tmp_path / "complaints.parquet").stat().st_mtime - 3600
+    os.utime(tmp_path / "complaints.parquet", (older, older))
+
+    freshness = lake.lake_freshness(tmp_path)
+    assert freshness["complaints"] < freshness["action_history"]
+
+
+def test_lake_freshness_on_an_empty_lake_is_empty(tmp_path):
+    assert lake.lake_freshness(tmp_path) == {}
 
 
 PG_URL = os.getenv(
