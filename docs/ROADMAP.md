@@ -892,9 +892,9 @@ decomposition, not the alert.
 **The closure metric splits into an insight and a capability**, and the split is the
 whole point.
 
-- **The insight.** 86.65% of resolved complaints close on a templated remark, so
-  "share of closures recording no action" is an exact string match for roughly seven
-  cases in eight. Deliverable is the view definition, handed over.
+- **The insight.** 64.25% of resolved complaints close on a templated remark, so
+  "share of closures recording no action" is an exact string match for roughly two
+  cases in three. Deliverable is the view definition, handed over.
   - **Built** as the `closure` mart in
     [`janasunani/analytics`](../janasunani/analytics/README.md), with the
     findings wrapper behind `janasunani-closure-finding` and fixture tests in
@@ -1985,8 +1985,8 @@ Terse and dated. The reasoning for choices that are not obvious from the code.
     process. Both retained as internal diagnostics. The Phase 13 privacy scorecard is
     a distinct artifact and is unaffected.
   - **The closure metric splits in two.** "Share of closures recording no action" is
-    an insight: 86.65% of resolved complaints close on a templated remark, so it is a
-    string match for seven cases in eight and ships as a view definition. It is
+    an insight: 64.25% of resolved complaints close on a templated remark, so it is a
+    string match for roughly two cases in three and ships as a view definition. It is
     descriptive only, because sometimes no action is the correct outcome and a
     correct closure is identical in the record to a premature one. The capability is
     the disambiguator: **does the citizen return?** Reopening is a column, but

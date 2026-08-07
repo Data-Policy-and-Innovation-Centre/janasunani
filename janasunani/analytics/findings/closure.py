@@ -11,10 +11,10 @@ Two rules are enforced in code rather than left to whoever quotes the number:
 * **Both denominators, always.** :func:`render_markdown` cannot emit the
   headline share without the templated-closure base beside it and the
   all-resolved share under it. They come out of the same row of the same view.
-* **Aggregates only.** Every output is a count or a share. The one view that
-  emits strings (``closure_off_ladder_templates``) is bounded to remarks used
-  1,000+ times, which are dropdown templates rather than citizen writing. This
-  never reads ``complaints.grievance``.
+* **Aggregates only.** Every output is a count or a share. Drift diagnostics
+  retain only aggregate frequencies, never the source remark or a linkable
+  fingerprint.
+  This never reads ``complaints.grievance``.
 """
 
 import argparse
@@ -39,12 +39,10 @@ FINDING_VIEWS = (
     "closure_benefitted_overlap",
 )
 
-# Engineer-facing, and deliberately not part of the handover. This is the only
-# view that emits remark text. A 1,000-use floor is dropdown scale rather than
-# free text, but frequency is evidence and not proof: a remark repeated ten
-# thousand times could still carry a name or a number somebody pasted into a
-# form. So it goes to its own directory, never into the shareable set, and it
-# exists for one purpose: telling you the ladder stopped matching.
+# Engineer-facing, and deliberately not part of the handover. High frequency
+# never proves arbitrary text is an approved template, so the deliverable
+# diagnostic carries only aggregate counts; identifying a drifted phrase
+# requires the private source system.
 DIAGNOSTIC_VIEWS = ("closure_off_ladder_templates",)
 
 REPORT_VIEWS = FINDING_VIEWS + DIAGNOSTIC_VIEWS
@@ -233,18 +231,25 @@ def write(
 def write_diagnostics(
     tables: dict[str, pl.DataFrame], out_dir: Optional[Path] = None
 ) -> dict[str, Path]:
-    """Write the engineer-facing drift diagnostic, under ``diagnostics/``.
+    """Write safe drift diagnostics under ``diagnostics/``.
 
-    Kept out of :func:`write` on purpose: this is the only output carrying
-    remark text, and the directory the finding is shared out of should contain
-    aggregates only.
+    Diagnostics remain below ``outputs/`` and can be delivered recursively,
+    so raw remarks must not be serialized there.
     """
     out = _out_dir(out_dir) / "diagnostics"
     out.mkdir(parents=True, exist_ok=True)
     written = {}
     for name in DIAGNOSTIC_VIEWS:
         path = out / f"{name}.csv"
-        tables[name].write_csv(path)
+        table = tables[name]
+        pl.DataFrame(
+            {
+                "high_volume_off_ladder_remarks": [table.height],
+                "affected_resolved_complaints": [
+                    int(table["resolved_complaints"].sum()) if table.height else 0
+                ],
+            }
+        ).write_csv(path)
         written[name] = path
     return written
 
@@ -258,14 +263,29 @@ def check_ladder_coverage(tables: dict[str, pl.DataFrame]) -> Optional[str]:
     headline is computed on.
     """
     coverage = tables["closure_finding_summary"].row(0, named=True)["ladder_coverage_pct"]
-    if coverage is not None and coverage >= MIN_LADDER_COVERAGE_PCT:
-        return None
-    return (
-        f"The disposal ladder matched only {_pct(coverage)} of resolved "
-        "complaints. Expected roughly two thirds. The template strings have "
-        "probably drifted. Check closure_off_ladder_templates.csv before "
-        "quoting anything."
-    )
+    if coverage is None or coverage < MIN_LADDER_COVERAGE_PCT:
+        return (
+            f"The disposal ladder matched only {_pct(coverage)} of resolved "
+            "complaints. Expected roughly two thirds. The template strings have "
+            "probably drifted. Check the private source system before quoting anything."
+        )
+    if tables["closure_off_ladder_templates"].height:
+        return (
+            "High-volume off-ladder closing remarks were detected. The shareable "
+            "diagnostic contains aggregate counts only; validate the templates against "
+            "the private source system before quoting the headline."
+        )
+    return None
+
+
+def remove_shareable_artifacts(out_dir: Optional[Path] = None) -> None:
+    """Remove only this finding's prior deliverables after a failed guard."""
+    out = _out_dir(out_dir)
+    paths = [out / f"{name}.csv" for name in FINDING_VIEWS]
+    paths.extend((out / "closure_finding.md", out / "closure_finding.sql"))
+    for path in paths:
+        if path.is_file():
+            path.unlink()
 
 
 def main() -> None:
@@ -307,6 +327,7 @@ def main() -> None:
         # Refuse to produce the artifacts rather than warning beside them. A
         # batch caller that keeps stdout and drops stderr would otherwise
         # publish exactly the number this check says must not be quoted.
+        remove_shareable_artifacts(args.out_dir)
         logger.error(drift)
         logger.error("Refusing to write the finding. Nothing was published.")
         raise SystemExit(1)

@@ -82,6 +82,7 @@ _ACTIONS = [
 
 
 def _write_lake(path, complaints=_COMPLAINTS, actions=_ACTIONS, grievance=None):
+    path.mkdir(parents=True, exist_ok=True)
     schema = [
         ("ticket_no", pl.Utf8),
         ("created_on", pl.Datetime),
@@ -263,6 +264,21 @@ def test_actions_after_resolution_are_not_treated_as_the_closing_action(tmp_path
     assert traj["steps_bucket"] == "2 steps"
 
 
+def test_undated_actions_are_quarantined_from_the_closing_trajectory(tmp_path):
+    """Unknown timing cannot establish either a closure or its work count."""
+    complaints = [
+        ("U1", datetime(2024, 1, 1), datetime(2024, 1, 10), None, "Water", "Puri", "RWSS")
+    ]
+    actions = [
+        (1, "U1", datetime(2024, 1, 10), _BARE),
+        (2, "U1", None, "Undated free-text follow-up."),
+    ]
+    tables = closure.compute(_write_lake(tmp_path, complaints, actions))
+
+    assert tables["closure_finding_summary"].row(0, named=True)["bare"] == 1
+    assert tables["closure_by_trajectory"].row(0, named=True)["steps_bucket"] == "1 step"
+
+
 def test_negative_durations_are_quarantined_rather_than_read_as_fast_closures(tmp_path):
     """`resolved_on` before `created_on` happens: the two timestamps are parsed
     independently at ingest and nothing enforces an order. Such a row is bad
@@ -321,8 +337,8 @@ def test_two_day_bare_subfinding(lake):
     row = closure.compute(lake)["closure_two_day_bare"].row(0, named=True)
 
     assert row["two_day_bare"] == 2  # T1 (1 day), T2 (2 days)
-    # Both closed on one action row, which is inside the three-step floor.
-    assert row["two_day_bare_min_trajectory"] == 2
+    # One-step histories are not the portal's three-row floor trajectory.
+    assert row["two_day_bare_min_trajectory"] == 0
     assert row["bare"] == 3
     assert row["share_of_bare_pct"] == pytest.approx(200.0 / 3)
     assert row["share_of_ladder_pct"] == pytest.approx(200.0 / 6)
@@ -436,12 +452,11 @@ def test_write_emits_the_tables_the_markdown_and_the_handed_over_sql(lake, tmp_p
     assert not {n for n in names if n.startswith(("closure_rung", "closure_closing"))}
 
 
-def test_the_remark_diagnostic_never_lands_in_the_shareable_directory(lake, tmp_path):
+def test_the_remark_diagnostic_is_aggregate_only_before_it_lands_in_outputs(lake, tmp_path):
     """`closure_off_ladder_templates` is the only output carrying remark text.
 
-    A 1,000-use floor is dropdown scale, but frequency is evidence and not
-    proof, so it goes to `diagnostics/` and the directory the finding is shared
-    out of stays aggregates-only.
+    A 1,000-use floor is not proof, so even `diagnostics/`, which the recursive
+    deliver target can copy, receives aggregate counts only.
     """
     out = tmp_path / "findings"
     tables = closure.compute(lake)
@@ -450,7 +465,12 @@ def test_the_remark_diagnostic_never_lands_in_the_shareable_directory(lake, tmp_
 
     written = closure.write_diagnostics(tables, out)
     assert written["closure_off_ladder_templates"].parent.name == "diagnostics"
-    assert (out / "diagnostics" / "closure_off_ladder_templates.csv").exists()
+    diagnostic = pl.read_csv(out / "diagnostics" / "closure_off_ladder_templates.csv")
+    assert diagnostic.columns == [
+        "high_volume_off_ladder_remarks",
+        "affected_resolved_complaints",
+    ]
+    assert _OFF_LADDER not in diagnostic.write_csv()
 
 
 def test_the_cli_refuses_to_publish_when_the_ladder_guard_fails(tmp_path, monkeypatch):
@@ -474,3 +494,49 @@ def test_the_cli_refuses_to_publish_when_the_ladder_guard_fails(tmp_path, monkey
     assert not (out / "closure_finding_summary.csv").exists()
     # The diagnostic is still written: it is what tells you why.
     assert (out / "diagnostics" / "closure_off_ladder_templates.csv").exists()
+
+
+def test_high_volume_off_ladder_text_refuses_publication(tmp_path, monkeypatch):
+    """Frequency does not make raw text a safe or approved template."""
+    actions = [
+        (i, f"O{i}", datetime(2024, 1, 2), "Unapproved free-text template")
+        for i in range(1, 1001)
+    ]
+    complaints = [
+        (f"O{i}", datetime(2024, 1, 1), datetime(2024, 1, 2), None, "Water", "Puri", "RWSS")
+        for i in range(1, 1001)
+    ]
+    lake = _write_lake(tmp_path / "lake", complaints, actions)
+    out = tmp_path / "findings"
+    monkeypatch.setattr(
+        "sys.argv", ["janasunani-closure-finding", "--lake-dir", str(lake), "--out-dir", str(out)]
+    )
+
+    with pytest.raises(SystemExit, match="1"):
+        closure.main()
+
+    diagnostic = (out / "diagnostics" / "closure_off_ladder_templates.csv").read_text()
+    assert "free-text" not in diagnostic
+    assert "Unapproved" not in diagnostic
+
+
+def test_failed_guard_removes_stale_shareable_artifacts(tmp_path, monkeypatch):
+    """A failed rerun must not leave an earlier valid report for delivery."""
+    healthy = tmp_path / "healthy"
+    healthy.mkdir()
+    out = tmp_path / "findings"
+    closure.write(closure.compute(_write_lake(healthy)), out)
+    drifted = [(i, t, d, r.replace("grievance", "petition")) for i, t, d, r in _ACTIONS]
+    failed = tmp_path / "failed"
+    failed.mkdir()
+    lake = _write_lake(failed, actions=drifted)
+    monkeypatch.setattr(
+        "sys.argv", ["janasunani-closure-finding", "--lake-dir", str(lake), "--out-dir", str(out)]
+    )
+
+    with pytest.raises(SystemExit, match="1"):
+        closure.main()
+
+    assert not (out / "closure_finding.md").exists()
+    assert not (out / "closure_finding_summary.csv").exists()
+    assert not (out / "closure_finding.sql").exists()

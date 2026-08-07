@@ -83,8 +83,11 @@ actions AS (
         COUNT(*) OVER (PARTITION BY a.ticket_no) AS action_steps
     FROM action_history a
     JOIN resolved r ON r.ticket_no = a.ticket_no
-    WHERE a.action_taken_date IS NULL
-       OR CAST(a.action_taken_date AS DATE) <= CAST(r.resolved_on AS DATE)
+    -- An undated action cannot establish either the closing remark or work
+    -- completed before closure. Omitting it is safer than assigning its
+    -- insertion order a place in a verified trajectory.
+    WHERE a.action_taken_date IS NOT NULL
+      AND CAST(a.action_taken_date AS DATE) <= CAST(r.resolved_on AS DATE)
 ),
 closing AS (
     SELECT ticket_no, action_taken_remark, action_status, action_steps
@@ -217,7 +220,7 @@ CREATE OR REPLACE VIEW closure_two_day_bare AS
 SELECT
     COUNT(*) FILTER (WHERE rung = 'bare' AND elapsed_days BETWEEN 0 AND 2)
         AS two_day_bare,
-    COUNT(*) FILTER (WHERE rung = 'bare' AND elapsed_days BETWEEN 0 AND 2 AND action_steps <= 3)
+    COUNT(*) FILTER (WHERE rung = 'bare' AND elapsed_days BETWEEN 0 AND 2 AND action_steps = 3)
         AS two_day_bare_min_trajectory,
     COUNT(*) FILTER (WHERE rung = 'bare')
         AS bare,
