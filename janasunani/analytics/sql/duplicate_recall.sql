@@ -5,8 +5,12 @@
 --
 -- Reads complaints + action_history only. Never reads citizen text column.
 -- Portable DuckDB + PostgreSQL. Exact normalized match over two template families:
---   'case already taken up' (+ 'taken up earlier' variant) — 19,904
---   'duplicate copy' — 14,767
+--   'case already taken up%' (+ 'case taken up earlier%' variant) — 19,904
+--   'duplicate copy%' — 14,767
+-- Matching is prefix-anchored because the stored remarks carry suffixes and a
+-- referenced ticket number. The ROADMAP figures above came from an ad hoc
+-- exact-match query and therefore undercount those variants; the delta is
+-- reported rather than smoothed.
 -- Normalized: lowercased, whitespace collapsed, trailing dots stripped.
 -- The increment, recall, and prevalence queries are in the Python wrapper
 -- (janasunani/analytics/findings/duplicate_recall.py) and use the same
@@ -35,8 +39,16 @@ FROM resolved r LEFT JOIN closing c ON c.ticket_no = r.ticket_no;
 CREATE OR REPLACE VIEW duplicate_officer_confirmed AS
 SELECT ticket_no, closing_remark,
        CASE
-           WHEN closing_remark IN ('case already taken up', 'case taken up earlier', 'grievance already taken up', 'complaint already taken up') THEN 'taken_up'
-           WHEN closing_remark = 'duplicate copy' OR closing_remark LIKE 'duplicate copy%' THEN 'duplicate_copy'
+           -- Prefix-anchored, not exact. The stored templates carry a suffix
+           -- ('... for examination', '... hence closed') and often a referenced
+           -- ticket, so equality matched 8 rows out of ~21,500. The anchor is
+           -- what keeps the deferral template out: 'the grievance has been kept
+           -- in priority category and shall be taken up after due government
+           -- approval' contains 'taken up' but is not a duplicate, and does not
+           -- start with 'case'.
+           WHEN closing_remark LIKE 'case already taken up%'
+             OR closing_remark LIKE 'case taken up earlier%' THEN 'taken_up'
+           WHEN closing_remark LIKE 'duplicate copy%' THEN 'duplicate_copy'
            ELSE NULL
        END AS duplicate_family
 FROM duplicate_closing_remark;
