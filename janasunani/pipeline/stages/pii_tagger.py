@@ -162,6 +162,29 @@ def _ascii_digits(text: str) -> str:
     return text.translate(_INDIC_DIGITS_TO_ASCII)
 
 
+# Runs of two or more ALL-CAPS words. Government correspondence writes names
+# this way constantly ("APPLICANT SMT SUNITA DEVI"), and spaCy's NER leans on
+# capitalisation as a feature, so all-caps defeats it: 53 of the 228 NAME
+# spans it missed on the n50 gold are all-caps (#92).
+_CAPS_RUN_RE = re.compile(r"\b[A-Z][A-Z'.-]*(?:\s+[A-Z][A-Z'.-]*)+\b")
+
+
+def _soften_caps(text: str) -> str:
+    """Title-case ALL-CAPS runs so the NER can see them as names.
+
+    **Length-preserving by construction**, which is what makes it safe: every
+    replacement is `str.title()` of the same span, so offsets carry over 1:1
+    and the caller can analyze this copy while redacting the original. Same
+    contract as :func:`_ascii_digits`, and the reason both are applied to a
+    throwaway copy rather than to the text anyone reads.
+
+    Only runs of two or more capitalised words are touched. A single
+    all-caps token is as likely to be an acronym (BDO, PHED, ATR) as a name,
+    and title-casing those would create names out of department codes.
+    """
+    return _CAPS_RUN_RE.sub(lambda m: m.group(0).title(), text)
+
+
 _engines: tuple | None = None
 
 
@@ -556,7 +579,7 @@ def redact_text(text: str) -> str:
     analyzer, anonymizer = _get_engines()
     # Analyze the digit-normalized copy (Indic numerals -> ASCII, same length),
     # anonymize the original: offsets carry over 1:1.
-    analyzed_text = _ascii_digits(text)
+    analyzed_text = _soften_caps(_ascii_digits(text))
     results = analyzer.analyze(
         text=analyzed_text, language="en", entities=list(ENTITY_TOKENS)
     )
@@ -585,7 +608,7 @@ def detect_pii_spans(text: str) -> list[PIISpan]:
     recognizers, not a parallel implementation.
     """
     analyzer, _ = _get_engines()
-    analyzed_text = _ascii_digits(text)
+    analyzed_text = _soften_caps(_ascii_digits(text))
     results = analyzer.analyze(
         text=analyzed_text, language="en", entities=list(ENTITY_TOKENS)
     )
