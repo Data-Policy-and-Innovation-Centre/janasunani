@@ -1,5 +1,18 @@
 # Agent Notes
 
+`CLAUDE.md` is a symlink to this file. Edit `AGENTS.md`.
+
+[.dpic/standards/agent-conventions.md](.dpic/standards/agent-conventions.md) is
+authoritative for commits, branches, pull requests, subagents, and handling
+review findings. It is synced from `dpic-org` by `dpic-sync-standards` — do not
+edit it here; propose changes upstream and re-sync.
+[CONTRIBUTING.md](CONTRIBUTING.md) is authoritative for required checks, the
+data and PII policy, gold-metric gates, pull request size, and the review
+protocol — self-review the diff, request a Codex review with `@codex review`,
+then verify each finding before acting on it. Neither file is restated here —
+read them. This file covers what they do not: where the project stands, how it
+is laid out, and which commands run it.
+
 **Start here: [docs/ROADMAP.md](docs/ROADMAP.md)** — current state, phase
 status, and sequencing (the source of truth, incl. the project snapshot for a
 fresh reviewer; keep it in sync as you land work).
@@ -35,10 +48,10 @@ Then [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the system overview.
 - Lint: `uv run ruff check .`
 - Tests: `uv run --extra serving --extra pipeline-core pytest`
   — every change ships with real-code-path tests, green before "done".
-- PII gate: `uv run --extra pii pytest tests/test_pii_extra_contract.py tests/test_pii_redaction.py tests/test_redact_grievance.py tests/test_rederive_pii_draft.py tests/test_bootstrap_pii_gold.py`
-  — runs every Presidio-gated redaction, evaluation, and bootstrap test.
   **Never run pytest against the production Postgres** (fixtures drop
   tables); see `tests/README.md`.
+- The full pre-PR check list, the Presidio-gated PII suite, and the gold-metric
+  gates are in [CONTRIBUTING.md](CONTRIBUTING.md).
 - Component run commands: root `README.md` §"Running the components".
 
 ## Dependencies And Data

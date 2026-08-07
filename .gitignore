@@ -246,6 +246,12 @@ mlruns/
 # (shared .claude/settings.json stays tracked)
 .claude/settings.local.json
 .claude/worktrees/
+.muse/worktrees/
+
+# Git worktrees: the DPIC agent conventions prescribe the top-level
+# .worktrees/ directory. Without this rule every worktree an agent creates
+# shows up as an untracked directory in the main checkout's git status.
+.worktrees/
 
 # Generated Word docs (management/technical briefs rendered from docs/*.md)
 docs/*.docx
