@@ -367,6 +367,10 @@ class TestGroupSourceSnapshotProvenance:
         )
         groups = _group_rows(sync_url)
         assert refreshed["source_mismatches_at_start"] == 1
+        assert refreshed["total"] == 3
+        assert refreshed["already_indexed"] == 2
+        assert refreshed["processed"] == 1
+        assert refreshed["already_indexed"] + refreshed["processed"] == 3
         assert groups["T1"].source_snapshot_id != before
         assert (
             assert_group_source_snapshot(
@@ -1108,6 +1112,8 @@ class TestRefreshStaleSignatures:
             "Sambalpur", 2024, oltp_url=async_url, salt="s", refresh_stale=True
         )
         assert counts["processed"] == first["processed"]
+        assert counts["already_indexed"] == 0
+        assert counts["processed"] + counts["already_indexed"] == counts["total"]
 
         engine = create_engine(sync_url)
         with engine.begin() as conn:
@@ -1252,3 +1258,48 @@ class TestCLIReporting:
         final = next(message for message in messages if message.startswith("done:"))
         assert "comparison_pairs=0" in final
         assert "large_buckets=0" in final
+
+    def test_main_reports_one_refresh_as_three_of_three_not_four(self, oltp, monkeypatch):
+        from loguru import logger as loguru_logger
+
+        import janasunani.pipeline.dedup_index as di
+
+        async_url, sync_url = oltp
+        build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT)
+        engine = create_engine(sync_url)
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE grievance_redactions SET grievance_redacted = :text "
+                    "WHERE ticket_no = 'T1'"
+                ),
+                {"text": "water supply now broken for eight months"},
+            )
+        engine.dispose()
+
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "janasunani-dedup-index",
+                "--district",
+                "Khordha",
+                "--year",
+                "2024",
+                "--oltp-url",
+                async_url,
+                "--salt",
+                _SALT,
+                "--refresh-stale",
+            ],
+        )
+        messages = []
+        sink = loguru_logger.add(
+            lambda message: messages.append(str(message)), level="INFO", format="{message}"
+        )
+        try:
+            di.main()
+        finally:
+            loguru_logger.remove(sink)
+
+        final = next(message for message in messages if message.startswith("done:"))
+        assert final.startswith("done: 1 processed this run, 3 of 3 indexed")

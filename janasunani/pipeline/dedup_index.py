@@ -593,6 +593,7 @@ async def _index_signatures(
     version = _index_version(window_days, threshold, salt)
     epoch = date(year, 1, 1)
     processed = 0
+    refreshed_tickets: set[str] = set()
 
     async with engine.begin() as conn:
         total, already = await _count_signature_slice(conn, district, year)
@@ -651,6 +652,7 @@ async def _index_signatures(
             await conn.execute(
                 _dialect_upsert(DedupSignature, conn.dialect.name, rows, "ticket_no")
             )
+        refreshed_tickets.update(row[0] for row in source_mismatches)
         processed += len(rows)
 
     while True:
@@ -665,6 +667,19 @@ async def _index_signatures(
             )
             if not batch:
                 break
+
+            batch_ticket_nos = [row[0] for row in batch]
+            existing_in_batch = set(
+                (
+                    await conn.execute(
+                        select(DedupSignature.ticket_no).where(
+                            DedupSignature.ticket_no.in_(batch_ticket_nos)
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
 
             # Naive UTC — every timestamp column in this schema is TIMESTAMP
             # WITHOUT TIME ZONE and asyncpg refuses a tz-aware value there,
@@ -683,14 +698,24 @@ async def _index_signatures(
                 _dialect_upsert(DedupSignature, conn.dialect.name, rows, "ticket_no")
             )
 
+        refreshed_tickets.update(existing_in_batch)
         processed += len(batch)
+        unchanged_existing = already - len(refreshed_tickets)
         logger.info(
-            "indexed {} of {} ({} this batch)", processed + already, total, len(batch)
+            "indexed {} of {} ({} this batch)",
+            unchanged_existing + processed,
+            total,
+            len(batch),
         )
 
+    unchanged_existing = already - len(refreshed_tickets)
     return {
         "total": total,
-        "already_indexed": already,
+        # Existing rows overwritten during this run belong in processed, not
+        # here. This keeps the reconciliation contract auditable:
+        # unchanged existing + inserted/refreshed <= total, including a
+        # one-row source refresh inside an otherwise complete slice.
+        "already_indexed": unchanged_existing,
         "processed": processed,
         "stale_at_start": stale,
         "source_mismatches_at_start": len(source_mismatches),
