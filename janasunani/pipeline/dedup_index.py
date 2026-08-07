@@ -144,6 +144,12 @@ from janasunani.pipeline.export import _dialect_upsert
 
 BATCH_SIZE = 500
 
+# Candidate pairs verified per round trip. Bounds peak memory: only the
+# redacted text and shingle sets for the tickets in one chunk are held, rather
+# than every ticket involved in any candidate pair. 20,000 pairs touch at most
+# 40,000 tickets and in practice far fewer, since sorting clusters them.
+VERIFY_CHUNK_PAIRS = 20_000
+
 # Time-window blocking width. Campaigns and resubmissions cluster within
 # days to a few weeks of each other (a citizen re-files, or many filers
 # submit the same near-identical text in a burst); a filing from January
@@ -544,18 +550,35 @@ async def _group_duplicates(
         rows
     )
 
-    involved = sorted({ticket for pair in candidate_pairs for ticket in pair})
-    async with engine.begin() as conn:
-        text_by_ticket = await _load_redacted_text(conn, involved)
+    # Verification is batched, and this is a memory fix rather than a
+    # preference. Loading every involved ticket's redacted text at once put
+    # the Sambalpur 2024 run at 7.4 GB RSS and the kernel OOM-killed it on an
+    # 8 GB box after all 55,544 signatures had been written. Candidate
+    # generation above is safe to keep global -- it touches only band hashes
+    # and identity hashes, which are small, and identity pairs legitimately
+    # cross blocks so partitioning there would change the answer.
+    #
+    # Pairs are sorted first so both members of consecutive pairs tend to
+    # repeat, which makes the per-chunk shingle cache actually hit.
+    verified_pairs: list[tuple[str, str]] = []
+    ordered_pairs = sorted(candidate_pairs)
+    for start in range(0, len(ordered_pairs), VERIFY_CHUNK_PAIRS):
+        chunk = ordered_pairs[start : start + VERIFY_CHUNK_PAIRS]
+        tickets = sorted({ticket for pair in chunk for ticket in pair})
+        async with engine.begin() as conn:
+            text_by_ticket = await _load_redacted_text(conn, tickets)
 
-    verified_pairs = [
-        (a, b)
-        for a, b in candidate_pairs
-        if jaccard_similarity(
-            shingles(text_by_ticket.get(a, "")), shingles(text_by_ticket.get(b, ""))
-        )
-        >= threshold
-    ]
+        # Shingling dominates the CPU here and the same ticket appears in many
+        # pairs, so cache within the chunk. The cache is rebound each
+        # iteration rather than accumulated, which is what keeps the ceiling
+        # flat instead of growing across the run.
+        shingle_cache: dict[str, set[str]] = {}
+        for a, b in chunk:
+            for ticket in (a, b):
+                if ticket not in shingle_cache:
+                    shingle_cache[ticket] = shingles(text_by_ticket.get(ticket, ""))
+            if jaccard_similarity(shingle_cache[a], shingle_cache[b]) >= threshold:
+                verified_pairs.append((a, b))
 
     all_tickets = [row.ticket_no for row in rows]
     groups = union_find_groups(verified_pairs, items=all_tickets)

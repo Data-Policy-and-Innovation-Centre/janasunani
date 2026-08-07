@@ -730,3 +730,38 @@ def _index_version_for_test() -> str:
     from janasunani.pipeline.dedup_index import _index_version
 
     return _index_version(30, 0.5, "s")
+
+
+class TestVerificationIsBatched:
+    """The Sambalpur 2024 run OOM-killed at 7.4 GB on an 8 GB box after all
+    55,544 signatures were written: verification loaded every involved ticket's
+    redacted text at once. Candidate generation stays global -- it touches only
+    band and identity hashes, and identity pairs legitimately cross blocks."""
+
+    def test_grouping_is_unchanged_by_chunking(self, dup_oltp, monkeypatch):
+        """A chunk size of 1 must produce exactly the same groups as one big
+        chunk, or the fix changed the answer rather than the memory profile."""
+        import janasunani.pipeline.dedup_index as di
+
+        async_url, sync_url = dup_oltp
+        big = build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt="s")
+
+        engine = create_engine(sync_url)
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM dedup_groups"))
+            conn.execute(text("DELETE FROM dedup_signatures"))
+        engine.dispose()
+
+        monkeypatch.setattr(di, "VERIFY_CHUNK_PAIRS", 1)
+        small = build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt="s")
+
+        assert small["groups"] == big["groups"]
+        assert small["verified_pairs"] == big["verified_pairs"]
+
+    def test_the_chunk_size_is_a_real_bound(self):
+        """A chunk larger than the pair count would silently restore the old
+        all-at-once behaviour."""
+        import janasunani.pipeline.dedup_index as di
+
+        assert isinstance(di.VERIFY_CHUNK_PAIRS, int)
+        assert 0 < di.VERIFY_CHUNK_PAIRS <= 100_000
