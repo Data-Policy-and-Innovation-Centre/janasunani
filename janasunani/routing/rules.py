@@ -245,10 +245,23 @@ class MappingRouter:
 
 
 class _LazyDefaultRouter:
-    """Construct the optional CSV-backed router on its first real request."""
+    """Construct the optional crosswalk and CSV-backed routers on first use.
+
+    Order is crosswalk, then mapping tables, then the generic fallback inside
+    ``RuleRouter``. The crosswalk goes first because it is the only layer with
+    a measured accuracy (72.8% at its widest, #33) and the only one that covers
+    categories the masters cannot bridge at all -- ``intCategoryGrp`` is NULL on
+    every category, so name equality is all ``MappingRouter`` has.
+
+    A missing or unreadable crosswalk artifact yields ``None`` and this falls
+    straight through, which is #33's stated degradation: routing reverts to the
+    placeholder and nothing else in the demo is affected.
+    """
 
     def __init__(self) -> None:
         self._router: MappingRouter | None = None
+        self._crosswalk = None
+        self._crosswalk_loaded = False
         self._lock = Lock()
 
     def _get(self) -> MappingRouter:
@@ -258,6 +271,16 @@ class _LazyDefaultRouter:
                     self._router = MappingRouter()
         return self._router
 
+    def _get_crosswalk(self):
+        if not self._crosswalk_loaded:
+            with self._lock:
+                if not self._crosswalk_loaded:
+                    from janasunani.routing.crosswalk import load_crosswalk
+
+                    self._crosswalk = load_crosswalk()
+                    self._crosswalk_loaded = True
+        return self._crosswalk
+
     def route(
         self,
         *,
@@ -265,6 +288,21 @@ class _LazyDefaultRouter:
         subcategory: Optional[str] = None,
         district: Optional[str] = None,
     ) -> RoutingResult:
+        crosswalk = self._get_crosswalk()
+        if crosswalk is not None:
+            hit = crosswalk.lookup(category, subcategory, district)
+            if hit is not None:
+                district_name = _district(district)
+                return RoutingResult(
+                    dept=hit.dept,
+                    office=f"Office of the Collector, {district_name}",
+                    designation=None,
+                    escalation_authority=f"District Magistrate, {district_name}",
+                    confidence=hit.confidence,
+                    # "learned" rather than "rules": this came from what the
+                    # record shows, not from a hand-written table.
+                    method="learned",
+                )
         return self._get().route(
             category=category,
             subcategory=subcategory,
