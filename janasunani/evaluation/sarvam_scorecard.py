@@ -41,6 +41,7 @@ import re
 import unicodedata
 from collections import defaultdict
 from dataclasses import asdict, dataclass
+from statistics import NormalDist
 from typing import Any
 
 NORMALIZER_VERSION = "1.0"
@@ -274,10 +275,17 @@ def required_pages_mcnemar(gap: float, discordance: float, alpha: float = 0.05, 
     """
     if not (0 < gap < 1 and 0 < gap < discordance <= 1):
         raise ValueError("need 0 < gap < discordance <= 1")
-    # z critical values
-    z_alpha = 1.96 if alpha == 0.05 else 1.96
-    # 80% power -> z=0.84
-    z_beta = 0.84 if power == 0.8 else 0.84
+    if not 0 < alpha < 1:
+        raise ValueError("alpha must be in (0, 1)")
+    if not 0 < power < 1:
+        raise ValueError("power must be in (0, 1)")
+    # Actual quantiles, not the 0.05/0.80 constants. Both ternaries here
+    # returned the same value on either branch, so asking for 90% power or a
+    # 1% level silently returned the 80%/5% sample size — a deliberately
+    # under-powered study reporting itself as powered, which is the failure
+    # #127 exists to prevent, and every page submitted costs money.
+    z_alpha = NormalDist().inv_cdf(1 - alpha / 2)
+    z_beta = NormalDist().inv_cdf(power)
     # McNemar: n = (z_alpha*sqrt(p_d) + z_beta*sqrt(p_d - gap^2))^2 / gap^2
     p_d = discordance
     numerator = (z_alpha * math.sqrt(p_d) + z_beta * math.sqrt(max(p_d - gap * gap, 1e-9))) ** 2

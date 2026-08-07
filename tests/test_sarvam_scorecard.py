@@ -3,6 +3,8 @@
 Verified with recorded (synthetic) page records only; no live Sarvam call.
 """
 
+import pytest
+
 from janasunani.evaluation.sarvam_scorecard import (
     NORMALIZER_VERSION,
     PageRecord,
@@ -127,3 +129,31 @@ def test_divergence_rate_ticket_clustered():
     assert res["rate"] == 0.5
     assert res["n_clusters"] == 2
     assert res["ci_low"] < 0.5 < res["ci_high"]
+
+
+def test_required_pages_mcnemar_honours_alpha_and_power():
+    """alpha and power must move the answer, not be accepted and ignored.
+
+    Both z-quantiles were previously hardcoded via ternaries that returned the
+    same value on either branch, so a request for 90% power came back with the
+    80% sample size — an under-powered study reporting itself as powered.
+    """
+    base = required_pages_mcnemar(0.10, 0.25)  # alpha=0.05, power=0.80
+
+    # Tighter level and higher power must each require strictly more pages.
+    assert required_pages_mcnemar(0.10, 0.25, power=0.90) > base
+    assert required_pages_mcnemar(0.10, 0.25, alpha=0.01) > base
+    assert (
+        required_pages_mcnemar(0.10, 0.25, alpha=0.01, power=0.90)
+        > required_pages_mcnemar(0.10, 0.25, alpha=0.01)
+    )
+
+    # Pin the standard quantiles so a regression to constants is caught.
+    assert required_pages_mcnemar(0.10, 0.25, power=0.90) == 259
+    assert required_pages_mcnemar(0.10, 0.25, alpha=0.01, power=0.90) == 368
+
+    for bad in (0.0, 1.0, -0.1, 1.5):
+        with pytest.raises(ValueError):
+            required_pages_mcnemar(0.10, 0.25, alpha=bad)
+        with pytest.raises(ValueError):
+            required_pages_mcnemar(0.10, 0.25, power=bad)
