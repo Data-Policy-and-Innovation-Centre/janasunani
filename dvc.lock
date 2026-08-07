@@ -85,3 +85,107 @@ stages:
       hash: md5
       md5: 4a6c9f27c88b75d1d5d51781b8ef1006
       size: 81920
+  findings:
+    cmd: uv run --frozen janasunani-closure-headline && uv run --frozen
+      janasunani-two-day-bare-closures && uv run --frozen
+      janasunani-discard-reasons && uv run --frozen
+      janasunani-confirmed-duplicates && uv run --frozen
+      janasunani-misrouting-baseline
+    deps:
+    - path: data/interim/action_history.parquet
+      hash: md5
+      md5: a69b4a902baa6bab082f3ee21dfcaeb5
+      size: 497002355
+    - path: data/interim/complaints.parquet
+      hash: md5
+      md5: f0eeb1379c88a70ecf2fac5bad07868f
+      size: 410159639
+    - path: janasunani/analytics/findings/closure.py
+      hash: md5
+      md5: 0db7166f19edf3856113a644e90f3d94
+      size: 24418
+    - path: janasunani/analytics/findings/discards.py
+      hash: md5
+      md5: 13e1b915153d273c589021b99813036a
+      size: 12020
+    - path: janasunani/analytics/marts.py
+      hash: md5
+      md5: 24c11f03b534543d66380e4363da4f47
+      size: 1906
+    - path: janasunani/analytics/sql/closure.sql
+      hash: md5
+      md5: a5e003e5082aae194ee8123d4473b399
+      size: 13744
+    - path: janasunani/olap/lake.py
+      hash: md5
+      md5: b1ab47929d6d7f95a5a4aa968faaf785
+      size: 3704
+    - path: pyproject.toml
+      hash: md5
+      md5: 902f678cdc937d6fa13ef4bcd8d79a19
+      size: 9231
+    - path: scripts/analysis/closure_recording_no_action.py
+      hash: md5
+      md5: 77c88abc50e6f2bf7f59aa9c21c4df8b
+      size: 205
+    - path: scripts/analysis/confirmed_duplicates.py
+      hash: md5
+      md5: 8551c8de2e14e49557d37a888c2afb20
+      size: 203
+    - path: scripts/analysis/discard_reason_families.py
+      hash: md5
+      md5: 0cc22493e59b04d5f40f5e88858a7652
+      size: 202
+    - path: scripts/analysis/misrouting_baseline.py
+      hash: md5
+      md5: 6f8c4460ba52d5ff57276f956bbf4146
+      size: 191
+    - path: scripts/analysis/two_day_bare_closures.py
+      hash: md5
+      md5: 955480b2bec5c3098330b38b612a0d40
+      size: 200
+    - path: uv.lock
+      hash: md5
+      md5: 8d9bf57e81b1843e8996a114485857e8
+      size: 1038485
+    outs:
+    - path: outputs/findings/closure_recording_no_action.csv
+      hash: md5
+      md5: 2b6716072a9264a8fba98352ac4203fd
+      size: 301
+    - path: outputs/findings/closure_recording_no_action.md
+      hash: md5
+      md5: 597059c33d2b0d0f9d007b04cb7dc3d0
+      size: 909
+    - path: outputs/findings/confirmed_duplicates.csv
+      hash: md5
+      md5: 96e3426cba51d34b860feaa279f48a1a
+      size: 108
+    - path: outputs/findings/confirmed_duplicates.md
+      hash: md5
+      md5: 737caf7407638d1f8e4112fd4d9d29aa
+      size: 442
+    - path: outputs/findings/discard_reason_families.csv
+      hash: md5
+      md5: 106d74efe41d8078b790e6e5132addd4
+      size: 568
+    - path: outputs/findings/discard_reason_families.md
+      hash: md5
+      md5: 2e1dacf2a30eb781dbb7476f3d2d2512
+      size: 847
+    - path: outputs/findings/misrouting_baseline.csv
+      hash: md5
+      md5: 81c85d7c0bc4f0bcb37a471ff516188a
+      size: 107
+    - path: outputs/findings/misrouting_baseline.md
+      hash: md5
+      md5: 01191e18de52adec595273205e6be22a
+      size: 396
+    - path: outputs/findings/two_day_bare_closures.csv
+      hash: md5
+      md5: d01c0f2126e5fbe24c741b12e63549f0
+      size: 231
+    - path: outputs/findings/two_day_bare_closures.md
+      hash: md5
+      md5: 903dc729212929dc0b8891df6487bd40
+      size: 868

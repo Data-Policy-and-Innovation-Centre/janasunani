@@ -78,3 +78,41 @@ stages:
       - data/interim/action_history.parquet
       - data/interim/pages.parquet
       - data/interim/documents.parquet
+
+  findings:
+    desc: >-
+      Build the five aggregate-only Sprint 3 findings from the two authorized
+      lake tables. Each entrypoint opens only its declared table set; no stage
+      reads complaints.grievance or enumerates other data/interim artifacts.
+    cmd: >-
+      uv run --frozen janasunani-closure-headline &&
+      uv run --frozen janasunani-two-day-bare-closures &&
+      uv run --frozen janasunani-discard-reasons &&
+      uv run --frozen janasunani-confirmed-duplicates &&
+      uv run --frozen janasunani-misrouting-baseline
+    deps:
+      - data/interim/complaints.parquet
+      - data/interim/action_history.parquet
+      - janasunani/analytics/findings/closure.py
+      - janasunani/analytics/findings/discards.py
+      - janasunani/analytics/marts.py
+      - janasunani/analytics/sql/closure.sql
+      - janasunani/olap/lake.py
+      - scripts/analysis/closure_recording_no_action.py
+      - scripts/analysis/two_day_bare_closures.py
+      - scripts/analysis/discard_reason_families.py
+      - scripts/analysis/confirmed_duplicates.py
+      - scripts/analysis/misrouting_baseline.py
+      - pyproject.toml
+      - uv.lock
+    outs:
+      - outputs/findings/closure_recording_no_action.csv
+      - outputs/findings/closure_recording_no_action.md
+      - outputs/findings/two_day_bare_closures.csv
+      - outputs/findings/two_day_bare_closures.md
+      - outputs/findings/discard_reason_families.csv
+      - outputs/findings/discard_reason_families.md
+      - outputs/findings/confirmed_duplicates.csv
+      - outputs/findings/confirmed_duplicates.md
+      - outputs/findings/misrouting_baseline.csv
+      - outputs/findings/misrouting_baseline.md

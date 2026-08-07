@@ -212,6 +212,35 @@ def test_headline_reports_both_denominators_and_they_differ(lake):
     assert row["with_action"] + row["benefit"] == row["claims_action"]
 
 
+def test_runtime_reconciliation_is_structurally_independent_of_the_mart():
+    sql = closure.RECONCILIATION_SQL.lower()
+
+    assert "arg_max" in sql
+    assert "row_number" not in sql
+    assert "closure_" not in sql
+    assert "complaints.grievance" not in sql
+
+
+def test_runtime_reconciliation_disagreement_fails_closed(lake):
+    tables = closure.compute(lake)
+    wrong = pl.DataFrame(
+        {
+            "resolved_complaints": [8],
+            "ladder_closures": [6],
+            "bare": [4],
+            "with_action": [2],
+            "benefit": [1],
+            "claims_action": [3],
+            "off_ladder": [2],
+            "two_day_bare": [2],
+            "two_day_bare_min_trajectory": [0],
+        }
+    )
+
+    with pytest.raises(closure.ClosureReconciliationError):
+        closure._assert_reconciled(tables, wrong)
+
+
 def test_rung_assignment_normalizes_case_whitespace_and_trailing_stops(lake):
     """T2's remark has no trailing stop; T5's has a doubled internal space."""
     row = closure.compute(lake)["closure_finding_summary"].row(0, named=True)
@@ -467,8 +496,10 @@ def test_the_remark_diagnostic_is_aggregate_only_before_it_lands_in_outputs(lake
     assert written["closure_off_ladder_templates"].parent.name == "diagnostics"
     diagnostic = pl.read_csv(out / "diagnostics" / "closure_off_ladder_templates.csv")
     assert diagnostic.columns == [
-        "high_volume_off_ladder_remarks",
-        "affected_resolved_complaints",
+        "known_high_volume_non_ladder_templates",
+        "known_affected_resolved_complaints",
+        "unexpected_high_volume_off_ladder_templates",
+        "unexpected_affected_resolved_complaints",
     ]
     assert _OFF_LADDER not in diagnostic.write_csv()
 
@@ -520,6 +551,28 @@ def test_high_volume_off_ladder_text_refuses_publication(tmp_path, monkeypatch):
     assert "Unapproved" not in diagnostic
 
 
+def test_reviewed_high_volume_discard_template_does_not_look_like_ladder_drift(tmp_path):
+    actions = []
+    complaints = []
+    for i in range(1, 1001):
+        actions.append((i, f"L{i}", datetime(2024, 1, 2), _BARE))
+        complaints.append(
+            (f"L{i}", datetime(2024, 1, 1), datetime(2024, 1, 2), None, "Water", "Puri", "RWSS")
+        )
+    for i in range(1001, 2001):
+        actions.append((i, f"D{i}", datetime(2024, 1, 2), "Duplicate copy."))
+        complaints.append(
+            (f"D{i}", datetime(2024, 1, 1), datetime(2024, 1, 2), None, "Water", "Puri", "RWSS")
+        )
+
+    tables = closure.compute(_write_lake(tmp_path, complaints, actions))
+
+    assert tables["closure_finding_summary"].item(0, "ladder_coverage_pct") == 50.0
+    assert tables["closure_off_ladder_templates"].height == 1
+    assert closure.unexpected_off_ladder_templates(tables).is_empty()
+    assert closure.check_ladder_coverage(tables) is None
+
+
 def test_failed_guard_removes_stale_shareable_artifacts(tmp_path, monkeypatch):
     """A failed rerun must not leave an earlier valid report for delivery."""
     healthy = tmp_path / "healthy"
@@ -540,3 +593,52 @@ def test_failed_guard_removes_stale_shareable_artifacts(tmp_path, monkeypatch):
     assert not (out / "closure_finding.md").exists()
     assert not (out / "closure_finding_summary.csv").exists()
     assert not (out / "closure_finding.sql").exists()
+
+
+@pytest.mark.parametrize(
+    ("finding", "view", "renderer"),
+    [
+        (
+            "closure_recording_no_action",
+            "closure_finding_summary",
+            closure.render_headline_markdown,
+        ),
+        (
+            "two_day_bare_closures",
+            "closure_two_day_bare",
+            closure.render_two_day_markdown,
+        ),
+    ],
+)
+def test_each_closure_finding_has_its_own_aggregate_artifacts(
+    lake, tmp_path, finding, view, renderer
+):
+    tables = closure.compute(lake)
+    out = tmp_path / "single"
+    written = closure.write_single_finding(tables, finding, out)
+
+    assert set(written) == {"csv", "markdown"}
+    assert pl.read_csv(written["csv"]).equals(tables[view])
+    markdown = written["markdown"].read_text()
+    assert markdown == renderer(tables)
+    assert "**Insight.**" in markdown
+    assert "complaint text" in markdown
+
+
+def test_single_closure_headline_always_carries_both_denominators(lake):
+    markdown = closure.render_headline_markdown(closure.compute(lake))
+
+    assert "Closed on one of the six disposal templates" in markdown
+    assert "All resolved complaints" in markdown
+    assert "**50.0%**" in markdown
+    assert "**37.5%**" in markdown
+    assert closure.DESCRIPTIVE_CAVEAT in markdown
+
+
+def test_single_two_day_finding_carries_both_relevant_shares(lake):
+    markdown = closure.render_two_day_markdown(closure.compute(lake))
+
+    assert "**2 complaints**" in markdown
+    assert "66.7% of all bare disposals" in markdown
+    assert "25.0% of all resolved complaints" in markdown
+    assert "not proof that the closure was wrong" in markdown
