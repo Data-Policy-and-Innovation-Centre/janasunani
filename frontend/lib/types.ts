@@ -32,6 +32,46 @@ export interface RoutingResult {
   escalation_authority?: string | null;
   confidence: number; // 0..1
   method: "rules" | "learned" | "fallback" | "mock";
+  empirical_evidence?: EmpiricalRoutingEvidence | null;
+}
+
+export interface EmpiricalRoutingEvidence {
+  support: number;
+  concentration: number; // 0..1: historic destination share
+  width:
+    | "category+subcategory+district"
+    | "category+subcategory"
+    | "category+district"
+    | "category";
+}
+
+export interface DuplicateSignal {
+  duplicate_kind: "resubmission" | "campaign";
+  duplicate_group_id: string;
+  duplicate_ticket_no?: string | null;
+  related_filings?: number | null;
+}
+
+export interface DuplicateReview {
+  decision:
+    | "matched"
+    | "no_match"
+    | "abstained"
+    | "not_indexed"
+    | "unavailable";
+  reason?: string | null;
+}
+
+export interface SpamReview {
+  decision: "flagged" | "abstained" | "not_scored";
+  spam_reason?: string | null;
+  spam_score?: number | null;
+}
+
+export interface TriageResult {
+  duplicate?: DuplicateSignal | null;
+  duplicate_review: DuplicateReview;
+  spam: SpamReview;
 }
 
 export interface GrievanceResult {
@@ -44,6 +84,7 @@ export interface GrievanceResult {
   classification: ClassificationResult;
   summary: string;
   routing: RoutingResult;
+  triage: TriageResult;
 }
 
 export interface HistoryItem {

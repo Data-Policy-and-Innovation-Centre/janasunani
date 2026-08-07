@@ -14,6 +14,8 @@ from janasunani.inference.service import (
     _PageTypeModelError,
 )
 from janasunani.routing.rules import RuleRouter
+from janasunani.serving.schemas import DuplicateReview, SpamReview, TriageResult
+from janasunani.serving.triage import TriageUnavailableError
 
 
 @dataclass
@@ -69,6 +71,7 @@ def _processor(
     summarizer=None,
     english=True,
     language="en",
+    triage_provider=None,
 ):
     return PipelineGrievanceProcessor(
         ocr=ocr
@@ -80,6 +83,7 @@ def _processor(
         router=RuleRouter(),
         is_english_compatible=lambda _text: english,
         detect_language=lambda _text: language,
+        triage_provider=triage_provider,
         now=lambda: datetime(2026, 7, 10, 8, 0, tzinfo=UTC),
     )
 
@@ -117,6 +121,59 @@ def test_typed_text_maps_pii_and_feeds_only_redacted_text_to_models():
     assert result.classification.category == "Water Supply"
     assert result.routing.method == "rules"
     assert result.routing.dept == "Rural Water Supply & Sanitation"
+
+
+def test_live_triage_provider_receives_only_redacted_text():
+    class RecordingTriageProvider:
+        def __init__(self):
+            self.calls = []
+
+        def assess(self, **values):
+            self.calls.append(values)
+            return TriageResult(
+                duplicate_review=DuplicateReview(
+                    decision="abstained",
+                    reason="The redacted submission is too short to compare.",
+                ),
+                spam=SpamReview(decision="not_scored"),
+            )
+
+    provider = RecordingTriageProvider()
+    result = _process(_processor(triage_provider=provider))
+
+    assert provider.calls == [
+        {
+            "redacted_text": "[NAME] reports that the village pump is broken. Call [PHONE].",
+            "district": "Cuttack",
+            "submitted_on": datetime(2026, 7, 10, 8, 0, tzinfo=UTC),
+        }
+    ]
+    assert "Ramesh" not in provider.calls[0]["redacted_text"]
+    assert "9876543210" not in provider.calls[0]["redacted_text"]
+    assert result.triage.duplicate_review.decision == "abstained"
+
+
+def test_default_live_triage_is_explicitly_not_indexed():
+    result = _process(_processor())
+
+    assert result.triage.duplicate is None
+    assert result.triage.duplicate_review.decision == "not_indexed"
+    assert result.triage.duplicate_review.reason
+    assert result.triage.spam.decision == "not_scored"
+
+
+def test_triage_provider_outage_is_nonblocking_and_explicit():
+    class FailingTriageProvider:
+        def assess(self, **_values):
+            raise TriageUnavailableError("database password must not reach the user")
+
+    result = _process(_processor(triage_provider=FailingTriageProvider()))
+
+    assert result.status == "Submitted"
+    assert result.triage.duplicate is None
+    assert result.triage.duplicate_review.decision == "unavailable"
+    assert "password" not in (result.triage.duplicate_review.reason or "")
+    assert result.triage.spam.decision == "not_scored"
 
 
 def test_pdf_preserves_all_ocr_but_gates_models_to_class_one_pages():

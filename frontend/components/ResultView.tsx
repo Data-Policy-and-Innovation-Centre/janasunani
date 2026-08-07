@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { GrievanceResult, PIIEntity } from "@/lib/types";
+import { TriageBanner } from "./TriageBanner";
 import { Badge, Card, Field } from "./ui";
 
 /** Render extracted text with detected PII spans highlighted in place.
@@ -75,6 +76,8 @@ export function ResultView({ result }: { result: GrievanceResult }) {
           a toy regex, not the production PII analyzer.
         </p>
       )}
+
+      <TriageBanner triage={result.triage} />
 
       {/* 1. Extraction */}
       <Card
@@ -157,6 +160,16 @@ export function ResultView({ result }: { result: GrievanceResult }) {
             No specific rule matched this category/district — routed to the
             generic public grievance cell as a safety net. Confidence is low
             by design.
+          </p>
+        )}
+        {routing.method === "learned" && routing.empirical_evidence && (
+          <p className="mb-3 rounded-sm border border-hair bg-panel px-3 py-2 text-xs leading-relaxed text-text-secondary">
+            This destination describes historical dispatch, not which office
+            resolves cases best. It is based on{" "}
+            {routing.empirical_evidence.support} comparable historical
+            routings;{" "}
+            {(routing.empirical_evidence.concentration * 100).toFixed(0)}% went
+            to this destination.
           </p>
         )}
         <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">

@@ -51,6 +51,7 @@ def test_submit_text_returns_full_result_shape(client):
         "classification",
         "summary",
         "routing",
+        "triage",
     }
     assert body["extraction"]["source"] == "text"
     assert body["extraction"]["extracted_text"] == _TEXT
@@ -65,6 +66,18 @@ def test_submit_text_returns_full_result_shape(client):
     assert body["routing"]["method"] == "mock"
     assert "Cuttack" in body["routing"]["office"]
     assert 0.0 <= body["routing"]["confidence"] <= 1.0
+    assert body["triage"]["duplicate_review"]["decision"] in {
+        "matched",
+        "no_match",
+        "abstained",
+        "not_indexed",
+        "unavailable",
+    }
+    assert body["triage"]["spam"]["decision"] in {
+        "flagged",
+        "abstained",
+        "not_scored",
+    }
 
 
 def test_submit_file_reports_document_source(client):

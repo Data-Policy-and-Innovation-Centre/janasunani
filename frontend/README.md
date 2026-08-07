@@ -34,9 +34,10 @@ Two backends implement the same contract:
   store). First boot is slow (model warm-up); `/health` must report
   `{"processor":"pipeline"}`.
 - **Mock** — `uv run --extra serving janasunani-api`. Canned/regex responses,
-  useful for fast UI iteration without models loaded. Results from this API
-  come back with `routing.method: "mock"` and the UI marks them with a
-  "mock result" badge.
+useful for fast UI iteration without models loaded. Results from this API
+come back with `routing.method: "mock"` and the UI marks them with a
+  "mock result" badge. Its triage states are deterministic illustrations, not
+  findings about real grievances.
 
 Whichever backend is running, note that `routing.method` frequently comes
 back `"fallback"` (low confidence) rather than `"rules"` — the real
@@ -45,11 +46,19 @@ category→department crosswalk is still being built out (see
 grievance cell rather than failing. This is expected; the UI renders it with
 an explanatory note, not as an error.
 
+The result screen's triage banner is advisory only. Possible resubmissions link
+to the existing history search, campaigns use a distinct collective-grievance
+treatment with the related-filing count, and low-signal scoring shows both the
+reason and an abstention when the scorer declines. Nothing in the banner
+blocks or rejects a submission. Learned routes show their aggregate support
+and destination concentration beside the existing confidence and escalation
+chain.
+
 ## Structure
 
 - `app/` — routes: `/` (submit a grievance) and `/history` (browse/search).
 - `components/` — `SubmitForm`, `ResultView` (the five-step result cards),
-  `HistoryView`, and `ui.tsx` (Card/Field/Badge primitives).
+  `TriageBanner`, `HistoryView`, and `ui.tsx` (Card/Field/Badge primitives).
 - `lib/api.ts` — the fetch client (`submitGrievance`, `fetchHistory`).
 - `lib/types.ts` — TypeScript mirror of `janasunani/serving/schemas.py`. Do
   not rename these fields without a matching backend contract change.

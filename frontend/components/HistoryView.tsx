@@ -13,13 +13,17 @@ function fmtDate(iso: string | null): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString();
 }
 
-export function HistoryView() {
+export function HistoryView({ initialQuery = "" }: { initialQuery?: string }) {
   // Applied filters (drive the query); form fields are separate so typing
   // doesn't fire a request per keystroke.
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(initialQuery);
   const [district, setDistrict] = useState("");
   const [category, setCategory] = useState("");
-  const [applied, setApplied] = useState({ q: "", district: "", category: "" });
+  const [applied, setApplied] = useState({
+    q: initialQuery,
+    district: "",
+    category: "",
+  });
   const [offset, setOffset] = useState(0);
 
   const [page, setPage] = useState<HistoryPage | null>(null);
