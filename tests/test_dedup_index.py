@@ -315,6 +315,16 @@ class TestSignatureContents:
         row = _signature_rows(sync_url)["T1"]
         assert row.index_version and "num_hashes=" in row.index_version
 
+    def test_signature_version_format_does_not_include_grouping_policy(self, oltp):
+        from janasunani.pipeline.dedup_index import _index_version
+
+        async_url, sync_url = oltp
+        build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT)
+        version = _signature_rows(sync_url)["T1"].index_version
+
+        assert version == _index_version(30, 0.5, _SALT)
+        assert "grouping_algorithm=" not in version
+
 
 # --- large fixture: duplicate detection, blocking, cross-script, identity -
 
@@ -492,6 +502,117 @@ class TestBucketVerifiesAllPairsNotJustStarEdges:
         assert len(normalized) == 3
 
 
+class TestBucketVerificationPolicy:
+    """#158 keeps #101's exhaustive small-bucket contract, but makes the
+    deliberate large-campaign recall trade bounded and visible."""
+
+    def test_small_bucket_scores_every_unordered_pair(self, monkeypatch):
+        import janasunani.pipeline.dedup_index as di
+
+        compared = []
+        monkeypatch.setattr(di, "shingles", lambda text: {text})
+        monkeypatch.setattr(
+            di,
+            "jaccard_similarity",
+            lambda left, right: compared.append(tuple(sorted((*left, *right)))) or 0.0,
+        )
+
+        matches, comparisons, used_large_policy = di._verify_bucket(
+            ["a", "b", "c", "d"],
+            {ticket: ticket for ticket in "abcd"},
+            {},
+            {},
+            threshold=0.5,
+            cap=5,
+        )
+
+        assert matches == 0
+        assert comparisons == 6
+        assert used_large_policy is False
+        assert len(compared) == 6
+
+    def test_large_bucket_has_a_linear_deterministic_comparison_bound(self, monkeypatch):
+        import janasunani.pipeline.dedup_index as di
+
+        monkeypatch.setattr(di, "shingles", lambda text: {text})
+        calls = []
+        monkeypatch.setattr(
+            di,
+            "jaccard_similarity",
+            lambda left, right: calls.append((left, right)) or 0.0,
+        )
+        members = [f"T{i:04d}" for i in range(1_000)]
+        anchor_count = 7
+
+        matches, comparisons, used_large_policy = di._verify_bucket(
+            members,
+            {ticket: ticket for ticket in members},
+            {},
+            {},
+            threshold=0.5,
+            cap=200,
+            anchor_count=anchor_count,
+        )
+
+        assert matches == 0
+        assert used_large_policy is True
+        expected = (
+            anchor_count * (anchor_count - 1) // 2
+            + anchor_count * (len(members) - anchor_count)
+        )
+        assert comparisons == expected
+        assert len(calls) == comparisons
+        assert comparisons < len(members) * (len(members) - 1) // 100
+
+    def test_large_bucket_scores_and_unions_anchor_pairs(self, monkeypatch):
+        import janasunani.pipeline.dedup_index as di
+
+        monkeypatch.setattr(di, "shingles", lambda text: {text})
+        compared = []
+
+        def similarity(left, right):
+            pair = frozenset((*left, *right))
+            compared.append(pair)
+            return 1.0 if pair == frozenset({"a", "b"}) else 0.0
+
+        monkeypatch.setattr(di, "jaccard_similarity", similarity)
+        parent = {}
+        matches, comparisons, used_large_policy = di._verify_bucket(
+            ["a", "b", "c", "d"],
+            {ticket: ticket for ticket in "abcd"},
+            {},
+            parent,
+            threshold=0.5,
+            cap=4,
+            anchor_count=2,
+        )
+
+        assert used_large_policy is True
+        assert comparisons == 5  # C(2, 2) + 2 * (4 - 2)
+        assert compared.count(frozenset({"a", "b"})) == 1
+        assert matches == 1
+        assert di._find(parent, "a") == di._find(parent, "b")
+
+    def test_overlapping_bands_fetch_each_candidate_text_once(self, dup_oltp, monkeypatch):
+        import janasunani.pipeline.dedup_index as di
+
+        original = di._load_redacted_text
+        fetches = []
+
+        async def tracked_load(conn, ticket_nos):
+            fetches.append(tuple(ticket_nos))
+            return await original(conn, ticket_nos)
+
+        monkeypatch.setattr(di, "_load_redacted_text", tracked_load)
+        async_url, _ = dup_oltp
+        counts = build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt=_SALT)
+
+        assert len(fetches) == 1
+        assert fetches[0] == tuple(sorted(set(fetches[0])))
+        assert counts["comparison_pairs"] >= counts["verified_pairs"]
+        assert counts["large_buckets"] == 0
+
+
 class TestCrossScriptNonSupport:
     def test_same_script_near_duplicate_is_grouped(self, dup_oltp):
         async_url, sync_url = dup_oltp
@@ -628,6 +749,59 @@ class TestReconciliation:
         async_url, sync_url = dup_oltp
         build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt=_SALT)
         assert "T6" not in _signature_rows(sync_url)
+
+
+class TestGroupVersionProvenance:
+    def test_group_version_records_effective_bounded_policy(self, dup_oltp):
+        from janasunani.pipeline.dedup_index import GROUPING_ALGORITHM, _index_version
+
+        async_url, sync_url = dup_oltp
+        build_dedup_index(
+            "Sambalpur",
+            2024,
+            oltp_url=async_url,
+            salt=_SALT,
+            representative_cap=7,
+            anchor_count=3,
+        )
+
+        expected = _index_version(
+            30,
+            0.5,
+            _SALT,
+            grouping_algorithm=GROUPING_ALGORITHM,
+            representative_cap=7,
+            anchor_count=3,
+        )
+        assert {row.index_version for row in _group_rows(sync_url).values()} == {expected}
+        assert expected.endswith(
+            "grouping_algorithm=fixed-anchor-v1 representative_cap=7 anchor_count=3"
+        )
+
+    def test_policy_change_restamps_groups_but_not_signatures(self, dup_oltp):
+        async_url, sync_url = dup_oltp
+        build_dedup_index(
+            "Sambalpur",
+            2024,
+            oltp_url=async_url,
+            salt=_SALT,
+            representative_cap=7,
+            anchor_count=3,
+        )
+        signature_before = _signature_rows(sync_url)["T1"].index_version
+        group_before = _group_rows(sync_url)["T1"].index_version
+
+        build_dedup_index(
+            "Sambalpur",
+            2024,
+            oltp_url=async_url,
+            salt=_SALT,
+            representative_cap=8,
+            anchor_count=4,
+        )
+
+        assert _signature_rows(sync_url)["T1"].index_version == signature_before
+        assert _group_rows(sync_url)["T1"].index_version != group_before
 
 
 class TestSchemaGuards:
@@ -769,7 +943,43 @@ class TestGroupingStreamsBucketsInsteadOfMaterialisingPairs:
             for t, k in (("T1", "shared"), ("T2", "shared"), ("T3", "alone"))
         ]
         buckets = di._candidate_buckets(rows, 4)
-        assert [sorted(b) for b in buckets] == [["T1", "T2"]]
+        assert [sorted(members) for _block_key, members in buckets] == [["T1", "T2"]]
+
+    def test_band_buckets_carry_their_block_key_identity_buckets_do_not(self):
+        """#158: `_group_duplicates` caches redacted text per block, reusing
+        it across every band bucket in that block -- it needs the block key
+        on each band bucket to know which cache to use. Identity buckets are
+        unblocked by construction (module docstring), so there is no single
+        block to key a cache on; they come back with `None` instead."""
+        import janasunani.pipeline.dedup_index as di
+
+        row_a = SimpleNamespace(
+            ticket_no="a",
+            block_key="Khordha:latin:0",
+            signature=[1, 1, 100, 101],
+            identity_key_mobile=None,
+            identity_key_email=None,
+        )
+        row_b = SimpleNamespace(
+            ticket_no="b",
+            block_key="Khordha:latin:0",
+            signature=[1, 1, 200, 201],
+            identity_key_mobile="shared-identity",
+            identity_key_email=None,
+        )
+        row_c = SimpleNamespace(
+            ticket_no="c",
+            block_key="Khordha:latin:5",
+            signature=[9, 9, 9, 9],
+            identity_key_mobile="shared-identity",
+            identity_key_email=None,
+        )
+        buckets = di._candidate_buckets([row_a, row_b, row_c], 2)
+
+        band = [(k, sorted(m)) for k, m in buckets if k is not None]
+        identity = [(k, sorted(m)) for k, m in buckets if k is None]
+        assert band == [("Khordha:latin:0", ["a", "b"])]
+        assert identity == [(None, ["b", "c"])]
 
     def test_groups_still_form_over_the_real_fixture(self, dup_oltp):
         """Streaming must not change the answer, only the memory profile."""
@@ -778,3 +988,39 @@ class TestGroupingStreamsBucketsInsteadOfMaterialisingPairs:
         assert counts["groups"] > 0
         assert counts["slice_signatures"] > 0
 
+
+class TestCLIReporting:
+    def test_main_logs_comparison_and_large_bucket_counts(self, oltp, monkeypatch):
+        """Exercise argparse -> build -> final Loguru message, not just the
+        build helper's returned dictionary."""
+        from loguru import logger as loguru_logger
+
+        import janasunani.pipeline.dedup_index as di
+
+        async_url, _ = oltp
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "janasunani-dedup-index",
+                "--district",
+                "Khordha",
+                "--year",
+                "2024",
+                "--oltp-url",
+                async_url,
+                "--salt",
+                _SALT,
+            ],
+        )
+        messages = []
+        sink = loguru_logger.add(
+            lambda message: messages.append(str(message)), level="INFO", format="{message}"
+        )
+        try:
+            di.main()
+        finally:
+            loguru_logger.remove(sink)
+
+        final = next(message for message in messages if message.startswith("done:"))
+        assert "comparison_pairs=0" in final
+        assert "large_buckets=0" in final

@@ -38,16 +38,36 @@ created_on, petitioner_mobile/email); it never selects `complaints.grievance`.
    buckets by `(block_key, lsh band)` to find text candidates, adds
    identity-key equality as a second, unblocked source of candidates
    (same-citizen resubmission does not need to fall in the same time
-   window), re-fetches redacted text for every candidate ticket, and
-   verifies **every** candidate pair — text and identity alike — with
-   `jaccard_similarity` before it is allowed to union (dedup.py module
+   window), re-fetches redacted text for the tickets each bucket needs, and
+   verifies candidate pairs — text and identity alike — with
+   `jaccard_similarity` before a pair is allowed to union (dedup.py module
    docstring point 6 — a shared LSH band *or* a shared identity is a
    candidate, not a confirmed duplicate: the same citizen filing two
-   unrelated grievances is "same citizen", not "same issue"). Unions
-   everything that passes with `union_find_groups`. Recomputed and upserted
-   whole every run: cheap at this scale, and correct where an incremental
-   update would drift (a late resubmission can change a group id that
-   already exists).
+   unrelated grievances is "same citizen", not "same issue"). Recomputed and
+   upserted whole every run: cheap at this scale, and correct where an
+   incremental update would drift (a late resubmission can change a group id
+   that already exists).
+
+   **Above `REPRESENTATIVE_COMPARISON_CAP` members, a bucket trades recall
+   for time (#158).** A campaign-heavy district-year produces buckets in the
+   thousands of members — 6,797 was the largest measured on Sambalpur 2024,
+   with `itertools.combinations` alone generating 23 million pairs for that
+   one bucket even though union-find's `find(a) == find(b)` short-circuit
+   skips verifying most of them once a few unions have collapsed the
+   component. Below the cap, `_verify_bucket` still does what #101
+   established: every unordered pair in the bucket, via
+   `itertools.combinations`, because a star topology (compare everything to
+   one arbitrary first member) can leave two genuine near-duplicates
+   elsewhere in the bucket uncompared with each other. At or above the cap,
+   it instead exhaustively compares a fixed, deterministic set of anchor
+   tickets, then compares every non-anchor against every anchor — O(members),
+   with a hard, auditable comparison bound.
+   **This is a real, accepted recall loss, not just a constant-factor
+   trade:** a member that would verify only against another non-anchor ticket
+   is missed and stays in its own group (or merges into a different one)
+   instead of joining that component. `tests/test_dedup_index.py` pins the
+   case directly — a duplicate which matches only another non-anchor ticket
+   is deliberately not found — as documented behavior, not a bug.
 
 **Blocked by district and time window, not compared pairwise.** A single
 district-year slice runs to tens of thousands of rows — 55,544 for
@@ -164,6 +184,32 @@ DEFAULT_WINDOW_DAYS = 30
 # opening a DB connection, since this backfill persists what it computes.
 DEFAULT_DUPLICATE_THRESHOLD = 0.5
 
+# Bucket size at which `_verify_bucket` switches from exhaustive all-pairs
+# comparison to fixed-anchor comparison (#158; see the module
+# docstring for the recall trade this makes). The Sambalpur 2024 measurement
+# that motivated this had 46,191 non-singleton buckets and only a handful of
+# them -- the campaign-driven ones -- above a few thousand members; the top
+# eight were 4,965-6,797. There is no observed middle ground between
+# "ordinary duplicate cluster" (a handful of members) and "campaign bucket"
+# (thousands), so 200 sits solidly above anything that looks like ordinary
+# near-duplicate traffic -- keeping #101's all-pairs guarantee for it, where
+# the cost is a few tens of thousands of comparisons at worst -- and solidly
+# below every pathological bucket actually measured, so the fixed-anchor
+# trade only ever applies where the alternative is tens of millions of
+# generated pairs.
+REPRESENTATIVE_COMPARISON_CAP = 200
+
+# Large buckets compare against these deterministic anchors, rather than a
+# representative list that can grow with every distinct member.  Keeping the
+# anchor count separate from the switch point is important: the latter
+# protects #101's exact behavior for ordinary buckets; this one is the actual
+# linear-work budget for campaign buckets.
+LARGE_BUCKET_ANCHOR_COUNT = 32
+
+# Stable provenance marker for the bounded grouping policy. Increment this
+# when the algorithm changes even if the cap/anchor defaults do not.
+GROUPING_ALGORITHM = "fixed-anchor-v1"
+
 # Odia Unicode block. Presence, not majority: any real Odia content in a
 # filing is enough to route it to the Odia-script partition rather than the
 # Latin one, and typed PII placeholders / stray punctuation are ASCII
@@ -213,12 +259,26 @@ def _salt_marker(salt: str) -> str:
     return hashlib.blake2b(salt.encode("utf-8"), digest_size=6).hexdigest()
 
 
-def _index_version(window_days: int, threshold: float, salt: str) -> str:
+def _index_version(
+    window_days: int,
+    threshold: float,
+    salt: str,
+    *,
+    grouping_algorithm: Optional[str] = None,
+    representative_cap: Optional[int] = None,
+    anchor_count: Optional[int] = None,
+) -> str:
     """Stamp identifying the parameters a signature/group row was produced
     under — same purpose as `redact_grievance._analyzer_version`, scaled down:
     `dedup.py` is stdlib-only with no third-party package versions to track,
     but its own constants and this runner's blocking/verification parameters
     can still change what the index contains.
+
+    With no grouping keywords, this returns the original signature provenance
+    format unchanged. Group rows supply all three grouping keywords, appending
+    the stable algorithm marker and effective bounded-policy parameters. This
+    lets signatures remain current when only grouping changes, while group
+    outputs from exhaustive and bounded policies cannot share a version stamp.
 
     The salt marker is included because rotating the salt changes every
     identity hash. Without it a rotation is undetectable: the compromised
@@ -226,10 +286,19 @@ def _index_version(window_days: int, threshold: float, salt: str) -> str:
     ones keep the old, so same-citizen linkage silently stops working across
     the boundary with no error and no visible symptom (#136).
     """
-    return (
+    base = (
         f"shingle_size={DEFAULT_SHINGLE_SIZE} num_hashes={DEFAULT_NUM_HASHES} "
         f"num_bands={DEFAULT_NUM_BANDS} window_days={window_days} "
         f"threshold={threshold} salt={_salt_marker(salt)}"
+    )
+    grouping_values = (grouping_algorithm, representative_cap, anchor_count)
+    if all(value is None for value in grouping_values):
+        return base
+    if any(value is None for value in grouping_values):
+        raise ValueError("grouping provenance requires algorithm, cap, and anchor count")
+    return (
+        f"{base} grouping_algorithm={grouping_algorithm} "
+        f"representative_cap={representative_cap} anchor_count={anchor_count}"
     )
 
 
@@ -521,16 +590,24 @@ def _identity_candidate_pairs(rows) -> set[tuple[str, str]]:
     return pairs
 
 
-def _candidate_buckets(rows, num_bands: int) -> list[list[str]]:
-    """Candidate buckets as membership lists, band and identity together.
+def _candidate_buckets(rows, num_bands: int) -> list[tuple[Optional[str], list[str]]]:
+    """Candidate buckets as ``(block_key, members)``, band and identity
+    together.
 
     Returns buckets rather than the pairs inside them. A bucket is quadratic
     in its membership, so materialising its pairs is what exhausted memory on
     the Sambalpur slice; the caller streams each bucket and unions as it goes.
 
     Band buckets are keyed by block, so they respect district/script/time
-    blocking. Identity buckets deliberately are not: a resubmission can land
-    months later and a phone number carries no script (module docstring).
+    blocking, and carry that block's key in the returned tuple. `_group_duplicates`
+    uses the key to organize overlapping bands before fetching all candidate
+    text once (#158), rather than once per bucket. Identity
+    buckets deliberately are not blocked: a resubmission can land months
+    later and a phone number carries no script (module docstring). They come
+    back with ``None`` in place of a block key -- there is no single block to
+    cache text against, since one identity bucket's members can span the
+    whole slice.
+
     Singleton buckets are dropped -- no pairs, and they would only cost a
     round trip.
 
@@ -556,9 +633,109 @@ def _candidate_buckets(rows, num_bands: int) -> list[list[str]]:
             if key is not None:
                 identity_buckets[(kind, key)].append(row.ticket_no)
 
-    return [m for m in band_buckets.values() if len(set(m)) > 1] + [
-        m for m in identity_buckets.values() if len(set(m)) > 1
-    ]
+    return [
+        (block_key, members)
+        for (block_key, _band_index, _band_hash), members in band_buckets.items()
+        if len(set(members)) > 1
+    ] + [(None, members) for members in identity_buckets.values() if len(set(members)) > 1]
+
+
+def _find(parent: dict[str, str], item: str) -> str:
+    """Union-find lookup with path compression, over a `parent` dict shared
+    across the whole grouping run (module-level so `_verify_bucket` and
+    `_group_duplicates` share the exact same implementation, not a copy each
+    with its own closure)."""
+    parent.setdefault(item, item)
+    root = item
+    while parent[root] != root:
+        root = parent[root]
+    while parent[item] != root:
+        parent[item], item = root, parent[item]
+    return root
+
+
+def _union(parent: dict[str, str], a: str, b: str) -> None:
+    """Union the components containing ``a`` and ``b``. A no-op if they are
+    already the same component -- callers still call this unconditionally
+    after a passing verification; the check that makes repeat unions cheap
+    lives in `_find`'s path compression, not here."""
+    root_a, root_b = _find(parent, a), _find(parent, b)
+    if root_a != root_b:
+        parent[root_a] = root_b
+
+
+def _verify_bucket(
+    members: list[str],
+    text_by_ticket: dict[str, str],
+    shingle_cache: dict[str, set[str]],
+    parent: dict[str, str],
+    threshold: float,
+    cap: int = REPRESENTATIVE_COMPARISON_CAP,
+    anchor_count: int = LARGE_BUCKET_ANCHOR_COUNT,
+) -> tuple[int, int, bool]:
+    """Verify Jaccard similarity for one candidate bucket and union whatever
+    passes ``threshold``. Returns ``(duplicate_pairs, comparisons,
+    used_large_bucket_policy)`` for per-run audit metadata.
+
+    ``members`` must already be deduplicated (the caller's `sorted(set(...))`
+    -- see `_group_duplicates`). ``shingle_cache`` is a per-ticket memo the
+    caller controls the lifetime of, so text loaded once can be reused across
+    every bucket sharing that cache (#158 -- see `_group_duplicates`'s
+    per-block cache).
+
+    Below ``cap`` members: exhaustive all-pairs, via `itertools.combinations`
+    -- #101's invariant. A star topology (compare everything to one arbitrary
+    first member) can leave two genuine near-duplicates elsewhere in the
+    bucket uncompared with each other, so every unordered pair is checked,
+    same as before #158. Every pair is actually scored, even after an earlier
+    union: #101's all-pairs correctness contract is about verification, not
+    merely the final connectivity.
+
+    At ``cap`` members or more: fixed-anchor comparison (#158; see the module
+    docstring for the full rationale and the accepted recall trade). The first
+    ``anchor_count`` sorted tickets are deterministic anchors. Every unordered
+    anchor pair is scored once, then every remaining member is scored against
+    every anchor, including when it already matched another anchor. Exact work
+    is ``C(anchor_count, 2) + anchor_count * (members - anchor_count)``, at most
+    ``anchor_count * len(members)``. Only non-anchor/non-anchor pairs are
+    omitted. This is deliberately not an adaptive representative list: an
+    adversarial bucket of unrelated filings must not quietly turn the
+    large-bucket path back into quadratic work.
+    """
+
+    def shingles_for(ticket: str) -> set[str]:
+        cached = shingle_cache.get(ticket)
+        if cached is None:
+            cached = shingles(text_by_ticket.get(ticket, ""))
+            shingle_cache[ticket] = cached
+        return cached
+
+    verified = 0
+    comparisons = 0
+
+    if len(members) < cap:
+        for a, b in combinations(members, 2):
+            comparisons += 1
+            if jaccard_similarity(shingles_for(a), shingles_for(b)) >= threshold:
+                _union(parent, a, b)
+                verified += 1
+        return verified, comparisons, False
+
+    # Leave at least one non-anchor to score. This also keeps the test-only
+    # ability to lower ``cap`` useful for a two-member bucket.
+    anchors = members[: min(anchor_count, len(members) - 1)]
+    for a, b in combinations(anchors, 2):
+        comparisons += 1
+        if jaccard_similarity(shingles_for(a), shingles_for(b)) >= threshold:
+            _union(parent, a, b)
+            verified += 1
+    for member in members[len(anchors) :]:
+        for anchor in anchors:
+            comparisons += 1
+            if jaccard_similarity(shingles_for(anchor), shingles_for(member)) >= threshold:
+                _union(parent, anchor, member)
+                verified += 1
+    return verified, comparisons, True
 
 
 async def _group_duplicates(
@@ -568,18 +745,26 @@ async def _group_duplicates(
     window_days: int,
     threshold: float,
     salt: str,
+    representative_cap: int = REPRESENTATIVE_COMPARISON_CAP,
+    anchor_count: int = LARGE_BUCKET_ANCHOR_COUNT,
 ) -> dict[str, int]:
     async with engine.begin() as conn:
         rows = await _load_slice_signatures(conn, district, year)
 
     if not rows:
-        return {"slice_signatures": 0, "verified_pairs": 0, "groups": 0}
+        return {
+            "slice_signatures": 0,
+            "verified_pairs": 0,
+            "comparison_pairs": 0,
+            "large_buckets": 0,
+            "groups": 0,
+        }
 
     # Both sources are candidates only, never confirmed duplicates on their
     # own: an LSH band collision needs Jaccard verification (dedup.py module
     # docstring point 6), and so does an identity-key match, which means
     # "same citizen", not "same issue" (see _identity_candidate_pairs). One
-    # verification pass covers both.
+    # verification pass covers both, in `_verify_bucket`.
     # Pairs are streamed per bucket and unioned immediately, never collected.
     #
     # The Sambalpur 2024 run OOM-killed twice at 7.4 GB on an 8 GB box, after
@@ -589,44 +774,86 @@ async def _group_duplicates(
     # pairs. Grievance subjects are a couple of hundred characters, so every
     # text in the slice together is only megabytes.
     #
-    # Union-find also lets an already-connected pair skip verification. That
-    # cannot change the grouping: components are what union-find computes, and
-    # a pair whose endpoints are already connected cannot alter connectivity
-    # whatever it verifies to. It is what makes a large campaign bucket cheap
-    # after its first few unions.
+    # That fixed memory; it left runtime quadratic (#158). Two changes here:
+    # `_verify_bucket` (above) stops generating every pair once a bucket
+    # crosses `representative_cap`, and this loop fetches each candidate
+    # ticket once for all its overlapping LSH and identity buckets. Text and
+    # shingle memory are linear in candidate tickets, not candidate pairs.
     parent: dict[str, str] = {}
 
-    def find(item: str) -> str:
-        parent.setdefault(item, item)
-        root = item
-        while parent[root] != root:
-            root = parent[root]
-        while parent[item] != root:
-            parent[item], item = root, parent[item]
-        return root
+    band_buckets_by_block: dict[str, list[list[str]]] = defaultdict(list)
+    identity_buckets: list[list[str]] = []
+    for block_key, members in _candidate_buckets(rows, DEFAULT_NUM_BANDS):
+        unique = sorted(set(members))
+        if block_key is None:
+            identity_buckets.append(unique)
+        else:
+            band_buckets_by_block[block_key].append(unique)
+
+    # Text is small relative to the former pair set. Fetch each candidate
+    # ticket once, in BATCH_SIZE chunks, then reuse it across overlapping LSH
+    # bands *and* identity buckets. This makes database reads linear in unique
+    # candidate tickets rather than one query sequence per candidate bucket.
+    candidate_tickets = sorted(
+        {
+            ticket
+            for buckets in band_buckets_by_block.values()
+            for members in buckets
+            for ticket in members
+        }
+        | {ticket for members in identity_buckets for ticket in members}
+    )
+    async with engine.begin() as conn:
+        text_by_ticket = await _load_redacted_text(conn, candidate_tickets)
 
     verified = 0
-    for members in _candidate_buckets(rows, DEFAULT_NUM_BANDS):
-        unique = sorted(set(members))
-        async with engine.begin() as conn:
-            text_by_ticket = await _load_redacted_text(conn, unique)
-        shingle_cache: dict[str, set[str]] = {}
-        for a, b in combinations(unique, 2):
-            if find(a) == find(b):
-                continue
-            for ticket in (a, b):
-                if ticket not in shingle_cache:
-                    shingle_cache[ticket] = shingles(text_by_ticket.get(ticket, ""))
-            if jaccard_similarity(shingle_cache[a], shingle_cache[b]) >= threshold:
-                parent[find(a)] = find(b)
-                verified += 1
+    comparisons = 0
+    large_buckets = 0
+    shingle_cache: dict[str, set[str]] = {}
+    for buckets_in_block in band_buckets_by_block.values():
+        for members in buckets_in_block:
+            matches, checked, used_large_policy = _verify_bucket(
+                members,
+                text_by_ticket,
+                shingle_cache,
+                parent,
+                threshold,
+                representative_cap,
+                anchor_count,
+            )
+            verified += matches
+            comparisons += checked
+            large_buckets += used_large_policy
+
+    # Identity buckets are unblocked by construction (module docstring), but
+    # share the same candidate-text/shingle cache as LSH buckets above.
+    for members in identity_buckets:
+        matches, checked, used_large_policy = _verify_bucket(
+            members,
+            text_by_ticket,
+            shingle_cache,
+            parent,
+            threshold,
+            representative_cap,
+            anchor_count,
+        )
+        verified += matches
+        comparisons += checked
+        large_buckets += used_large_policy
 
     all_tickets = [row.ticket_no for row in rows]
     # Singletons still need a group id, so every ticket is seeded through find().
-    groups = {ticket: find(ticket) for ticket in all_tickets}
+    groups = {ticket: _find(parent, ticket) for ticket in all_tickets}
     group_sizes = Counter(groups.values())
 
-    version = _index_version(window_days, threshold, salt)
+    version = _index_version(
+        window_days,
+        threshold,
+        salt,
+        grouping_algorithm=GROUPING_ALGORITHM,
+        representative_cap=representative_cap,
+        anchor_count=anchor_count,
+    )
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     block_key_by_ticket = {row.ticket_no: row.block_key for row in rows}
     group_rows = [
@@ -653,6 +880,8 @@ async def _group_duplicates(
     return {
         "slice_signatures": len(rows),
         "verified_pairs": verified,
+        "comparison_pairs": comparisons,
+        "large_buckets": large_buckets,
         "groups": len(group_sizes),
     }
 
@@ -669,6 +898,8 @@ def build_dedup_index(
     threshold: float = DEFAULT_DUPLICATE_THRESHOLD,
     limit: Optional[int] = None,
     refresh_stale: bool = False,
+    representative_cap: int = REPRESENTATIVE_COMPARISON_CAP,
+    anchor_count: int = LARGE_BUCKET_ANCHOR_COUNT,
 ) -> dict[str, int]:
     """Index one district-year slice and (re)compute its duplicate groups.
 
@@ -676,6 +907,11 @@ def build_dedup_index(
     immediately — before opening any DB connection — if no salt is
     configured, or if ``threshold`` is not a finite value in ``[0, 1]``; see
     the module docstring.
+
+    ``representative_cap`` overrides `REPRESENTATIVE_COMPARISON_CAP` (#158)
+    -- the bucket-size threshold above which grouping trades recall for
+    time. Exposed mainly for tests that need to force one path or the other
+    deterministically; production runs should use the default.
     """
     effective_salt = salt if salt is not None else settings.DEDUP_SALT
     if not effective_salt or not effective_salt.strip():
@@ -716,7 +952,14 @@ def build_dedup_index(
                 refresh_stale=refresh_stale,
             )
             group_counts = await _group_duplicates(
-                engine, district, year, window_days, threshold, effective_salt
+                engine,
+                district,
+                year,
+                window_days,
+                threshold,
+                effective_salt,
+                representative_cap=representative_cap,
+                anchor_count=anchor_count,
             )
             return {**signature_counts, **group_counts}
         finally:
@@ -789,12 +1032,14 @@ def main() -> None:
     )
     logger.info(
         "done: {} processed this run, {} of {} indexed, {} duplicate groups "
-        "over {} signatures in slice {}/{}",
+        "over {} signatures (comparison_pairs={}, large_buckets={}) in slice {}/{}",
         counts["processed"],
         counts["already_indexed"] + counts["processed"],
         counts["total"],
         counts["groups"],
         counts["slice_signatures"],
+        counts["comparison_pairs"],
+        counts["large_buckets"],
         args.district,
         args.year,
     )
