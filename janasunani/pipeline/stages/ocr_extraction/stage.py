@@ -120,7 +120,7 @@ def _load_pending_pages(
                pages.language, pages.ticket_number, documents.ticket_number
         FROM pages
         LEFT JOIN documents ON documents.doc_id = pages.doc_id
-        WHERE extracted_text IS NULL
+        WHERE pages.extracted_text IS NULL
           AND NOT EXISTS (
               SELECT 1 FROM unreadable_pages u
               WHERE u.doc_id = pages.doc_id
@@ -130,9 +130,11 @@ def _load_pending_pages(
     """
     params: list[Any] = []
     if filter_language is not None:
-        sql += " AND language = ?"
+        sql += " AND pages.language = ?"
         params.append(filter_language)
-    sql += " ORDER BY doc_id, page_number"
+    # Qualified: the LEFT JOIN brings a second doc_id into scope, so an
+    # unqualified ORDER BY doc_id is an error, not a silent wrong sort.
+    sql += " ORDER BY pages.doc_id, pages.page_number"
 
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=60.0)
     try:
