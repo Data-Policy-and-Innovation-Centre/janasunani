@@ -1034,6 +1034,13 @@ appendix. Different audiences, different documents.
 **Serving + UI.** A `serving/intelligence.py` router with new schemas, the frozen
 contract untouched, behind auth, plus a supervisor screen in the frontend.
 
+The first integration reads only validated, aggregate findings artifacts at the
+serving boundary, never the lake at request time. It can show a closure
+headline with its artifact provenance, while duplicate-adjusted workload and
+the three-count spike remain explicitly unavailable until their own
+same-slice, backfill-derived aggregate artifacts exist. The officer-confirmed
+duplicate baseline is not substituted for either capability.
+
 Deliberately **not** in this phase: office-vs-office ranking and natural-language
 querying. Both are Phase 20, for reasons given there.
 

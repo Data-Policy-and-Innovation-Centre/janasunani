@@ -1,6 +1,10 @@
 // Client-side fetch layer for the Janasunani serving API. No auth, no SSR — the
 // browser calls the API directly. Base URL is env-configurable.
 import type { GrievanceResult, HealthResponse, HistoryPage } from "@/lib/types";
+import {
+  parseSupervisorDashboard,
+  type SupervisorDashboard,
+} from "@/lib/supervisor";
 
 const API_BASE = (
   process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000"
@@ -75,4 +79,13 @@ export async function fetchHistory(params: {
   const res = await fetch(`${API_BASE}/history?${qs.toString()}`);
   if (!res.ok) throw new Error(await errorMessage(res));
   return (await res.json()) as HistoryPage;
+}
+
+/** GET /supervisor - aggregate-only briefing data or explicit unavailable states. */
+export async function fetchSupervisorDashboard(): Promise<SupervisorDashboard> {
+  const res = await fetch(`${API_BASE}/supervisor`, { cache: "no-store" });
+  if (!res.ok) {
+    throw new Error("Supervisor aggregate endpoint is unavailable.");
+  }
+  return parseSupervisorDashboard(await res.json());
 }

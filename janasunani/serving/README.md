@@ -39,6 +39,7 @@ There is still no auth/redaction on `/history`, so the real-history opt-in
 | `POST /grievance` (201) | multipart: `text` **xor** `file`, optional `district` | `GrievanceResult` |
 | `GET /grievance/{id}` | — | the submitted `GrievanceResult` (404 if unknown) |
 | `GET /history` | `q`, `district`, `category`, `limit` (≤100), `offset` | `HistoryPage` (lake column names) |
+| `GET /supervisor` | — | `SupervisorDashboard`: recorded aggregate artifacts or explicit unavailable states |
 | `GET /health` | — | `{status, processor}` — `mock` or `pipeline` |
 
 **`schemas.py` is the contract.** Field names mirror what already exists —
@@ -53,6 +54,28 @@ lookups from a verified no-match, so absent evidence is never presented as a
 negative finding. None of these fields rejects a grievance. Changing a field is an API break; the
 frontend is built against exactly these shapes, and `tests/test_serving_api.py`
 plus `tests/test_serving_triage_contract.py` pin them.
+
+## Supervisor aggregate artifacts
+
+The supervisor endpoint reads only aggregate artifacts from an explicitly
+configured directory. It never queries the lake, grievance text, contact
+details, or citizen identifiers at request time. With no configured directory
+or no valid artifact, every panel says why it is unavailable instead of
+rendering illustrative values.
+
+Set JANASUNANI_SUPERVISOR_FINDINGS_DIR only inside the protected deployment to
+the container-visible findings directory. The current seam accepts exactly one
+validated closure headline CSV, under either the legacy
+closure_finding_summary.csv name or the one-finding
+closure_recording_no_action.csv name. It checks the aggregate-only schema and
+the reported counts and percentages before returning it, and labels its file
+and write timestamp without calling that timestamp source-data freshness.
+
+Duplicate-adjusted workload and the worked spike remain unavailable until their
+own validated capability artifacts exist. In particular, the manual
+confirmed-duplicates finding is a baseline insight, not a replacement for the
+MinHash-backed workload or the three-count spike. Production proxy auth protects
+this endpoint with the rest of the API.
 
 ## Mock and live modes
 

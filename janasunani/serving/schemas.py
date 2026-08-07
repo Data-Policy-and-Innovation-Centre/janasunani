@@ -24,7 +24,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+def _camel_case(name: str) -> str:
+    """Serialize new frontend-facing aggregate models in the existing TS style."""
+
+    head, *tail = name.split("_")
+    return head + "".join(part.capitalize() for part in tail)
 
 
 class PIIEntity(BaseModel):
@@ -299,3 +306,110 @@ class HistoryPage(BaseModel):
 class HealthResponse(BaseModel):
     status: Literal["ok"]
     processor: str  # "mock" until Phase 8/9 wire-up
+
+
+# The individual-grievance models above are a frozen Phase 8-11 contract and
+# retain their established field names.  The supervisor endpoint is a new,
+# aggregate-only contract, so it uses camel-case aliases matching the frontend
+# data-transfer object rather than making the client translate Python names.
+class SupervisorResponseModel(BaseModel):
+    model_config = ConfigDict(alias_generator=_camel_case, populate_by_name=True)
+
+
+class SupervisorSlice(SupervisorResponseModel):
+    district: str
+    category: str
+    period: str
+
+
+class SupervisorAggregateCount(SupervisorResponseModel):
+    label: str
+    value: int = Field(ge=0)
+    explanation: str
+
+
+class RecordedArtifactProvenance(SupervisorResponseModel):
+    """A validated aggregate artifact, not a claim about source-data freshness."""
+
+    state: Literal["recorded"] = "recorded"
+    label: str
+    artifact: str
+    artifact_written_at: datetime
+
+
+class UnavailableArtifactProvenance(SupervisorResponseModel):
+    state: Literal["unavailable"] = "unavailable"
+    label: str
+    reason: str
+
+
+class RecordedWorkloadPanel(SupervisorResponseModel):
+    kind: Literal["Capability"] = "Capability"
+    title: str
+    slice: SupervisorSlice
+    provenance: RecordedArtifactProvenance
+    total_filings: SupervisorAggregateCount
+    distinct_problems: SupervisorAggregateCount
+    duplicate_adjustment: SupervisorAggregateCount
+
+
+class UnavailableWorkloadPanel(SupervisorResponseModel):
+    kind: Literal["Capability"] = "Capability"
+    title: str
+    provenance: UnavailableArtifactProvenance
+    requirement: str
+
+
+class RecordedSpikePanel(SupervisorResponseModel):
+    kind: Literal["Capability"] = "Capability"
+    title: str
+    slice: SupervisorSlice
+    provenance: RecordedArtifactProvenance
+    interpretation: str
+    counts: tuple[
+        SupervisorAggregateCount,
+        SupervisorAggregateCount,
+        SupervisorAggregateCount,
+    ]
+
+
+class UnavailableSpikePanel(SupervisorResponseModel):
+    kind: Literal["Capability"] = "Capability"
+    title: str
+    provenance: UnavailableArtifactProvenance
+    requirement: str
+
+
+class RecordedClosurePanel(SupervisorResponseModel):
+    kind: Literal["Insight"] = "Insight"
+    title: str
+    provenance: RecordedArtifactProvenance
+    numerator_label: str
+    numerator: int = Field(ge=0)
+    primary_denominator_label: str
+    primary_denominator: int = Field(ge=0)
+    primary_share_pct: float = Field(ge=0, le=100)
+    secondary_denominator_label: str
+    secondary_denominator: int = Field(ge=0)
+    secondary_share_pct: float = Field(ge=0, le=100)
+    caveat: str
+
+
+class UnavailableClosurePanel(SupervisorResponseModel):
+    kind: Literal["Insight"] = "Insight"
+    title: str
+    provenance: UnavailableArtifactProvenance
+    numerator_label: str
+    primary_denominator_label: str
+    secondary_denominator_label: str
+    caveat: str
+
+
+class SupervisorDashboard(SupervisorResponseModel):
+    """The aggregate-only response for the supervisor briefing surface."""
+
+    generated_label: str
+    safety_note: str
+    workload: RecordedWorkloadPanel | UnavailableWorkloadPanel
+    spike: RecordedSpikePanel | UnavailableSpikePanel
+    closure: RecordedClosurePanel | UnavailableClosurePanel

@@ -57,16 +57,25 @@ chain.
 
 ## Structure
 
-- `app/` — routes: `/` (submit a grievance) and `/history` (browse/search).
+- `app/` — routes: `/` (submit a grievance), `/history` (browse/search), and
+  `/supervisor` (aggregate-only Phase 15 briefing).
 - `components/` — `SubmitForm`, `ResultView` (the five-step result cards),
-  `TriageBanner`, `HistoryView`, and `ui.tsx` (Card/Field/Badge primitives).
-- `lib/api.ts` — the fetch client (`submitGrievance`, `fetchHistory`).
+  `TriageBanner`, `HistoryView`, `SupervisorDashboard`, `SupervisorView`, and
+  `ui.tsx` (Card/Field/Badge primitives).
+- `lib/api.ts` — the fetch client (`submitGrievance`, `fetchHistory`,
+  `fetchSupervisorDashboard`).
 - `lib/types.ts` — TypeScript mirror of `janasunani/serving/schemas.py`. Do
   not rename these fields without a matching backend contract change.
+- `lib/supervisor.ts` — typed, aggregate-only supervisor response contract.
+  The browser accepts only the backend's narrow DTO and rejects row-level
+  fields. Until a validated artifact exists, each panel fails closed with its
+  own requirement; it never turns a manual duplicate baseline into the dedup
+  capability or a placeholder into a worked spike.
 
 ## Gate
 
 ```bash
+npm test
 npm run lint
 npm run build
 ```
