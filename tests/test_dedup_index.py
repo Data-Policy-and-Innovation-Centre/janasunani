@@ -246,7 +246,18 @@ class TestGroupSourceSnapshotProvenance:
             if district == "Khordha" and year == 2024 and redacted is not None
         ]
 
-    def test_groups_record_the_recomputable_oltp_source_snapshot(self, oltp):
+    @staticmethod
+    def _group_provenance_rows(groups):
+        return [
+            {
+                "ticket_no": row.ticket_no,
+                "source_name": row.source_name,
+                "source_snapshot_id": row.source_snapshot_id,
+            }
+            for row in groups.values()
+        ]
+
+    def test_reordered_complete_group_set_validates(self, oltp):
         async_url, sync_url = oltp
         build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT)
 
@@ -260,17 +271,61 @@ class TestGroupSourceSnapshotProvenance:
         # while a different/incomplete lake source would fail before aggregation.
         assert (
             assert_group_source_snapshot(
-                [
-                    {
-                        "source_name": row.source_name,
-                        "source_snapshot_id": row.source_snapshot_id,
-                    }
-                    for row in groups.values()
-                ],
+                reversed(self._group_provenance_rows(groups)),
                 reversed(source_records),
             )
             == expected
         )
+
+    def test_missing_group_row_fails_with_counts_only(self, oltp):
+        async_url, sync_url = oltp
+        build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT)
+        group_rows = self._group_provenance_rows(_group_rows(sync_url))
+
+        with pytest.raises(
+            DedupSourceSnapshotMismatch,
+            match="missing_group_rows=1, extra_group_rows=0",
+        ):
+            assert_group_source_snapshot(group_rows[:-1], self._source_records())
+
+    def test_extra_group_row_fails_with_counts_only(self, oltp):
+        async_url, sync_url = oltp
+        build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT)
+        group_rows = self._group_provenance_rows(_group_rows(sync_url))
+        group_rows.append(
+            {
+                "ticket_no": "synthetic-extra-ticket",
+                "source_name": group_rows[0]["source_name"],
+                "source_snapshot_id": group_rows[0]["source_snapshot_id"],
+            }
+        )
+
+        with pytest.raises(
+            DedupSourceSnapshotMismatch,
+            match="missing_group_rows=0, extra_group_rows=1",
+        ):
+            assert_group_source_snapshot(group_rows, self._source_records())
+
+    def test_duplicate_group_row_fails_with_count_only(self, oltp):
+        async_url, sync_url = oltp
+        build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT)
+        group_rows = self._group_provenance_rows(_group_rows(sync_url))
+        group_rows.append(dict(group_rows[0]))
+
+        with pytest.raises(DedupSourceSnapshotMismatch, match="duplicates=1"):
+            assert_group_source_snapshot(group_rows, self._source_records())
+
+    def test_blank_group_ticket_fails_with_count_only(self, oltp):
+        async_url, sync_url = oltp
+        build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT)
+        group_rows = self._group_provenance_rows(_group_rows(sync_url))
+        group_rows[0]["ticket_no"] = " "
+
+        with pytest.raises(
+            DedupSourceSnapshotMismatch,
+            match="blank_or_non_string=1",
+        ):
+            assert_group_source_snapshot(group_rows, self._source_records())
 
     def test_changed_oltp_source_fails_until_refresh_then_recertifies(self, oltp):
         async_url, sync_url = oltp
@@ -299,13 +354,7 @@ class TestGroupSourceSnapshotProvenance:
         changed_source[0]["grievance_redacted"] = "water supply now broken for eight months"
         with pytest.raises(DedupSourceSnapshotMismatch, match="does not match"):
             assert_group_source_snapshot(
-                [
-                    {
-                        "source_name": row.source_name,
-                        "source_snapshot_id": row.source_snapshot_id,
-                    }
-                    for row in groups.values()
-                ],
+                self._group_provenance_rows(groups),
                 changed_source,
             )
 
@@ -321,13 +370,7 @@ class TestGroupSourceSnapshotProvenance:
         assert groups["T1"].source_snapshot_id != before
         assert (
             assert_group_source_snapshot(
-                [
-                    {
-                        "source_name": row.source_name,
-                        "source_snapshot_id": row.source_snapshot_id,
-                    }
-                    for row in groups.values()
-                ],
+                self._group_provenance_rows(groups),
                 changed_source,
             )
             == groups["T1"].source_snapshot_id

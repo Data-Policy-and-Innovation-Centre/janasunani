@@ -189,7 +189,7 @@ def _canonical_source_record(record: Mapping[str, object]) -> tuple[str, bytes]:
     except KeyError as exc:
         raise ValueError(f"dedup source snapshot record is missing {exc.args[0]!r}") from exc
     ticket_no = payload["ticket_no"]
-    if not isinstance(ticket_no, str) or not ticket_no:
+    if not isinstance(ticket_no, str) or not ticket_no.strip():
         raise ValueError("dedup source snapshot requires a non-blank ticket_no")
     return (
         ticket_no,
@@ -266,20 +266,51 @@ def assert_group_source_snapshot(
     ``source_records`` is normally the district-year join of lake
     ``complaints`` and ``grievance_redactions``.  A #72-style consumer calls
     this before duplicate-adjusted aggregation; a changed or incomplete lake,
-    legacy rows without provenance, and a mix of group runs all raise instead
-    of being combined silently.  The verified digest is returned for callers
-    that need to record it in their own output provenance.
+    a missing/extra/duplicate group ticket, legacy rows without provenance,
+    and a mix of group runs all raise instead of being combined silently. The
+    verified digest is returned for callers that need to record it in their
+    own output provenance.
     """
+    source_records = list(source_records)
     expected = source_snapshot_id(source_records)
+    source_tickets = {record["ticket_no"] for record in source_records}
+
     observed: set[tuple[object, object]] = set()
+    group_tickets: set[str] = set()
+    duplicate_group_tickets = 0
+    blank_group_tickets = 0
     for row in group_rows:
+        ticket_no = row.get("ticket_no")
+        if not isinstance(ticket_no, str) or not ticket_no.strip():
+            blank_group_tickets += 1
+        elif ticket_no in group_tickets:
+            duplicate_group_tickets += 1
+        else:
+            group_tickets.add(ticket_no)
         observed.add((row.get("source_name"), row.get("source_snapshot_id")))
+
+    if blank_group_tickets:
+        raise DedupSourceSnapshotMismatch(
+            "dedup group provenance has invalid ticket rows: "
+            f"blank_or_non_string={blank_group_tickets}"
+        )
+    if duplicate_group_tickets:
+        raise DedupSourceSnapshotMismatch(
+            "dedup group provenance has duplicate ticket rows: "
+            f"duplicates={duplicate_group_tickets}"
+        )
 
     required = {(DEDUP_SOURCE_NAME, expected)}
     if observed != required:
         raise DedupSourceSnapshotMismatch(
             "dedup group provenance does not match the asserted source snapshot: "
-            f"expected {required!r}, observed {observed!r}"
+            f"expected_labels={len(required)}, observed_labels={len(observed)}"
+        )
+    if group_tickets != source_tickets:
+        raise DedupSourceSnapshotMismatch(
+            "dedup group ticket population does not match the asserted source snapshot: "
+            f"missing_group_rows={len(source_tickets - group_tickets)}, "
+            f"extra_group_rows={len(group_tickets - source_tickets)}"
         )
     return expected
 
