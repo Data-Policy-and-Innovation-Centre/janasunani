@@ -102,9 +102,15 @@ migration change): **1,371,288 complaints / 6,556,171 action-history rows**.
 | [`janasunani/migration/`](../janasunani/migration/README.md) | Cold-start dump loader + live-MySQL sync, converging on one validated insert routine. |
 | [`janasunani/ingestion/`](../janasunani/ingestion/README.md) | Janasunani API client, S3 service, document downloader, and the Pydantic schemas that are the **single raw→ORM column map**. |
 | [`janasunani/olap/`](../janasunani/olap/README.md) | `materialize` (OLTP → Parquet via DuckDB scanners) and `lake` (read helpers). |
-| [`janasunani/pipeline/`](../janasunani/pipeline/README.md) | The document pipeline (DSI refold), its artifact DB, the OLTP exporter, OCR quality guards, PII evaluator. Six stages today, seven with triage (Phase 14). |
+| [`janasunani/pipeline/`](../janasunani/pipeline/README.md) | The batch document pipeline (DSI refold), its artifact DB, the OLTP exporter, OCR quality guards, and `pii_eval` — the release gate the pipeline itself runs. Six stages today, seven with triage (Phase 14). |
+| [`janasunani/inference/`](../janasunani/inference/README.md) | Single-item inference for the live warm processor. Same models as `pipeline/`, one item at a time instead of a batch. |
+| [`janasunani/serving/`](../janasunani/serving/README.md) | The demo API: endpoints, response schemas (the frozen frontend contract), triage advisory, supervisor aggregates, history. |
+| [`janasunani/routing/`](../janasunani/routing/__init__.py) | Rules-first grievance routing: mappings, rules, and the empirical category→department crosswalk (#33). The learned router is deliberately deferred. |
+| [`janasunani/analytics/`](../janasunani/analytics/README.md) | The analytical layer over the Parquet lake: governed marts, the findings scripts, and the action-type lookup. |
+| [`janasunani/evaluation/`](../janasunani/evaluation/__init__.py) | Harnesses that score a stage against ground truth and report, rather than gating a run: the PII scorecard (#67) and the Sarvam vs pytesseract scorecard (#84/#127). |
+| [`janasunani/pii/`](../janasunani/pii/__init__.py) | PII gold-set construction: the ensemble labelling helpers, agreement report and adjudication queue (#15). |
+| [`janasunani/egress/`](../janasunani/egress/__init__.py) | The **only** package permitted to send citizen data to an `authorized-external` destination. Provider route registry, per-call audit log, rate limiting, kill switch, and the governance gate. |
 | [`janasunani/tracking/`](../janasunani/tracking/__init__.py) | DVC is the tracker. The slim MLflow helpers merged in PR #20 (2026-07-08) but nothing calls them yet; Phase 17 turns this into the provider-backed model registry. |
-| `janasunani/egress/` *(planned, Phase 17)* | The **only** module permitted to send citizen text to an `authorized-external` destination. Provider clients, per-call audit log, timeouts / circuit breaker, kill switch. |
 | `janasunani/experiments/` *(planned, Phase 16)* | Assignment service (deterministic seeded hash), exposure log, shadow-mode plumbing, the locked analysis plan, the analysis CLI. |
 | [`deploy/`](../deploy/README.md) | docker-compose for the CPU box; [Terraform](../deploy/terraform/README.md) for both EC2 boxes. |
 | [`scripts/`](../scripts/README.md) | Operational one-offs: `migrate.sh` (cold-start), `gpu_smoke.sh` (DeepSeek smoke), `sample_english_complaints.py` (evaluation bundles), `setup.sh`. |

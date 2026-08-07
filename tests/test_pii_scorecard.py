@@ -1,6 +1,6 @@
 import json
 
-from janasunani.pipeline.pii_scorecard import (
+from janasunani.evaluation.pii_scorecard import (
     _normalize_language,
     render_scorecard,
     score_per_language,
