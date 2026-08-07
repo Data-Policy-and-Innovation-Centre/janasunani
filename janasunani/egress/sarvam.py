@@ -40,6 +40,14 @@ TERMINAL_STATUSES = frozenset({"completed", "partially_completed", "failed", "re
 
 
 @dataclass(frozen=True)
+class GovernanceControl:
+    """A provider control statement and whether repo evidence verifies it."""
+
+    statement: str
+    verified: bool
+
+
+@dataclass(frozen=True)
 class ProviderRoute:
     """The registered, reviewable declaration for a provider route."""
 
@@ -48,8 +56,43 @@ class ProviderRoute:
     model_id: str
     endpoint: str
     trust_tier: str
+    data_class: str
     authorization_reference: str
+    retention_terms: GovernanceControl
+    encryption_in_transit: GovernanceControl
+    encryption_at_rest: GovernanceControl
+    audit_policy: str
     fallback: str
+
+    @property
+    def unverified_controls(self) -> tuple[str, ...]:
+        controls = {
+            "retention_terms": self.retention_terms,
+            "encryption_in_transit": self.encryption_in_transit,
+            "encryption_at_rest": self.encryption_at_rest,
+        }
+        return tuple(name for name, control in controls.items() if not control.verified)
+
+    @property
+    def declared_controls_complete(self) -> bool:
+        """Whether the architecture-mandated registry fields are all declared."""
+        required_text = (
+            self.trust_tier,
+            self.data_class,
+            self.endpoint,
+            self.authorization_reference,
+            self.retention_terms.statement,
+            self.encryption_in_transit.statement,
+            self.encryption_at_rest.statement,
+            self.audit_policy,
+            self.fallback,
+        )
+        return all(value.strip() for value in required_text)
+
+    @property
+    def live_use_ready(self) -> bool:
+        """Whether every provider-held-data control has verified repo evidence."""
+        return self.declared_controls_complete and not self.unverified_controls
 
 
 PROVIDER_REGISTRY = {
@@ -59,7 +102,25 @@ PROVIDER_REGISTRY = {
         model_id=MODEL_ID,
         endpoint=API_BASE_URL,
         trust_tier=TRUST_TIER,
+        data_class="raw grievance document bytes, including citizen PII",
         authorization_reference=AUTHORIZATION_REFERENCE,
+        retention_terms=GovernanceControl(
+            statement="Sarvam provider retention terms are not verified in this repository.",
+            verified=False,
+        ),
+        encryption_in_transit=GovernanceControl(
+            statement="Sarvam transport-encryption guarantees are not verified in this repository.",
+            verified=False,
+        ),
+        encryption_at_rest=GovernanceControl(
+            statement="Sarvam at-rest encryption guarantees are not verified in this repository.",
+            verified=False,
+        ),
+        audit_policy=(
+            "Append one local record for every remote attempt and fallback with ticket, stage, "
+            "document, provider, model, bytes sent, timestamp, authorization reference, "
+            "operation, event, language, request key, job id, and safe response metadata."
+        ),
         fallback="pytesseract",
     )
 }
@@ -75,6 +136,10 @@ class SarvamDisabled(SarvamError):
 
 class SarvamPollTimeout(SarvamError):
     """The job did not reach a terminal state within the bounded poll loop."""
+
+
+class SarvamGovernanceError(SarvamError):
+    """The external route lacks verified provider-held-data controls."""
 
 
 @dataclass(frozen=True)
@@ -268,6 +333,7 @@ class SarvamVisionAdapter:
         enabled: bool = False,
         api_key: str | None = None,
         audit_log: AuditLog,
+        route: ProviderRoute | None = None,
         transport: HttpTransport | None = None,
         poll_interval_seconds: float = 1.0,
         max_poll_attempts: int = 60,
@@ -278,6 +344,7 @@ class SarvamVisionAdapter:
             os.getenv("SARVAM_API_KEY") or os.getenv("SARVAM_API_SUBSCRIPTION_KEY")
         )
         self.audit_log = audit_log
+        self.route = route or PROVIDER_REGISTRY["sarvam-vision"]
         self.transport = transport
         self.poll_interval_seconds = poll_interval_seconds
         self.max_poll_attempts = max_poll_attempts
@@ -291,13 +358,14 @@ class SarvamVisionAdapter:
         context: SarvamAuditContext,
     ) -> str:
         """Run the OCR/Digitise endpoint and return its Markdown output."""
+        form = self._digitise_form(language)
         return self._run_job(
             operation="digitise",
             document_bytes=document_bytes,
             filename=filename,
             language=language,
             context=context,
-            form={"language": language, "output_format": "md"},
+            form=form,
             result_reader=self._read_digitise_result,
         )
 
@@ -321,7 +389,13 @@ class SarvamVisionAdapter:
             raise ValueError("provide exactly one of schema or config_id for Sarvam Extract")
         form: dict[str, Any] = {"language": language, "output_format": "json"}
         if schema is not None:
-            form["schema"] = json.dumps(schema, sort_keys=True)
+            form["schema"] = json.dumps(
+                schema,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            )
         else:
             form["config_id"] = config_id
         return self._run_job(
@@ -347,6 +421,14 @@ class SarvamVisionAdapter:
         Disabled means no remote request of any kind, including a resume/poll.
         Enabled runs may resume a recorded job rather than resubmitting it.
         """
+        form = self._digitise_form(language)
+        idempotency_key = self._idempotency_key(
+            context,
+            "digitise",
+            document_bytes,
+            filename=filename,
+            form=form,
+        )
         if not self.enabled:
             self._audit(
                 context,
@@ -356,13 +438,21 @@ class SarvamVisionAdapter:
                 0,
                 None,
                 {},
-                self._idempotency_key(context, "digitise", document_bytes),
+                idempotency_key,
             )
             return DigitiseOutcome(text=fallback(), ocr_model="pytesseract")
         try:
             return DigitiseOutcome(
-                text=self.digitise(document_bytes, filename, language, context),
-                ocr_model=SARVAM_OCR_MODEL,
+                text=self._run_job(
+                    operation="digitise",
+                    document_bytes=document_bytes,
+                    filename=filename,
+                    language=language,
+                    context=context,
+                    form=form,
+                    result_reader=self._read_digitise_result,
+                ),
+                ocr_model=f"{self.route.provider}:{self.route.model_id}",
             )
         except SarvamError as exc:
             self._audit(
@@ -373,7 +463,7 @@ class SarvamVisionAdapter:
                 0,
                 None,
                 {"reason": type(exc).__name__},
-                self._idempotency_key(context, "digitise", document_bytes),
+                idempotency_key,
             )
             return DigitiseOutcome(text=fallback(), ocr_model="pytesseract")
 
@@ -392,13 +482,24 @@ class SarvamVisionAdapter:
     ) -> _Result:
         if not self.enabled:
             raise SarvamDisabled("Sarvam hosted egress is disabled")
+        if not self.route.live_use_ready:
+            controls = ", ".join(self.route.unverified_controls)
+            raise SarvamGovernanceError(
+                f"Sarvam hosted egress is gated by unverified controls: {controls}"
+            )
         if not self.api_key:
             raise SarvamError(
                 "SARVAM_API_KEY is required when Sarvam is enabled "
                 "(SARVAM_API_SUBSCRIPTION_KEY is accepted for compatibility)"
             )
 
-        idempotency_key = self._idempotency_key(context, operation, document_bytes)
+        idempotency_key = self._idempotency_key(
+            context,
+            operation,
+            document_bytes,
+            filename=filename,
+            form=form,
+        )
         recorded_job = self.audit_log.submitted_job(context, operation, idempotency_key)
         if recorded_job:
             self._audit(
@@ -420,7 +521,7 @@ class SarvamVisionAdapter:
                 result_reader,
             )
         submitted = self._post_json(
-            url=f"{API_BASE_URL}/doc-ai/v1/job/{operation}",
+            url=f"{self.route.endpoint}/doc-ai/v1/job/{operation}",
             headers={
                 "api-subscription-key": self.api_key,
                 "Idempotency-Key": idempotency_key,
@@ -479,7 +580,7 @@ class SarvamVisionAdapter:
             if attempt:
                 self.sleep(self.poll_interval_seconds)
             status = self._get_json(
-                url=f"{API_BASE_URL}/doc-ai/v1/job/{job_id}/status",
+                url=f"{self.route.endpoint}/doc-ai/v1/job/{job_id}/status",
                 headers={"api-subscription-key": self.api_key},
                 label="poll",
                 context=context,
@@ -503,7 +604,7 @@ class SarvamVisionAdapter:
         idempotency_key: str,
     ) -> str:
         response = self._get_json(
-            url=f"{API_BASE_URL}/doc-ai/v1/job/{job_id}/download-url",
+            url=f"{self.route.endpoint}/doc-ai/v1/job/{job_id}/download-url",
             headers={"api-subscription-key": self.api_key},
             label="result_lookup",
             context=context,
@@ -537,7 +638,7 @@ class SarvamVisionAdapter:
         idempotency_key: str,
     ) -> dict[str, Any]:
         return self._get_json(
-            url=f"{API_BASE_URL}/doc-ai/v1/job/{job_id}/results",
+            url=f"{self.route.endpoint}/doc-ai/v1/job/{job_id}/results",
             headers={"api-subscription-key": self.api_key},
             label="result_lookup",
             context=context,
@@ -724,12 +825,39 @@ class SarvamVisionAdapter:
         }
 
     @staticmethod
+    def _digitise_form(language: str) -> dict[str, str]:
+        return {"language": language, "output_format": "md"}
+
+    @staticmethod
     def _idempotency_key(
-        context: SarvamAuditContext, operation: str, document_bytes: bytes = b""
+        context: SarvamAuditContext,
+        operation: str,
+        document_bytes: bytes,
+        *,
+        filename: str,
+        form: dict[str, Any],
     ) -> str:
+        try:
+            normalized_form = json.dumps(
+                form,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Sarvam request form must be canonical JSON data") from exc
         content_hash = hashlib.sha256(document_bytes).hexdigest()
         source = "\0".join(
-            (context.ticket, context.document_id, context.stage, operation, content_hash)
+            (
+                context.ticket,
+                context.document_id,
+                context.stage,
+                operation,
+                filename,
+                normalized_form,
+                content_hash,
+            )
         )
         return hashlib.sha256(source.encode("utf-8")).hexdigest()
 
@@ -742,23 +870,22 @@ class SarvamVisionAdapter:
         bytes_sent: int,
         job_id: str | None,
         metadata: dict[str, Any],
-        idempotency_key: str | None = None,
+        idempotency_key: str,
     ) -> None:
         self.audit_log.append(
             AuditRecord(
                 ticket=context.ticket,
                 stage=context.stage,
                 document_id=context.document_id,
-                provider=PROVIDER_ID,
-                model_id=MODEL_ID,
+                provider=self.route.provider,
+                model_id=self.route.model_id,
                 bytes_sent=bytes_sent,
                 timestamp=datetime.now(UTC).isoformat(),
-                authorization_reference=AUTHORIZATION_REFERENCE,
+                authorization_reference=self.route.authorization_reference,
                 operation=operation,
                 event=event,
                 language=language,
-                idempotency_key=idempotency_key
-                or self._idempotency_key(context, operation),
+                idempotency_key=idempotency_key,
                 job_id=job_id,
                 response_metadata=metadata,
             )

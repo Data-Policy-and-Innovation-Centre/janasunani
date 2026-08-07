@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from io import BytesIO
 from typing import Any
 
@@ -12,11 +13,13 @@ import pytest
 
 from janasunani.egress.sarvam import (
     AUTHORIZATION_REFERENCE,
+    GovernanceControl,
     MODEL_ID,
     PROVIDER_REGISTRY,
     SARVAM_OCR_MODEL,
     SarvamAuditContext,
     SarvamError,
+    SarvamPollTimeout,
     SarvamVisionAdapter,
     SqliteAuditLog,
 )
@@ -53,6 +56,17 @@ def _context() -> SarvamAuditContext:
     return SarvamAuditContext(ticket="T-42", stage="ocr_extraction", document_id="doc:1")
 
 
+def _verified_test_route():
+    """Recorded transports use explicit synthetic governance evidence."""
+    control = GovernanceControl(statement="verified recorded-test fixture", verified=True)
+    return replace(
+        PROVIDER_REGISTRY["sarvam-vision"],
+        retention_terms=control,
+        encryption_in_transit=control,
+        encryption_at_rest=control,
+    )
+
+
 def _zip_output(**members: str) -> bytes:
     output = BytesIO()
     with zipfile.ZipFile(output, "w") as archive:
@@ -70,6 +84,16 @@ def _audit_rows(path):
             FROM authorized_external_audit ORDER BY id
             """
         ).fetchall()
+
+
+def _audit_keys(path):
+    with sqlite3.connect(path) as connection:
+        return [
+            row[0]
+            for row in connection.execute(
+                "SELECT idempotency_key FROM authorized_external_audit ORDER BY id"
+            )
+        ]
 
 
 def test_digitise_replays_submit_poll_and_download_with_an_auditable_job(tmp_path):
@@ -102,6 +126,7 @@ def test_digitise_replays_submit_poll_and_download_with_an_auditable_job(tmp_pat
         enabled=True,
         api_key="recorded-test-key",
         audit_log=SqliteAuditLog(audit_path),
+        route=_verified_test_route(),
         transport=transport,
         poll_interval_seconds=0,
         sleep=lambda _seconds: None,
@@ -119,7 +144,11 @@ def test_digitise_replays_submit_poll_and_download_with_an_auditable_job(tmp_pat
     assert submit[2]["data"] == {"language": "od-IN", "output_format": "md"}
     assert "model" not in submit[2]["data"]
     assert submit[2]["headers"]["Idempotency-Key"] == adapter._idempotency_key(
-        _context(), "digitise", b"fixture-png"
+        _context(),
+        "digitise",
+        b"fixture-png",
+        filename="page.png",
+        form={"language": "od-IN", "output_format": "md"},
     )
 
     rows = _audit_rows(audit_path)
@@ -141,6 +170,7 @@ def test_digitise_replays_submit_poll_and_download_with_an_auditable_job(tmp_pat
     )
     assert all(row[10] == "job-7" for row in rows)
     assert [row[4] for row in rows] == [len(b"fixture-png"), 0, 0, 0, 0]
+    assert set(_audit_keys(audit_path)) == {submit[2]["headers"]["Idempotency-Key"]}
 
 
 def test_kill_switch_never_constructs_or_calls_the_remote_transport(tmp_path):
@@ -174,6 +204,7 @@ def test_nonterminating_recorded_job_falls_back_after_its_bounded_poll_loop(tmp_
         enabled=True,
         api_key="recorded-test-key",
         audit_log=SqliteAuditLog(audit_path),
+        route=_verified_test_route(),
         transport=transport,
         poll_interval_seconds=0,
         max_poll_attempts=2,
@@ -192,6 +223,7 @@ def test_nonterminating_recorded_job_falls_back_after_its_bounded_poll_loop(tmp_
         "poll",
         "fallback",
     ]
+    assert len(set(_audit_keys(audit_path))) == 1
 
 
 @pytest.mark.parametrize(
@@ -220,6 +252,7 @@ def test_partially_completed_job_is_rejected_and_audited_as_fallback(tmp_path, u
         enabled=True,
         api_key="recorded-test-key",
         audit_log=SqliteAuditLog(audit_path),
+        route=_verified_test_route(),
         transport=transport,
         poll_interval_seconds=0,
         sleep=lambda _seconds: None,
@@ -252,6 +285,7 @@ def test_recorded_submission_is_resumed_instead_of_resubmitted_and_rebilled(tmp_
         enabled=True,
         api_key="recorded-test-key",
         audit_log=audit_log,
+        route=_verified_test_route(),
         transport=first_transport,
         max_poll_attempts=1,
         poll_interval_seconds=0,
@@ -274,6 +308,7 @@ def test_recorded_submission_is_resumed_instead_of_resubmitted_and_rebilled(tmp_
         enabled=True,
         api_key="recorded-test-key",
         audit_log=audit_log,
+        route=_verified_test_route(),
         transport=resumed_transport,
         poll_interval_seconds=0,
         sleep=lambda _seconds: None,
@@ -282,6 +317,122 @@ def test_recorded_submission_is_resumed_instead_of_resubmitted_and_rebilled(tmp_
     assert resumed.digitise(b"fixture-png", "page.png", "en-IN", _context()) == "resumed markdown"
     assert [method for method, _, _ in resumed_transport.calls] == ["GET", "GET", "GET"]
     assert "resume" in [row[8] for row in _audit_rows(audit_path)]
+
+
+def test_extract_resume_key_is_stable_across_schema_dict_order(tmp_path):
+    audit_path = tmp_path / "audit.sqlite"
+    audit_log = SqliteAuditLog(audit_path)
+    first_transport = RecordedTransport(
+        [
+            RecordedResponse(202, {"job_id": "job-schema", "status": "pending"}),
+            RecordedResponse(200, {"job_id": "job-schema", "status": "running"}),
+        ]
+    )
+    first = SarvamVisionAdapter(
+        enabled=True,
+        api_key="recorded-test-key",
+        audit_log=audit_log,
+        route=_verified_test_route(),
+        transport=first_transport,
+        max_poll_attempts=1,
+        poll_interval_seconds=0,
+        sleep=lambda _seconds: None,
+    )
+    with pytest.raises(SarvamPollTimeout):
+        first.extract(
+            b"fixture-png",
+            "page.png",
+            "en-IN",
+            _context(),
+            schema={"z_field": {"type": "string"}, "a_field": {"type": "number"}},
+        )
+
+    resumed_transport = RecordedTransport(
+        [
+            RecordedResponse(200, {"job_id": "job-schema", "status": "completed"}),
+            RecordedResponse(200, {"results": [{"a_field": 1, "z_field": "ok"}]}),
+        ]
+    )
+    resumed = SarvamVisionAdapter(
+        enabled=True,
+        api_key="recorded-test-key",
+        audit_log=audit_log,
+        route=_verified_test_route(),
+        transport=resumed_transport,
+        poll_interval_seconds=0,
+        sleep=lambda _seconds: None,
+    )
+
+    result = resumed.extract(
+        b"fixture-png",
+        "page.png",
+        "en-IN",
+        _context(),
+        schema={"a_field": {"type": "number"}, "z_field": {"type": "string"}},
+    )
+
+    assert result == {"results": [{"a_field": 1, "z_field": "ok"}]}
+    assert [method for method, _, _ in resumed_transport.calls] == ["GET", "GET"]
+    assert "resume" in [row[8] for row in _audit_rows(audit_path)]
+
+
+@pytest.mark.parametrize("changed_parameter", ["language", "schema", "config_id"])
+def test_changed_result_defining_parameter_does_not_resume_recorded_job(
+    tmp_path, changed_parameter
+):
+    audit_path = tmp_path / "audit.sqlite"
+    audit_log = SqliteAuditLog(audit_path)
+
+    def call(adapter, changed):
+        if changed_parameter == "language":
+            return adapter.digitise(
+                b"fixture-png",
+                "page.png",
+                "od-IN" if changed else "en-IN",
+                _context(),
+            )
+        if changed_parameter == "schema":
+            return adapter.extract(
+                b"fixture-png",
+                "page.png",
+                "en-IN",
+                _context(),
+                schema={"field": "number" if changed else "string"},
+            )
+        return adapter.extract(
+            b"fixture-png",
+            "page.png",
+            "en-IN",
+            _context(),
+            config_id="config-new" if changed else "config-old",
+        )
+
+    transports = []
+    for changed, job_id in ((False, "job-old"), (True, "job-new")):
+        transport = RecordedTransport(
+            [
+                RecordedResponse(202, {"job_id": job_id, "status": "pending"}),
+                RecordedResponse(200, {"job_id": job_id, "status": "running"}),
+            ]
+        )
+        transports.append(transport)
+        adapter = SarvamVisionAdapter(
+            enabled=True,
+            api_key="recorded-test-key",
+            audit_log=audit_log,
+            route=_verified_test_route(),
+            transport=transport,
+            max_poll_attempts=1,
+            poll_interval_seconds=0,
+            sleep=lambda _seconds: None,
+        )
+        with pytest.raises(SarvamPollTimeout):
+            call(adapter, changed)
+
+    assert [method for method, _, _ in transports[1].calls] == ["POST", "GET"]
+    first_key = transports[0].calls[0][2]["headers"]["Idempotency-Key"]
+    changed_key = transports[1].calls[0][2]["headers"]["Idempotency-Key"]
+    assert changed_key != first_key
 
 
 @pytest.mark.parametrize(
@@ -299,9 +450,51 @@ def test_digitise_rejects_invalid_or_ambiguous_zip_results(archive, message):
 
 def test_idempotency_key_includes_the_actual_uploaded_bytes():
     same_context = _context()
-    assert SarvamVisionAdapter._idempotency_key(same_context, "digitise", b"first") != (
-        SarvamVisionAdapter._idempotency_key(same_context, "digitise", b"changed")
+    request = {
+        "filename": "page.png",
+        "form": {"language": "en-IN", "output_format": "md"},
+    }
+    assert SarvamVisionAdapter._idempotency_key(
+        same_context, "digitise", b"first", **request
+    ) != (
+        SarvamVisionAdapter._idempotency_key(
+            same_context, "digitise", b"changed", **request
+        )
     )
+
+
+def test_idempotency_key_canonicalizes_the_complete_request_form():
+    base_form = {
+        "language": "en-IN",
+        "output_format": "json",
+        "schema": {"b": {"type": "string"}, "a": {"type": "number"}},
+        "future_option": {"beta": True, "modes": ["layout", "tables"]},
+    }
+    reordered_form = {
+        "future_option": {"modes": ["layout", "tables"], "beta": True},
+        "schema": {"a": {"type": "number"}, "b": {"type": "string"}},
+        "output_format": "json",
+        "language": "en-IN",
+    }
+
+    def key(form):
+        return SarvamVisionAdapter._idempotency_key(
+            _context(),
+            "extract",
+            b"fixture-png",
+            filename="page.png",
+            form=form,
+        )
+
+    assert key(base_form) == key(reordered_form)
+    for changed in (
+        {**base_form, "language": "od-IN"},
+        {**base_form, "output_format": "csv"},
+        {**base_form, "schema": {"a": {"type": "string"}}},
+        {**base_form, "config_id": "config-2"},
+        {**base_form, "future_option": {"beta": False}},
+    ):
+        assert key(changed) != key(base_form)
 
 
 def test_failed_submission_is_audited_with_only_its_actual_upload_bytes(tmp_path):
@@ -310,6 +503,7 @@ def test_failed_submission_is_audited_with_only_its_actual_upload_bytes(tmp_path
         enabled=True,
         api_key="recorded-test-key",
         audit_log=SqliteAuditLog(audit_path),
+        route=_verified_test_route(),
         transport=RecordedTransport([RecordedResponse(503, {"error": "unavailable"})]),
     )
 
@@ -344,8 +538,46 @@ def test_extract_is_a_distinct_operation_and_requires_one_pinned_schema_source(t
 
     route = PROVIDER_REGISTRY["sarvam-vision"]
     assert route.trust_tier == "authorized-external"
+    assert route.data_class == "raw grievance document bytes, including citizen PII"
+    assert route.endpoint == "https://api.sarvam.ai"
     assert route.fallback == "pytesseract"
     assert route.authorization_reference == AUTHORIZATION_REFERENCE
+    assert route.retention_terms.statement
+    assert route.encryption_in_transit.statement
+    assert route.encryption_at_rest.statement
+    assert route.audit_policy
+    assert route.declared_controls_complete is True
+    assert route.unverified_controls == (
+        "retention_terms",
+        "encryption_in_transit",
+        "encryption_at_rest",
+    )
+    assert route.live_use_ready is False
+
+
+def test_unverified_provider_controls_gate_enabled_route_without_remote_call(tmp_path):
+    audit_path = tmp_path / "audit.sqlite"
+    transport = RecordedTransport([])
+    adapter = SarvamVisionAdapter(
+        enabled=True,
+        api_key="recorded-test-key",
+        audit_log=SqliteAuditLog(audit_path),
+        transport=transport,
+    )
+
+    outcome = adapter.digitise_or_fallback(
+        b"fixture-png", "page.png", "en-IN", _context(), lambda: "local OCR"
+    )
+
+    assert outcome.text == "local OCR"
+    assert outcome.ocr_model == "pytesseract"
+    assert transport.calls == []
+    with sqlite3.connect(audit_path) as connection:
+        event, metadata = connection.execute(
+            "SELECT event, response_metadata FROM authorized_external_audit"
+        ).fetchone()
+    assert event == "fallback"
+    assert json.loads(metadata)["reason"] == "SarvamGovernanceError"
 
 
 def test_extract_submission_omits_an_unsupported_model_field(tmp_path):
@@ -360,6 +592,7 @@ def test_extract_submission_omits_an_unsupported_model_field(tmp_path):
         enabled=True,
         api_key="recorded-test-key",
         audit_log=SqliteAuditLog(tmp_path / "audit.sqlite"),
+        route=_verified_test_route(),
         transport=transport,
         poll_interval_seconds=0,
         sleep=lambda _seconds: None,
@@ -378,7 +611,7 @@ def test_extract_submission_omits_an_unsupported_model_field(tmp_path):
     assert submission_data == {
         "language": "en-IN",
         "output_format": "json",
-        "schema": '{"complainant_name": "string"}',
+        "schema": '{"complainant_name":"string"}',
     }
     assert "model" not in submission_data
 
@@ -461,6 +694,7 @@ def test_sarvam_stage_fallback_persists_pytesseract_per_page(
         enabled=mode != "disabled",
         api_key="" if mode == "missing_credentials" else "recorded-test-key",
         audit_log=SqliteAuditLog(db_path),
+        route=_verified_test_route(),
         transport=RecordedTransport(responses),
         poll_interval_seconds=0,
         max_poll_attempts=1,
@@ -494,6 +728,7 @@ def test_sarvam_stage_success_persists_remote_route_and_model(tmp_path, monkeypa
         enabled=True,
         api_key="recorded-test-key",
         audit_log=SqliteAuditLog(db_path),
+        route=_verified_test_route(),
         transport=RecordedTransport(
             [
                 RecordedResponse(202, {"job_id": "job-ok", "status": "pending"}),
