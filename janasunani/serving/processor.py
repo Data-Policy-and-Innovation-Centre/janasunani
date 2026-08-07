@@ -116,7 +116,9 @@ class MockGrievanceProcessor:
                 confidence=0.42,
                 method="mock",
             ),
-            triage=_mock_triage(extraction.extracted_text),
+            # Triage receives only the mock-redacted representation too.  The
+            # mock is never a source of live low-signal evidence.
+            triage=_mock_triage(redaction.redacted_text),
         )
 
 
@@ -154,6 +156,10 @@ def _mock_triage(text: str) -> TriageResult:
     """Deterministic illustrative triage states for frontend contract work only."""
     bucket = hashlib.sha256(text.encode()).digest()[1] % 4
     group_id = hashlib.sha256(text.encode()).hexdigest()[:10]
+    mock_low_signal = SpamReview(
+        decision="abstained",
+        reason_code="mock_low_signal_review_unavailable",
+    )
     if bucket == 0:
         return TriageResult(
             duplicate=DuplicateSignal(
@@ -162,6 +168,7 @@ def _mock_triage(text: str) -> TriageResult:
                 duplicate_ticket_no="CMO202400042",
             ),
             duplicate_review=DuplicateReview(decision="matched"),
+            spam=mock_low_signal,
         )
     if bucket == 1:
         return TriageResult(
@@ -171,18 +178,6 @@ def _mock_triage(text: str) -> TriageResult:
                 related_filings=18,
             ),
             duplicate_review=DuplicateReview(decision="matched"),
+            spam=mock_low_signal,
         )
-    if bucket == 2:
-        return TriageResult(
-            spam=SpamReview(
-                decision="flagged",
-                spam_reason="Very little grievance detail was detected.",
-                spam_score=0.81,
-            )
-        )
-    return TriageResult(
-        spam=SpamReview(
-            decision="abstained",
-            spam_reason="The available signals were insufficient for a low-signal flag.",
-        )
-    )
+    return TriageResult(spam=mock_low_signal)

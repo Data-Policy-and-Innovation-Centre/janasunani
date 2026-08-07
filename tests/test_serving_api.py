@@ -73,11 +73,8 @@ def test_submit_text_returns_full_result_shape(client):
         "not_indexed",
         "unavailable",
     }
-    assert body["triage"]["spam"]["decision"] in {
-        "flagged",
-        "abstained",
-        "not_scored",
-    }
+    assert body["triage"]["spam"]["decision"] == "abstained"
+    assert "spam_score" not in body["triage"]["spam"]
 
 
 def test_submit_file_reports_document_source(client):

@@ -135,7 +135,10 @@ def test_live_triage_provider_receives_only_redacted_text():
                     decision="abstained",
                     reason="The redacted submission is too short to compare.",
                 ),
-                spam=SpamReview(decision="not_scored"),
+                spam=SpamReview(
+                    decision="abstained",
+                    reason_code="live_review_disabled_pending_redacted_adjudication",
+                ),
             )
 
     provider = RecordingTriageProvider()
@@ -153,13 +156,18 @@ def test_live_triage_provider_receives_only_redacted_text():
     assert result.triage.duplicate_review.decision == "abstained"
 
 
-def test_default_live_triage_is_explicitly_not_indexed():
+def test_default_live_triage_is_explicitly_abstained_pending_validation():
     result = _process(_processor())
 
     assert result.triage.duplicate is None
     assert result.triage.duplicate_review.decision == "not_indexed"
     assert result.triage.duplicate_review.reason
-    assert result.triage.spam.decision == "not_scored"
+    assert result.triage.spam.decision == "abstained"
+    assert result.triage.spam.reason_code == (
+        "live_review_disabled_pending_redacted_adjudication"
+    )
+    assert result.triage.spam.evidence[0].kind == "repetition_collapse"
+    assert "spam_score" not in result.triage.spam.model_dump()
 
 
 def test_triage_provider_outage_is_nonblocking_and_explicit():
@@ -173,7 +181,8 @@ def test_triage_provider_outage_is_nonblocking_and_explicit():
     assert result.triage.duplicate is None
     assert result.triage.duplicate_review.decision == "unavailable"
     assert "password" not in (result.triage.duplicate_review.reason or "")
-    assert result.triage.spam.decision == "not_scored"
+    assert result.triage.spam.decision == "abstained"
+    assert result.triage.spam.reason_code == "advisory_provider_unavailable"
 
 
 def test_pdf_preserves_all_ocr_but_gates_models_to_class_one_pages():

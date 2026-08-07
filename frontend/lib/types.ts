@@ -62,10 +62,20 @@ export interface DuplicateReview {
   reason?: string | null;
 }
 
+export interface OcrQualityEvidence {
+  kind: "repetition_collapse";
+  observed: boolean;
+}
+
 export interface SpamReview {
-  decision: "flagged" | "abstained" | "not_scored";
-  spam_reason?: string | null;
-  spam_score?: number | null;
+  decision: "review" | "abstained";
+  reason_code:
+    | "validated_low_signal_evidence"
+    | "ocr_repetition_collapse_unvalidated"
+    | "live_review_disabled_pending_redacted_adjudication"
+    | "mock_low_signal_review_unavailable"
+    | "advisory_provider_unavailable";
+  evidence: OcrQualityEvidence[];
 }
 
 export interface TriageResult {

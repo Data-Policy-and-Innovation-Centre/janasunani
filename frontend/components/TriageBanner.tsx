@@ -8,6 +8,21 @@ import { Badge } from "./ui";
  */
 export function TriageBanner({ triage }: { triage: TriageResult }) {
   const { duplicate, duplicate_review, spam } = triage;
+  const lowSignalMessage = {
+    validated_low_signal_evidence:
+      "Validated low-signal evidence requests an officer review.",
+    ocr_repetition_collapse_unvalidated:
+      "The established OCR repetition-collapse guard observed a problem, but it is not an approved low-signal review rule.",
+    live_review_disabled_pending_redacted_adjudication:
+      "Low-signal review is disabled pending redacted human-adjudicated validation.",
+    mock_low_signal_review_unavailable:
+      "The mock demo does not run low-signal review.",
+    advisory_provider_unavailable:
+      "The advisory provider was unavailable, so no low-signal review was assigned.",
+  }[spam.reason_code];
+  const repetitionEvidence = spam.evidence.find(
+    (evidence) => evidence.kind === "repetition_collapse",
+  );
 
   return (
     <section
@@ -100,15 +115,16 @@ export function TriageBanner({ triage }: { triage: TriageResult }) {
           </article>
         )}
 
-        {spam.decision === "flagged" && (
+        {spam.decision === "review" && (
           <article className="rounded-sm border border-negative bg-negative/10 px-3 py-2">
             <Badge tone="negative">low-signal review</Badge>
             <h3 className="mt-1 text-sm font-semibold text-text-dark">
-              Flagged low-signal, review
+              Officer review requested
             </h3>
-            <p className="mt-1 text-sm text-text-body">{spam.spam_reason}</p>
+            <p className="mt-1 text-sm text-text-body">{lowSignalMessage}</p>
             <p className="mt-1 text-xs text-text-secondary">
-              This flag does not reject the grievance.
+              Reason code: <code>{spam.reason_code}</code>. This advisory does
+              not reject the grievance.
             </p>
           </article>
         )}
@@ -116,23 +132,16 @@ export function TriageBanner({ triage }: { triage: TriageResult }) {
         {spam.decision === "abstained" && (
           <article className="rounded-sm border border-hair bg-surface px-3 py-2">
             <Badge tone="neutral">low-signal review abstained</Badge>
-            <p className="mt-1 text-sm text-text-body">{spam.spam_reason}</p>
+            <p className="mt-1 text-sm text-text-body">{lowSignalMessage}</p>
             <p className="mt-1 text-xs text-text-secondary">
-              No low-signal flag was assigned.
+              Reason code: <code>{spam.reason_code}</code>. No low-signal
+              review was assigned.
             </p>
-          </article>
-        )}
-
-        {spam.decision === "not_scored" && (
-          <article className="rounded-sm border border-hair bg-surface px-3 py-2">
-            <Badge tone="neutral">low-signal review unavailable</Badge>
-            <p className="mt-1 text-sm text-text-body">
-              Low-signal scoring has not run for this submission.
-            </p>
-            <p className="mt-1 text-xs text-text-secondary">
-              This is neither a low-signal flag nor a finding that the
-              grievance is actionable.
-            </p>
+            {repetitionEvidence && (
+              <p className="mt-1 text-xs text-text-secondary">
+                OCR repetition-collapse guard: {repetitionEvidence.observed ? "observed" : "not observed"}. No source text is shown here.
+              </p>
+            )}
           </article>
         )}
       </div>
