@@ -242,7 +242,15 @@ shared Box folder under different path prefixes — print the resolved paths wit
 `make box-paths`, and override per command
 (`make deliver BOX_PROJECT_ROOT="DPIC/janasunani"`) or persistently in `.env`.
 If a derived path doesn't match your Box layout, override the full endpoint
-(`INCOMING_REMOTE` / `EXHIBITS_REMOTE`) in `.env`.
+(`INCOMING_REMOTE` / `EXHIBITS_REMOTE`) in `.env` — write the bare value, with
+no manual shell quoting around spaces (`INCOMING_REMOTE=box:My Custom Path/`,
+not `box:'My Custom Path/'`): the `ingest`/`publish-raw`/`deliver` recipes
+quote it for you at the point they hand it to `rclone`, so a value with
+spaces (the default `BOX_PROJECT_ROOT` above has one) or an embedded `'`
+reaches `rclone` as a single argument either way. If your `.env` still has
+the old hand-quoted form from before this recipe-boundary quoting existed
+(`INCOMING_REMOTE=box:'Some/Path/'`), the Makefile now refuses to run with a
+loud error instead of silently misreading it — remove the quote marks.
 
 Common data operations:
 
