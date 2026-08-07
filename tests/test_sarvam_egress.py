@@ -905,6 +905,12 @@ def test_extract_is_a_distinct_operation_and_requires_one_pinned_schema_source(t
 
 
 def test_unverified_provider_controls_gate_enabled_route_without_remote_call(tmp_path):
+    """Unverified controls and no accepted risk must still block every call.
+
+    This is the invariant the accepted-risk field must not weaken: an
+    acceptance is an explicit, named decision, and its absence has to keep
+    failing closed.
+    """
     audit_path = tmp_path / "audit.sqlite"
     transport = RecordedTransport([])
     adapter = SarvamVisionAdapter(
@@ -912,6 +918,7 @@ def test_unverified_provider_controls_gate_enabled_route_without_remote_call(tmp
         api_key="recorded-test-key",
         audit_log=SqliteAuditLog(audit_path),
         transport=transport,
+        route=replace(PROVIDER_REGISTRY["sarvam-vision"], accepted_risk=None),
     )
 
     outcome = adapter.digitise_or_fallback(
@@ -927,6 +934,86 @@ def test_unverified_provider_controls_gate_enabled_route_without_remote_call(tmp
         ).fetchone()
     assert event == "fallback"
     assert json.loads(metadata)["reason"] == "SarvamGovernanceError"
+
+
+def test_accepted_risk_permits_egress_without_claiming_verification():
+    """An acceptance unblocks the call and never rewrites the control state.
+
+    The registry is what a reviewer reads. Recording someone's signature as
+    though it were evidence about Sarvam's retention would be a false
+    statement about a third party, so `verified` and `unverified_controls`
+    must be unmoved by it.
+    """
+    route = PROVIDER_REGISTRY["sarvam-vision"]
+
+    assert route.accepted_risk is not None
+    assert route.egress_permitted is True
+    assert route.egress_basis == "accepted_risk"
+
+    # Still not verified, and still reported as such.
+    assert route.live_use_ready is False
+    assert route.unverified_controls == (
+        "retention_terms",
+        "encryption_in_transit",
+        "encryption_at_rest",
+    )
+    assert route.retention_terms.verified is False
+
+
+def test_accepted_risk_is_named_in_the_audit_authorization(tmp_path):
+    """The audit row must say a call went out on acceptance, not verification."""
+    audit_path = tmp_path / "audit.sqlite"
+    transport = RecordedTransport(
+        [
+            RecordedResponse(202, {"job_id": "job-accepted", "status": "pending"}),
+            RecordedResponse(200, {"job_id": "job-accepted", "status": "completed"}),
+            RecordedResponse(
+                200, {"download_url": "https://example.invalid/out.zip"}
+            ),
+            RecordedResponse(200, _zip_output(**{"page-1.md": "recognised text"})),
+        ]
+    )
+    adapter = SarvamVisionAdapter(
+        enabled=True,
+        api_key="recorded-test-key",
+        audit_log=SqliteAuditLog(audit_path),
+        transport=transport,
+        poll_interval_seconds=0,
+    )
+
+    adapter.digitise_or_fallback(
+        b"fixture-png", "page.png", "en-IN", _context(), lambda: "local OCR"
+    )
+
+    with sqlite3.connect(audit_path) as connection:
+        references = [
+            row[0]
+            for row in connection.execute(
+                "SELECT authorization_reference FROM authorized_external_audit"
+            )
+        ]
+    assert references
+    for reference in references:
+        assert "risk accepted by" in reference
+        assert "Additional Chief Secretary" in reference
+        # A reader must be able to see which controls were unverified.
+        assert "retention_terms" in reference
+
+
+def test_verified_route_audit_does_not_mention_accepted_risk(tmp_path):
+    """When controls are genuinely verified, the acceptance wording is absent."""
+    audit_path = tmp_path / "audit.sqlite"
+    transport = RecordedTransport([])
+    adapter = SarvamVisionAdapter(
+        enabled=True,
+        api_key="recorded-test-key",
+        audit_log=SqliteAuditLog(audit_path),
+        transport=transport,
+        route=_verified_test_route(),
+    )
+
+    assert adapter.route.egress_basis == "verified_controls"
+    assert adapter._authorization_reference() == adapter.route.authorization_reference
 
 
 def test_extract_submission_omits_an_unsupported_model_field(tmp_path):
