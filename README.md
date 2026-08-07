@@ -93,15 +93,24 @@ must be quoted with: [janasunani/analytics/README.md](janasunani/analytics/READM
 
 ### 3 · Document pipeline (scanned docs → text/redaction/summary/category)
 
-Heavy deps live in three mutually-conflicting extras (`pipeline-core`,
-`ocr-deepseek`, `categorizer`) — run stage subsets per env:
+Heavy deps live in four extras (`pipeline-core`, `pii`, `ocr-deepseek`,
+`categorizer`). `pii` is a small, compiler-free redaction/evaluation
+environment, intentionally separate from the inherited `numpy<2` pipeline
+environment. Run the stages that need each extra in sequential invocations
+against the same artifact DB:
 
 ```bash
 uv run --extra pipeline-core janasunani-pipeline run \
   --input data/raw/documents-sample \
   --db data/processed/pipeline.sqlite \
   --models models \
-  --ocr-engine pytesseract          # deepseek needs CUDA (the GPU box)
+  --ocr-engine pytesseract \
+  --stages format_classifier ocr_extraction  # deepseek needs CUDA (the GPU box)
+
+uv run --extra pii janasunani-pipeline run \
+  --db data/processed/pipeline.sqlite \
+  --models models \
+  --stages pii_tagger
 
 dvc repro pipeline-sample           # the 2-doc end-to-end regression stage
 bash scripts/gpu_smoke.sh           # on the GPU box: DeepSeek OCR smoke
@@ -115,7 +124,7 @@ flags, and the artifact-DB design:
 
 ```bash
 uv run janasunani-export-pipeline --db data/processed/pipeline.sqlite  # → OLTP (idempotent upserts)
-uv run --extra pipeline-core janasunani-evaluate-pii --gold <gold.jsonl> # gate: coverage ≥ 0.8056
+uv run --extra pii janasunani-evaluate-pii --gold <gold.jsonl> # gate: coverage ≥ 0.8056
 ```
 
 ### 5 · Sample English complaints + documents (evaluation bundles)
@@ -163,7 +172,9 @@ Contract details: [janasunani/serving/README.md](janasunani/serving/README.md).
 ### Tests (the gate for every change)
 
 ```bash
-uv run --extra pipeline-core pytest && uv run ruff check .
+uv run --extra serving --extra pipeline-core pytest
+uv run --extra pii pytest tests/test_pii_extra_contract.py tests/test_pii_redaction.py tests/test_redact_grievance.py
+uv run ruff check .
 ```
 
 **Never against the production Postgres container** — see

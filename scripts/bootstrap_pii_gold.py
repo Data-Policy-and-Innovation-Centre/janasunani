@@ -16,11 +16,13 @@ recall by construction. The human pass is the measurement:
   2. DELETE spans that aren't PII   — false positives;
   3. FIX boundaries and labels      — exact-match quality.
 
-Then: uv run --extra pipeline-core janasunani-evaluate-pii --gold <corrected>
+Then: uv run --extra pii janasunani-evaluate-pii --gold <corrected>
 
-Run (pipeline-core env: tesseract binary + presidio + spaCy model needed):
+Run (`demo` env: tesseract binary + Presidio + spaCy model needed). This
+combines OCR and PII in one process, so it retains the demo's legacy
+``numpy<2`` pipeline contract; it is not the compiler-free PII backfill path:
 
-    uv run --extra pipeline-core python scripts/bootstrap_pii_gold.py \
+    uv run --extra demo python scripts/bootstrap_pii_gold.py \
         [--bundle data/output/english_complaints_sample.zip] \
         [--out data/output/pii_gold_draft.jsonl] [--max-pages-per-doc N]
 

@@ -12,7 +12,13 @@ uv run --extra pipeline-core janasunani-pipeline run \
   --input data/raw/documents-sample \
   --db data/processed/pipeline.sqlite \
   --models models \
-  --stages format_classifier ocr_extraction   # omit --stages to run all six
+  --stages format_classifier ocr_extraction
+
+uv run --extra pii janasunani-pipeline run \
+  --input data/raw/documents-sample \
+  --db data/processed/pipeline.sqlite \
+  --models models \
+  --stages pii_tagger
 ```
 
 `--stages` exists because of the dependency split (below). Other key flags:
@@ -46,10 +52,15 @@ provide. See [ROADMAP.md](../../docs/ROADMAP.md) §5.2.
 ## The dependency split (why `--stages` and lazy imports exist)
 
 DeepSeek OCR pins `transformers==4.46.3`; everything else needs `>=4.57`. The
-extras (`pipeline-core` / `ocr-deepseek` / `categorizer`) are declared
-**mutually conflicting** in `[tool.uv].conflicts`, so an environment holds one
-side only. Stages import their heavy deps **inside** their run functions, and a
-`--stages` subset imports only what it runs. Deploy pattern: one
+extras (`pipeline-core` / `pii` / `ocr-deepseek` / `categorizer`) are declared
+**mutually conflicting** where their model stacks clash in
+`[tool.uv].conflicts`, so an environment holds one side only. `pii` carries
+Presidio, spaCy, the English model, and a numpy 2.x floor; it deliberately does
+not inherit the legacy `numpy<2` pin of the non-PII pipeline stages. Stages
+import their heavy deps **inside** their run functions, and a `--stages` subset imports only
+what it runs. A run containing `pii_tagger` needs `--extra pii` in a separate
+invocation against the same artifact DB; all other CPU stages use
+`--extra pipeline-core`. Deploy pattern: one
 `uv run --extra X` env per extra, sequential invocations against the same
 artifact DB (`scripts/gpu_smoke.sh` is the working example).
 

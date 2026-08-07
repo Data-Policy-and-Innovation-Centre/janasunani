@@ -113,10 +113,13 @@ migration change): **1,371,288 complaints / 6,556,171 action-history rows**.
 ## Environments and the dependency split
 
 Python ≥ 3.13, managed by **uv**. Base deps are light; heavy ML stacks live in
-three **optional extras** (`pyproject.toml`):
+four **optional extras** (`pyproject.toml`):
 
-- `pipeline-core` — format classifier, pytesseract OCR, Presidio PII, page-type
-  ViT, summarizer (`transformers>=4.57,<5`)
+- `pipeline-core` — format classifier, pytesseract OCR, page-type ViT,
+  summarizer (`transformers>=4.57,<5`); its inherited `numpy<2` pin remains
+  isolated from the standalone `pii` extra
+- `pii` — Presidio, spaCy, and the English model; a numpy 2.x floor gives the
+  standalone redaction/evaluation environment CPython 3.13 wheels
 - `ocr-deepseek` — DeepSeek OCR only (`transformers==4.46.3` — **conflicts** with
   the others; declared in `[tool.uv].conflicts`)
 - `categorizer` — MuRIL categorizer

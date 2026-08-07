@@ -1,7 +1,7 @@
 """Presidio PII stage: real redaction on realistic grievance text.
 
 Runs the actual analyzer/anonymizer (no mocks); skips only where the
-pipeline-core extra (presidio + spaCy model) isn't installed, e.g. CI.
+`pii` extra (Presidio + spaCy model) isn't installed, e.g. CI.
 """
 
 import sqlite3

@@ -2,7 +2,7 @@
 
 Synthetic complaint text only. The redactor itself is stubbed in most tests so
 they run without presidio; one test exercises the real analyzer and skips if
-pipeline-core is absent.
+the `pii` extra is absent.
 """
 
 import pytest

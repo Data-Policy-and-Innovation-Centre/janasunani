@@ -32,7 +32,7 @@ What it cannot do, and `verify_pii_gold.py` will not tell you:
 Both files are DVC-tracked and never enter git. Nothing here prints citizen text.
 
 Usage:
-    uv run --extra pipeline-core python scripts/rederive_pii_draft.py \
+    uv run --extra pii python scripts/rederive_pii_draft.py \
         --gold data/external/pii_gold_n50.jsonl \
         --out data/external/pii_gold_n50.rederived_draft.jsonl
 
