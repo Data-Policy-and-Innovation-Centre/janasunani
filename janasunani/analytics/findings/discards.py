@@ -29,40 +29,45 @@ FindingName = Literal[
     "discard_reason_families", "confirmed_duplicates", "misrouting_baseline"
 ]
 
-# These are the high-frequency normalized templates recorded in ROADMAP §5.2.
-# Variants are enumerated rather than pattern-matched.  The live run must be
-# reconciled to the independently measured baseline before publication; if a
-# source-system dropdown changes, the lookup is reviewed and changed here.
+# These are the high-frequency normalized templates behind the family labels in
+# ROADMAP §5.2, verified against the 7 August action-history snapshot. Variants
+# are enumerated rather than pattern-matched. If a source-system dropdown
+# changes, the lookup is reviewed and changed here.
 TEMPLATES: dict[str, tuple[str, ...]] = {
     "details_inadequate": (
         "complaint details inadequate",
-        "complaint details are inadequate",
+        "complaint details inadequate. may file a detail grievance",
     ),
-    "documents_not_attached": (
-        "documents not attached",
-        "required documents not attached",
-        "the required documents are not attached",
-    ),
+    "documents_not_attached": ("relevant/requisite document/s not attached",),
     "case_already_taken_up": (
-        "case already taken up",
-        "case taken up earlier",
-        "the case has already been taken up",
-        "the case was taken up earlier",
+        "case already taken up for examination",
+        "case taken up earlier hence closed",
     ),
     "no_specific_grievance": (
         "no specific grievance",
-        "no specific grievance has been mentioned",
+        "no specific grievance. may file a detail grievance",
     ),
     "duplicate_copy": ("duplicate copy",),
     "policy_decision_required": (
-        "needs a policy decision first",
-        "can be considered only after a policy decision",
+        "can be considered only after a policy decision is made by the government",
     ),
     "outside_grievance_cell_purview": (
-        "not within purview of this grievance cell",
-        "not within the purview of this grievance cell",
+        "this is not within the purview of this grievance cell",
     ),
-    "address_not_given": ("address not given",),
+    "address_not_given": ("detail address of the complainant not given",),
+}
+
+# The dated values already published in ROADMAP §5.2. They remain beside every
+# current count so a refreshed lake cannot silently overwrite the baseline.
+ROADMAP_REFERENCE_ROWS = {
+    "details_inadequate": 39_943,
+    "documents_not_attached": 29_029,
+    "case_already_taken_up": 19_904,
+    "no_specific_grievance": 16_340,
+    "duplicate_copy": 14_767,
+    "policy_decision_required": 9_090,
+    "outside_grievance_cell_purview": 8_455,
+    "address_not_given": 4_110,
 }
 
 FAMILY_LABELS = {
@@ -158,14 +163,25 @@ def _complete(frame: pl.DataFrame) -> pl.DataFrame:
             "family": list(TEMPLATES),
             "label": [FAMILY_LABELS[family] for family in TEMPLATES],
             "rows": [observed.get(family, 0) for family in TEMPLATES],
+            "roadmap_reference_rows": [
+                ROADMAP_REFERENCE_ROWS[family] for family in TEMPLATES
+            ],
+            "delta_since_reference": [
+                observed.get(family, 0) - ROADMAP_REFERENCE_ROWS[family]
+                for family in TEMPLATES
+            ],
         }
     )
 
 
 def compute(lake_dir: Optional[Path] = None) -> pl.DataFrame:
     """Compute all eight families and fail closed if reconciliation differs."""
-    primary = _complete(lake.query(primary_sql(), lake_dir))
-    check = lake.query(reconciliation_sql(), lake_dir).row(0, named=True)
+    primary = _complete(
+        lake.query(primary_sql(), lake_dir, tables=("action_history",))
+    )
+    check = lake.query(
+        reconciliation_sql(), lake_dir, tables=("action_history",)
+    ).row(0, named=True)
     expected = {family: int(check[family]) for family in TEMPLATES}
     actual = {
         row["family"]: int(row["rows"])
@@ -186,20 +202,26 @@ def select_finding(families: pl.DataFrame, finding: FindingName) -> pl.DataFrame
         count = int(
             families.filter(pl.col("family").is_in(DUPLICATE_FAMILIES))["rows"].sum()
         )
+        reference = sum(ROADMAP_REFERENCE_ROWS[family] for family in DUPLICATE_FAMILIES)
         return pl.DataFrame(
             {
                 "measure": ["officer_confirmed_duplicate_rows"],
                 "rows": [count],
+                "roadmap_reference_rows": [reference],
+                "delta_since_reference": [count - reference],
             }
         )
     if finding == "misrouting_baseline":
         count = int(
             families.filter(pl.col("family") == MISROUTING_FAMILY)["rows"].sum()
         )
+        reference = ROADMAP_REFERENCE_ROWS[MISROUTING_FAMILY]
         return pl.DataFrame(
             {
                 "measure": ["outside_grievance_cell_purview_rows"],
                 "rows": [count],
+                "roadmap_reference_rows": [reference],
+                "delta_since_reference": [count - reference],
             }
         )
     raise ValueError(f"unknown finding {finding!r}")
@@ -218,11 +240,15 @@ def render_markdown(families: pl.DataFrame, finding: FindingName) -> str:
             "**Insight.** Exact matches over eight high-frequency officer "
             "templates; no model and no complaint text.",
             "",
-            "| Reason family | Action rows |",
-            "|---|---:|",
+            "| Reason family | Current action rows | ROADMAP reference | Change |",
+            "|---|---:|---:|---:|",
         ]
         for row in families.iter_rows(named=True):
-            lines.append(f"| {row['label']} | {_n(row['rows'])} |")
+            lines.append(
+                f"| {row['label']} | {_n(row['rows'])} | "
+                f"{_n(row['roadmap_reference_rows'])} | "
+                f"{row['delta_since_reference']:+,} |"
+            )
         lines += [
             "",
             "These are administrative reason labels, not ground truth about the "
@@ -233,13 +259,15 @@ def render_markdown(families: pl.DataFrame, finding: FindingName) -> str:
         return "\n".join(lines)
 
     if finding == "confirmed_duplicates":
-        rows = select_finding(families, finding).item(0, "rows")
+        result = select_finding(families, finding).row(0, named=True)
         return "\n".join(
             [
                 "## Duplicates already caught by the manual process",
                 "",
                 "**Insight.** The two exact-match discard families record "
-                f"**{_n(rows)} officer-confirmed duplicate action rows**.",
+                f"**{_n(result['rows'])} officer-confirmed duplicate action rows** "
+                f"in the current snapshot, {result['delta_since_reference']:+,} "
+                f"from the ROADMAP reference of {_n(result['roadmap_reference_rows'])}.",
                 "",
                 "This is the baseline, not the dedup capability claim. The "
                 "capability is the separately reported increment found by MinHash. "
@@ -249,13 +277,15 @@ def render_markdown(families: pl.DataFrame, finding: FindingName) -> str:
             ]
         )
 
-    rows = select_finding(families, finding).item(0, "rows")
+    result = select_finding(families, finding).row(0, named=True)
     return "\n".join(
         [
             "## Complaints discarded as outside the office's remit",
             "",
             "**Insight.** The exact out-of-purview template records "
-            f"**{_n(rows)} action rows**.",
+            f"**{_n(result['rows'])} action rows** in the current snapshot, "
+            f"{result['delta_since_reference']:+,} from the ROADMAP reference "
+            f"of {_n(result['roadmap_reference_rows'])}.",
             "",
             "This is a routing baseline, not spam and not evidence that the "
             "grievance lacked merit. It records where a case was judged not to "

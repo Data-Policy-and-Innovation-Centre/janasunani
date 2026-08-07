@@ -43,6 +43,12 @@ independently written `CASE` query before publishing. The confirmed-duplicate
 count is the manual-process baseline; the MinHash increment remains a separate
 capability claim.
 
+The dated ROADMAP counts remain in the discard outputs beside the current lake
+counts and their delta. A refreshed action history therefore cannot silently
+rewrite the baseline. The two closure entrypoints also reconcile the portable
+window-function mart against an independently structured DuckDB `arg_max`
+query before writing either artifact.
+
 Two house rules, enforced by tests rather than by convention:
 
 - **Aggregates only.** No finding prints a row of citizen writing. Where one

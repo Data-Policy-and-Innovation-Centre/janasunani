@@ -12,15 +12,15 @@ from janasunani.analytics.findings import discards
 def lake(tmp_path):
     remarks = [
         "Complaint details inadequate.",
-        "  Complaint   details ARE inadequate  ",
-        "Documents not attached.",
-        "Case already taken up.",
-        "The case was taken up earlier.",
+        "  Complaint   details inadequate. May file a detail grievance.  ",
+        "Relevant/requisite document/s not attached.",
+        "Case already taken up for examination.",
+        "Case taken up earlier hence closed.",
         "No specific grievance.",
         "Duplicate copy.",
-        "Needs a policy decision first.",
-        "Not within the purview of this grievance cell.",
-        "Address not given.",
+        "Can be considered only after a policy decision is made by the Government.",
+        "This is not within the purview of this Grievance Cell.",
+        "Detail address of the complainant not given.",
         # Arbitrary prose must not be pulled into a family by fuzzy matching.
         "The address was checked and found correct.",
         "A duplicate document was attached, but this is a different case.",
@@ -64,6 +64,9 @@ def test_eight_families_reconcile_against_independent_query(lake):
     assert counts["duplicate_copy"] == 1
     assert counts["outside_grievance_cell_purview"] == 1
     assert sum(counts.values()) == 10
+    assert result.filter(pl.col("family") == "duplicate_copy").item(
+        0, "roadmap_reference_rows"
+    ) == 14_767
 
 
 def test_confirmed_duplicate_baseline_is_two_families_only(lake):
@@ -74,6 +77,7 @@ def test_confirmed_duplicate_baseline_is_two_families_only(lake):
     markdown = discards.render_markdown(families, "confirmed_duplicates")
     assert "**Insight.**" in markdown
     assert "**3 officer-confirmed duplicate action rows**" in markdown
+    assert "ROADMAP reference of 34,671" in markdown
     assert "baseline, not the dedup capability claim" in markdown
 
 
@@ -85,6 +89,7 @@ def test_misrouting_is_not_described_as_spam(lake):
     markdown = discards.render_markdown(families, "misrouting_baseline")
     assert "**Insight.**" in markdown
     assert "not spam" in markdown
+    assert "ROADMAP reference of 8,455" in markdown
     assert "does not identify the destination that resolves it well" in markdown
 
 
@@ -111,10 +116,10 @@ def test_reconciliation_disagreement_fails_closed(lake, monkeypatch):
     real_query = discards.lake.query
     calls = 0
 
-    def disagreeing_query(sql, lake_dir):
+    def disagreeing_query(sql, lake_dir, *, tables=None):
         nonlocal calls
         calls += 1
-        frame = real_query(sql, lake_dir)
+        frame = real_query(sql, lake_dir, tables=tables)
         if calls == 2:
             frame = frame.with_columns(
                 (pl.col("duplicate_copy") + 1).alias("duplicate_copy")
