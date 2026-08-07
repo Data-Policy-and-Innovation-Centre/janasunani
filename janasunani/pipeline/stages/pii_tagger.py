@@ -462,6 +462,21 @@ def _get_engines():
     return _engines
 
 
+def _trim_span(text: str, start: int, end: int) -> tuple[int, int]:
+    """Shrink a span to its first and last non-whitespace character.
+
+    Never widens and never crosses a non-whitespace character, so what the
+    recognizer identified is untouched -- only the padding around it goes.
+    Returns a degenerate span when the extent is entirely whitespace; the
+    caller drops those.
+    """
+    while start < end and text[start].isspace():
+        start += 1
+    while end > start and text[end - 1].isspace():
+        end -= 1
+    return start, end
+
+
 def _postfilter(analyzed_text: str, results: list) -> list:
     """Drop analyzer results that are out of scope for our redaction policy.
 
@@ -508,7 +523,30 @@ def _postfilter(analyzed_text: str, results: list) -> list:
         if _overlaps_government_email(result):
             continue
         filtered.append(result)
-    return filtered
+
+    # Trim whitespace off both ends of every surviving span (#121).
+    #
+    # Recognizers return extents that sometimes run past the entity into
+    # surrounding space or a newline -- 11 of 567 spans on the n50 gold. Two
+    # consequences, and the second is the one a reader sees: a span containing
+    # whitespace can never be exact-matched by a gold that does not, which
+    # depresses exact_recall for free; and redaction replaces the whole
+    # extent, so a span swallowing a trailing newline emits "[NAME]" where
+    # "[NAME]\n" belonged, silently joining two lines of a citizen's grievance.
+    #
+    # Done here, at the end, for the reason #56 established: this is the one
+    # place both redact_text and detect_pii_spans pass through, so the two
+    # cannot disagree about what a span covers. Done *after* the checks above
+    # so they still see the extents the recognizers actually produced.
+    trimmed = []
+    for result in filtered:
+        start, end = _trim_span(analyzed_text, result.start, result.end)
+        if start >= end:
+            # Entirely whitespace. Nothing to redact and nothing to score.
+            continue
+        result.start, result.end = start, end
+        trimmed.append(result)
+    return trimmed
 
 
 def redact_text(text: str) -> str:

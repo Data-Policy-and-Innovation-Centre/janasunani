@@ -441,3 +441,46 @@ class TestIdentifierContextIsAClauseNotAnAdjacency:
         """14+ digits is an identifier whatever precedes it: no case number is
         that long, so the citation guard must not suppress this class."""
         assert "[ACCOUNT]" in redact_text("12345678901234567 credited late")
+
+
+class TestSpanBoundariesAreTrimmed:
+    """#121. Recognizers return extents that sometimes run past the entity into
+    surrounding whitespace -- 11 of 567 spans on the n50 gold. Trimmed in
+    _postfilter, the one place both redact_text and detect_pii_spans pass
+    through, so the two cannot disagree about what a span covers (#56)."""
+
+    def test_no_predicted_span_carries_whitespace(self):
+        text = "Please contact Rajesh Patnaik \nat 9876543210 about the water"
+        for span in detect_pii_spans(text):
+            surface = text[span.start : span.end]
+            assert surface == surface.strip(), (span.entity, repr(surface))
+
+    def test_redaction_leaves_the_newline_outside_the_token(self):
+        """A span swallowing a trailing newline emits '[PHONE]' where
+        '[PHONE]\\n' belonged, silently joining two lines of a grievance."""
+        text = "call 9876543210 \nabout the water supply"
+        out = redact_text(text)
+        assert "\n" in out
+        assert "[PHONE]" in out
+
+    def test_a_whitespace_only_span_is_dropped(self):
+        """Nothing to redact and nothing to score."""
+        from janasunani.pipeline.stages.pii_tagger import _trim_span
+
+        start, end = _trim_span("   ", 0, 3)
+        assert start >= end
+
+    def test_trimming_never_widens_or_crosses_content(self):
+        from janasunani.pipeline.stages.pii_tagger import _trim_span
+
+        text = "  Ravi  "
+        start, end = _trim_span(text, 0, len(text))
+        assert text[start:end] == "Ravi"
+
+    def test_both_paths_agree_after_trimming(self):
+        """The invariant #56 established: redact_text and detect_pii_spans must
+        never disagree about what counts as PII or how far it extends."""
+        text = "Sunita Devi  filed on 9876543210 "
+        spans = detect_pii_spans(text)
+        out = redact_text(text)
+        assert len(spans) == out.count("[NAME]") + out.count("[PHONE]")
