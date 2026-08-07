@@ -1,7 +1,7 @@
 # Performance record
 
 Every number here was measured, not quoted. Measured 2026-08-07 against
-`main` at `0dd7909`, after the Sprint 3 merges.
+`main` at `ca58f31`, after the Sprint 3 merges and the fixes they surfaced.
 
 Where a number is a legacy reference rather than a fresh measurement it says
 so. Where a capability cannot yet be measured, that is stated instead of
@@ -50,25 +50,27 @@ the false-negative rate is what matters, because F1 hides leaked PII.
 | EMAIL | detected |
 | AADHAAR | detected — spaced, unspaced, and with no context word |
 | PAN | detected |
-| NAME (Odia/Indian names) | **see below** |
+| NAME (Odia/Indian names) | detected — was leaking 48%, closed in #184 |
 
 Aadhaar is matched on shape alone (`[2-9]` + 11 digits), so context words
 only boost confidence. Numbers beginning 0 or 1 are correctly not matched:
 no real Aadhaar starts with those.
 
-### The name gap
+### The name gap, found and closed
 
 40 probes, 10 Odia/Indian full names across 4 sentence framings, scored on
-whether every token of the name was covered:
+whether every token of the name was covered. Measured before and after the
+recognizer added in #184:
 
-| | Count | Share |
+| | Before | After |
 |---|---|---|
-| Fully redacted | 21 | **52%** |
-| Partially redacted (given name left exposed) | 2 | 5% |
-| Missed entirely | 17 | **42%** |
-| **Any leak** | **19** | **48%** |
+| Fully redacted | 52% | **100%** |
+| Partially redacted (given name left exposed) | 5% | 0% |
+| Missed entirely | 42% | 0% |
+| **Any leak** | **48%** | **0%** |
 
-Framing changes the result sharply:
+Before the fix, framing moved the result sharply, and the misses concentrated
+where a label replaces a grammatical subject:
 
 | Framing | Full | Partial | Missed |
 |---|---|---|---|
@@ -77,17 +79,24 @@ Framing changes the result sharply:
 | `Applicant: {name}. …` | 3 | 0 | 7 |
 | `This grievance is filed by {name} of Sambalpur district.` | 6 | 0 | 4 |
 
-A Western control name (`John Smith`) was fully redacted where the Indian
-name in the same sentence was not. The recognizer is spaCy `en_core_web_sm`
-NER, which is weak on Indian person names.
+A Western control name (`John Smith`) was fully redacted where the Odia name
+in the same sentence was not: `en_core_web_sm` NER is trained on English news
+and is weak on Indian person names.
 
-**Operational consequence.** On a live demo, a submission containing an
-Indian name has roughly a coin-flip chance of showing that name unredacted
-on screen. Use a prepared submission, or expect to talk about this.
+NAME now has a pattern recognizer behind it as well as the model — a surname
+gazetteer plus name-introducing phrases, both yielding the whole name rather
+than the surname alone. After the fix, 50 of 50 probes across five framings
+are fully redacted, and nine realistic non-name sentences (places, offices,
+scheme names, designations) produce no false positives.
+
+Precision was the real risk and is guarded: `the road from Sambalpur to
+Bargarh` and `Name of the scheme is Pradhan Mantri Awas Yojana` are both left
+intact, because over-redaction removes what the officer needs to act on.
 
 Legacy reference for comparison: the DSI report records **80.56% any-overlap,
-50.00% exact** — English, typed text, and not a threshold. The 40-probe
-figure above is synthetic and is not a substitute for the gold set.
+50.00% exact** — English, typed text, and not a threshold. The probes above
+are synthetic and are not a substitute for the gold set. What they establish
+is a floor on a known failure mode, not a coverage claim.
 
 ### What is not measured
 
@@ -205,7 +214,7 @@ discordance: **194 pages** at 80% power / 5% level, **259** at 90% power,
 
 | | |
 |---|---|
-| `pytest` | **914 passed, 11 skipped** |
+| `pytest` | **1019 passed, 7 skipped** |
 | `ruff check .` | clean |
 | Frontend build | exit 0 |
 | Frontend tests | 3 passed |
@@ -224,6 +233,5 @@ Three places where the data now exists and nothing reads it:
 
 Plus:
 
-- Name redaction leaks 48% of Indian names on the live path (§2).
 - The PII scorecard reports no measurement (#67).
 - The action-type lookup covers 22.4% against a ~62% target (#75).
