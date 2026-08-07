@@ -484,3 +484,50 @@ class TestSpanBoundariesAreTrimmed:
         spans = detect_pii_spans(text)
         out = redact_text(text)
         assert len(spans) == out.count("[NAME]") + out.count("[PHONE]")
+
+
+class TestAllCapsNamesAreFound:
+    """#92. spaCy's NER leans on capitalisation as a feature, so ALL-CAPS text
+    defeats it: 53 of the 228 NAME spans missed on the n50 gold were all-caps.
+    Government correspondence writes names that way constantly."""
+
+    def test_softening_is_length_preserving(self):
+        """The whole safety argument. Offsets carry over 1:1 to the original,
+        which is what lets us analyze a copy and redact the untouched text --
+        the same contract as _ascii_digits."""
+        from janasunani.pipeline.stages.pii_tagger import _soften_caps
+
+        for text in [
+            "APPLICANT SMT SUNITA DEVI aged 45",
+            "RAMESH KUMAR SAHOO filed on 06.05.2024",
+            "no caps here at all",
+        ]:
+            assert len(_soften_caps(text)) == len(text)
+
+    def test_single_acronyms_are_left_alone(self):
+        """A lone all-caps token is as likely an acronym as a name, and
+        title-casing those would invent names out of department codes."""
+        from janasunani.pipeline.stages.pii_tagger import _soften_caps
+
+        assert _soften_caps("the BDO office and PHED dept") == "the BDO office and PHED dept"
+
+    def test_all_caps_is_detected_the_same_as_title_case(self):
+        """The mechanism, not spaCy's vocabulary. Whatever the model finds in
+        title-cased text it must now also find in the all-caps form -- and
+        whether it knows a given Indian name at all is #92's separate problem,
+        which softening cannot fix.
+        """
+        title = "The petitioner Michael Anderson lives in the ward"
+        caps = "The petitioner MICHAEL ANDERSON lives in the ward"
+        assert len(title) == len(caps)
+
+        title_spans = {(s.entity, s.start, s.end) for s in detect_pii_spans(title)}
+        caps_spans = {(s.entity, s.start, s.end) for s in detect_pii_spans(caps)}
+        assert title_spans, "fixture must produce at least one span to be meaningful"
+        assert caps_spans == title_spans
+
+    def test_the_original_text_is_what_gets_redacted(self):
+        """Softening happens on the analysis copy only; everything not redacted
+        must come back exactly as written, caps included."""
+        out = redact_text("WATER SUPPLY BROKEN since June in the WARD")
+        assert "WATER SUPPLY BROKEN" in out
