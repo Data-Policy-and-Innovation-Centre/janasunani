@@ -32,7 +32,10 @@ stages:
     cmd: uv run --extra pipeline-core janasunani-pipeline run --input 
       data/raw/documents-sample --db data/processed/pipeline-sample.sqlite 
       --models models --ocr-engine pytesseract --stages format_classifier 
-      ocr_extraction pii_tagger --workers 1
+      ocr_extraction --workers 1 && uv run --extra pii janasunani-pipeline run
+      --input data/raw/documents-sample --db
+      data/processed/pipeline-sample.sqlite --models models --stages pii_tagger
+      --workers 1
     deps:
     - path: data/raw/documents-sample
       hash: md5

@@ -18,6 +18,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 PYPROJECT_PATH = ROOT_DIR / "pyproject.toml"
 UV_LOCK_PATH = ROOT_DIR / "uv.lock"
 DVC_PATH = ROOT_DIR / "dvc.yaml"
+DVC_LOCK_PATH = ROOT_DIR / "dvc.lock"
 PRESIDIO_ANALYZER_REQUIREMENT = "presidio-analyzer==2.2.363"
 
 
@@ -97,6 +98,18 @@ def test_dvc_sample_runs_each_stage_in_its_compatible_extra():
         "janasunani/pipeline/stages/ocr_extraction",
         "janasunani/pipeline/stages/pii_tagger.py",
     }
+
+
+def test_dvc_sample_lock_command_matches_the_stage_definition():
+    """A checkout must not advertise an artifact from an obsolete environment."""
+    stage_command = yaml.safe_load(DVC_PATH.read_text())["stages"]["pipeline-sample"][
+        "cmd"
+    ]
+    locked_command = yaml.safe_load(DVC_LOCK_PATH.read_text())["stages"][
+        "pipeline-sample"
+    ]["cmd"]
+
+    assert locked_command == stage_command
 
 
 def _requirements_for_linux(extra: str) -> dict[str, str]:
