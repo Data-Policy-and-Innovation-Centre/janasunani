@@ -22,8 +22,9 @@ registration time (import time), not as something a caller can skip:
 - a metric this module cannot compute from the lake as it stands says so
   (``unavailable_reason``) instead of inventing a column.
 
-:func:`compute_metric` is the one read path, and it enforces small-cell
-suppression itself -- a caller cannot ask for the unsuppressed value.
+:func:`compute_metric` is the one read path.  It withholds an entire grouped
+release if it contains a small cell: returning the other groups beside an
+overall total would let a caller recover the withheld count by subtraction.
 
 **The three counts** (ROADMAP §5.3 S2): total filings, unique grievance
 clusters, unique citizens/signatories. One number cannot answer "how much
@@ -76,6 +77,15 @@ class MetricNotComputable(Exception):
     """
 
 
+class MetricSuppressed(Exception):
+    """Raised when a grouped release contains a small cell.
+
+    A grouped response is all-or-nothing.  This deliberately stronger rule
+    avoids both direct disclosure and the subtraction attack available when a
+    suppressed cell is returned beside its visible complements and a total.
+    """
+
+
 @dataclass(frozen=True)
 class MetricDefinition:
     """One governed metric: a stable id, a name, a description, a stated
@@ -101,7 +111,14 @@ class MetricDefinition:
     unavailable_reason: Optional[str] = None
 
     def __post_init__(self) -> None:
-        has_query = self.source is not None and self.measure is not None
+        has_source = self.source is not None
+        has_measure = self.measure is not None
+        if has_source != has_measure:
+            raise ValueError(
+                f"{self.id}: source and measure must be set together -- "
+                "a partial query is neither executable nor unavailable"
+            )
+        has_query = has_source
         if has_query == bool(self.unavailable_reason):
             raise ValueError(
                 f"{self.id}: exactly one of (source and measure) or "
@@ -116,6 +133,8 @@ class MetricDefinition:
         if has_query:
             _forbid_raw_grievance(self.id, self.source or "")
             _forbid_raw_grievance(self.id, self.measure or "")
+        for dimension in self.dimensions:
+            _forbid_raw_grievance(self.id, dimension)
 
     @property
     def sql(self) -> Optional[str]:
@@ -127,7 +146,7 @@ class MetricDefinition:
 
     @property
     def computable(self) -> bool:
-        return self.measure is not None
+        return self.source is not None and self.measure is not None
 
 
 @dataclass(frozen=True)
@@ -269,10 +288,11 @@ def compute_metric(
     """Run a governed metric, grouped by zero or more of its declared
     ``dimensions``.
 
-    Small-cell suppression is applied here, in the layer, on every grouped
-    row below :data:`SMALL_CELL_THRESHOLD` -- there is no argument to ask
-    for the unsuppressed value. The ungrouped, whole-lake total is never
-    suppressed.
+    A grouped result is withheld altogether when any cell is below
+    :data:`SMALL_CELL_THRESHOLD`. Returning a suppressed row (or only its
+    visible complements) alongside the ungrouped total would reveal its value
+    by subtraction, so callers cannot obtain a partial grouped release. The
+    ungrouped, whole-lake total is never suppressed.
     """
     definition = get_definition(metric_id)
     if not definition.computable:
@@ -305,17 +325,25 @@ def compute_metric(
             f"FROM {definition.source} GROUP BY {columns}"
         )
         frame = lake.query(sql, lake_dir)
+        if any(
+            int(row["value"]) < SMALL_CELL_THRESHOLD
+            for row in frame.iter_rows(named=True)
+        ):
+            raise MetricSuppressed(
+                f"{metric_id}: grouped release withheld because it contains a "
+                f"cell below the minimum group size of {SMALL_CELL_THRESHOLD}"
+            )
+
         results = []
         for row in frame.iter_rows(named=True):
             value = int(row["value"])
-            suppressed = value < SMALL_CELL_THRESHOLD
             results.append(
                 MetricResult(
                     metric_id=metric_id,
-                    value=None if suppressed else value,
+                    value=value,
                     denominator=definition.denominator,
                     dimensions={dim: row[dim] for dim in group_by},
-                    suppressed=suppressed,
+                    suppressed=False,
                     lake_as_of=as_of,
                 )
             )

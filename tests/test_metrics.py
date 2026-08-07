@@ -21,6 +21,7 @@ from janasunani.olap.metrics import (
     SMALL_CELL_THRESHOLD,
     MetricDefinition,
     MetricNotComputable,
+    MetricSuppressed,
     compute_metric,
     get_definition,
     list_metrics,
@@ -109,6 +110,25 @@ class TestGovernanceIsEnforcedInTheLayer:
                 unavailable_reason="needs a table that doesn't exist",
             )
 
+    @pytest.mark.parametrize(
+        ("source", "measure"),
+        [("complaints", None), (None, "count(*)")],
+    )
+    def test_a_partial_query_is_rejected_even_with_an_unavailable_reason(
+        self, source, measure
+    ):
+        with pytest.raises(ValueError, match="source and measure"):
+            MetricDefinition(
+                id="bad",
+                name="Bad",
+                description="d",
+                denominator="all complaints",
+                tables=("complaints",),
+                source=source,
+                measure=measure,
+                unavailable_reason="needs a table that doesn't exist",
+            )
+
     def test_a_metric_with_neither_a_query_nor_a_reason_is_rejected(self):
         with pytest.raises(ValueError):
             MetricDefinition(
@@ -144,6 +164,19 @@ class TestGovernanceIsEnforcedInTheLayer:
                 tables=("complaints",),
                 source="complaints c",
                 measure="count(distinct c.grievance)",
+            )
+
+    def test_declaring_raw_grievance_as_a_dimension_is_rejected(self):
+        with pytest.raises(ValueError, match="grievance"):
+            MetricDefinition(
+                id="bad",
+                name="Bad",
+                description="d",
+                denominator="all complaints",
+                tables=("complaints",),
+                source="complaints",
+                measure="count(*)",
+                dimensions=("grievance",),
             )
 
     def test_reading_grievance_redacted_is_allowed(self):
@@ -228,7 +261,7 @@ class TestTotalFilings:
 
 
 class TestSmallCellSuppressionIsEnforcedNotOptional:
-    def test_a_cell_below_the_threshold_is_suppressed(self, tmp_path):
+    def test_grouped_release_with_a_small_cell_is_withheld(self, tmp_path):
         rows = [
             {"ticket_no": f"A{i}", "district": "Cuttack", "category": "Water"}
             for i in range(SMALL_CELL_THRESHOLD + 2)  # comfortably over
@@ -238,21 +271,30 @@ class TestSmallCellSuppressionIsEnforcedNotOptional:
         ]
         _write_complaints(tmp_path, rows)
 
-        results = compute_metric(
-            "total_filings", group_by=["district"], lake_dir=tmp_path
+        with pytest.raises(MetricSuppressed, match="grouped release withheld"):
+            compute_metric("total_filings", group_by=["district"], lake_dir=tmp_path)
+
+    def test_small_cell_cannot_be_derived_from_a_total_and_visible_groups(self, tmp_path):
+        """The total is releasable, but a breakdown containing a small cell
+        returns no visible complement at all.  Thus 12 and 9 can never be
+        returned beside 21 for a caller to subtract."""
+        _write_complaints(
+            tmp_path,
+            [
+                *[
+                    {"ticket_no": f"A{i}", "district": "Cuttack"}
+                    for i in range(SMALL_CELL_THRESHOLD + 2)
+                ],
+                *[
+                    {"ticket_no": f"B{i}", "district": "Nabarangpur"}
+                    for i in range(SMALL_CELL_THRESHOLD - 1)
+                ],
+            ],
         )
-        by_district = {r.dimensions["district"]: r for r in results}
 
-        big = by_district["Cuttack"]
-        assert big.value == SMALL_CELL_THRESHOLD + 2
-        assert big.suppressed is False
-
-        small = by_district["Nabarangpur"]
-        assert small.value is None  # the count itself is withheld
-        assert small.suppressed is True
-        # the dimension label survives -- suppression hides the count, not
-        # the fact that the district exists in the slice
-        assert small.dimensions == {"district": "Nabarangpur"}
+        assert compute_metric("total_filings", lake_dir=tmp_path)[0].value == 21
+        with pytest.raises(MetricSuppressed):
+            compute_metric("total_filings", group_by=["district"], lake_dir=tmp_path)
 
     def test_a_cell_exactly_at_the_threshold_is_not_suppressed(self, tmp_path):
         rows = [
@@ -299,14 +341,12 @@ class TestGroupByIsRestrictedToDeclaredDimensions:
                 {"ticket_no": "T2", "district": "Cuttack", "category": "Roads"},
             ],
         )
-        results = compute_metric(
-            "total_filings", group_by=["district", "category"], lake_dir=tmp_path
-        )
-        # both under the suppression floor, but both rows still come back
-        assert {tuple(sorted(r.dimensions.items())) for r in results} == {
-            (("category", "Roads"), ("district", "Cuttack")),
-            (("category", "Water"), ("district", "Cuttack")),
-        }
+        # A partial release would expose the two cells (and permit future
+        # subtraction attacks with their marginal totals), so it is withheld.
+        with pytest.raises(MetricSuppressed):
+            compute_metric(
+                "total_filings", group_by=["district", "category"], lake_dir=tmp_path
+            )
 
 
 # --------------------------------------------------------------------------
