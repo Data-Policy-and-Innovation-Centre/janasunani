@@ -201,6 +201,67 @@ def render_markdown(tables: dict[str, pl.DataFrame]) -> str:
     return "\n".join(lines)
 
 
+def render_headline_markdown(tables: dict[str, pl.DataFrame]) -> str:
+    """Finding 1 only: the closure headline with both required denominators."""
+    s = tables["closure_finding_summary"].row(0, named=True)
+    return "\n".join(
+        [
+            "## Share of closures recording no action",
+            "",
+            "**Insight.** Exact matches over the six disposal templates; no "
+            "model and no complaint text.",
+            "",
+            "| Base | Complaints | Bare disposal rung | Share |",
+            "|---|---:|---:|---:|",
+            (
+                "| Closed on one of the six disposal templates | "
+                f"{_n(s['ladder_closures'])} | {_n(s['bare'])} | "
+                f"**{_pct(s['bare_share_of_ladder_pct'])}** |"
+            ),
+            (
+                f"| All resolved complaints | {_n(s['resolved_complaints'])} | "
+                f"{_n(s['bare'])} | **{_pct(s['bare_share_of_resolved_pct'])}** |"
+            ),
+            "",
+            (
+                f"Quote the {_n(s['ladder_closures'])} templated-closure base "
+                f"whenever the {_pct(s['bare_share_of_ladder_pct'])} figure is used."
+            ),
+            "",
+            f"⚠️ {DESCRIPTIVE_CAVEAT}",
+            "",
+        ]
+    )
+
+
+def render_two_day_markdown(tables: dict[str, pl.DataFrame]) -> str:
+    """Finding 2 only: fast bare closures on both relevant denominators."""
+    t = tables["closure_two_day_bare"].row(0, named=True)
+    return "\n".join(
+        [
+            "## Cases created and closed within two days on a bare disposal",
+            "",
+            "**Insight.** An exact, aggregate subset of the governed closure "
+            "finding; no model and no complaint text.",
+            "",
+            (
+                f"**{_n(t['two_day_bare'])} complaints**: "
+                f"{_pct(t['share_of_bare_pct'])} of all bare disposals and "
+                f"{_pct(t['share_of_resolved_pct'])} of all resolved complaints."
+            ),
+            "",
+            (
+                f"{_n(t['two_day_bare_min_trajectory'])} closed on the shortest "
+                "trajectory that reaches a disposal at all. Two days is fast, "
+                "not proof that the closure was wrong."
+            ),
+            "",
+            f"⚠️ {DESCRIPTIVE_CAVEAT}",
+            "",
+        ]
+    )
+
+
 def _out_dir(out_dir: Optional[Path]) -> Path:
     return Path(out_dir) if out_dir else OUTPUTS_DIR / "findings"
 
@@ -226,6 +287,68 @@ def write(
     handover.write_text(sql_text())
     written["sql"] = handover
     return written
+
+
+def write_single_finding(
+    tables: dict[str, pl.DataFrame],
+    finding: str,
+    out_dir: Optional[Path] = None,
+) -> dict[str, Path]:
+    """Write one #107 closure finding as one aggregate CSV + Markdown pair."""
+    definitions = {
+        "closure_recording_no_action": (
+            "closure_finding_summary",
+            render_headline_markdown,
+        ),
+        "two_day_bare_closures": (
+            "closure_two_day_bare",
+            render_two_day_markdown,
+        ),
+    }
+    try:
+        view, renderer = definitions[finding]
+    except KeyError:
+        raise ValueError(f"unknown closure finding {finding!r}") from None
+
+    out = _out_dir(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    csv_path = out / f"{finding}.csv"
+    md_path = out / f"{finding}.md"
+    tables[view].write_csv(csv_path)
+    md_path.write_text(renderer(tables))
+    return {"csv": csv_path, "markdown": md_path}
+
+
+def _single_finding_main(finding: str) -> None:
+    parser = argparse.ArgumentParser(description=f"Build the {finding} finding.")
+    parser.add_argument(
+        "--lake-dir", type=Path, default=None, help="Lake dir (default: data/interim)."
+    )
+    parser.add_argument(
+        "--out-dir", type=Path, default=None, help="Output dir (default: outputs/findings)."
+    )
+    args = parser.parse_args()
+    tables = compute(args.lake_dir)
+    drift = check_ladder_coverage(tables)
+    if drift:
+        out = _out_dir(args.out_dir)
+        for suffix in ("csv", "md"):
+            path = out / f"{finding}.{suffix}"
+            if path.is_file():
+                path.unlink()
+        logger.error(drift)
+        logger.error("Refusing to write the finding. Nothing was published.")
+        raise SystemExit(1)
+    for kind, path in write_single_finding(tables, finding, args.out_dir).items():
+        logger.success(f"{kind} -> {path}")
+
+
+def closure_headline_main() -> None:
+    _single_finding_main("closure_recording_no_action")
+
+
+def two_day_bare_main() -> None:
+    _single_finding_main("two_day_bare_closures")
 
 
 def write_diagnostics(

@@ -23,8 +23,25 @@ way that means anything, by running the mart over a fixture lake in `tests/`.
 
 The presentation built on a mart: aggregate tables, the reconciliation, and the
 Markdown fragment that goes in front of an audience with the caveats that must
-travel with each number. One module per finding, each with a CLI writing to
-`outputs/findings/`.
+travel with each number. Each finding has its own CLI writing to
+`outputs/findings/`; closely related findings may share audited lookup logic.
+
+The remaining record-only Sprint 3 findings use exact, enumerated
+high-frequency discard templates and never read complaint prose:
+
+```bash
+uv run janasunani-closure-headline
+uv run janasunani-two-day-bare-closures
+uv run janasunani-discard-reasons
+uv run janasunani-confirmed-duplicates
+uv run janasunani-misrouting-baseline
+```
+
+Each command writes one aggregate CSV and one Markdown fragment, labels the
+result as an **Insight**, and reconciles its lookup-join result against an
+independently written `CASE` query before publishing. The confirmed-duplicate
+count is the manual-process baseline; the MinHash increment remains a separate
+capability claim.
 
 Two house rules, enforced by tests rather than by convention:
 

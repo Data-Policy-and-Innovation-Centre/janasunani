@@ -540,3 +540,52 @@ def test_failed_guard_removes_stale_shareable_artifacts(tmp_path, monkeypatch):
     assert not (out / "closure_finding.md").exists()
     assert not (out / "closure_finding_summary.csv").exists()
     assert not (out / "closure_finding.sql").exists()
+
+
+@pytest.mark.parametrize(
+    ("finding", "view", "renderer"),
+    [
+        (
+            "closure_recording_no_action",
+            "closure_finding_summary",
+            closure.render_headline_markdown,
+        ),
+        (
+            "two_day_bare_closures",
+            "closure_two_day_bare",
+            closure.render_two_day_markdown,
+        ),
+    ],
+)
+def test_each_closure_finding_has_its_own_aggregate_artifacts(
+    lake, tmp_path, finding, view, renderer
+):
+    tables = closure.compute(lake)
+    out = tmp_path / "single"
+    written = closure.write_single_finding(tables, finding, out)
+
+    assert set(written) == {"csv", "markdown"}
+    assert pl.read_csv(written["csv"]).equals(tables[view])
+    markdown = written["markdown"].read_text()
+    assert markdown == renderer(tables)
+    assert "**Insight.**" in markdown
+    assert "complaint text" in markdown
+
+
+def test_single_closure_headline_always_carries_both_denominators(lake):
+    markdown = closure.render_headline_markdown(closure.compute(lake))
+
+    assert "Closed on one of the six disposal templates" in markdown
+    assert "All resolved complaints" in markdown
+    assert "**50.0%**" in markdown
+    assert "**37.5%**" in markdown
+    assert closure.DESCRIPTIVE_CAVEAT in markdown
+
+
+def test_single_two_day_finding_carries_both_relevant_shares(lake):
+    markdown = closure.render_two_day_markdown(closure.compute(lake))
+
+    assert "**2 complaints**" in markdown
+    assert "66.7% of all bare disposals" in markdown
+    assert "25.0% of all resolved complaints" in markdown
+    assert "not proof that the closure was wrong" in markdown
