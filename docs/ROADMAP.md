@@ -895,14 +895,49 @@ decomposition, not the alert.
 **The closure metric splits into an insight and a capability**, and the split is the
 whole point.
 
-- **The insight.** 86.65% of resolved complaints close on a templated remark, so
-  "share of closures recording no action" is an exact string match for roughly seven
-  cases in eight. Deliverable is the view definition, handed over.
-- **State the denominator explicitly; it moves the number by half.** Of the 792,038
-  complaints whose closing remark is one of the disposal templates, **60.8%** are on
-  the bare rung (481,268 bare vs 310,770 claiming action). Measured against *all*
-  1,209,138 resolved complaints it is **39.1%**, because 35.8% close on neither
-  template. Quote the 792,038 base whenever the 61% figure is used.
+- **The insight.** 64.25% of resolved complaints close on a templated remark, so
+  "share of closures recording no action" is an exact string match for roughly two
+  cases in three. Deliverable is the view definition, handed over.
+  - **Built** as the `closure` mart in
+    [`janasunani/analytics`](../janasunani/analytics/README.md), with the
+    findings wrapper behind `janasunani-closure-finding` and fixture tests in
+    `tests/test_closure_finding.py`. Portable SQL, so the same file runs against
+    our DuckDB lake and against the department's PostgreSQL.
+  - **It did not need the S3 template lookup after all.** §5.6 A lists template
+    labelling as gating this view, on the assumption the ladder had to come out
+    of the top-500 labelling pass. The ladder is six strings, enumerated above,
+    and the mart matches them directly. S3 still gates the *other* action-type
+    work; it no longer gates this.
+  - Run `closure_off_ladder_templates` before quoting the figure on any corpus
+    this has not been run against. An unmatched ladder string does not error,
+    it moves complaints into `off_ladder` and silently shrinks the denominator.
+- **State the denominator explicitly; it moves the number by half.** Of the 776,922
+  complaints whose closing remark is one of the disposal templates, **60.9%** are on
+  the bare rung (472,782 bare vs 304,140 claiming action). Measured against *all*
+  1,209,144 resolved complaints it is **39.1%**, because 35.7% close on neither
+  template. Quote the 776,922 base whenever the 61% figure is used.
+  - Measured 7 Aug by the `closure` mart. The earlier ad-hoc counts (792,038 /
+    481,268 / 310,770) ran about 2% high; every percentage they were quoted
+    with survives unchanged. Use the counts above.
+- ⚠️ **The bare share rises with the amount of work done, which inverts the
+  obvious reading.** 58.4% at three to five action steps, 64.8% at six or more,
+  and 72.6% at six or more closing inside a week. The cases with the most
+  movement on file are the *most* likely to close on the bare rung, not the
+  least. Whatever drives the choice of phrase, it is not "nothing happened".
+  This is the single most important qualifier on the number and it was not
+  visible before the view existed.
+- **The two-day subset is small, and that is a result.** 8,974 complaints created
+  and closed within two days on a bare disposal: 1.9% of bare disposals, 0.7% of
+  resolved. Only 1,022 sit on the floor trajectory. The suspicious mass §5.3
+  expected at two days is not there, so the sub-finding names a tractable set of
+  cases rather than an indictment, which is what it was asked to do.
+- **Below three action steps the ladder is empty**, because the portal writes a
+  create and an assign row before an officer can dispose. The 145,621 resolved
+  complaints with two action rows close almost entirely on *discard* templates
+  (`complaint details inadequate`, `duplicate copy`, `not within the purview of
+  this grievance cell`), which is Phase 15's discard-reason finding, not this
+  one. Report the resolved base beside the templated base in any trajectory cut,
+  or those cells read as thin data rather than as a different population.
 - ⚠️ **A bare disposal does not mean the case was mishandled.** Sometimes no action
   is correct: an information request answered, an ineligible claim properly refused,
   a matter already settled elsewhere. Correct closure and premature closure are
@@ -1953,8 +1988,8 @@ Terse and dated. The reasoning for choices that are not obvious from the code.
     process. Both retained as internal diagnostics. The Phase 13 privacy scorecard is
     a distinct artifact and is unaffected.
   - **The closure metric splits in two.** "Share of closures recording no action" is
-    an insight: 86.65% of resolved complaints close on a templated remark, so it is a
-    string match for seven cases in eight and ships as a view definition. It is
+    an insight: 64.25% of resolved complaints close on a templated remark, so it is a
+    string match for roughly two cases in three and ships as a view definition. It is
     descriptive only, because sometimes no action is the correct outcome and a
     correct closure is identical in the record to a premature one. The capability is
     the disambiguator: **does the citizen return?** Reopening is a column, but

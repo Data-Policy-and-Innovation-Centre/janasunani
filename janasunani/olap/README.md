@@ -14,6 +14,11 @@ history browse read **this**, never OLTP.
 - `lake.py` — read helpers: `query(sql)` (DuckDB over the Parquet files) and
   `read(table)` (whole table as a Polars DataFrame).
 
+Everything analytical built *on* the lake, the governed SQL marts and the
+findings that read them, lives in
+[`janasunani/analytics`](../analytics/README.md), not here. This module stays
+the plumbing.
+
 ## Why "lake"
 
 It's the cheap, schema-on-read, file-based analytical layer — the OLTP store

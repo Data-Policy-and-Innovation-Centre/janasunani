@@ -79,9 +79,11 @@ We hold to one rule. If an analyst with database access could produce a number i
 
 **3. Spikes with the cause attached.** A rise in complaints can mean four hundred citizens about one road, or two hundred unrelated problems. Those need opposite responses and are identical in a count. Every spike carries three numbers: filings, distinct problems, distinct citizens. Detecting the spike is ordinary. Telling the two cases apart is not.
 
-**4. How cases are closed.** Officers close using a graded set of standard phrases: disposed, disposed with appropriate action, or disposed with the beneficiary benefited. Of the roughly 792,000 complaints closed with one of those standard phrases, **61% use the wording that claims no action**, while the more specific wording was available and used 311,000 times.
+**4. How cases are closed.** Officers close using a graded set of standard phrases: disposed, disposed with appropriate action, or disposed with the beneficiary benefited. Of the 776,922 complaints closed with one of those standard phrases, **61% use the wording that claims no action**, while the more specific wording was available and used 304,140 times.
 
 The denominator matters. That 61% is of complaints closed on a standard disposal phrase, which is about two thirds of all resolved complaints. Measured against every resolved complaint the figure is 39%, because a third close on some other wording entirely.
+
+One qualifier goes with the number wherever it travels. The share rises with the amount of work recorded on the case: 58% where three to five steps were taken, 65% where six or more were. The cases with the most movement on file are the most likely to close on the bare phrase, not the least. Whatever explains the choice of wording, it is not that nothing happened.
 
 This one needs care for a second reason too. Sometimes no action is the correct outcome: an information request answered, an ineligible claim properly refused, a matter already settled elsewhere. A correct closure and a premature one look identical in the record, so the figure is a description and not a verdict.
 
