@@ -12,8 +12,8 @@ import sqlite3
 import pytest
 
 from janasunani.config import directories
-from janasunani.pipeline.cli import build_parser
-from janasunani.pipeline.config import PipelineConfig
+from janasunani.pipeline.cli import build_parser, main
+from janasunani.pipeline.config import PipelineConfig, validate_sarvam_sharding
 from janasunani.pipeline.db import connect, initialize_database
 from janasunani.pipeline.pipeline import STAGE_ORDER, run_pipeline
 
@@ -111,6 +111,50 @@ def test_cli_parses_stage_subset_and_engine():
     assert args.ocr_engine == "pytesseract"
     # every CLI-selectable stage must be a real stage
     assert set(STAGE_ORDER) >= set(args.stages)
+
+
+def test_sarvam_engine_is_disabled_unless_explicitly_enabled():
+    args = build_parser().parse_args(["run", "--ocr-engine", "sarvam"])
+    assert args.ocr_engine == "sarvam"
+    assert args.enable_sarvam is False
+
+    enabled = build_parser().parse_args(["run", "--ocr-engine", "sarvam", "--enable-sarvam"])
+    assert enabled.enable_sarvam is True
+
+
+def test_cli_rejects_enabled_sarvam_cross_machine_sharding(monkeypatch):
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "janasunani-pipeline",
+            "run",
+            "--ocr-engine",
+            "sarvam",
+            "--enable-sarvam",
+            "--num-workers",
+            "2",
+        ],
+    )
+    monkeypatch.setattr(
+        "janasunani.pipeline.cli.run_pipeline",
+        lambda _config: pytest.fail("pipeline must not start"),
+    )
+
+    with pytest.raises(SystemExit, match="--num-workers 1"):
+        main()
+
+
+def test_enabled_sarvam_rejects_cross_machine_sharding_without_ocr_dependencies():
+    with pytest.raises(ValueError, match="num_workers=1"):
+        validate_sarvam_sharding(
+            ocr_engine="sarvam", sarvam_enabled=True, num_workers=2
+        )
+
+
+def test_disabled_sarvam_allows_local_fallback_sharding():
+    validate_sarvam_sharding(
+        ocr_engine="sarvam", sarvam_enabled=False, num_workers=2
+    )
 
 
 def test_cli_rejects_unknown_stage():

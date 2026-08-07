@@ -8,6 +8,8 @@ the configured OCR backend, and writes the extracted text back to the
 The choice of backend is driven by config.ocr_engine:
   - "pytesseract": CPU-only, multi-language with confidence picking
   - "deepseek":    GPU-only, vision-language model
+  - "sarvam":      authorized-external provider, disabled by default and
+                     routed to pytesseract until explicitly enabled
 
 The pytesseract path can use multiprocessing for parallelism. DeepSeek
 runs serial within one process; cross-machine parallelism uses the
@@ -21,7 +23,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from ...config import PipelineConfig
+from ...config import PipelineConfig, validate_sarvam_sharding
 from ...db import connect
 from .executors import pick_executor, shard_work_items
 from .page_renderer import render_page
@@ -42,11 +44,16 @@ def run_ocr_extraction(config: PipelineConfig) -> None:
     by language, OCRs each one, and writes the results back.
     """
     backend = config.ocr_engine
-    if backend not in ("pytesseract", "deepseek"):
+    if backend not in ("pytesseract", "deepseek", "sarvam"):
         raise ValueError(
             f"unknown ocr_engine: {backend!r}. "
-            "must be 'pytesseract' or 'deepseek'."
+            "must be 'pytesseract', 'deepseek', or 'sarvam'."
         )
+    validate_sarvam_sharding(
+        ocr_engine=backend,
+        sarvam_enabled=config.sarvam_enabled,
+        num_workers=config.num_workers,
+    )
 
     work_items = _load_pending_pages(
         db_path=config.db_path,
@@ -80,7 +87,13 @@ def run_ocr_extraction(config: PipelineConfig) -> None:
         + (f" (filter_language={config.filter_language})" if config.filter_language else "")
     )
 
-    _run(backend=backend, work_items=work_items, db_path=config.db_path, n_workers=config.n_workers)
+    _run(
+        backend=backend,
+        work_items=work_items,
+        db_path=config.db_path,
+        n_workers=config.n_workers,
+        sarvam_enabled=config.sarvam_enabled,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -103,8 +116,10 @@ def _load_pending_pages(
     # Known-bad pages (already in unreadable_pages for this stage) are
     # excluded — otherwise every resume re-grinds the same failures forever.
     sql = """
-        SELECT page_id, doc_id, page_number, full_path, language
+        SELECT pages.page_id, pages.doc_id, pages.page_number, pages.full_path,
+               pages.language, pages.ticket_number, documents.ticket_number
         FROM pages
+        LEFT JOIN documents ON documents.doc_id = pages.doc_id
         WHERE extracted_text IS NULL
           AND NOT EXISTS (
               SELECT 1 FROM unreadable_pages u
@@ -126,7 +141,7 @@ def _load_pending_pages(
         conn.close()
 
     items: list[dict[str, Any]] = []
-    for page_id, doc_id, page_number, full_path, language in rows:
+    for page_id, doc_id, page_number, full_path, language, page_ticket, document_ticket in rows:
         # full_path in `pages` is stored relative to the original input_dir.
         # If the user passed --input, resolve against it. Otherwise treat
         # as absolute.
@@ -140,6 +155,7 @@ def _load_pending_pages(
                 "page_number": page_number,
                 "file_path": str(p),
                 "language": language,
+                "ticket": page_ticket or document_ticket,
             }
         )
     return items
@@ -152,20 +168,30 @@ def _load_pending_pages(
 _worker_backend: str = ""
 _worker_ds_tokenizer: Any = None
 _worker_ds_model: Any = None
+_worker_sarvam: Any = None
 
 
-def _worker_init(backend: str) -> None:
+def _worker_init(backend: str, sarvam_enabled: bool = False, db_path: Path | None = None) -> None:
     """Per-worker initializer.
 
     For deepseek, loads the GPU model (slow, multi-GB) once per worker.
     For pytesseract, just configures the tesseract binary path.
     """
-    global _worker_backend, _worker_ds_tokenizer, _worker_ds_model
+    global _worker_backend, _worker_ds_tokenizer, _worker_ds_model, _worker_sarvam
     _worker_backend = backend
 
     if backend == "deepseek":
         from .deepseek_backend import load_model
         _worker_ds_tokenizer, _worker_ds_model = load_model()
+    elif backend == "sarvam":
+        if db_path is None:
+            raise ValueError("Sarvam OCR requires the pipeline audit database path")
+        from janasunani.egress.sarvam import SarvamVisionAdapter, SqliteAuditLog
+
+        _worker_sarvam = SarvamVisionAdapter(
+            enabled=sarvam_enabled,
+            audit_log=SqliteAuditLog(db_path),
+        )
     else:
         from .pytesseract_backend import _configure_tesseract
         _configure_tesseract()
@@ -179,6 +205,7 @@ def _process_page(item: dict[str, Any]) -> dict[str, Any]:
         "page_number": item["page_number"],
         "file_path": item["file_path"],
         "text": None,
+        "ocr_model": None,
         "error": None,
     }
     try:
@@ -196,6 +223,7 @@ def _process_page(item: dict[str, Any]) -> dict[str, Any]:
             )
             from .deepseek_backend import extract_text as ds_extract
             text = ds_extract(image, tokenizer=_worker_ds_tokenizer, model=_worker_ds_model)
+            result["ocr_model"] = "deepseek"
             # DeepSeek's signature failure mode (per the DSI report): the
             # generation loops and one phrase fills the page. Store nothing —
             # record the page in unreadable_pages so resumes skip it.
@@ -206,6 +234,41 @@ def _process_page(item: dict[str, Any]) -> dict[str, Any]:
                     f"(top-trigram share {top_trigram_share(text):.2f})"
                 )
                 return result
+        elif _worker_backend == "sarvam":
+            from io import BytesIO
+
+            from janasunani.egress.sarvam import SarvamAuditContext
+            from .pytesseract_backend import (
+                extract_text as pt_extract,
+                pipeline_lang_to_tesseract,
+            )
+
+            ticket = item.get("ticket")
+            if not ticket:
+                # A call without the required audit identity would be an
+                # untraceable egress route.  Preserve OCR behavior locally.
+                text = pt_extract(image, force_lang=pipeline_lang_to_tesseract(item.get("language")))
+                result["ocr_model"] = "pytesseract"
+            else:
+                encoded = BytesIO()
+                image.save(encoded, format="PNG")
+                language = _pipeline_lang_to_sarvam(item.get("language"))
+                outcome = _worker_sarvam.digitise_or_fallback(
+                    encoded.getvalue(),
+                    f"{item['doc_id']}-{item['page_number']}.png",
+                    language,
+                    SarvamAuditContext(
+                        ticket=ticket,
+                        stage="ocr_extraction",
+                        document_id=f"{item['doc_id']}:{item['page_number']}",
+                    ),
+                    lambda: pt_extract(
+                        image,
+                        force_lang=pipeline_lang_to_tesseract(item.get("language")),
+                    ),
+                )
+                text = outcome.text
+                result["ocr_model"] = outcome.ocr_model
         else:
             from .pytesseract_backend import (
                 extract_text as pt_extract,
@@ -213,12 +276,22 @@ def _process_page(item: dict[str, Any]) -> dict[str, Any]:
             )
             force_lang = pipeline_lang_to_tesseract(item.get("language"))
             text = pt_extract(image, force_lang=force_lang)
+            result["ocr_model"] = "pytesseract"
     except Exception as e:
         result["error"] = f"ocr failed: {e}"
         return result
 
     result["text"] = text
     return result
+
+
+def _pipeline_lang_to_sarvam(pipeline_language: str | None) -> str:
+    """Map the format stage's labels to Sarvam's documented language codes."""
+    if pipeline_language == "Odia":
+        return "od-IN"
+    # Mixed/unknown pages remain explicitly English for the current adapter;
+    # language routing is audited so a benchmark can surface that limitation.
+    return "en-IN"
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +308,7 @@ def _write_results_with_retry(
     params = [
         {
             "text": r["text"],
-            "model": backend,
+            "model": r.get("ocr_model") or backend,
             "date": today_iso,
             "page_id": r["page_id"],
         }
@@ -306,6 +379,7 @@ def _run(
     work_items: list[dict[str, Any]],
     db_path: Path,
     n_workers: int | None,
+    sarvam_enabled: bool = False,
 ) -> None:
     n = len(work_items)
     today_iso = datetime.now().isoformat()
@@ -315,7 +389,7 @@ def _run(
         n_items=n,
         n_workers=n_workers,
         initializer=_worker_init,
-        initargs=(backend,),
+        initargs=(backend, sarvam_enabled, db_path),
     )
 
     # For serial execution, the executor's __init__ already ran _worker_init.
