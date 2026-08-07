@@ -48,8 +48,9 @@ an explanatory note, not as an error.
 
 The result screen's triage banner is advisory only. Possible resubmissions link
 to the existing history search, campaigns use a distinct collective-grievance
-treatment with the related-filing count, and low-signal scoring shows both the
-reason and an abstention when the scorer declines. Nothing in the banner
+treatment with the related-filing count. Low-signal review currently exposes
+an explicit, reason-coded abstention and non-content OCR-quality evidence; it
+does not emit a score or a "clean" finding. Nothing in the banner
 blocks or rejects a submission. Learned routes show their aggregate support
 and destination concentration beside the existing confidence and escalation
 chain.

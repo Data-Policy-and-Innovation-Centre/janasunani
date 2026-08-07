@@ -68,14 +68,16 @@ truncation, or no grievance-bearing pages). Unexpected model/runtime failures
 remain server errors. DeepSeek and MLflow runtime resolution are not part of
 this in-process live command.
 
-The mock emits deterministic illustrative resubmission, campaign, flagged, or
-abstained triage states so the frontend can be developed without a backfill.
+The mock emits deterministic illustrative resubmission and campaign states,
+but always abstains from low-signal review so a fixture cannot look like live
+evidence.
 The live processor calls its advisory triage seam only after PII redaction.
 Until the Phase 14 matcher is wired, it returns
-`duplicate_review.decision="not_indexed"` and `spam.decision="not_scored"`
-rather than presenting missing output as a negative result. If an eventual
-provider is unavailable, the submission proceeds with the explicit
-`duplicate_review.decision="unavailable"` state.
+`duplicate_review.decision="not_indexed"`. Low-signal review records only the
+existing repetition-collapse observation and returns `spam.decision="abstained"`;
+no numeric score or review flag is enabled before redacted human-adjudicated
+validation. If an eventual provider is unavailable, the submission proceeds
+with explicit unavailable/abstained states.
 
 Only synthetic demo submissions are allowed until the PII gold evaluation gate
 passes. The mock must never serve real citizen submissions.

@@ -136,25 +136,79 @@ class DuplicateReview(BaseModel):
         return self
 
 
-class SpamReview(BaseModel):
-    """Officer-review state for the optional low-signal scorer.
+class OcrQualityEvidence(BaseModel):
+    """A non-content observation from the established OCR quality guard.
 
-    ``abstained`` is intentionally observable: absence of a flag is not
-    evidence that a scorer ran and found the filing actionable.
+    This deliberately records only whether the existing repetition-collapse
+    guard fired.  It never serializes source text, a feature vector, or a
+    purported probability.
     """
 
-    decision: Literal["flagged", "abstained", "not_scored"]
-    spam_reason: Optional[str] = None
-    spam_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    kind: Literal["repetition_collapse"]
+    observed: bool
+
+
+class SpamReview(BaseModel):
+    """Officer-review state for the deliberately narrow low-signal advisory.
+
+    ``review`` is reserved for a future, redacted human-adjudicated validation
+    release.  The current provider always abstains, even if the OCR quality
+    guard observes repetition collapse.  There is intentionally no score:
+    no calibrated or trained spam model has been authorized for this service.
+    """
+
+    decision: Literal["review", "abstained"]
+    reason_code: Literal[
+        "validated_low_signal_evidence",
+        "ocr_repetition_collapse_unvalidated",
+        "live_review_disabled_pending_redacted_adjudication",
+        "mock_low_signal_review_unavailable",
+        "advisory_provider_unavailable",
+    ]
+    evidence: tuple[OcrQualityEvidence, ...] = ()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _replace_legacy_score_contract(cls, value):
+        """Read pre-validation persisted results without retaining their score.
+
+        Prior demo responses could contain a mock ``flagged`` result or a
+        ``not_scored`` status plus a numeric ``spam_score``.  Neither is
+        defensible as a live decision, so old records become an explicit
+        abstention instead of preserving a pseudo-score on the new wire shape.
+        """
+
+        if not isinstance(value, dict):
+            return value
+        legacy_decision = value.get("decision")
+        if legacy_decision not in {"flagged", "not_scored", "abstained"}:
+            return value
+        if legacy_decision == "abstained" and "reason_code" in value:
+            return value
+        normalized = dict(value)
+        normalized.update(
+            decision="abstained",
+            reason_code="live_review_disabled_pending_redacted_adjudication",
+            evidence=(),
+        )
+        normalized.pop("spam_reason", None)
+        normalized.pop("spam_score", None)
+        return normalized
 
     @model_validator(mode="after")
-    def _decision_has_an_explanation(self) -> "SpamReview":
-        if self.decision in {"flagged", "abstained"} and not self.spam_reason:
-            raise ValueError(f"{self.decision} spam review requires a reason")
-        if self.decision == "not_scored" and (
-            self.spam_reason is not None or self.spam_score is not None
+    def _decision_matches_the_reason_code(self) -> "SpamReview":
+        if (
+            self.decision == "review"
+            and self.reason_code != "validated_low_signal_evidence"
         ):
-            raise ValueError("not_scored spam review must not imply a result")
+            raise ValueError("review requires validated_low_signal_evidence")
+        if (
+            self.decision == "abstained"
+            and self.reason_code == "validated_low_signal_evidence"
+        ):
+            raise ValueError("validated_low_signal_evidence requires review")
+        if self.decision == "review" and not self.evidence:
+            raise ValueError("review requires auditable low-signal evidence")
         return self
 
 
@@ -171,7 +225,12 @@ class TriageResult(BaseModel):
             ),
         )
     )
-    spam: SpamReview = Field(default_factory=lambda: SpamReview(decision="not_scored"))
+    spam: SpamReview = Field(
+        default_factory=lambda: SpamReview(
+            decision="abstained",
+            reason_code="live_review_disabled_pending_redacted_adjudication",
+        )
+    )
 
     @model_validator(mode="before")
     @classmethod
