@@ -26,8 +26,24 @@ from typing import Any
 from ...config import PipelineConfig, validate_sarvam_sharding
 from ...db import connect
 from .executors import pick_executor, shard_work_items
-from .page_renderer import render_page
 from loguru import logger
+
+
+def render_page(path: Path, page_number: int) -> Any:
+    """Render one page, importing the renderer on use.
+
+    page_renderer pulls pdf2image/poppler at import time, which the DB-reading
+    half of this stage does not need and which is absent wherever OCR is not
+    installed — that is why the ambiguous-column bug below could never be
+    caught on CI. Every other backend here (deepseek, sarvam, pytesseract) is
+    already imported inside the function that uses it.
+
+    This stays a module-level attribute rather than a local import so tests can
+    still monkeypatch ``stage.render_page``.
+    """
+    from .page_renderer import render_page as _render_page
+
+    return _render_page(path, page_number)
 
 DB_BATCH_SIZE = 50
 DB_LOCK_RETRIES = 5
@@ -120,7 +136,7 @@ def _load_pending_pages(
                pages.language, pages.ticket_number, documents.ticket_number
         FROM pages
         LEFT JOIN documents ON documents.doc_id = pages.doc_id
-        WHERE extracted_text IS NULL
+        WHERE pages.extracted_text IS NULL
           AND NOT EXISTS (
               SELECT 1 FROM unreadable_pages u
               WHERE u.doc_id = pages.doc_id
@@ -130,9 +146,11 @@ def _load_pending_pages(
     """
     params: list[Any] = []
     if filter_language is not None:
-        sql += " AND language = ?"
+        sql += " AND pages.language = ?"
         params.append(filter_language)
-    sql += " ORDER BY doc_id, page_number"
+    # Qualified: the LEFT JOIN brings a second doc_id into scope, so an
+    # unqualified ORDER BY doc_id is an error, not a silent wrong sort.
+    sql += " ORDER BY pages.doc_id, pages.page_number"
 
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=60.0)
     try:

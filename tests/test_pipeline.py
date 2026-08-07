@@ -197,3 +197,34 @@ def test_format_and_ocr_on_generated_image(tmp_path):
         ).fetchall()
     assert len(rows) == 1
     assert "WATER" in rows[0][1] and "12345" in rows[0][1]
+
+
+def test_load_pending_pages_qualifies_joined_columns(tmp_path):
+    """The pages/documents join puts two doc_id columns in scope.
+
+    An unqualified ORDER BY doc_id is an OperationalError, not a silent
+    mis-sort, so this fails loudly rather than degrading. The language filter
+    appends a second predicate and is exercised here for the same reason.
+    """
+    from janasunani.pipeline.stages.ocr_extraction.stage import _load_pending_pages
+
+    db_path = tmp_path / "pipeline.db"
+    initialize_database(db_path)
+    with connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO documents (doc_id, ticket_number) VALUES (?, ?)",
+            ("D1", "TICKET-1"),
+        )
+        conn.execute(
+            "INSERT INTO pages (doc_id, page_number, page_id, full_path, language,"
+            " ticket_number, extracted_text) VALUES (?, ?, ?, ?, ?, ?, NULL)",
+            ("D1", 1, "D1-1", "D1/page-1.png", "en", "TICKET-1"),
+        )
+        conn.commit()
+
+    rows = _load_pending_pages(db_path, tmp_path, None)
+    assert [r["page_id"] for r in rows] == ["D1-1"]
+
+    # Same query with the optional language predicate appended.
+    assert [r["page_id"] for r in _load_pending_pages(db_path, tmp_path, "en")] == ["D1-1"]
+    assert _load_pending_pages(db_path, tmp_path, "or") == []
