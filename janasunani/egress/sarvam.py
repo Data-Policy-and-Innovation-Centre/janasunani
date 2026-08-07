@@ -63,6 +63,28 @@ class GovernanceControl:
 
 
 @dataclass(frozen=True)
+class RiskAcceptance:
+    """A named authority knowingly accepting unverified provider controls.
+
+    This is deliberately not the same thing as verification, and setting one
+    must never flip a control to ``verified``. Verification is a claim about
+    what the provider does with the data once it has it; acceptance is a claim
+    about who decided we may send it anyway, and on what basis. Recording an
+    acceptance as a verification would put a false statement about a third
+    party into the registry, and the registry is the artifact a reviewer reads.
+
+    ``unverified_controls`` therefore keeps reporting every unverified control
+    even when an acceptance is present, and the audit log records which of the
+    two bases permitted each call.
+    """
+
+    authority: str
+    basis: str
+    scope: str
+    accepted_on: str
+
+
+@dataclass(frozen=True)
 class ProviderRoute:
     """The registered, reviewable declaration for a provider route."""
 
@@ -78,6 +100,7 @@ class ProviderRoute:
     encryption_at_rest: GovernanceControl
     audit_policy: str
     fallback: str
+    accepted_risk: RiskAcceptance | None = None
 
     @property
     def unverified_controls(self) -> tuple[str, ...]:
@@ -106,8 +129,30 @@ class ProviderRoute:
 
     @property
     def live_use_ready(self) -> bool:
-        """Whether every provider-held-data control has verified repo evidence."""
+        """Whether every provider-held-data control has verified repo evidence.
+
+        Unchanged by an accepted risk, on purpose. This property answers "is
+        the provider's handling of our data verified", and an acceptance does
+        not make it so. Callers deciding whether a call may proceed want
+        :attr:`egress_permitted`.
+        """
         return self.declared_controls_complete and not self.unverified_controls
+
+    @property
+    def egress_permitted(self) -> bool:
+        """Whether a live call may proceed, by verification or by acceptance."""
+        if not self.declared_controls_complete:
+            return False
+        return not self.unverified_controls or self.accepted_risk is not None
+
+    @property
+    def egress_basis(self) -> str:
+        """Which of the two bases permits egress, for the audit record."""
+        if self.live_use_ready:
+            return "verified_controls"
+        if self.egress_permitted:
+            return "accepted_risk"
+        return "blocked"
 
 
 PROVIDER_REGISTRY = {
@@ -137,6 +182,28 @@ PROVIDER_REGISTRY = {
             "operation, event, language, request key, job id, and safe response metadata."
         ),
         fallback="pytesseract",
+        # The three controls above stay `verified=False` because they are still
+        # not verified: Sarvam publishes no retention or residency commitment,
+        # and their documentation says these vary by plan and must be settled
+        # with an account representative. What exists is authorization, not
+        # verification, and the two are recorded separately on purpose.
+        accepted_risk=RiskAcceptance(
+            authority=(
+                "Additional Chief Secretary, Electronics & IT Department, "
+                "Government of Odisha"
+            ),
+            basis=(
+                "Sign-off that citizen PII may be remitted to Sarvam. No state "
+                "statute currently governs this transfer, and the residual risk "
+                "was judged acceptable on that basis. Provider retention and "
+                "encryption terms remain unverified."
+            ),
+            scope=(
+                "Sarvam Vision document digitisation and extraction for the "
+                "grievance corpus."
+            ),
+            accepted_on="2026-08-07",
+        ),
     )
 }
 
@@ -535,7 +602,7 @@ class SarvamVisionAdapter:
     ) -> _Result:
         if not self.enabled:
             raise SarvamDisabled("Sarvam hosted egress is disabled")
-        if not self.route.live_use_ready:
+        if not self.route.egress_permitted:
             controls = ", ".join(self.route.unverified_controls)
             raise SarvamGovernanceError(
                 f"Sarvam hosted egress is gated by unverified controls: {controls}"
@@ -1001,6 +1068,23 @@ class SarvamVisionAdapter:
         )
         return hashlib.sha256(source.encode("utf-8")).hexdigest()
 
+    def _authorization_reference(self) -> str:
+        """The route's authorization, naming the accepted risk when that is the basis.
+
+        A reader of the audit table should not have to go to the source to find
+        out whether a call went out on verified controls or on someone's
+        signature accepting unverified ones.
+        """
+        reference = self.route.authorization_reference
+        accepted = self.route.accepted_risk
+        if self.route.egress_basis == "accepted_risk" and accepted is not None:
+            return (
+                f"{reference} | risk accepted by {accepted.authority}"
+                f" on {accepted.accepted_on}: {accepted.basis}"
+                f" (unverified: {', '.join(self.route.unverified_controls)})"
+            )
+        return reference
+
     def _audit(
         self,
         context: SarvamAuditContext,
@@ -1021,7 +1105,7 @@ class SarvamVisionAdapter:
                 model_id=self.route.model_id,
                 bytes_sent=bytes_sent,
                 timestamp=datetime.now(UTC).isoformat(),
-                authorization_reference=self.route.authorization_reference,
+                authorization_reference=self._authorization_reference(),
                 operation=operation,
                 event=event,
                 language=language,
