@@ -732,36 +732,49 @@ def _index_version_for_test() -> str:
     return _index_version(30, 0.5, "s")
 
 
-class TestVerificationIsBatched:
-    """The Sambalpur 2024 run OOM-killed at 7.4 GB on an 8 GB box after all
-    55,544 signatures were written: verification loaded every involved ticket's
-    redacted text at once. Candidate generation stays global -- it touches only
-    band and identity hashes, and identity pairs legitimately cross blocks."""
+class TestGroupingStreamsBucketsInsteadOfMaterialisingPairs:
+    """The Sambalpur run OOM-killed twice at 7.4 GB on an 8 GB box, after all
+    55,544 signatures were written. The allocation was the candidate-pair set,
+    not the text: a bucket is quadratic in its membership and this slice has a
+    9,405-row block, so one campaign bucket alone is tens of millions of pairs.
+    Grievance subjects are a couple of hundred characters -- every text in the
+    slice together is only megabytes."""
 
-    def test_grouping_is_unchanged_by_chunking(self, dup_oltp, monkeypatch):
-        """A chunk size of 1 must produce exactly the same groups as one big
-        chunk, or the fix changed the answer rather than the memory profile."""
+    def test_grouping_no_longer_builds_a_global_pair_set(self):
+        """The regression guard. If a future change collects every candidate
+        pair before verifying, this is what should stop it."""
+        import inspect
+        import re
+
         import janasunani.pipeline.dedup_index as di
 
-        async_url, sync_url = dup_oltp
-        big = build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt="s")
+        source = inspect.getsource(di._group_duplicates)
+        assert "_candidate_buckets" in source
+        # Assignment, not any mention: a comment referring to the old helpers
+        # is fine, a variable holding every pair is the thing being guarded.
+        assert not re.search(r"^\s*candidate_pairs\s*=", source, re.M)
 
-        engine = create_engine(sync_url)
-        with engine.begin() as conn:
-            conn.execute(text("DELETE FROM dedup_groups"))
-            conn.execute(text("DELETE FROM dedup_signatures"))
-        engine.dispose()
-
-        monkeypatch.setattr(di, "VERIFY_CHUNK_PAIRS", 1)
-        small = build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt="s")
-
-        assert small["groups"] == big["groups"]
-        assert small["verified_pairs"] == big["verified_pairs"]
-
-    def test_the_chunk_size_is_a_real_bound(self):
-        """A chunk larger than the pair count would silently restore the old
-        all-at-once behaviour."""
+    def test_singleton_buckets_are_dropped(self):
+        """No pairs in them, and they would each cost a database round trip."""
         import janasunani.pipeline.dedup_index as di
 
-        assert isinstance(di.VERIFY_CHUNK_PAIRS, int)
-        assert 0 < di.VERIFY_CHUNK_PAIRS <= 100_000
+        rows = [
+            SimpleNamespace(
+                ticket_no=t,
+                signature=None,
+                block_key="b",
+                identity_key_mobile=k,
+                identity_key_email=None,
+            )
+            for t, k in (("T1", "shared"), ("T2", "shared"), ("T3", "alone"))
+        ]
+        buckets = di._candidate_buckets(rows, 4)
+        assert [sorted(b) for b in buckets] == [["T1", "T2"]]
+
+    def test_groups_still_form_over_the_real_fixture(self, dup_oltp):
+        """Streaming must not change the answer, only the memory profile."""
+        async_url, _ = dup_oltp
+        counts = build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt="s")
+        assert counts["groups"] > 0
+        assert counts["slice_signatures"] > 0
+
