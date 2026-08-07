@@ -9,7 +9,7 @@ the same endpoints and response shapes.
 
 ```bash
 uv run --extra serving janasunani-api
-uv run --extra serving --extra pipeline-core --extra categorizer janasunani-api-live
+uv run --extra demo janasunani-api-live
 ```
 
 Both serve `http://127.0.0.1:8000` by default, with OpenAPI at `/docs`. The

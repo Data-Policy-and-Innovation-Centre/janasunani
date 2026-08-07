@@ -35,6 +35,16 @@ DOCKERIGNORE_PATH = ROOT_DIR / ".dockerignore"
 FRONTEND_DOCKERFILE_PATH = ROOT_DIR / "frontend" / "Dockerfile"
 API_DOCKERFILE_PATH = DEPLOY_DIR / "api.Dockerfile"
 DEPLOY_DOC_PATH = ROOT_DIR / "docs" / "DEPLOY.md"
+LIVE_LAUNCH_PATHS = (
+    ROOT_DIR / "README.md",
+    ROOT_DIR / "pyproject.toml",
+    ROOT_DIR / "Makefile",
+    ROOT_DIR / "docs" / "DEMO.md",
+    ROOT_DIR / "frontend" / "README.md",
+    ROOT_DIR / "frontend" / ".env.local.example",
+    ROOT_DIR / "janasunani" / "inference" / "README.md",
+    ROOT_DIR / "janasunani" / "serving" / "README.md",
+)
 
 
 def _compose() -> dict:
@@ -1052,6 +1062,25 @@ def test_demo_extra_sources_torch_from_the_cpu_index():
     assert all(s["index"] == "pytorch-cpu" for s in sources)
 
 
+def test_documented_live_launches_use_the_demo_extra():
+    """The component extras omit PII; only demo is a complete live environment."""
+    commands: list[tuple[str, str]] = []
+    for path in LIVE_LAUNCH_PATHS:
+        commands.extend(
+            (str(path.relative_to(ROOT_DIR)), line.strip())
+            for line in path.read_text().splitlines()
+            if "uv run" in line and "janasunani-api-live" in line
+        )
+
+    assert commands, "no documented live launch commands found"
+    stale = [
+        f"{path}: {command}"
+        for path, command in commands
+        if "uv run --extra demo janasunani-api-live" not in command
+    ]
+    assert not stale, f"live launches must use the complete demo extra: {stale}"
+
+
 def test_gpu_extras_keep_cuda_torch():
     """The counterpart: pinning the GPU extras to CPU wheels would silently
     remove GPU acceleration from the DeepSeek OCR run and the MuRIL embedding
@@ -1135,6 +1164,21 @@ def test_demo_resolves_cpu_torch_on_linux():
     resolved = _demo_requirements_for_linux()
     assert resolved.get("torch") == "2.12.1+cpu", (
         f"expected the CPU torch build on linux, got {resolved.get('torch')!r}"
+    )
+
+
+@pytest.mark.skipif(shutil.which("uv") is None, reason="uv not on PATH")
+def test_demo_resolves_live_processor_pii_dependencies_on_linux():
+    """The documented live environment must carry the production PII stack."""
+    resolved = _demo_requirements_for_linux()
+    required = {
+        "en-core-web-sm",
+        "presidio-analyzer",
+        "presidio-anonymizer",
+        "spacy",
+    }
+    assert required <= resolved.keys(), (
+        f"demo extra is missing live PII dependencies: {sorted(required - resolved.keys())}"
     )
 
 
