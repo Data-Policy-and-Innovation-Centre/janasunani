@@ -113,6 +113,15 @@ def test_cli_parses_stage_subset_and_engine():
     assert set(STAGE_ORDER) >= set(args.stages)
 
 
+def test_sarvam_engine_is_disabled_unless_explicitly_enabled():
+    args = build_parser().parse_args(["run", "--ocr-engine", "sarvam"])
+    assert args.ocr_engine == "sarvam"
+    assert args.enable_sarvam is False
+
+    enabled = build_parser().parse_args(["run", "--ocr-engine", "sarvam", "--enable-sarvam"])
+    assert enabled.enable_sarvam is True
+
+
 def test_cli_rejects_unknown_stage():
     with pytest.raises(SystemExit):
         build_parser().parse_args(["run", "--stages", "bogus"])

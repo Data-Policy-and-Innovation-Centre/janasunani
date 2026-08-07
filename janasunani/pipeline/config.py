@@ -8,6 +8,10 @@ class PipelineConfig:
     db_path: Path
     models_dir: Path
     ocr_engine: str = "pytesseract"
+    # Hosted Sarvam is an authorized-external route and stays off unless a
+    # deliberate run enables it.  When ``ocr_engine == "sarvam"`` but this is
+    # false, the OCR stage uses its maintained pytesseract counterpart.
+    sarvam_enabled: bool = False
     # None -> resolved by the page-type stage: the DVC-mirrored copy under
     # models_dir/page_type_classifier/vit_type_classifier when present,
     # falling back to the (orphaned-org) HF repo. Set explicitly to override.

@@ -86,7 +86,7 @@ def pick_executor(
 
     Pytesseract picks serial for small batches, multiprocessing otherwise.
     """
-    if backend == "deepseek":
+    if backend in {"deepseek", "sarvam"}:
         return SerialExecutor(initializer=initializer, initargs=initargs)
 
     # Pytesseract path

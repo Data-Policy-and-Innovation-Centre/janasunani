@@ -35,8 +35,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument(
         "--ocr-engine",
-        choices=["pytesseract", "deepseek"],
+        choices=["pytesseract", "deepseek", "sarvam"],
         default="pytesseract",
+    )
+    run.add_argument(
+        "--enable-sarvam",
+        action="store_true",
+        help=(
+            "Permit the authorized-external Sarvam OCR route for this run. "
+            "Without this flag, --ocr-engine sarvam falls back to pytesseract."
+        ),
     )
     run.add_argument(
         "--page-type-model",
@@ -125,6 +133,7 @@ def main() -> int:
             db_path=args.db,
             models_dir=args.models,
             ocr_engine=args.ocr_engine,
+            sarvam_enabled=args.enable_sarvam,
             page_type_model_id=args.page_type_model,
             file_list=args.file_list,
             n_workers=args.workers,
