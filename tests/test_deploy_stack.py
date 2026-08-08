@@ -1216,3 +1216,103 @@ def test_locked_torch_resolves_to_a_cpu_wheel_for_linux():
     assert "torch-2.12.1%2Bcpu-cp313-cp313-manylinux_2_28_x86_64.whl" in lock, (
         "the locked CPU torch has no linux x86_64 wheel"
     )
+
+
+# --- Demo rehearsal scripts (Unit B) ---------------------------------------
+#
+# The 13 Aug freeze gate lives in scripts/demo_rehearsal.sh (Phases A-D) and
+# the thin Tier-3 wrapper scripts/e2e_pipeline.sh. These are the integration
+# rehearsal's own executables — guard them with the same real-file checks
+# test_entrypoint_and_deploy_script_are_valid_shell uses (parse the file on
+# disk that CI and the operator actually run).
+
+REHEARSAL_SH_PATH = ROOT_DIR / "scripts" / "demo_rehearsal.sh"
+E2E_PIPELINE_SH_PATH = ROOT_DIR / "scripts" / "e2e_pipeline.sh"
+MAKEFILE_PATH = ROOT_DIR / "Makefile"
+
+
+def test_demo_rehearsal_script_exists_and_is_executable():
+    """The rehearsal gate must be a tracked, executable shell script."""
+    assert REHEARSAL_SH_PATH.exists(), f"{REHEARSAL_SH_PATH} does not exist"
+    assert REHEARSAL_SH_PATH.is_file()
+    mode = REHEARSAL_SH_PATH.stat().st_mode
+    assert mode & stat.S_IEXEC, f"{REHEARSAL_SH_PATH} is not executable"
+    # Must start with a bash shebang
+    first_line = REHEARSAL_SH_PATH.read_text().splitlines()[0]
+    assert first_line.startswith("#!") and "bash" in first_line
+
+
+def test_e2e_pipeline_script_exists_and_is_executable():
+    """The Tier-3 pipeline wrapper must be a tracked, executable shell script."""
+    assert E2E_PIPELINE_SH_PATH.exists(), f"{E2E_PIPELINE_SH_PATH} does not exist"
+    assert E2E_PIPELINE_SH_PATH.is_file()
+    mode = E2E_PIPELINE_SH_PATH.stat().st_mode
+    assert mode & stat.S_IEXEC, f"{E2E_PIPELINE_SH_PATH} is not executable"
+    first_line = E2E_PIPELINE_SH_PATH.read_text().splitlines()[0]
+    assert first_line.startswith("#!") and "bash" in first_line
+
+
+def test_rehearsal_scripts_are_valid_shell():
+    """Both scripts must pass `bash -n` (same gate as deploy.sh)."""
+    for path in (REHEARSAL_SH_PATH, E2E_PIPELINE_SH_PATH):
+        result = subprocess.run(
+            ["bash", "-n", str(path)], capture_output=True, text=True
+        )
+        assert result.returncode == 0, f"{path.name} failed bash -n: {result.stderr}"
+
+
+def test_demo_rehearsal_script_covers_required_phases():
+    """Static content check: the rehearsal script must implement Phases A-D
+    from the plan (ruff+pytest, health curl, supervisor/history, frontend,
+    artifact presence, optional model smoke) and warn vs fail handling."""
+    text = REHEARSAL_SH_PATH.read_text()
+    # Phase A
+    assert "ruff check" in text, "Phase A must run ruff check"
+    assert "janasunani-demo-preflight" in text
+    # Phase B — health + submission + round-trip + supervisor/history/frontend
+    assert "/health" in text
+    assert "processor" in text and "pipeline" in text
+    assert "/grievance" in text
+    assert "/supervisor" in text
+    assert "/history" in text
+    assert "FRONTEND_URL" in text or "127.0.0.1:3000" in text
+    # Phase C — artifacts
+    assert "routing_crosswalk.json" in text
+    assert "outputs/findings" in text
+    assert "outputs/sarvam" in text or "sarvam" in text.lower()
+    # Phase D — optional model smoke
+    assert "JANASUNANI_RUN_MODEL_SMOKE" in text
+    assert "test_inference_model_smoke" in text
+    # Must exit non-zero on failure and have warn vs fail configurability
+    assert "REHEARSAL_STRICT" in text
+    assert "exit 1" in text
+
+
+def test_e2e_pipeline_script_covers_required_steps():
+    """The Tier-3 wrapper must invoke the pipeline on a non-PII fixture, export,
+    materialize, and optionally curl the rehearsal checks — and must never
+    default to data/raw/."""
+    text = E2E_PIPELINE_SH_PATH.read_text()
+    assert "janasunani-pipeline" in text
+    assert "janasunani-export-pipeline" in text or "export_pipeline" in text
+    assert "janasunani-materialize" in text or "materialize" in text
+    assert "tests/fixtures" in text
+    assert "data/raw" not in text or "not data/raw" in text or "never data/raw" in text, (
+        "e2e_pipeline.sh must not default to data/raw/ (real PII) — use tests/fixtures/"
+    )
+    # Must exit non-zero on failure
+    assert "set -e" in text or "set -euo pipefail" in text
+
+
+def test_makefile_has_rehearsal_target():
+    """`make rehearsal` must exist and delegate to scripts/demo_rehearsal.sh."""
+    text = MAKEFILE_PATH.read_text()
+    assert re.search(r"^rehearsal\s*:", text, re.M), "Makefile missing rehearsal target"
+    # The target must actually invoke demo_rehearsal.sh (not just be a stub)
+    rehearsal_block = text[text.index("rehearsal:") : text.index("rehearsal:") + 500]
+    assert "demo_rehearsal.sh" in rehearsal_block, (
+        "rehearsal target must run scripts/demo_rehearsal.sh"
+    )
+    # Must be .PHONY so make treats it as a command even if a file named
+    # rehearsal exists
+    assert re.search(r"\.PHONY:.*rehearsal", text), "rehearsal must be .PHONY"

@@ -557,6 +557,7 @@ help:
 	@echo "  make frontend        Run the Next.js UI against the live API"
 	@echo "  make up              Serve API + frontend together (Ctrl-C stops both)"
 	@echo "  make down            Tear down the demo API + frontend + throwaway DB"
+	@echo "  make rehearsal       Run the 13 Aug freeze gate (static + stack + artifacts)"
 	@echo ""
 
 setup:
@@ -728,7 +729,7 @@ _check_git_clean:
 # --- Live demo (real-inference API). `models` and `frontend` share names with
 # repo directories, so this whole group must be .PHONY or make treats them as
 # up-to-date files and skips the recipe.
-.PHONY: models preflight db api frontend up down
+.PHONY: models preflight db api frontend up down rehearsal
 
 models:
 	@echo "Pulling ONLY the demo model artifacts (not the PII-bearing data)..."
@@ -833,3 +834,6 @@ down:
 	-docker rm -f $(PG_CONTAINER)
 	-docker volume rm $(PG_CONTAINER)
 	@echo "Demo stack torn down."
+
+rehearsal:
+	bash scripts/demo_rehearsal.sh
