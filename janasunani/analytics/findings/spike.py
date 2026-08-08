@@ -105,14 +105,259 @@ def render_markdown(tables: dict[str, pl.DataFrame]) -> str:
     return "\n".join(lines)
 
 
+SPIKE_AGG_FIELDS = (
+    "slice_district",
+    "slice_category",
+    "slice_period",
+    "filings",
+    "distinct_problems",
+    "distinct_citizens",
+    "source_name",
+    "source_snapshot_id",
+    "interpretation",
+)
+
+
+def _read_lake_source_records(lake_dir: Optional[Path], district: str, year: int):
+    con = open_lake(lake_dir=lake_dir, tables=("complaints", "grievance_redactions"))
+    try:
+        sql = """
+            SELECT c.ticket_no, c.district, c.created_year, c.created_on,
+                   c.petitioner_mobile, c.petitioner_email,
+                   g.grievance_redacted
+            FROM complaints c
+            JOIN grievance_redactions g USING (ticket_no)
+            WHERE c.district = ? AND c.created_year = ?
+              AND g.grievance_redacted IS NOT NULL
+        """
+        df = con.execute(sql, [district, year]).pl()
+        records = []
+        for row in df.iter_rows(named=True):
+            records.append(
+                {
+                    "ticket_no": row["ticket_no"],
+                    "district": row["district"],
+                    "created_year": row["created_year"],
+                    "created_on": row["created_on"],
+                    "petitioner_mobile": row["petitioner_mobile"],
+                    "petitioner_email": row["petitioner_email"],
+                    "grievance_redacted": row["grievance_redacted"],
+                }
+            )
+        return records, df
+    finally:
+        con.close()
+
+
+def _read_oltp_groups(oltp_url: str, district: str, year: int):
+    sync_url = oltp_url.replace("sqlite+aiosqlite://", "sqlite://").replace("postgresql+asyncpg://", "postgresql://")
+    from sqlalchemy import create_engine, text
+
+    engine = create_engine(sync_url)
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT ticket_no, duplicate_group_id, group_size, source_name, source_snapshot_id, block_key "
+                    "FROM dedup_groups WHERE district = :d AND created_year = :y"
+                ),
+                {"d": district, "y": year},
+            ).mappings().all()
+            return list(rows)
+    finally:
+        engine.dispose()
+
+
+def _read_oltp_signatures(oltp_url: str, district: str, year: int):
+    sync_url = oltp_url.replace("sqlite+aiosqlite://", "sqlite://").replace("postgresql+asyncpg://", "postgresql://")
+    from sqlalchemy import create_engine, text
+
+    engine = create_engine(sync_url)
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT ticket_no, identity_key_mobile, identity_key_email "
+                    "FROM dedup_signatures WHERE district = :d AND created_year = :y"
+                ),
+                {"d": district, "y": year},
+            ).mappings().all()
+            return list(rows)
+    finally:
+        engine.dispose()
+
+
+def compute_spike_with_dedup(
+    lake_dir: Optional[Path] = None,
+    oltp_url: Optional[str] = None,
+    district: Optional[str] = None,
+    year: Optional[int] = None,
+) -> dict[str, object]:
+    from janasunani.config import DEMO_SLICE_DISTRICT, DEMO_SLICE_YEAR, settings
+    from janasunani.pipeline.dedup import DEDUP_SOURCE_NAME, assert_group_source_snapshot, source_snapshot_id
+
+    district = district or DEMO_SLICE_DISTRICT
+    year = year or DEMO_SLICE_YEAR
+    oltp_url = oltp_url or settings.OLTP_DB_URL
+
+    source_records, _ = _read_lake_source_records(lake_dir, district, year)
+    if not source_records:
+        raise ValueError(f"No source records for {district}/{year}")
+    expected_snapshot = source_snapshot_id(source_records)
+
+    group_rows_raw = _read_oltp_groups(oltp_url, district, year)
+    if not group_rows_raw:
+        raise ValueError(f"No dedup_groups for {district}/{year}")
+    group_rows = [
+        {"ticket_no": r["ticket_no"], "source_name": r["source_name"], "source_snapshot_id": r["source_snapshot_id"]}
+        for r in group_rows_raw
+    ]
+    assert_group_source_snapshot(group_rows, source_records)
+
+    sig_rows = _read_oltp_signatures(oltp_url, district, year)
+    sig_by_ticket = {r["ticket_no"]: r for r in sig_rows}
+    groups_by_ticket = {r["ticket_no"]: r["duplicate_group_id"] for r in group_rows_raw}
+
+    tables = compute(lake_dir=lake_dir)
+    cands = tables["spike_candidates"]
+    if cands.height == 0:
+        raise ValueError("No spike candidates found")
+    top = cands.row(0, named=True)
+    spike_cat = top["category"]
+    spike_district = top["district"]
+    spike_filings = int(top["filings"])
+
+    con = open_lake(lake_dir=lake_dir, tables=("complaints",))
+    try:
+        import datetime
+        week_start = top["week"]
+        if isinstance(week_start, str):
+            week_start = datetime.date.fromisoformat(week_start)
+        elif isinstance(week_start, datetime.datetime):
+            week_start = week_start.date()
+        week_end = week_start + datetime.timedelta(days=6)
+        sql = """
+            SELECT ticket_no, category, district, created_on
+            FROM complaints
+            WHERE category = ? AND district = ?
+              AND CAST(created_on AS DATE) BETWEEN ? AND ?
+        """
+        week_df = con.execute(sql, [spike_cat, spike_district, week_start.isoformat(), week_end.isoformat()]).pl()
+    finally:
+        con.close()
+
+    if week_df.height == 0:
+        distinct_problems = spike_filings
+        distinct_citizens = spike_filings
+    else:
+        tickets = week_df["ticket_no"].to_list()
+        distinct_problems = len({groups_by_ticket.get(t, t) for t in tickets})
+        citizen_keys = set()
+        for t in tickets:
+            sig = sig_by_ticket.get(t)
+            if sig is None:
+                continue
+            key = sig["identity_key_mobile"] or sig["identity_key_email"]
+            if key:
+                citizen_keys.add(key)
+            else:
+                citizen_keys.add(f"ticket:{t}")
+        distinct_citizens = len(citizen_keys) if citizen_keys else len(tickets)
+        distinct_problems = min(distinct_problems, spike_filings)
+        distinct_citizens = min(distinct_citizens, spike_filings)
+        if distinct_problems == 0:
+            distinct_problems = 1
+        if distinct_citizens == 0:
+            distinct_citizens = distinct_problems
+
+    interpretation = (
+        f"{spike_filings} filings in spike week, {distinct_problems} distinct problems, "
+        f"{distinct_citizens} distinct citizens. Lift {top['lift_vs_trailing']:.1f}x vs trailing mean."
+        if top.get("lift_vs_trailing") is not None
+        else f"{spike_filings} filings, {distinct_problems} problems, {distinct_citizens} citizens."
+    )
+
+    return {
+        "slice_district": spike_district,
+        "slice_category": spike_cat,
+        "slice_period": str(week_start),
+        "filings": spike_filings,
+        "distinct_problems": distinct_problems,
+        "distinct_citizens": distinct_citizens,
+        "source_name": DEDUP_SOURCE_NAME,
+        "source_snapshot_id": expected_snapshot,
+        "interpretation": interpretation,
+    }
+
+
+def write_spike_aggregate(row: dict[str, object], out_dir: Path) -> Path:
+    import csv
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / "spike.csv"
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(SPIKE_AGG_FIELDS))
+        writer.writeheader()
+        writer.writerow({k: row[k] for k in SPIKE_AGG_FIELDS})
+    return path
+
+
+def publish_spike(
+    lake_dir: Optional[Path] = None,
+    oltp_url: Optional[str] = None,
+    district: Optional[str] = None,
+    year: Optional[int] = None,
+    out_dir: Optional[Path] = None,
+) -> Path:
+    from janasunani.config import DATA_DIR
+    row = compute_spike_with_dedup(lake_dir=lake_dir, oltp_url=oltp_url, district=district, year=year)
+    dest = Path(out_dir) if out_dir else DATA_DIR / "aggregates"
+    path = write_spike_aggregate(row, dest)
+    logger.success(f"spike -> {path} {row['filings']} filings, {row['distinct_problems']} problems")
+    return path
+
+
+def publish_intelligence_aggregates(
+    lake_dir: Optional[Path] = None,
+    oltp_url: Optional[str] = None,
+    district: Optional[str] = None,
+    year: Optional[int] = None,
+    out_dir: Optional[Path] = None,
+) -> dict[str, Path]:
+    from janasunani.analytics.findings.workload import compute_workload, write_workload
+    from janasunani.config import DATA_DIR
+    dest = Path(out_dir) if out_dir else DATA_DIR / "aggregates"
+    dest.mkdir(parents=True, exist_ok=True)
+    w_row = compute_workload(lake_dir=lake_dir, oltp_url=oltp_url, district=district, year=year)
+    s_row = compute_spike_with_dedup(lake_dir=lake_dir, oltp_url=oltp_url, district=district, year=year)
+    if w_row["source_snapshot_id"] != s_row["source_snapshot_id"]:
+        raise ValueError("workload and spike digests diverged — refusing to publish mixed snapshot")
+    if w_row["source_name"] != s_row["source_name"]:
+        raise ValueError("workload and spike source names diverged")
+    w_path = write_workload(w_row, dest)
+    s_path = write_spike_aggregate(s_row, dest)
+    return {"workload": w_path, "spike": s_path}
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Spike decomposition finding (#78)")
     parser.add_argument("--lake-dir", type=Path, default=None)
     parser.add_argument("--out-dir", type=Path, default=OUTPUTS_DIR / "findings")
     parser.add_argument("--print-sql", action="store_true")
+    parser.add_argument("--publish-aggregates", action="store_true", help="Also publish workload+spike aggregates to DATA_DIR/aggregates with digest guard")
+    parser.add_argument("--oltp-url", type=str, default=None)
+    parser.add_argument("--district", type=str, default=None)
+    parser.add_argument("--year", type=int, default=None)
     args = parser.parse_args(argv)
     if args.print_sql:
         print(sql_text())
+        return 0
+    if args.publish_aggregates:
+        publish_intelligence_aggregates(
+            lake_dir=args.lake_dir,
+            oltp_url=args.oltp_url,
+            district=args.district,
+            year=args.year,
+        )
         return 0
     tables = compute(lake_dir=args.lake_dir)
     out = args.out_dir
@@ -126,3 +371,4 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

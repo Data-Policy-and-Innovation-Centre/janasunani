@@ -13,6 +13,10 @@ findings-pack work. If both are present, it fails closed rather than choosing
 an arbitrary version. The manual confirmed-duplicates finding is intentionally
 not read here: it is an insight about existing officer labels, not the
 MinHash-backed duplicate-adjusted-workload capability.
+
+Workload and spike are read from the aggregate seam (DATA_DIR/aggregates by
+default, or the configured findings directory for tests). Both carry the same
+dedup source digest; a mismatch fails loudly as unavailable.
 """
 
 from __future__ import annotations
@@ -29,16 +33,17 @@ from janasunani.config import DATA_DIR
 from janasunani.serving.schemas import (
     RecordedArtifactProvenance,
     RecordedClosurePanel,
+    RecordedSpikePanel,
+    RecordedWorkloadPanel,
+    SupervisorAggregateCount,
     SupervisorDashboard,
+    SupervisorSlice,
     UnavailableArtifactProvenance,
     UnavailableClosurePanel,
     UnavailableSpikePanel,
     UnavailableWorkloadPanel,
 )
 
-# A one-row summary from the governed closure mart has precisely these aggregate
-# columns. An allowlist is deliberate: accepting extra columns makes it too
-# easy for a later producer to smuggle a row-level field into a serving path.
 _CLOSURE_FIELDS = frozenset(
     {
         "resolved_complaints",
@@ -67,6 +72,37 @@ _CLOSURE_CAVEAT = (
     "that no work occurred or that a closure was wrong; making that claim "
     "requires human adjudication."
 )
+
+_WORKLOAD_FIELDS = frozenset(
+    {
+        "slice_district",
+        "slice_category",
+        "slice_period",
+        "total_filings",
+        "distinct_problems",
+        "duplicate_adjustment",
+        "source_name",
+        "source_snapshot_id",
+    }
+)
+_SPIKE_FIELDS = frozenset(
+    {
+        "slice_district",
+        "slice_category",
+        "slice_period",
+        "filings",
+        "distinct_problems",
+        "distinct_citizens",
+        "source_name",
+        "source_snapshot_id",
+        "interpretation",
+    }
+)
+_WORKLOAD_ARTIFACT = "workload.csv"
+_SPIKE_ARTIFACT = "spike.csv"
+_MAX_AGGREGATE_BYTES = 32 * 1024
+
+_DEDUP_SOURCE_NAME = "oltp:complaints+grievance_redactions"
 
 
 class SupervisorProvider(Protocol):
@@ -113,26 +149,6 @@ def _closure_unavailable(reason: str) -> UnavailableClosurePanel:
     )
 
 
-def _dashboard(
-    *,
-    closure: RecordedClosurePanel | UnavailableClosurePanel,
-    unavailable_reason: str,
-) -> SupervisorDashboard:
-    """Build the stable response while capabilities are still backfill-gated."""
-
-    return SupervisorDashboard(
-        generated_label="Supervisor aggregate response",
-        safety_note=(
-            "Aggregate counts only. This endpoint reads validated published "
-            "aggregate artifacts and never queries grievance text, contact "
-            "details, citizen identifiers, or the lake at request time."
-        ),
-        workload=_workload_unavailable(unavailable_reason),
-        spike=_spike_unavailable(unavailable_reason),
-        closure=closure,
-    )
-
-
 class UnavailableSupervisorProvider:
     """Return a fully explicit response when aggregate publication is not enabled."""
 
@@ -140,38 +156,118 @@ class UnavailableSupervisorProvider:
         self._reason = reason
 
     def dashboard(self) -> SupervisorDashboard:
-        return _dashboard(
+        return SupervisorDashboard(
+            generated_label="Supervisor aggregate response",
+            safety_note=(
+                "Aggregate counts only. This endpoint reads validated published "
+                "aggregate artifacts and never queries grievance text, contact "
+                "details, citizen identifiers, or the lake at request time."
+            ),
+            workload=_workload_unavailable(self._reason),
+            spike=_spike_unavailable(self._reason),
             closure=_closure_unavailable(self._reason),
-            unavailable_reason=self._reason,
         )
 
 
 class ArtifactSupervisorProvider:
     """Read the narrow, validated artifact seam consumed by the supervisor UI."""
 
-    def __init__(self, findings_dir: Path) -> None:
+    def __init__(
+        self,
+        findings_dir: Path,
+        aggregates_dir: Path | None = None,
+    ) -> None:
         self._findings_dir = findings_dir.resolve()
         data_root = DATA_DIR.resolve()
         if self._findings_dir == data_root or self._findings_dir.is_relative_to(data_root):
             raise ValueError(
                 "supervisor aggregate artifacts must not be served from the data directory"
             )
+        if aggregates_dir is not None:
+            self._aggregates_dir = aggregates_dir.resolve()
+        else:
+            default = (DATA_DIR / "aggregates").resolve()
+            if default.exists():
+                self._aggregates_dir = default
+            else:
+                self._aggregates_dir = self._findings_dir
 
     def dashboard(self) -> SupervisorDashboard:
         closure = self._load_closure()
-        common_reason = (
+        workload = self._load_workload()
+        spike = self._load_spike()
+
+        if workload is not None and spike is not None:
+            w_row = self._read_raw_workload_row()
+            s_row = self._read_raw_spike_row()
+            if w_row is not None and s_row is not None:
+                if w_row.get("source_snapshot_id") != s_row.get("source_snapshot_id"):
+                    workload = None
+                    spike = None
+                    digest_reason = (
+                        "Workload and spike aggregates carry different dedup source digests; "
+                        "refusing to serve a mixed snapshot."
+                    )
+                    return SupervisorDashboard(
+                        generated_label="Supervisor aggregate response",
+                        safety_note=(
+                            "Aggregate counts only. This endpoint reads validated published "
+                            "aggregate artifacts and never queries grievance text, contact "
+                            "details, citizen identifiers, or the lake at request time."
+                        ),
+                        workload=_workload_unavailable(digest_reason),
+                        spike=_spike_unavailable(digest_reason),
+                        closure=closure
+                        if closure is not None
+                        else _closure_unavailable(
+                            "No publishable closure aggregate artifact was found, or it did "
+                            "not pass the required aggregate schema and arithmetic checks."
+                        ),
+                    )
+                if w_row.get("source_name") != s_row.get("source_name"):
+                    workload = None
+                    spike = None
+                    digest_reason = (
+                        "Workload and spike aggregates carry different source names; "
+                        "refusing to serve a mixed snapshot."
+                    )
+                    return SupervisorDashboard(
+                        generated_label="Supervisor aggregate response",
+                        safety_note=(
+                            "Aggregate counts only. This endpoint reads validated published "
+                            "aggregate artifacts and never queries grievance text, contact "
+                            "details, citizen identifiers, or the lake at request time."
+                        ),
+                        workload=_workload_unavailable(digest_reason),
+                        spike=_spike_unavailable(digest_reason),
+                        closure=closure
+                        if closure is not None
+                        else _closure_unavailable(
+                            "No publishable closure aggregate artifact was found, or it did "
+                            "not pass the required aggregate schema and arithmetic checks."
+                        ),
+                    )
+
+        common_unavailable_reason = (
             "No validated aggregate artifact is available for this capability. "
             "The manual confirmed-duplicates baseline is not a substitute for "
             "deduplicated workload or a worked spike."
         )
-        return _dashboard(
+        return SupervisorDashboard(
+            generated_label="Supervisor aggregate response",
+            safety_note=(
+                "Aggregate counts only. This endpoint reads validated published "
+                "aggregate artifacts and never queries grievance text, contact "
+                "details, citizen identifiers, or the lake at request time."
+            ),
+            workload=workload if workload is not None else _workload_unavailable(common_unavailable_reason),
+            spike=spike if spike is not None else _spike_unavailable(common_unavailable_reason),
             closure=closure
             if closure is not None
             else _closure_unavailable(
                 "No publishable closure aggregate artifact was found, or it did "
                 "not pass the required aggregate schema and arithmetic checks."
             ),
-            unavailable_reason=common_reason,
         )
 
     def _load_closure(self) -> RecordedClosurePanel | None:
@@ -180,9 +276,6 @@ class ArtifactSupervisorProvider:
             for name in _CLOSURE_ARTIFACT_NAMES
             if _is_regular_artifact(self._findings_dir / name, self._findings_dir)
         ]
-        # A file could be a stale legacy copy beside the current producer's
-        # output. The service cannot prove which one is intended, so it returns
-        # no number until the operator resolves the ambiguity.
         if len(candidates) != 1:
             return None
 
@@ -194,8 +287,6 @@ class ArtifactSupervisorProvider:
             _validate_closure_row(row)
             written_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
         except (OSError, UnicodeError, ValueError, csv.Error):
-            # Do not log a producer-controlled row or header. API and deploy
-            # logs can travel much farther than the trusted artifact directory.
             return None
 
         return RecordedClosurePanel(
@@ -218,6 +309,121 @@ class ArtifactSupervisorProvider:
             caveat=_CLOSURE_CAVEAT,
         )
 
+    def _load_workload(self) -> RecordedWorkloadPanel | None:
+        for base in (self._aggregates_dir, self._findings_dir):
+            path = base / _WORKLOAD_ARTIFACT
+            if not _is_regular_aggregate(path, base):
+                continue
+            try:
+                row = _read_workload_row(path)
+                _validate_workload_row(row)
+                written_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+            except (OSError, UnicodeError, ValueError, csv.Error):
+                return None
+            return RecordedWorkloadPanel(
+                title="Duplicate-adjusted workload",
+                slice=SupervisorSlice(
+                    district=str(row["slice_district"]),
+                    category=str(row["slice_category"]),
+                    period=str(row["slice_period"]),
+                ),
+                provenance=RecordedArtifactProvenance(
+                    label="Recorded aggregate artifact",
+                    artifact=path.name,
+                    artifact_written_at=written_at,
+                ),
+                total_filings=SupervisorAggregateCount(
+                    label="Total filings (portal count)",
+                    value=int(row["total_filings"]),
+                    explanation="All complaints in the slice, undeduplicated.",
+                ),
+                distinct_problems=SupervisorAggregateCount(
+                    label="Distinct problems (dedup groups)",
+                    value=int(row["distinct_problems"]),
+                    explanation="Distinct grievance clusters after MinHash/LSH dedup.",
+                ),
+                duplicate_adjustment=SupervisorAggregateCount(
+                    label="Duplicate adjustment",
+                    value=int(row["duplicate_adjustment"]),
+                    explanation="Filings that are extra copies beyond the first per group.",
+                ),
+            )
+        return None
+
+    def _load_spike(self) -> RecordedSpikePanel | None:
+        for base in (self._aggregates_dir, self._findings_dir):
+            path = base / _SPIKE_ARTIFACT
+            if not _is_regular_aggregate(path, base):
+                continue
+            try:
+                row = _read_spike_row(path)
+                _validate_spike_row(row)
+                written_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+            except (OSError, UnicodeError, ValueError, csv.Error):
+                return None
+            return RecordedSpikePanel(
+                title="Worked spike decomposition",
+                slice=SupervisorSlice(
+                    district=str(row["slice_district"]),
+                    category=str(row["slice_category"]),
+                    period=str(row["slice_period"]),
+                ),
+                provenance=RecordedArtifactProvenance(
+                    label="Recorded aggregate artifact",
+                    artifact=path.name,
+                    artifact_written_at=written_at,
+                ),
+                interpretation=str(row["interpretation"]),
+                counts=(
+                    SupervisorAggregateCount(
+                        label="Total filings in spike week",
+                        value=int(row["filings"]),
+                        explanation="Filings in the spike week, undeduplicated.",
+                    ),
+                    SupervisorAggregateCount(
+                        label="Distinct problems in spike week",
+                        value=int(row["distinct_problems"]),
+                        explanation="Distinct dedup groups among spike filings.",
+                    ),
+                    SupervisorAggregateCount(
+                        label="Distinct citizens in spike week",
+                        value=int(row["distinct_citizens"]),
+                        explanation="Distinct signatories via salted identity keys.",
+                    ),
+                ),
+            )
+        return None
+
+    def _read_raw_workload_row(self) -> dict[str, str] | None:
+        for base in (self._aggregates_dir, self._findings_dir):
+            path = base / _WORKLOAD_ARTIFACT
+            if not _is_regular_aggregate(path, base):
+                continue
+            try:
+                with path.open(newline="", encoding="utf-8") as handle:
+                    reader = csv.DictReader(handle)
+                    rows = list(reader)
+                    if len(rows) == 1:
+                        return rows[0]
+            except (OSError, UnicodeError, csv.Error):
+                return None
+        return None
+
+    def _read_raw_spike_row(self) -> dict[str, str] | None:
+        for base in (self._aggregates_dir, self._findings_dir):
+            path = base / _SPIKE_ARTIFACT
+            if not _is_regular_aggregate(path, base):
+                continue
+            try:
+                with path.open(newline="", encoding="utf-8") as handle:
+                    reader = csv.DictReader(handle)
+                    rows = list(reader)
+                    if len(rows) == 1:
+                        return rows[0]
+            except (OSError, UnicodeError, csv.Error):
+                return None
+        return None
+
 
 def _is_regular_artifact(path: Path, findings_dir: Path) -> bool:
     """Reject symlinks and oversized or escaped files before parsing them."""
@@ -231,6 +437,17 @@ def _is_regular_artifact(path: Path, findings_dir: Path) -> bool:
             stat.S_ISREG(metadata.st_mode)
             and metadata.st_size <= _MAX_CLOSURE_ARTIFACT_BYTES
         )
+    except (OSError, ValueError):
+        return False
+
+
+def _is_regular_aggregate(path: Path, base_dir: Path) -> bool:
+    try:
+        path.relative_to(base_dir)
+        if path.is_symlink():
+            return False
+        metadata = path.stat()
+        return stat.S_ISREG(metadata.st_mode) and metadata.st_size <= _MAX_AGGREGATE_BYTES
     except (OSError, ValueError):
         return False
 
@@ -275,6 +492,73 @@ def _read_closure_row(path: Path) -> dict[str, int | float]:
     }
 
 
+def _read_workload_row(path: Path) -> dict[str, object]:
+    with path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        headers = reader.fieldnames
+        if headers is None or set(headers) != _WORKLOAD_FIELDS or len(headers) != len(_WORKLOAD_FIELDS):
+            raise ValueError("workload artifact has an unexpected aggregate schema")
+        rows = list(reader)
+    if len(rows) != 1 or set(rows[0]) != _WORKLOAD_FIELDS:
+        raise ValueError("workload artifact must contain exactly one aggregate row")
+    row = rows[0]
+    total = _parse_nonnegative_int(row["total_filings"])
+    distinct = _parse_nonnegative_int(row["distinct_problems"])
+    adjustment = _parse_nonnegative_int(row["duplicate_adjustment"])
+    for key in ("slice_district", "slice_category", "slice_period", "source_name", "source_snapshot_id"):
+        val = row.get(key)
+        if not isinstance(val, str) or not val or val.strip() != val:
+            raise ValueError(f"workload {key} is missing or has whitespace")
+    if row["source_name"] != _DEDUP_SOURCE_NAME:
+        raise ValueError("workload source_name mismatch")
+    if not row["source_snapshot_id"].startswith("sha256:"):
+        raise ValueError("workload source_snapshot_id must be sha256")
+    return {
+        "slice_district": row["slice_district"],
+        "slice_category": row["slice_category"],
+        "slice_period": row["slice_period"],
+        "total_filings": total,
+        "distinct_problems": distinct,
+        "duplicate_adjustment": adjustment,
+        "source_name": row["source_name"],
+        "source_snapshot_id": row["source_snapshot_id"],
+    }
+
+
+def _read_spike_row(path: Path) -> dict[str, object]:
+    with path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        headers = reader.fieldnames
+        if headers is None or set(headers) != _SPIKE_FIELDS or len(headers) != len(_SPIKE_FIELDS):
+            raise ValueError("spike artifact has an unexpected aggregate schema")
+        rows = list(reader)
+    if len(rows) != 1 or set(rows[0]) != _SPIKE_FIELDS:
+        raise ValueError("spike artifact must contain exactly one aggregate row")
+    row = rows[0]
+    filings = _parse_nonnegative_int(row["filings"])
+    distinct = _parse_nonnegative_int(row["distinct_problems"])
+    citizens = _parse_nonnegative_int(row["distinct_citizens"])
+    for key in ("slice_district", "slice_category", "slice_period", "source_name", "source_snapshot_id", "interpretation"):
+        val = row.get(key)
+        if not isinstance(val, str) or not val or val.strip() != val:
+            raise ValueError(f"spike {key} is missing or has whitespace")
+    if row["source_name"] != _DEDUP_SOURCE_NAME:
+        raise ValueError("spike source_name mismatch")
+    if not row["source_snapshot_id"].startswith("sha256:"):
+        raise ValueError("spike source_snapshot_id must be sha256")
+    return {
+        "slice_district": row["slice_district"],
+        "slice_category": row["slice_category"],
+        "slice_period": row["slice_period"],
+        "filings": filings,
+        "distinct_problems": distinct,
+        "distinct_citizens": citizens,
+        "source_name": row["source_name"],
+        "source_snapshot_id": row["source_snapshot_id"],
+        "interpretation": row["interpretation"],
+    }
+
+
 def _parse_nonnegative_int(value: str | None) -> int:
     if value is None or not value or value.strip() != value:
         raise ValueError("aggregate count is missing")
@@ -314,8 +598,6 @@ def _validate_closure_row(row: dict[str, int | float]) -> None:
     claims_action = int(row["claims_action"])
     off_ladder = int(row["off_ladder"])
 
-    # A headline share with no base is undefined, not zero.  It must remain
-    # unavailable until a non-empty, publishable aggregate exists.
     if resolved == 0 or ladder == 0:
         raise ValueError("closure artifact has no publishable denominator")
 
@@ -344,6 +626,32 @@ def _validate_closure_row(row: dict[str, int | float]) -> None:
     )
 
 
+def _validate_workload_row(row: dict[str, object]) -> None:
+    total = int(row["total_filings"])  # type: ignore
+    distinct = int(row["distinct_problems"])  # type: ignore
+    adj = int(row["duplicate_adjustment"])  # type: ignore
+    if total == 0:
+        raise ValueError("workload has no filings")
+    if distinct == 0:
+        raise ValueError("workload has no distinct problems")
+    if distinct > total:
+        raise ValueError("distinct problems cannot exceed total filings")
+    if adj != total - distinct:
+        raise ValueError("workload duplicate_adjustment must equal total_filings - distinct_problems")
+
+
+def _validate_spike_row(row: dict[str, object]) -> None:
+    filings = int(row["filings"])  # type: ignore
+    distinct = int(row["distinct_problems"])  # type: ignore
+    citizens = int(row["distinct_citizens"])  # type: ignore
+    if filings == 0:
+        raise ValueError("spike has no filings")
+    if distinct == 0 or distinct > filings:
+        raise ValueError("spike distinct_problems invalid")
+    if citizens == 0 or citizens > filings:
+        raise ValueError("spike distinct_citizens invalid")
+
+
 def _assert_percentage(actual: float, expected: float) -> None:
     if not math.isclose(actual, expected, abs_tol=_PERCENT_TOLERANCE):
         raise ValueError("closure artifact percentage does not match its counts")
@@ -353,14 +661,16 @@ def supervisor_provider_from_env() -> SupervisorProvider:
     """Enable the aggregate seam only when an operator configures it explicitly."""
 
     configured = os.environ.get("JANASUNANI_SUPERVISOR_FINDINGS_DIR")
+    aggregates_configured = os.environ.get("JANASUNANI_SUPERVISOR_AGGREGATES_DIR")
     if not configured:
         return UnavailableSupervisorProvider(
             "No supervisor aggregate artifact directory has been configured."
         )
     try:
-        return ArtifactSupervisorProvider(Path(configured))
+        findings = Path(configured)
+        aggregates = Path(aggregates_configured) if aggregates_configured else None
+        return ArtifactSupervisorProvider(findings, aggregates_dir=aggregates)
     except (OSError, RuntimeError, ValueError):
-        # Do not echo a potentially sensitive configured path in a response.
         return UnavailableSupervisorProvider(
             "The configured supervisor aggregate artifact directory is not allowed."
         )
