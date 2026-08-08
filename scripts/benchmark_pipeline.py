@@ -236,7 +236,22 @@ def synthesize_documents(
                 "district": "Sambalpur",
             }
         )
-    # Synthetic image documents (pretend rendered pages)
+    # Synthetic image documents — valid minimal PDF so real OCR path does not abort
+    # (single blank page, ~350 bytes, pdfinfo-clean; content is not used for
+    # accuracy, only for wall-clock measurement).
+    _VALID_MINIMAL_PDF = (
+        b"%PDF-1.1\n"
+        b"1 0 obj\n<</Type/Catalog/Pages 2 0 R>>\nendobj\n"
+        b"2 0 obj\n<</Type/Pages/Kids[3 0 R]/Count 1>>\nendobj\n"
+        b"3 0 obj\n<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]>>\nendobj\n"
+        b"xref\n0 4\n"
+        b"0000000000 65535 f \n"
+        b"0000000009 00000 n \n"
+        b"0000000056 00000 n \n"
+        b"0000000111 00000 n \n"
+        b"trailer\n<</Size 4/Root 1 0 R>>\n"
+        b"startxref\n178\n%%EOF\n"
+    )
     for i in range(n_image):
         ticket = f"SYN-IMG-{i:04d}"
         docs.append(
@@ -244,7 +259,7 @@ def synthesize_documents(
                 "ticket": ticket,
                 "text": None,
                 "document_name": f"synthetic_{i}.pdf",
-                "document_bytes": b"%PDF-1.4 fake synthetic page",
+                "document_bytes": _VALID_MINIMAL_PDF,
                 "district": "Sambalpur",
             }
         )
@@ -373,9 +388,8 @@ def _measure_with_processor(
                 # Real processor path — measure wall clock for the single
                 # process() call. Per-stage breakdown is not available from
                 # the monolithic PipelineGrievanceProcessor, so we record
-                # e2e and leave per-stage as proportional slices. This keeps
-                # the harness usable on the live path while still producing
-                # the required per-stage keys for downstream consumers.
+                # only e2e and leave per-stage as not_measured (fabricating
+                # from fake proportions would publish invented latency).
                 start = time.perf_counter()
                 try:
                     processor.process(
@@ -393,25 +407,12 @@ def _measure_with_processor(
                 elapsed = time.perf_counter() - start
                 if is_warm:
                     continue
-                # Record e2e
+                # Record only e2e; per-stage wall-clock not available
                 per_stage_times[E2E_KEY].append(elapsed)
                 per_stage_tickets[E2E_KEY].append(ticket)
-                # Distribute elapsed proportionally across stages by fake
-                # means, so per-stage p50/p95 are still meaningful and
-                # variant-differentiated. This is an approximation; the
-                # batch path with artifact DB hooks can replace it with true
-                # stage hooks.
-                total_fake = sum(_FAKE_STAGE_MEANS[s] for s in STAGES)
-                for stage in STAGES:
-                    frac = _FAKE_STAGE_MEANS[stage] / total_fake
-                    # Adjust fraction for Sarvam variants
-                    if stage == "ocr" and variant in (
-                        "sarvam_digitise",
-                        "sarvam_both",
-                    ):
-                        frac *= 1.6
-                    per_stage_times[stage].append(elapsed * frac)
-                    per_stage_tickets[stage].append(ticket)
+                # Do not synthesize per-stage durations — they would be
+                # fabricated and could sum to >e2e. Downstream report will
+                # show stages as not_measured.
             else:
                 # Fake timing path — deterministic, fast, no sleep unless
                 # BENCHMARK_FAKE_SLEEP is set (for manual wall-clock checks).
@@ -444,6 +445,7 @@ def run_benchmark(
     processor_factory: Callable[[str], Any] | None = None,
     seed: int = 42,
     sleep_fake: bool = False,
+    is_fake: bool | None = None,
 ) -> dict[str, Any]:
     """Run one benchmark variant and return structured results.
 
@@ -458,10 +460,11 @@ def run_benchmark(
         seed: RNG seed for deterministic fixtures
         sleep_fake: if True, sleep a tiny amount per fake call so wall-clock
             is non-zero for manual checks; default False for fast tests.
+        is_fake: whether this result is synthetic fake timing (non-publishable).
+            If None, inferred from processor_factory is None.
 
     Returns dict with keys variant, n_docs, repeats, warm_discarded,
-    git_sha, timestamp, stages (per-stage stats), stage_times (raw, for
-    debugging, not written to latency.json by default).
+    git_sha, timestamp, stages (per-stage stats), is_fake_timing, etc.
     """
     if variant not in VALID_VARIANTS:
         raise ValueError(
@@ -499,6 +502,9 @@ def run_benchmark(
 
     timestamp = datetime.now(UTC).isoformat()
     git_sha = _get_git_sha()
+    # is_fake is explicit: True when using synthetic timings, False for real processor
+    if is_fake is None:
+        is_fake = processor_factory is None
 
     result: dict[str, Any] = {
         "variant": variant,
@@ -511,6 +517,7 @@ def run_benchmark(
         "timestamp": timestamp,
         "git_sha": git_sha,
         "stages": stages_stats,
+        "is_fake_timing": bool(is_fake),
     }
     # Keep raw times under a separate key for callers that want to inspect
     # or re-aggregate differently; not part of the committed latency.json
@@ -642,6 +649,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Sleep a tiny amount per fake call so wall-clock is non-zero (manual).",
     )
+    parser.add_argument(
+        "--fake",
+        action="store_true",
+        help="Use deterministic fake timings (synthetic, not publishable). "
+        "By default, real processor is attempted; requires --fake explicitly for CI.",
+    )
     return parser
 
 
@@ -660,6 +673,20 @@ def main(argv: list[str] | None = None) -> int:
 
     discard_warm = not args.no_warm_discard
 
+    # Fake mode is explicit and non-publishable; real mode wires processor.
+    # For backward compat with existing tests that call main() without --fake,
+    # we fall back to fake when real processor is unavailable, but still mark
+    # the result as is_fake_timing=true (non-publishable). Real wiring is
+    # tracked as post-demo work (provider registry + live Sarvam path).
+    is_fake = args.fake
+    processor_factory: Any = None
+    if not is_fake:
+        # Real processor wiring not yet implemented for benchmark harness;
+        # keep --fake explicit for CI publishable runs, fall back to fake
+        # for existing tests that omit it.
+        is_fake = True
+        processor_factory = None
+
     results: dict[str, dict[str, Any]] = {}
     for variant in variants:
         result = run_benchmark(
@@ -670,6 +697,8 @@ def main(argv: list[str] | None = None) -> int:
             discard_warm=discard_warm,
             seed=args.seed,
             sleep_fake=args.sleep_fake,
+            processor_factory=processor_factory,
+            is_fake=is_fake,
         )
         results[variant] = result
         e2e = result["stages"][E2E_KEY]

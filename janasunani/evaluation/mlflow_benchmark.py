@@ -198,12 +198,14 @@ def build_benchmark_metrics(
     return metrics
 
 
-def load_latency_e2e(path: Path | str) -> dict[str, Any] | None:
+def load_latency_e2e(
+    path: Path | str, pipeline_variant: str | None = None
+) -> dict[str, Any] | None:
     """Load the ``stages.e2e`` dict from a latency.json file.
 
     Supports both single-variant files (top-level ``stages``) and
     multi-variant files (top-level ``variants``). When multi-variant,
-    returns the ``standard`` entry if present, else the first variant.
+    selects the entry for ``pipeline_variant`` if given, else ``standard``.
     Returns None if the file does not exist or has no e2e entry.
     """
     p = Path(path)
@@ -213,15 +215,25 @@ def load_latency_e2e(path: Path | str) -> dict[str, Any] | None:
         data = json.loads(p.read_text())
     except Exception:
         return None
-    # Single-variant
+    # Single-variant: top-level stages with no variants wrapper
     if "stages" in data and isinstance(data["stages"], dict):
+        # If caller asked for a specific variant but file is single-variant,
+        # only return it when the file's own variant matches or is absent.
+        file_variant = data.get("variant")
+        if pipeline_variant is not None and file_variant is not None and file_variant != pipeline_variant:
+            return None
         e2e = data["stages"].get("e2e")
         if isinstance(e2e, dict):
             return e2e
     # Multi-variant
     variants = data.get("variants")
     if isinstance(variants, dict):
-        # Prefer standard, else first
+        # Prefer requested variant, then standard, then first
+        if pipeline_variant is not None and pipeline_variant in variants:
+            stages = variants[pipeline_variant].get("stages", {})
+            e2e = stages.get("e2e") if isinstance(stages, dict) else None
+            if isinstance(e2e, dict):
+                return e2e
         for key in ("standard",):
             if key in variants:
                 stages = variants[key].get("stages", {})
@@ -279,7 +291,7 @@ def log_benchmark(
 
     latency_stats: dict[str, Any] | None = None
     if latency_path is not None:
-        latency_stats = load_latency_e2e(latency_path)
+        latency_stats = load_latency_e2e(latency_path, pipeline_variant=pipeline_variant)
         # Also try to infer sample_n from the file if not already set
         if sample_n is None and latency_stats is not None:
             try:
