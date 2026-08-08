@@ -247,25 +247,23 @@ class MappingRouter:
 class _LazyDefaultRouter:
     """Construct the CSV-backed demo router and optional empirical crosswalk.
 
-    The live default deliberately leaves ``enable_crosswalk`` false. The
-    empirical artifact describes historic dispatch rather than validated
-    routing correctness, and the routing gold set does not yet exist. This
-    preserves the committed demo behaviour (mapping/rules/fallback) while the
-    artifact and its synthetic-path tests can mature independently. Enabling
-    it requires an explicit code/configuration change made alongside routing
-    gold validation; it must never happen merely because an artifact appears
-    on disk.
-
-    When explicitly enabled for a validated deployment, order is crosswalk,
-    then mapping tables, then the generic fallback inside ``RuleRouter``. The
-    crosswalk goes first because it is the only layer with an empirical
-    estimate and the only one that covers categories the masters cannot bridge
-    at all -- ``intCategoryGrp`` is NULL on every category, so name equality
-    is all ``MappingRouter`` has.
+    Live routing is ``enable_crosswalk=True`` (Unit 7, 2026-08-08): the
+    empirical crosswalk is the first rung, then the ORTPSA mapping tables
+    and the generic fallback inside :class:`RuleRouter`. The crosswalk goes
+    first because it is the only layer with an empirical estimate and the
+    only one that covers categories the masters cannot bridge at all --
+    ``intCategoryGrp`` is NULL on every category, so name equality is all
+    ``MappingRouter`` has.
 
     A missing or unreadable crosswalk artifact yields ``None`` and this falls
     straight through, which is #33's stated degradation: routing reverts to the
     placeholder and nothing else in the demo is affected.
+
+    The live classifier does not predict a subcategory (``crosswalk.py:15``),
+    so the deployed ``route(category=..., district=...)`` path only ever
+    consults the ``by_category`` and ``by_category_district`` rungs.
+    ``by_subcategory`` and ``by_full`` are built (and tested) but not
+    consulted live.
     """
 
     def __init__(self, *, enable_crosswalk: bool = False) -> None:
@@ -344,4 +342,4 @@ class _LazyDefaultRouter:
         )
 
 
-DEFAULT_ROUTER = _LazyDefaultRouter()
+DEFAULT_ROUTER = _LazyDefaultRouter(enable_crosswalk=True)
