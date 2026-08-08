@@ -796,30 +796,64 @@ def test_pipeline_stages_run_in_canonical_order_even_when_cli_shuffled(tmp_path,
 
         return _fake
 
-    # Monkeypatch each stage's runner before importing run_pipeline's lazy imports
-    monkeypatch.setattr(
-        "janasunani.pipeline.stages.format_classifier.run_format_classifier",
-        _make_fake("format_classifier"),
+    # Monkeypatch each stage's runner before importing run_pipeline's lazy imports.
+    # Heavy deps (cv2, torch, presidio) may be absent in CI's light env; importing
+    # the stage module then fails (No module named 'cv2'). Pre-populate
+    # sys.modules with lightweight stubs so the lazy `from ... import run_*`
+    # inside run_pipeline resolves to our fakes without touching cv2.
+    import sys
+    import types
+
+    def _install_fake(module_path: str, attr: str, fake_fn):
+        # Ensure parent package exists and is in sys.modules
+        parent_path = module_path.rsplit(".", 1)[0]
+        # parent package janasunani.pipeline.stages is a real package — ensure it's loaded
+        try:
+            import importlib
+            importlib.import_module(parent_path)
+        except Exception:
+            pass
+        parent_mod = sys.modules.get(parent_path)
+        if parent_mod is None:
+            parent_mod = types.ModuleType(parent_path)
+            sys.modules[parent_path] = parent_mod
+
+        # Create or reuse stub for the stage module
+        existing = sys.modules.get(module_path)
+        if existing is None or not hasattr(existing, attr):
+            # If the real module failed to import previously, replace it with stub
+            stub = types.ModuleType(module_path)
+            setattr(stub, attr, fake_fn)
+            # Register stub and expose as attribute on parent
+            monkeypatch.setitem(sys.modules, module_path, stub)
+            monkeypatch.setattr(parent_mod, module_path.split(".")[-1], stub, raising=False)
+        else:
+            monkeypatch.setattr(f"{module_path}.{attr}", fake_fn)
+
+        # Also ensure the specific attr is patched (covers case where stub existed)
+        # Use monkeypatch on the module object directly to avoid dotted-path import
+        mod = sys.modules[module_path]
+        monkeypatch.setattr(mod, attr, fake_fn, raising=False)
+
+    _install_fake(
+        "janasunani.pipeline.stages.format_classifier", "run_format_classifier", _make_fake("format_classifier")
     )
-    monkeypatch.setattr(
-        "janasunani.pipeline.stages.ocr_extraction.run_ocr_extraction",
-        _make_fake("ocr_extraction"),
+    _install_fake(
+        "janasunani.pipeline.stages.ocr_extraction", "run_ocr_extraction", _make_fake("ocr_extraction")
     )
-    monkeypatch.setattr(
-        "janasunani.pipeline.stages.pii_tagger.run_pii_tagger",
-        _make_fake("pii_tagger"),
+    _install_fake(
+        "janasunani.pipeline.stages.pii_tagger", "run_pii_tagger", _make_fake("pii_tagger")
     )
-    monkeypatch.setattr(
-        "janasunani.pipeline.stages.page_type_classifier.run_page_type_classifier",
+    _install_fake(
+        "janasunani.pipeline.stages.page_type_classifier",
+        "run_page_type_classifier",
         _make_fake("page_type_classifier"),
     )
-    monkeypatch.setattr(
-        "janasunani.pipeline.stages.summarizer.run_summarizer",
-        _make_fake("summarizer"),
+    _install_fake(
+        "janasunani.pipeline.stages.summarizer", "run_summarizer", _make_fake("summarizer")
     )
-    monkeypatch.setattr(
-        "janasunani.pipeline.stages.categorizer.run_categorizer",
-        _make_fake("categorizer"),
+    _install_fake(
+        "janasunani.pipeline.stages.categorizer", "run_categorizer", _make_fake("categorizer")
     )
 
     from janasunani.pipeline.pipeline import run_pipeline
