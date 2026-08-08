@@ -382,7 +382,7 @@ def _try_run_categorizer(config: PipelineConfig) -> bool:
 # ---------------------------------------------------------------------------
 
 def test_stage_order_is_six_and_no_spam_stage():
-    """Canonical order is exactly 6; no 7th spam/triage stage gates the run."""
+    """Canonical order is exactly 6; spam runs as a sidecar after PII, not a gate."""
     assert STAGE_ORDER == [
         "format_classifier",
         "ocr_extraction",
@@ -395,6 +395,113 @@ def test_stage_order_is_six_and_no_spam_stage():
     assert "spam_duplicate" not in STAGE_ORDER
     assert "triage" not in STAGE_ORDER
     assert len(STAGE_ORDER) == 6
+
+
+def _try_run_spam_sidecar(config: PipelineConfig, sidecar_path: Path) -> bool:
+    """Score redacted_text as a sidecar after PII — never gates page-type.
+
+    Uses the bounded scorer (pipeline/spam) over redacted_text only; writes
+    a JSON sidecar with spam_score in [0,1] and spam_reason. Returns True if
+    the real scorer ran, False if simulated (still writes a valid sidecar so
+    downstream hops can be verified and counts reconcile).
+    """
+    import json
+
+    try:
+        from janasunani.pipeline.spam import score_spam  # noqa: F401
+    except ImportError:
+        # Simulate: read redacted_text and write a deterministic sidecar
+        with connect(config.db_path) as con:
+            rows = con.execute("SELECT page_id, redacted_text FROM pages").fetchall()
+            redacted = " ".join(r["redacted_text"] or "" for r in rows)
+        # simple bounded score for simulation
+        spam_score = 0.07 if len(redacted.split()) > 8 else 0.68
+        spam_reason = "clean" if spam_score < 0.5 else "low_signal_details_inadequate"
+        sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+        sidecar_path.write_text(json.dumps({"spam_score": spam_score, "spam_reason": spam_reason}), encoding="utf-8")
+        return False
+    from janasunani.pipeline.spam import score_spam
+
+    with connect(config.db_path) as con:
+        rows = con.execute("SELECT page_id, redacted_text, extracted_text FROM pages").fetchall()
+    # Score over redacted_text; fallback to extracted if redacted missing
+    texts = [r["redacted_text"] or r["extracted_text"] or "" for r in rows]
+    combined = " ".join(texts)
+    # Real scorer is CI-safe (import-light). If import succeeded, a failure
+    # on valid redacted input must fail the test — no fabricated fallback.
+    scored = score_spam(combined)
+    import json as _json
+
+    sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+    sidecar_path.write_text(_json.dumps({"spam_score": scored.spam_score, "spam_reason": scored.spam_reason}), encoding="utf-8")
+    assert 0.0 <= scored.spam_score <= 1.0
+    assert scored.spam_reason in ("low_signal_details_inadequate", "low_signal_no_grievance", "repetition_collapse", "length_too_short", "clean")
+    return True
+
+
+def test_spam_sidecar_after_pii_before_page_type_writes_bounded_score(tmp_path):
+    """Spam signal is a sidecar after PII, before page-type — not a pipeline gate."""
+    input_dir = tmp_path / "input"
+    db = tmp_path / "pipeline.sqlite"
+    sidecar = tmp_path / "sidecar" / "spam.json"
+    models_dir = tmp_path / "models"
+    models_dir.mkdir()
+    _make_synthetic_image(input_dir / "E2E1_scan.jpg", "Hand pump broken 9876543210")
+    initialize_database(db)
+    config = PipelineConfig(input_dir=input_dir, db_path=db, models_dir=models_dir)
+    _try_run_format_classifier(config)
+    _try_run_ocr(config)
+    _try_run_pii(config)
+    # Sidecar hop: must not change core counts, must emit bounded score
+    counts_before = _counts(db)
+    assert counts_before["redacted"] == 1
+    _try_run_spam_sidecar(config, sidecar)
+    assert sidecar.exists()
+    import json
+
+    payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert 0.0 <= payload["spam_score"] <= 1.0
+    assert payload["spam_reason"] in ("low_signal_details_inadequate", "low_signal_no_grievance", "repetition_collapse", "length_too_short", "clean")
+    counts_after = _counts(db)
+    # Sidecar must not mutate core artifact counts
+    assert counts_after == counts_before
+    # Downstream hops still reconcile
+    _try_run_page_type(config)
+    _try_run_summarizer(config)
+    _try_run_categorizer(config)
+    final = _counts(db)
+    assert final["typed"] == 1
+    assert final["summarized"] == 1
+    assert final["categorized"] == 1
+
+
+def test_learned_routing_with_crosswalk_for_known_category_district(tmp_path):
+    """When the committed crosswalk is present, known category+district yields learned."""
+    from janasunani.routing.crosswalk import DEFAULT_ARTIFACT, load_crosswalk
+
+    assert DEFAULT_ARTIFACT.exists(), "routing_crosswalk.json must be committed for demo"
+    assert load_crosswalk() is not None, "crosswalk must load (corrupt JSON must not degrade silently)"
+    from janasunani.routing.rules import DEFAULT_ROUTER
+
+    # Known well-supported category must hit the learned rung — accepting
+    # rules/fallback would mask a corrupt or missing crosswalk.
+    result = DEFAULT_ROUTER.route(category="Energy")
+    assert result.method == "learned", f"Energy must be learned, got {result.method}"
+    assert result.empirical_evidence is not None
+    assert result.empirical_evidence.support >= 3
+    assert result.empirical_evidence.width in {"category", "category+district", "category+subcategory", "category+subcategory+district"}
+    assert 0.0 < result.confidence <= 0.95
+
+    # Known category+district that has a district rung
+    district_result = DEFAULT_ROUTER.route(category="Water Supply", district="Angul")
+    assert district_result.method in {"learned", "rules", "fallback"}
+    assert district_result.method != "mock"
+
+    # Unknown category must fall through to rules/fallback, never learned, never mock
+    unknown = DEFAULT_ROUTER.route(category="Astrophysics-unknown-xyz-999")
+    assert unknown.method in {"rules", "fallback"}
+    assert unknown.empirical_evidence is None
+    assert unknown.method != "mock"
 
 
 def test_pipeline_import_is_light():
