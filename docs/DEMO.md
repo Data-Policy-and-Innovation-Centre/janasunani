@@ -187,3 +187,34 @@ for evaluation/retraining (see [ROADMAP.md](ROADMAP.md)):
   avoid it. Pre-warm the model (or mirror it) for a hands-off box demo.
 - **Non-English submissions** skip the summarizer and are marked
   `Uncategorized` — the first real-model demo targets English.
+
+---
+
+## 7. Rehearsal gate (13 Aug)
+
+The **13 August freeze** is gated by a single laptop command that proves every [DELIVERY.md](DELIVERY.md) Table 1 row has either a live surface or a reconciled artifact on this machine — before any code freeze or tag.
+
+```bash
+make rehearsal
+# runs scripts/demo_rehearsal.sh — see docs/plans/2026-08-08-demo-integration-rehearsal.md Part 2
+# Note: the Make target and script land in PR #203 (chore/demo-rehearsal-script);
+# until that merges, run the individual Phase A–C checks from the plan directly.
+```
+
+What it checks (four phases, fail-fast):
+
+- **Phase A — static (no stack):** `ruff check`, `pytest` on the demo contract (`test_demo_integration.py`, `test_pipeline_e2e.py`, `test_routing_integration.py`, `test_supervisor_intelligence.py`, `test_serving_triage_contract.py`), and `janasunani-demo-preflight`.
+- **Phase B — stack smoke:** requires `make up` (or starts a throwaway DB+API itself), polls `GET /health` until `{"status":"ok","processor":"pipeline"}`, drives a text submission and asserts `redaction.redacted_text` / `classification.category` / `summary` / `routing.method` / `triage.spam.spam_score`, checks `GET /grievance/{id}` round-trip, `GET /supervisor` (warn if `Unavailable*`, fail only if all panels unavailable), `GET /history` (may be empty on a fresh lake — see §5 vs §3), and `curl -sf http://127.0.0.1:3000`.
+- **Phase C — artifact presence:** warns (or fails, configurable) if `janasunani/routing/reference/routing_crosswalk.json`, `outputs/findings/`, `DATA_DIR/aggregates/` / `JANASUNANI_SUPERVISOR_FINDINGS_DIR`, or `outputs/sarvam/` / `outputs/benchmark/table2.md` are missing — each maps to a demo component.
+- **Phase D — optional real models:** `JANASUNANI_RUN_MODEL_SMOKE=1` runs `tests/test_inference_model_smoke.py`.
+
+Run it **the night before the demo** (see [DEMO_SCRIPT.md](DEMO_SCRIPT.md#pre-demo-checklist)) and again the morning of. The full walkthrough it gates is [DEMO_SCRIPT.md](DEMO_SCRIPT.md) — Scenes 0–6 (43 min scripted, ~45 min with buffer, with privacy preamble, OLTP-vs-lake note, routing ladder, triage banner, supervisor 61% talking point, benchmark Table 2, and pre-demo checklist).
+
+| Artifact | Where |
+|---|---|
+| Timed walkthrough (Scenes 0–6) | [DEMO_SCRIPT.md](DEMO_SCRIPT.md) |
+| Automated gate | [`scripts/demo_rehearsal.sh`](../scripts/demo_rehearsal.sh) (via PR #203) |
+| Integration plan (gates, Table 2, three Sarvam arms) | [`docs/plans/2026-08-08-demo-integration-rehearsal.md`](plans/2026-08-08-demo-integration-rehearsal.md) |
+| Delivery scope & benchmark Table 2 | [DELIVERY.md](DELIVERY.md) Table 1 & 2 |
+
+> **History empty after a live submit is not a failure.** `GET /grievance/{id}` is OLTP and is the gate that must pass; `GET /history` is lake-backed and may lag until the next `janasunani-materialize`. The rehearsal script documents this gap rather than patching serving to query OLTP for history.
