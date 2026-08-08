@@ -55,6 +55,7 @@ PR body without exception.
   the repo's `.gitignore` contains `.worktrees/`. Without the ignore rule,
   every worktree an agent creates shows up as an untracked directory in the
   main checkout's `git status`.
+- Do not merge branches until the review loop is complete. Typically, this involves multiple rounds with the codex reviewer: read more about handling review findings below. Ask the maintainer before merging a branch rather than making that decision on your own. 
 
 ## Working with subagents
 
