@@ -437,17 +437,30 @@ def stratified_sample(
     return sampled
 
 
-def sample_compliance(n_pages: int) -> dict[str, Any]:
+def sample_compliance(n_pages: int, slice_label: str | None = None) -> dict[str, Any]:
     """Whether the sample size is the intended few hundred (200–400)."""
+    sl = slice_label or DEMO_SLICE_LABEL
+    # Derive district/year from slice label when possible
+    if "/" in sl:
+        try:
+            d, y_s = sl.split("/", 1)
+            sd = d.strip()
+            sy = int(y_s.strip())
+        except Exception:  # noqa: BLE001
+            sd = DEMO_SLICE_DISTRICT
+            sy = DEMO_SLICE_YEAR
+    else:
+        sd = DEMO_SLICE_DISTRICT
+        sy = DEMO_SLICE_YEAR
     return {
         "n_pages": n_pages,
         "is_few_hundred": BENCHMARK_MIN_SAMPLE <= n_pages <= BENCHMARK_MAX_SAMPLE,
         "recommended": BENCHMARK_SAMPLE_SIZE,
         "min": BENCHMARK_MIN_SAMPLE,
         "max": BENCHMARK_MAX_SAMPLE,
-        "slice": DEMO_SLICE_LABEL,
-        "slice_district": DEMO_SLICE_DISTRICT,
-        "slice_year": DEMO_SLICE_YEAR,
+        "slice": sl,
+        "slice_district": sd,
+        "slice_year": sy,
     }
 
 
@@ -591,6 +604,9 @@ class ScorecardReport:
     sample_info: dict[str, Any] | None = None
     # Unit E — summary divergence exploratory (Sarvam Extract summary vs BART)
     summary_divergence: dict[str, Any] | None = None
+    # Slice + arm for correct rendering (P2 slice label, P1 arm-aware OCR/category)
+    slice_label: str = DEMO_SLICE_LABEL
+    arm: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -603,14 +619,23 @@ PRIMARY_OUTCOME_LABEL = (
 )
 
 
-def build_scorecard(pages: list[PageRecord]) -> ScorecardReport:
+def build_scorecard(
+    pages: list[PageRecord],
+    slice_label: str | None = None,
+    arm: str | None = None,
+) -> ScorecardReport:
     """Build the full scorecard from a frozen sample.
 
     * Every page must have been processed by **both** engines (paired).
     * ``handwritten`` and ``language`` splits are always reported.
     * If no page carries ``transcription``, accuracy is not computable and
       ``transcription_divergence`` is the only transcription result.
+    * ``arm`` controls which headline metrics are measured: ``digitise`` hides
+      category, ``extract`` hides OCR divergence, ``both`` measures both.
+    * ``slice_label`` is the selected slice (e.g. Ganjam/2024) for sample_info
+      and rendering; defaults to DEMO_SLICE_LABEL.
     """
+    resolved_slice = slice_label or DEMO_SLICE_LABEL
     n_pages = len(pages)
     n_tickets = len({p.ticket for p in pages})
 
@@ -636,36 +661,54 @@ def build_scorecard(pages: list[PageRecord]) -> ScorecardReport:
                 pass
 
     # Only tickets with a gold label contribute to paired accuracy
-    cat_tickets = [t for t in ticket_gold if ticket_gold[t] is not None]
-    cat_clusters = cat_tickets  # one per ticket
-    if cat_tickets:
-        pipe_correct = [1 if ticket_pipe.get(t) == ticket_gold[t] else 0 for t in cat_tickets]
-        sarvam_correct = [1 if ticket_sarvam.get(t) == ticket_gold[t] else 0 for t in cat_tickets]
-        pipe_rate = sum(pipe_correct) / len(pipe_correct) if pipe_correct else 0.0
-        sarvam_rate = sum(sarvam_correct) / len(sarvam_correct) if sarvam_correct else 0.0
-        diff = paired_difference(sarvam_correct, pipe_correct, cat_clusters)
-        category_result: dict[str, Any] | None = {
-            "n_tickets": len(cat_tickets),
-            "pipeline_accuracy": pipe_rate,
-            "sarvam_accuracy": sarvam_rate,
-            "difference": diff["diff"],  # sarvam - pipeline, positive favours sarvam
-            "se": diff["se"],
-            "ci_low": diff["ci_low"],
-            "ci_high": diff["ci_high"],
-            "n_clusters": diff["n_clusters"],
-            "interpretation": "difference + CI is the result; marginal rates are description (#127)",
+    # Arm-aware: digitise-only does not score category (gold Category requires Extract)
+    if arm == "digitise":
+        category_result = None
+        cat_tickets = []
+    else:
+        cat_tickets = [t for t in ticket_gold if ticket_gold[t] is not None]
+        cat_clusters = cat_tickets  # one per ticket
+        if cat_tickets:
+            pipe_correct = [1 if ticket_pipe.get(t) == ticket_gold[t] else 0 for t in cat_tickets]
+            sarvam_correct = [1 if ticket_sarvam.get(t) == ticket_gold[t] else 0 for t in cat_tickets]
+            pipe_rate = sum(pipe_correct) / len(pipe_correct) if pipe_correct else 0.0
+            sarvam_rate = sum(sarvam_correct) / len(sarvam_correct) if sarvam_correct else 0.0
+            diff = paired_difference(sarvam_correct, pipe_correct, cat_clusters)
+            category_result: dict[str, Any] | None = {
+                "n_tickets": len(cat_tickets),
+                "pipeline_accuracy": pipe_rate,
+                "sarvam_accuracy": sarvam_rate,
+                "difference": diff["diff"],  # sarvam - pipeline, positive favours sarvam
+                "se": diff["se"],
+                "ci_low": diff["ci_low"],
+                "ci_high": diff["ci_high"],
+                "n_clusters": diff["n_clusters"],
+                "interpretation": "difference + CI is the result; marginal rates are description (#127)",
+            }
+        else:
+            category_result = None
+            cat_tickets = []
+
+    # Transcription arm — arm-aware: extract-only does not measure OCR
+    transcription_available = any(p.transcription is not None for p in pages)
+    if arm == "extract":
+        div: dict[str, Any] = {
+            "rate": 0.0,
+            "se": 0.0,
+            "ci_low": 0.0,
+            "ci_high": 0.0,
+            "n": 0,
+            "n_clusters": 0,
+            "not_measured": True,
+            "reason": "Extract-only arm — Digitise not run; OCR divergence not measured (run with --arm digitise or both).",
         }
     else:
-        category_result = None
-
-    # Transcription arm
-    transcription_available = any(p.transcription is not None for p in pages)
-    # divergence always computable
-    div = divergence_rate(
-        [p.pytesseract_text for p in pages],
-        [p.sarvam_markdown for p in pages],
-        [p.ticket for p in pages],
-    )
+        # divergence always computable when OCR arm is active
+        div = divergence_rate(
+            [p.pytesseract_text for p in pages],
+            [p.sarvam_markdown for p in pages],
+            [p.ticket for p in pages],
+        )
     # accuracy only if ground truth exists
     if transcription_available:
         # For pages without transcription, exclude from accuracy comparison
@@ -692,17 +735,30 @@ def build_scorecard(pages: list[PageRecord]) -> ScorecardReport:
         transcription_accuracy = None
 
     # Splits — divergence split always; accuracy split only if available
+    # When arm == extract, OCR splits are not measured (Digitise not run)
     def _split_metrics(key_fn) -> dict[str, dict[str, Any]]:
         buckets: dict[str, list[PageRecord]] = defaultdict(list)
         for p in pages:
             buckets[key_fn(p)].append(p)
         out: dict[str, dict[str, Any]] = {}
         for bucket, bucket_pages in sorted(buckets.items()):
-            b_div = divergence_rate(
-                [x.pytesseract_text for x in bucket_pages],
-                [x.sarvam_markdown for x in bucket_pages],
-                [x.ticket for x in bucket_pages],
-            )
+            if arm == "extract":
+                b_div: dict[str, Any] = {
+                    "rate": 0.0,
+                    "se": 0.0,
+                    "ci_low": 0.0,
+                    "ci_high": 0.0,
+                    "n": 0,
+                    "n_clusters": 0,
+                    "not_measured": True,
+                    "reason": "Extract-only arm",
+                }
+            else:
+                b_div = divergence_rate(
+                    [x.pytesseract_text for x in bucket_pages],
+                    [x.sarvam_markdown for x in bucket_pages],
+                    [x.ticket for x in bucket_pages],
+                )
             entry: dict[str, Any] = {"n_pages": len(bucket_pages), "divergence": b_div}
             if transcription_available:
                 gt_pages = [x for x in bucket_pages if x.transcription is not None]
@@ -758,10 +814,17 @@ def build_scorecard(pages: list[PageRecord]) -> ScorecardReport:
             "no gold referee; normalised text diff, ticket-clustered CI."
         )
 
+    # Arm-aware summary divergence: only when Extract contributed
+    if arm == "digitise":
+        summ_div = None
+        # Add note that summary not measured for digitise-only
+        notes_parts.append(
+            "Summary divergence not measured — Extract arm not run (digitise-only); run with --arm extract or both."
+        )
     # Phase 17 extensions
     per_cat = per_category_table(pages)
     trans_probe = transliteration_probe(pages)
-    samp_info = sample_compliance(n_pages)
+    samp_info = sample_compliance(n_pages, slice_label=resolved_slice)
     # augment notes with per-category spread headline if available
     if per_cat:
         # headline spread like Police 0.85 vs Welfare 0.51 — report in notes for discoverability
@@ -779,23 +842,35 @@ def build_scorecard(pages: list[PageRecord]) -> ScorecardReport:
             "Sarvam transliteration (od-IN, 1000 chars/chunk) via "
             "janasunani/egress/sarvam.py is the next step before hashing/embedding."
         )
-    # few-hundred compliance note
+    # few-hundred compliance note — use resolved slice, not demo constant
     if not samp_info["is_few_hundred"]:
         notes_parts.append(
             f"Sample size {n_pages} is outside the intended few-hundred "
             f"({BENCHMARK_MIN_SAMPLE}–{BENCHMARK_MAX_SAMPLE}) window for the "
-            f"{DEMO_SLICE_LABEL} stratified benchmark; "
+            f"{resolved_slice} stratified benchmark; "
             "cost and power are calibrated for 200–400 at 10 req/min Vision."
         )
     else:
         notes_parts.append(
             f"Sample size {n_pages} is within the few-hundred "
             f"({BENCHMARK_MIN_SAMPLE}–{BENCHMARK_MAX_SAMPLE}) benchmark window for "
-            f"{DEMO_SLICE_LABEL} (stratified handwritten/printed); "
+            f"{resolved_slice} (stratified handwritten/printed); "
             "Vision divergence reported per-surface with no accuracy verdict "
             "(no transcription ground truth)."
         )
     notes = " ".join(notes_parts)
+
+    # Arm-aware notes for P1 digitise/extract
+    if arm == "digitise" and category_result is None:
+        notes_parts.append(
+            "Category accuracy not measured — digitise-only arm (Extract not run); run with --arm extract or both."
+        )
+        notes = " ".join(notes_parts)
+    if arm == "extract" and div.get("not_measured"):
+        notes_parts.append(
+            "Transcription divergence not measured — extract-only arm (Digitise not run); run with --arm digitise or both."
+        )
+        notes = " ".join(notes_parts)
 
     return ScorecardReport(
         normalizer_version=NORMALIZER_VERSION,
@@ -815,6 +890,8 @@ def build_scorecard(pages: list[PageRecord]) -> ScorecardReport:
         transliteration_probe_result=trans_probe,
         sample_info=samp_info,
         summary_divergence=summ_div,
+        slice_label=resolved_slice,
+        arm=arm,
     )
 
 
@@ -831,8 +908,12 @@ def render_markdown(report: ScorecardReport) -> str:
     with three decimals; missing arms are labelled ``not measured`` rather
     than omitted so a stale ``DELIVERY.md`` Table 2 row is visible.
     """
+    # Use report slice when available (P2), else demo constant
+    slice_for_header = getattr(report, "slice_label", None) or report.sample_info.get("slice") if report.sample_info else DEMO_SLICE_LABEL
+    if not slice_for_header:
+        slice_for_header = DEMO_SLICE_LABEL
     lines: list[str] = [
-        f"# Sarvam benchmark — {DEMO_SLICE_LABEL}",
+        f"# Sarvam benchmark — {slice_for_header}",
         "",
         f"Normalizer: `{report.normalizer_version}` · paired={report.paired_design} · n_pages={report.n_pages} · n_tickets={report.n_tickets}",
         "",
@@ -858,13 +939,21 @@ def render_markdown(report: ScorecardReport) -> str:
             "Not measured — no gold labels (``gold_category``) in sample; run with ``--join-metadata`` from the lake slice.",
             "",
         ]
-    # Transcription
+    # Transcription — arm-aware: extract-only hides OCR
     if report.transcription_available and report.transcription_accuracy is not None:
         t = report.transcription_accuracy
         lines += [
             "## Transcription accuracy (ground-truth available)",
             "",
             f"- Pipeline: {t['pipeline_accuracy']:.3f} · Sarvam: {t['sarvam_accuracy']:.3f} · diff {t['difference']:.3f} 95% CI [{t['ci_low']:.3f}, {t['ci_high']:.3f}] (n={t['n_pages']}, clusters={t['n_clusters']})",
+            "",
+        ]
+    elif report.transcription_divergence.get("not_measured"):
+        reason = report.transcription_divergence.get("reason", "OCR not measured for this arm.")
+        lines += [
+            "## Transcription",
+            "",
+            f"Not measured — {reason}",
             "",
         ]
     else:
@@ -876,10 +965,15 @@ def render_markdown(report: ScorecardReport) -> str:
             "No accuracy verdict — commission a hand-transcribed sample for an accuracy comparison (per DELIVERY.md fallback).",
             "",
         ]
-    # Divergence splits
+    # Divergence splits — arm-aware
     def _div_block(title: str, data: dict[str, dict[str, Any]]) -> None:
         lines.append(f"## {title}")
         lines.append("")
+        # check if arm hides OCR: if any entry has not_measured divergence, show not measured notice
+        if data and any(e.get("divergence", {}).get("not_measured") for e in data.values()):
+            lines.append("Not measured — Extract-only arm (Digitise not run).")
+            lines.append("")
+            return
         lines.append("| Bucket | n_pages | divergence rate | 95% CI |")
         lines.append("|---|---:|---:|---|")
         for bucket, entry in sorted(data.items()):

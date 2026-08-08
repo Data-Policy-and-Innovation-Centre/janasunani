@@ -94,11 +94,14 @@ def _load_metadata_join(
 ) -> dict[str, dict[str, Any]]:
     """Load redacted metadata for ``--join-metadata``.
 
-    Returns mapping ticket -> {gold_category, handwritten, language,
-    pipeline_category, pipeline_summary}. Only gold_category is attempted from
-    the lake today; other fields degrade to None when not available. An empty
-    dict is returned when the lake is missing or unreadable (the runner
-    continues — the category arm simply becomes “not measured”).
+    Returns mapping ``ticket -> {gold_category, pipeline_category,
+    pipeline_summary, ...}`` plus per-page overrides keyed as
+    ``"{ticket}:{page_number}"`` for ``handwritten``/``language`` so that
+    multi-page tickets with differing page metadata are not collapsed (ticket-
+    keyed overwrites corrupt the handwritten/printed splits).
+
+    When the lake is missing or unreadable an empty dict is returned and the
+    runner continues with category arm marked not measured.
     """
     if lake_dir is None:
         # Try default interim location; if missing, return empty.
@@ -145,22 +148,62 @@ def _load_metadata_join(
             continue
         except Exception:  # noqa: BLE001
             continue
-    # Pages: handwritten, language if present
-    for col in ("handwritten", "language", "district"):
-        try:
-            # Need ticket_number column
-            if col == "handwritten":
-                sql = "SELECT ticket_number, handwritten FROM pages WHERE ticket_number IS NOT NULL"
-            elif col == "language":
-                sql = "SELECT ticket_number, language FROM pages WHERE ticket_number IS NOT NULL"
-            else:
+    # Documents: pipeline outputs for paired accuracy (grievance_category + summary)
+    # This fixes fabricated zero pipeline accuracy when gold is present but
+    # documents.parquet is ignored.
+    try:
+        sql = "SELECT ticket_number, grievance_category, summary FROM documents WHERE ticket_number IS NOT NULL"
+        frame = lake_mod.query(sql, lake_dir, tables=("documents",))
+        for row in frame.iter_rows(named=True):
+            ticket = row.get("ticket_number")
+            if not ticket:
                 continue
+            ticket_s = str(ticket)
+            cat = row.get("grievance_category") or row.get("category")
+            summ = row.get("summary")
+            if cat:
+                mapping.setdefault(ticket_s, {})["pipeline_category"] = str(cat)
+            if summ:
+                mapping.setdefault(ticket_s, {})["pipeline_summary"] = str(summ)
+    except FileNotFoundError:
+        pass
+    except Exception:  # noqa: BLE001
+        pass
+    # Pages: handwritten, language — preserve page identity via (ticket, page_number)
+    # Ticket-keyed overwrites corrupt splits for multi-page tickets, so store
+    # per-page overrides under composite key "{ticket}:{page_number}" and keep
+    # ticket-level fallback for single-page or when page_number missing.
+    for col in ("handwritten", "language"):
+        try:
+            # Select per-page identity; page_number may be NULL for legacy rows
+            sql = (
+                "SELECT ticket_number, page_number, page_id, "
+                f"{col} FROM pages WHERE ticket_number IS NOT NULL AND {col} IS NOT NULL"
+            )
             frame = lake_mod.query(sql, lake_dir, tables=("pages",))
             for row in frame.iter_rows(named=True):
                 ticket = row.get("ticket_number")
                 val = row.get(col)
-                if ticket and val:
-                    mapping.setdefault(str(ticket), {})[col] = str(val)
+                if not ticket or not val:
+                    continue
+                ticket_s = str(ticket)
+                val_s = str(val)
+                page_number = row.get("page_number")
+                # Always keep ticket-level fallback (first wins for backwards compat)
+                mapping.setdefault(ticket_s, {}).setdefault(col, val_s)
+                # Per-page override when page_number available
+                if page_number is not None:
+                    try:
+                        pn = int(page_number)
+                        key = f"{ticket_s}:{pn}"
+                        mapping.setdefault(key, {})[col] = val_s
+                    except (ValueError, TypeError):
+                        pass
+                else:
+                    # page_id fallback if page_number absent
+                    page_id = row.get("page_id")
+                    if page_id:
+                        mapping.setdefault(f"{ticket_s}#{page_id}", {})[col] = val_s
         except FileNotFoundError:
             continue
         except Exception:  # noqa: BLE001
@@ -270,10 +313,24 @@ def main(argv: list[str] | None = None) -> int:
     else:
         from janasunani.egress.sarvam import SarvamAuditContext as _Ctx  # noqa: F401  # ensure import works
 
-    # Lazy pytesseract + renderer — only needed when actually processing
+    # Lazy pytesseract + renderer — require pipeline-core when processing pages
+    # Under `uv run --extra serving` this import fails; the original code
+    # swallowed it and later skipped every Sarvam call with image=None while
+    # still exiting 0 with full cost metadata, producing an empty benchmark.
+    # Fail explicitly so the operator installs the correct extra.
     try:
         from janasunani.pipeline.stages.ocr_extraction.page_renderer import render_page
-    except Exception:  # noqa: BLE001  — allow dry-run tests without pipeline-core
+    except Exception as exc:  # noqa: BLE001
+        # If we have real pages to process (not just --help/--dry-run stub),
+        # the renderer is required. Dry-run still needs it for local OCR
+        # comparison, so fail in the same way.
+        logger.error(
+            "page_renderer not available — install pipeline-core extra: "
+            f"uv run --extra pipeline-core janasunani-evaluate-sarvam ({type(exc).__name__}: {exc})"
+        )
+        # Only fail when pages exist; allows --help without renderer
+        if pages:
+            return 1
         render_page = None  # type: ignore[assignment]
 
     # pylint: disable=import-error
@@ -310,6 +367,7 @@ def main(argv: list[str] | None = None) -> int:
         sarvam_markdown = ""
         sarvam_category: str | None = None
         sarvam_summary: str | None = None
+        page_failed = False
 
         if adapter is not None and image is not None:
             from io import BytesIO
@@ -331,26 +389,74 @@ def main(argv: list[str] | None = None) -> int:
                     failures.append({"page_id": page_id, "error": type(exc).__name__, "arm": "digitise"})
                     logger.error(f"{page_id} digitise: {type(exc).__name__}: {exc}")
                     sarvam_markdown = ""
+                    page_failed = True
             if args.arm in ("extract", "both"):
                 try:
                     raw = adapter.extract(doc_bytes, f"{page_id}.png", args.language, context, schema=schema)
                     payload = _unwrap_extract_result(raw)
                     sarvam_category = payload.get("grievance_category") or payload.get("category") or payload.get("grievanceCategory")
                     sarvam_summary = payload.get("summary") or payload.get("sarvam_summary")
-                    # If extract also returns markdown-like text, keep it as fallback
-                    if not sarvam_markdown and isinstance(payload.get("grievance_text"), str):
-                        sarvam_markdown = payload.get("grievance_text", "") if args.arm == "extract" else sarvam_markdown
+                    # Do not copy grievance_text into sarvam_markdown for extract-only:
+                    # that would publish Extract structured text as Digitise OCR and
+                    # conflate separately billed arms. OCR is not measured for
+                    # extract-only (handled in scorecard).
                 except Exception as exc:  # noqa: BLE001
                     failures.append({"page_id": page_id, "error": type(exc).__name__, "arm": "extract"})
                     logger.error(f"{page_id} extract: {type(exc).__name__}: {exc}")
+                    page_failed = True
+        elif adapter is not None and image is None:
+            # Renderer missing but Sarvam still requested — image is None
+            # implies render failure; treat as per-page failure rather than
+            # scoring empty text as divergence/incorrect.
+            failures.append({"page_id": page_id, "error": "RenderUnavailable", "arm": args.arm})
+            logger.error(f"{page_id}: cannot render page — image is None, skipping Sarvam call")
+            page_failed = True
 
-        # Metadata join overrides
-        meta = metadata.get(ticket, {})
-        gold_category = meta.get("gold_category")
-        handwritten = meta.get("handwritten")
-        language = meta.get("language") or args.language
-        pipeline_category = meta.get("pipeline_category")
-        pipeline_summary = meta.get("pipeline_summary")
+        # Metadata join overrides — page identity preserved for handwritten/language
+        # Ticket-level fields: gold_category, pipeline_*
+        ticket_meta = metadata.get(ticket, {})
+        page_key = f"{ticket}:{number}"
+        page_meta = metadata.get(page_key, {})
+        # gold_category only scored for extract/both (digitise-only would fabricate 0% Sarvam)
+        if args.arm in ("extract", "both"):
+            gold_category = ticket_meta.get("gold_category")
+            pipeline_category = ticket_meta.get("pipeline_category")
+            pipeline_summary = ticket_meta.get("pipeline_summary")
+        else:
+            gold_category = None
+            pipeline_category = None
+            pipeline_summary = None
+        # handwritten/language are page-level; prefer per-page override then ticket fallback
+        handwritten = page_meta.get("handwritten") or ticket_meta.get("handwritten")
+        language = page_meta.get("language") or ticket_meta.get("language") or args.language
+        # For extract-only, OCR is not measured — clear sarvam_markdown even if fallback would set it
+        if args.arm == "extract":
+            sarvam_markdown = ""
+
+        # Exclude failed Sarvam calls from paired scorecard rather than scoring
+        # timeout/rate-limit as divergence or incorrect category (bias).
+        if page_failed:
+            logger.warning(f"{page_id}: Sarvam call failed — excluding page from scorecard (not scored as divergence/incorrect)")
+            # still record lengths for observability but skip PageRecord
+            try:
+                from janasunani.evaluation.sarvam_scorecard import normalize_text
+
+                local_n = len(normalize_text(local_text))
+                remote_n = len(normalize_text(sarvam_markdown))
+            except Exception:  # noqa: BLE001
+                local_n = len(local_text)
+                remote_n = len(sarvam_markdown)
+            page_lengths.append({"page_id": page_id, "pytesseract_chars": local_n, "sarvam_chars": remote_n, "sarvam_raw_chars": len(sarvam_markdown), "failed": True})
+            logger.info(f"{page_id}: pytesseract {local_n} chars, sarvam {remote_n} chars (raw {len(sarvam_markdown)}) — FAILED, excluded")
+            if args.dump_text:
+                print("---- pytesseract ----")
+                print(local_text)
+                print("---- sarvam ----")
+                print(sarvam_markdown)
+                if sarvam_summary:
+                    print("---- sarvam_summary ----")
+                    print(sarvam_summary)
+            continue
 
         records.append(
             PageRecord(
@@ -390,7 +496,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(sarvam_summary)
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    report = build_scorecard(records)
+    # Pass arm + slice so scorecard correctly hides non-measured arms (digitise vs extract)
+    # and renders the selected slice (not demo constant).
+    report = build_scorecard(records, slice_label=args.slice, arm=args.arm)
 
     # Write markdown + base scorecard first, then overwrite JSON with enriched payload
     try:
@@ -419,7 +527,12 @@ def main(argv: list[str] | None = None) -> int:
     print(render_markdown(report))
 
     if failures:
-        logger.warning(f"{len(failures)} page(s) failed; they score as empty remote text")
+        # Failed pages are excluded from paired metrics (not scored as divergence/incorrect)
+        # but kept in failures + pages_submitted for audit; report.n_pages is scored count.
+        logger.warning(f"{len(failures)} page(s) failed; excluded from scorecard (pages_submitted={len(pages)}, scored={report.n_pages})")
+    # Surface scored vs submitted for verification
+    if report.n_pages != len(pages):
+        logger.info(f"Scored {report.n_pages}/{len(pages)} pages; {len(pages)-report.n_pages} excluded (failures or arm filter)")
     return 0
 
 

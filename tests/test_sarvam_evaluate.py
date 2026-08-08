@@ -135,6 +135,7 @@ def test_evaluate_join_metadata_from_lake(tmp_path: Path):
     out = tmp_path / "out3"
     from janasunani.evaluation.sarvam_evaluate import main
 
+    # Category is only scored for extract/both (digitise-only would fabricate 0% Sarvam)
     rc = main(
         [
             "--input",
@@ -142,7 +143,7 @@ def test_evaluate_join_metadata_from_lake(tmp_path: Path):
             "--out",
             str(out),
             "--arm",
-            "digitise",
+            "extract",
             "--dry-run",
             "--join-metadata",
             "--lake-dir",
@@ -156,6 +157,27 @@ def test_evaluate_join_metadata_from_lake(tmp_path: Path):
     # With gold present, category headline should be computed (not None)
     assert data["category"] is not None
     assert data["category"]["n_tickets"] == 2
+    # Digitise-only with same gold should NOT score category (avoids fabricated zero)
+    out2 = tmp_path / "out3_digitise"
+    rc2 = main(
+        [
+            "--input",
+            str(inp),
+            "--out",
+            str(out2),
+            "--arm",
+            "digitise",
+            "--dry-run",
+            "--join-metadata",
+            "--lake-dir",
+            str(lake_dir),
+            "--slice",
+            "Sambalpur/2024",
+        ]
+    )
+    assert rc2 == 0
+    data2 = json.loads((out2 / "sarvam_scorecard.json").read_text())
+    assert data2["category"] is None
 
 
 def test_evaluate_extract_arm_with_mocked_adapter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
