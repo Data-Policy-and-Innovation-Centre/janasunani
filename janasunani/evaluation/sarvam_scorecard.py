@@ -36,12 +36,14 @@ recorded Sarvam markdown fixtures; no live network call is made.
 
 from __future__ import annotations
 
+import json
 import math
 import random
 import re
 import unicodedata
 from collections import defaultdict
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from statistics import NormalDist
 from typing import Any
 
@@ -132,6 +134,9 @@ class PageRecord:
     ``pipeline_category`` / ``sarvam_category`` / ``gold_category`` are for
     the category arm (issue #127) at ticket level; they may be repeated per
     page for convenience and are de-duplicated by ticket when scored.
+    ``sarvam_summary`` / ``pipeline_summary`` are the exploratory summary arm
+    (Extract ``summary`` field vs BART output); no gold referee, divergence
+    only, clustered by ticket like the OCR arm.
     """
 
     ticket: str
@@ -144,6 +149,8 @@ class PageRecord:
     pipeline_category: str | None = None
     sarvam_category: str | None = None
     gold_category: str | None = None
+    sarvam_summary: str | None = None
+    pipeline_summary: str | None = None
 
     def handwritten_bucket(self) -> str:
         if self.handwritten == "yes":
@@ -266,6 +273,35 @@ def divergence_rate(
     rate = sum(disagreements) / n
     # SE for a proportion with clustering: treat disagreements as 1/0 and
     # apply clustered SE for the mean.
+    se = _clustered_se([float(x) for x in disagreements], clusters)
+    z = 1.96
+    return {"rate": rate, "se": se, "ci_low": rate - z * se, "ci_high": rate + z * se, "n": n, "n_clusters": len(set(clusters))}
+
+
+def summary_divergence(
+    sarvam_summaries: list[str | None],
+    pipeline_summaries: list[str | None],
+    clusters: list[str],
+) -> dict[str, float]:
+    """Divergence rate for summaries — exploratory, no gold referee.
+
+    Compares Sarvam Extract ``summary`` vs pipeline BART ``summary`` after the
+    same ``normalize_text`` applied to OCR. Cluster-robust SE by ticket, like
+    ``divergence_rate``. ``None`` is treated as empty string so a missing
+    summary on one side counts as divergence; callers that want to omit
+    missing pairs should filter before calling.
+    """
+    if not (len(sarvam_summaries) == len(pipeline_summaries) == len(clusters)):
+        raise ValueError("inputs must have equal length")
+    n = len(sarvam_summaries)
+    if n == 0:
+        return {"rate": 0.0, "se": 0.0, "ci_low": 0.0, "ci_high": 0.0, "n": 0, "n_clusters": 0}
+    disagreements: list[int] = []
+    for a, b in zip(sarvam_summaries, pipeline_summaries):
+        a_norm = normalize_text(a or "")
+        b_norm = normalize_text(b or "")
+        disagreements.append(0 if a_norm == b_norm else 1)
+    rate = sum(disagreements) / n
     se = _clustered_se([float(x) for x in disagreements], clusters)
     z = 1.96
     return {"rate": rate, "se": se, "ci_low": rate - z * se, "ci_high": rate + z * se, "n": n, "n_clusters": len(set(clusters))}
@@ -553,6 +589,8 @@ class ScorecardReport:
     per_category: dict[str, Any] | None = None
     transliteration_probe_result: dict[str, Any] | None = None
     sample_info: dict[str, Any] | None = None
+    # Unit E — summary divergence exploratory (Sarvam Extract summary vs BART)
+    summary_divergence: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -703,6 +741,23 @@ def build_scorecard(pages: list[PageRecord]) -> ScorecardReport:
             "Transcription cannot be produced by an agent because it is the ground truth "
             "an agent would be measured against."
         )
+    # Summary divergence — exploratory, no gold referee
+    pages_with_summaries = [p for p in pages if p.sarvam_summary is not None and p.pipeline_summary is not None]
+    if pages_with_summaries:
+        summ_div = summary_divergence(
+            [p.sarvam_summary for p in pages_with_summaries],
+            [p.pipeline_summary for p in pages_with_summaries],
+            [p.ticket for p in pages_with_summaries],
+        )
+    else:
+        summ_div = None
+    if summ_div is not None:
+        notes_parts.append(
+            f"Summary divergence (exploratory, Sarvam Extract vs BART): "
+            f"{summ_div['rate']:.3f} (n={summ_div['n']}, clusters={summ_div['n_clusters']}) — "
+            "no gold referee; normalised text diff, ticket-clustered CI."
+        )
+
     # Phase 17 extensions
     per_cat = per_category_table(pages)
     trans_probe = transliteration_probe(pages)
@@ -759,4 +814,138 @@ def build_scorecard(pages: list[PageRecord]) -> ScorecardReport:
         per_category=per_cat if per_cat else None,
         transliteration_probe_result=trans_probe,
         sample_info=samp_info,
+        summary_divergence=summ_div,
     )
+
+
+# ---------------------------------------------------------------------------
+# Rendering — markdown + outputs (Unit E)
+# ---------------------------------------------------------------------------
+
+def render_markdown(report: ScorecardReport) -> str:
+    """Render a human-readable markdown summary of *report*.
+
+    Mirrors the ``render_markdown`` pattern in
+    ``janasunani.evaluation.spam_scorecard`` so the benchmark report can
+    inline the Sarvam section verbatim. All numeric fields are formatted
+    with three decimals; missing arms are labelled ``not measured`` rather
+    than omitted so a stale ``DELIVERY.md`` Table 2 row is visible.
+    """
+    lines: list[str] = [
+        f"# Sarvam benchmark — {DEMO_SLICE_LABEL}",
+        "",
+        f"Normalizer: `{report.normalizer_version}` · paired={report.paired_design} · n_pages={report.n_pages} · n_tickets={report.n_tickets}",
+        "",
+        f"**Primary outcome:** {report.primary_outcome}",
+        "",
+    ]
+    # Category headline
+    if report.category is not None:
+        c = report.category
+        lines += [
+            "## Category accuracy (headline — paired, ticket-clustered 95% CI)",
+            "",
+            f"- Pipeline accuracy: **{c['pipeline_accuracy']:.3f}**",
+            f"- Sarvam Extract accuracy: **{c['sarvam_accuracy']:.3f}**",
+            f"- Difference (Sarvam − pipeline): **{c['difference']:.3f}** 95% CI [{c['ci_low']:.3f}, {c['ci_high']:.3f}] (se={c['se']:.3f}, n_tickets={c['n_tickets']}, clusters={c['n_clusters']})",
+            f"- Interpretation: {c.get('interpretation', '')}",
+            "",
+        ]
+    else:
+        lines += [
+            "## Category accuracy",
+            "",
+            "Not measured — no gold labels (``gold_category``) in sample; run with ``--join-metadata`` from the lake slice.",
+            "",
+        ]
+    # Transcription
+    if report.transcription_available and report.transcription_accuracy is not None:
+        t = report.transcription_accuracy
+        lines += [
+            "## Transcription accuracy (ground-truth available)",
+            "",
+            f"- Pipeline: {t['pipeline_accuracy']:.3f} · Sarvam: {t['sarvam_accuracy']:.3f} · diff {t['difference']:.3f} 95% CI [{t['ci_low']:.3f}, {t['ci_high']:.3f}] (n={t['n_pages']}, clusters={t['n_clusters']})",
+            "",
+        ]
+    else:
+        lines += [
+            "## Transcription",
+            "",
+            f"Divergence only (no hand-transcribed ground truth): **{report.transcription_divergence['rate']:.3f}** 95% CI [{report.transcription_divergence['ci_low']:.3f}, {report.transcription_divergence['ci_high']:.3f}] (n={report.transcription_divergence['n']}, clusters={report.transcription_divergence['n_clusters']})",
+            "",
+            "No accuracy verdict — commission a hand-transcribed sample for an accuracy comparison (per DELIVERY.md fallback).",
+            "",
+        ]
+    # Divergence splits
+    def _div_block(title: str, data: dict[str, dict[str, Any]]) -> None:
+        lines.append(f"## {title}")
+        lines.append("")
+        lines.append("| Bucket | n_pages | divergence rate | 95% CI |")
+        lines.append("|---|---:|---:|---|")
+        for bucket, entry in sorted(data.items()):
+            d = entry["divergence"]
+            lines.append(f"| {bucket} | {d['n']} | {d['rate']:.3f} | [{d['ci_low']:.3f}, {d['ci_high']:.3f}] |")
+        lines.append("")
+
+    _div_block("By handwritten", report.by_handwritten)
+    _div_block("By language", report.by_language)
+
+    # Summary divergence exploratory
+    lines.append("## Summary divergence (exploratory — Sarvam Extract vs BART, no gold referee)")
+    lines.append("")
+    if report.summary_divergence is not None:
+        s = report.summary_divergence
+        lines.append(f"- Rate: **{s['rate']:.3f}** 95% CI [{s['ci_low']:.3f}, {s['ci_high']:.3f}] (se={s['se']:.3f}, n={s['n']}, clusters={s['n_clusters']})")
+        lines.append("- Normalised text diff with ticket-clustered SE; exploratory — no accuracy verdict unless a DSI usefulness re-run is commissioned.")
+    else:
+        lines.append("Not measured — no paired ``sarvam_summary`` / ``pipeline_summary`` in sample.")
+    lines.append("")
+
+    # Per-category spread
+    if report.per_category:
+        lines.append("## Per-category accuracy spread")
+        lines.append("")
+        lines.append("| Category | n_tickets | pipeline | Sarvam | diff |")
+        lines.append("|---|---:|---:|---:|---:|")
+        for cat, row in sorted(report.per_category.items()):
+            lines.append(f"| {cat} | {row['n_tickets']} | {row['pipeline_accuracy']:.3f} | {row['sarvam_accuracy']:.3f} | {row['difference']:.3f} |")
+        lines.append("")
+
+    # Transliteration probe
+    if report.transliteration_probe_result is not None:
+        probe = report.transliteration_probe_result
+        lines.append("## Transliteration probe (romanized Odia)")
+        lines.append("")
+        lines.append(f"- Candidates: {probe['n_romanized_candidates']}/{probe['n_total']} — applicable={probe['probe_applicable']}")
+        lines.append(f"- Note: {probe.get('note', '')}")
+        lines.append("")
+
+    # Sample compliance
+    if report.sample_info is not None:
+        si = report.sample_info
+        lines.append("## Sample")
+        lines.append("")
+        lines.append(f"- n_pages={si['n_pages']} · few-hundred={si['is_few_hundred']} · slice={si['slice']} (recommended {si['recommended']}, range {si['min']}–{si['max']})")
+        lines.append("")
+
+    lines.append("## Notes")
+    lines.append("")
+    lines.append(report.notes)
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_outputs(report: ScorecardReport, out_dir: Path | str) -> dict[str, Path]:
+    """Write ``report`` as JSON and markdown under *out_dir*.
+
+    Returns mapping ``{"json": Path, "markdown": Path}``. The JSON is the
+    machine-readable artifact that feeds ``benchmark_report`` Table 2; the
+    markdown is the human-readable fragment inline in the rehearsal slide.
+    """
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    json_path = out / "sarvam_scorecard.json"
+    md_path = out / "sarvam_scorecard.md"
+    json_path.write_text(json.dumps(report.to_dict(), indent=2, default=str))
+    md_path.write_text(render_markdown(report))
+    return {"json": json_path, "markdown": md_path}

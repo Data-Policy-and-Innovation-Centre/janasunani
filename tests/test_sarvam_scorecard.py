@@ -402,3 +402,90 @@ def test_few_hundred_sample_compliance_flagged_in_report():
     assert report_big.sample_info["is_few_hundred"] is True
     assert report_big.sample_info["n_pages"] == 250
     assert "within the few-hundred" in report_big.notes
+
+
+# ---------------------------------------------------------------------------
+# Unit E extensions — PageRecord summary fields, summary_divergence,
+# render_markdown, write_outputs
+# ---------------------------------------------------------------------------
+
+
+def test_pagerecord_summary_fields_exist():
+    """PageRecord must carry sarvam_summary / pipeline_summary (Unit E)."""
+    from janasunani.evaluation.sarvam_scorecard import PageRecord
+
+    rec = PageRecord(ticket="T1", page_id="P1", sarvam_summary="sarvam one-paragraph", pipeline_summary="bart summary")
+    assert rec.sarvam_summary == "sarvam one-paragraph"
+    assert rec.pipeline_summary == "bart summary"
+    # defaults are None
+    rec2 = PageRecord(ticket="T2", page_id="P2")
+    assert rec2.sarvam_summary is None
+    assert rec2.pipeline_summary is None
+
+
+def test_summary_divergence_clustered():
+    """summary_divergence is the exploratory counterpart of divergence_rate."""
+    from janasunani.evaluation.sarvam_scorecard import summary_divergence
+
+    sarvam = ["same summary", "same summary", "different A", "different A"]
+    pipe = ["same summary", "same summary", "different B", "different B"]
+    clusters = ["T1", "T1", "T2", "T2"]
+    res = summary_divergence(sarvam, pipe, clusters)
+    assert res["rate"] == 0.5
+    assert res["n"] == 4
+    assert res["n_clusters"] == 2
+    assert res["ci_low"] < 0.5 < res["ci_high"]
+    # markdown normalisation: same after normalise -> not divergent
+    res2 = summary_divergence(["**bold** text", "a | b"], ["bold text", "a b"], ["T1", "T2"])
+    assert res2["rate"] == 0.0
+
+
+def test_build_scorecard_computes_summary_divergence_when_present():
+    from janasunani.evaluation.sarvam_scorecard import PageRecord, build_scorecard
+
+    pages = [
+        PageRecord(ticket="T1", page_id="P1", sarvam_summary="same", pipeline_summary="same", pytesseract_text="a", sarvam_markdown="a"),
+        PageRecord(ticket="T2", page_id="P2", sarvam_summary="sarvam diff", pipeline_summary="bart diff", pytesseract_text="a", sarvam_markdown="a"),
+    ]
+    report = build_scorecard(pages)
+    assert report.summary_divergence is not None
+    assert report.summary_divergence["rate"] == 0.5
+    assert report.summary_divergence["n"] == 2
+    assert "Summary divergence" in report.notes
+
+    # No summaries -> None and not in notes as measured
+    pages2 = [PageRecord(ticket="T1", page_id="P1", pytesseract_text="a", sarvam_markdown="a")]
+    report2 = build_scorecard(pages2)
+    assert report2.summary_divergence is None
+
+
+def test_render_markdown_and_write_outputs():
+    """render_markdown must mention headline, divergence, summary; write_outputs writes files."""
+    import json
+    import tempfile
+    from pathlib import Path
+
+    from janasunani.evaluation.sarvam_scorecard import PageRecord, build_scorecard, render_markdown, write_outputs
+
+    pages = [
+        PageRecord(ticket="T1", page_id="P1", gold_category="Police", pipeline_category="Police", sarvam_category="Police", sarvam_summary="same", pipeline_summary="same", pytesseract_text="a", sarvam_markdown="a"),
+        PageRecord(ticket="T2", page_id="P2", gold_category="Revenue", pipeline_category="Police", sarvam_category="Revenue", sarvam_summary="x", pipeline_summary="y", pytesseract_text="a", sarvam_markdown="b"),
+    ]
+    report = build_scorecard(pages)
+    md = render_markdown(report)
+    assert "Sarvam" in md
+    assert "Category accuracy" in md
+    assert "Divergence" in md or "divergence" in md
+    assert "Summary divergence" in md
+    assert "Sambalpur/2024" in md or "Sambalpur" in md
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "out"
+        paths = write_outputs(report, out)
+        assert paths["json"].is_file()
+        assert paths["markdown"].is_file()
+        data = json.loads(paths["json"].read_text())
+        assert data["n_pages"] == 2
+        assert "summary_divergence" in data
+        md2 = paths["markdown"].read_text()
+        assert md2 == md
