@@ -319,12 +319,25 @@ def main(argv: list[str] | None = None) -> int:
     # image=None while still exiting 0 with full cost, producing an empty
     # benchmark. For live runs we must fail explicitly; for --dry-run (CI)
     # we allow empty rendering so `uv run --extra serving pytest` stays green.
+    # Preserve already-patched render_page for tests (monkeypatch sets eval_mod.render_page)
+    # so the test's FakeAdapter + fake image is used even when pdf2image is missing on CI
+    _pre_patched = globals().get("render_page", None)
     render_import_error: Exception | None = None
     try:
-        from janasunani.pipeline.stages.ocr_extraction.page_renderer import render_page
+        from janasunani.pipeline.stages.ocr_extraction.page_renderer import render_page as _real_render  # type: ignore[assignment]
+
+        if _pre_patched is not None and callable(_pre_patched):
+            render_page = _pre_patched  # type: ignore[assignment]
+        else:
+            render_page = _real_render  # type: ignore[assignment]
+        render_import_error = None
     except Exception as exc:  # noqa: BLE001
-        render_page = None  # type: ignore[assignment]
-        render_import_error = exc
+        if _pre_patched is not None and callable(_pre_patched):
+            render_page = _pre_patched  # type: ignore[assignment]
+            render_import_error = None
+        else:
+            render_page = None  # type: ignore[assignment]
+            render_import_error = exc
 
     # Fail fast for live runs where renderer is required (would otherwise
     # silently skip every Sarvam call and report pages_submitted with no work).
