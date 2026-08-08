@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import sqlite3
 import time
 import zipfile
@@ -23,6 +22,8 @@ from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable, Protocol, TypeVar
+
+from janasunani.config import Settings
 
 API_BASE_URL = "https://api.sarvam.ai"
 PROVIDER_ID = "sarvam-hosted"
@@ -456,9 +457,14 @@ class SarvamVisionAdapter:
         if submission_backoff_seconds < 0:
             raise ValueError("submission_backoff_seconds must be non-negative")
         self.enabled = enabled
-        self.api_key = api_key if api_key is not None else (
-            os.getenv("SARVAM_API_KEY") or os.getenv("SARVAM_API_SUBSCRIPTION_KEY")
-        )
+        # Centralized via janasunani/config.Settings: single source for the
+        # hosted key (env var or .env). Fresh Settings() so monkeypatched env
+        # in tests is visible; singleton `settings` is frozen at import time.
+        if api_key is not None:
+            self.api_key = api_key
+        else:
+            live = Settings()
+            self.api_key = live.SARVAM_API_KEY or live.SARVAM_API_SUBSCRIPTION_KEY
         self.audit_log = audit_log
         self.route = route or PROVIDER_REGISTRY["sarvam-vision"]
         self.transport = transport

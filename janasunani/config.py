@@ -132,6 +132,15 @@ class Settings(BaseSettings):
     # rather than silently hash citizen contact fields unsalted.
     DEDUP_SALT: Optional[str] = os.getenv("DEDUP_SALT")
 
+    # Sarvam Vision (authorized-external) — single source for the hosted API
+    # key. Primary: SARVAM_API_KEY; SARVAM_API_SUBSCRIPTION_KEY kept as the
+    # legacy alias. Rotating the key is how a compromised credential is
+    # revoked, so it lives outside version control via env/.env, not in code.
+    SARVAM_API_KEY: Optional[str] = os.getenv("SARVAM_API_KEY")
+    SARVAM_API_SUBSCRIPTION_KEY: Optional[str] = os.getenv(
+        "SARVAM_API_SUBSCRIPTION_KEY"
+    )
+
     model_config = SettingsConfigDict(env_file=ROOT_DIR / ".env", extra="ignore")
 
     @field_validator("DEBUG", mode="before")
