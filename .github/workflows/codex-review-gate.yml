@@ -6,23 +6,29 @@ name: Codex Review Gate
 #
 # Two GitHub constraints explain the shape of this file:
 #
-#   1. Reactions emit no webhook, so the clean :+1: cannot trigger a workflow.
-#      The schedule sweeps open pull requests to catch it.
+#   1. Reactions emit no webhook, and neither does resolving a review thread,
+#      so a clean :+1: and the last resolve of a round cannot trigger a run.
+#      The schedule sweeps open pull requests to catch both.
 #   2. Runs from `issue_comment` and `pull_request_review` attach to the default
 #      branch, not the pull request head. The check run is therefore created
 #      against `head_sha` through the API rather than reported by the job.
 #
-# Branch protection should require the check named below, not this job.
+# Branch protection should require the check named `codex-review`, which this
+# job creates through the API. The job itself is deliberately named something
+# else: a job called `codex-review` would produce a second, always-green check
+# run under the same name, and protection would accept that one instead.
 
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
   pull_request_review:
     types: [submitted, dismissed]
+  pull_request_review_comment:
+    types: [created, deleted]
   issue_comment:
     types: [created]
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
       pr:
@@ -39,15 +45,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  codex-review:
+  evaluate:
     runs-on: ubuntu-latest
     # issue_comment fires on plain issues too; only pull requests have a head.
     if: >-
       github.event_name != 'issue_comment' ||
       github.event.issue.pull_request != null
     steps:
-      - name: Check out repository
+      # Never the pull request's own code. On `pull_request` the default
+      # checkout is `refs/pull/N/merge`, which would run a contributor-edited
+      # gate script with this job's `checks: write` token -- a branch could
+      # post its own passing `codex-review` check. The script reads only the
+      # API, so the base copy is all it needs. The consequence is that edits
+      # to the gate are not exercised here; `tests/test_check_codex_review.py`
+      # covers them on the normal test job instead.
+      - name: Check out trusted base copy of the gate
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch || 'main' }}
+          persist-credentials: false
 
       - name: Resolve pull requests to gate
         id: targets

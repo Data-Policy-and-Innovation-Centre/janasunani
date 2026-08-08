@@ -44,7 +44,11 @@ REVIEWED_COMMIT_RE = re.compile(r"Reviewed commit:\*\*\s*`([0-9a-f]{7,40})`")
 
 # CONTRIBUTING.md exempts "small docs-only or config-only branches". Docs-only
 # is decidable from the diff; config-only is not, so it goes through the label.
+# "Small" is load-bearing and not defined upstream: a docs rewrite large enough
+# to restate a policy deserves the review, so past this many changed lines the
+# exemption lapses and the branch goes through the normal gate or the label.
 DOCS_ONLY_PATTERNS = ("*.md", "docs/*", "docs/**", "*.rst", "LICENSE")
+DOCS_ONLY_MAX_LINES = 400
 SKIP_LABEL = "codex-review-not-required"
 
 RestFetch = Callable[[str], Any]
@@ -242,6 +246,10 @@ def is_docs_only(files: Sequence[dict[str, Any]]) -> bool:
     )
 
 
+def changed_lines(files: Iterable[dict[str, Any]]) -> int:
+    return sum(entry.get("additions", 0) + entry.get("deletions", 0) for entry in files)
+
+
 # --------------------------------------------------------------------------
 # Decision
 # --------------------------------------------------------------------------
@@ -256,11 +264,13 @@ def evaluate(rest: RestFetch, graphql: GraphQLFetch, repo: str, pr_number: int) 
     if SKIP_LABEL in labels:
         return Verdict("success", "Codex review not required", f"Skipped by `{SKIP_LABEL}`.")
 
-    if is_docs_only(rest(f"pulls/{pr_number}/files") or []):
+    files = rest(f"pulls/{pr_number}/files") or []
+    if is_docs_only(files) and changed_lines(files) <= DOCS_ONLY_MAX_LINES:
         return Verdict(
             "success",
             "Codex review not required",
-            "Docs-only branch; CONTRIBUTING.md exempts these.",
+            f"Docs-only branch, {changed_lines(files)} changed lines; "
+            "CONTRIBUTING.md exempts small ones.",
         )
 
     if pull.get("draft"):

@@ -67,6 +67,7 @@ class FakeGitHub:
         draft: bool = False,
         labels: list[str] | None = None,
         files: list[str] | None = None,
+        changed_lines: int = 20,
         reviews: list[dict[str, Any]] | None = None,
         comments: list[dict[str, Any]] | None = None,
         reactions: dict[str, list[dict[str, Any]]] | None = None,
@@ -77,6 +78,7 @@ class FakeGitHub:
         self.draft = draft
         self.labels = labels or []
         self.files = files if files is not None else ["janasunani/evaluation/sarvam.py"]
+        self.changed_lines = changed_lines
         self.reviews = reviews or []
         self.comments = comments or []
         self.reactions = reactions or {}
@@ -84,7 +86,11 @@ class FakeGitHub:
 
     def rest(self, path: str) -> Any:
         if path.startswith("pulls/") and path.endswith("/files"):
-            return [{"filename": name} for name in self.files]
+            per_file, extra = divmod(self.changed_lines, len(self.files))
+            return [
+                {"filename": name, "additions": per_file + (extra if i == 0 else 0)}
+                for i, name in enumerate(self.files)
+            ]
         if path.startswith("pulls/") and path.endswith("/reviews"):
             return self.reviews
         if path.startswith("pulls/"):
@@ -253,11 +259,33 @@ def test_unresolved_thread_fails_even_when_a_fresh_thumbs_up_exists():
 # --------------------------------------------------------------------------
 
 
-def test_docs_only_branch_is_exempt():
-    api = FakeGitHub(files=["docs/ROADMAP.md", "CONTRIBUTING.md"])
+def test_small_docs_only_branch_is_exempt():
+    api = FakeGitHub(files=["docs/ROADMAP.md", "CONTRIBUTING.md"], changed_lines=30)
     verdict = api.evaluate()
     assert verdict.ok
     assert "Docs-only" in verdict.summary
+
+
+def test_large_docs_only_branch_is_not_exempt():
+    """CONTRIBUTING.md exempts *small* docs branches; a policy rewrite is not one."""
+    api = FakeGitHub(
+        files=["docs/ROADMAP.md"], changed_lines=check.DOCS_ONLY_MAX_LINES + 1
+    )
+    assert not api.evaluate().ok
+
+
+def test_docs_exemption_holds_exactly_at_the_threshold():
+    api = FakeGitHub(files=["docs/ROADMAP.md"], changed_lines=check.DOCS_ONLY_MAX_LINES)
+    assert api.evaluate().ok
+
+
+def test_large_docs_only_branch_can_still_use_the_label():
+    api = FakeGitHub(
+        files=["docs/ROADMAP.md"],
+        changed_lines=check.DOCS_ONLY_MAX_LINES + 1,
+        labels=["codex-review-not-required"],
+    )
+    assert api.evaluate().ok
 
 
 def test_one_code_file_removes_the_docs_exemption():
@@ -267,6 +295,11 @@ def test_one_code_file_removes_the_docs_exemption():
 
 def test_empty_diff_is_not_treated_as_docs_only():
     assert check.is_docs_only([]) is False
+
+
+def test_changed_lines_counts_both_sides_of_the_diff():
+    files = [{"additions": 10, "deletions": 5}, {"additions": 1, "deletions": 0}]
+    assert check.changed_lines(files) == 16
 
 
 def test_skip_label_is_exempt():
