@@ -75,6 +75,31 @@ The sequence is deliberate: reproducible database insights come first. Two addit
 
 **Implication.** This baseline can anchor a routing crosswalk that learns where complaints are sent. Outcome claims require separate evidence about what happened after transfer.
 
+# PII redaction — per-entity scorecard and corpus scan
+
+**Gold.** 89 pages (50 documents, 2026-08-06) with 529 hand-corrected spans. Governance: DVC-tracked `data/external/pii_gold_draft_n50.jsonl` (and `pii_draft_n50.jsonl` re-derived draft), duplicate-span rejection and overlap reporting on the scoring path (#89). 49 EMAIL spans on `nic.in`/`gov.in`/`mil.in` are excluded by policy (#56) — they are published officer contact, not citizen PII — so 480 spans enter the denominator (NAME 404, PHONE 29, EMAIL 40, AADHAAR 7; BANK_ACCOUNT/SCHEME_ID not labelled in this gold).
+
+**Number — per-entity overlap recall via the live Presidio analyzers** (`janasunani-evaluate-pii --gold <gold.jsonl>`; same recognizers production uses, not a parallel harness). Measured 2026-08-08 on the 89-page set (English; Odia/romanized slices are thin/no labelled set — `unknown` bucket, thin-slice guard per DELIVERY fallback):
+
+| Entity | Gold | Overlap recall | Exact recall | Missed-PII rate (1 − overlap) |
+|---|---:|---:|---:|---:|
+| PHONE | 29 | **0.828** | 0.828 | 0.172 |
+| AADHAAR | 7 | **0.857** | 0.857 | 0.143 |
+| EMAIL (non-gov) | 40 | **0.750** | 0.725 | 0.250 |
+| NAME | 404 | **0.777** | 0.507 | 0.223 |
+| OVERALL (typed) | 480 | **0.779** | 0.550 | 0.221 |
+| COVERAGE (untyped, DSI-comparable) | 480 | **0.783** | 0.552 | 0.217 |
+
+49 gov-EMAIL excluded; `excluded_by_policy=49`. DSI reference 80.56% any-overlap / 50.00% exact (English, untyped, 106-sentence val split) is reported alongside, not as a threshold — the two are not like-for-like (#67, DELIVERY Table 2).
+
+**What the headline covers and what it cannot.** The 0.78 overall is set by NAME (404 of 480). DELIVERY's pre-fix figure of 0.44 for names (and 0.496 headline) came from the English NER alone; the current 0.777 reflects the Indian-surname gazetteer + ALL-CAPS softening landed in #92/#183 — 53 of 228 NAME misses were ALL-CAPS — without which DELIVERY's 0.44 figure stands. The gold still has no $n<20$ Odia/romanized slice, so per-language is reported as `unknown` only (low-power guard). Bank-account and scheme-ID recognizers (#139/#120) have no labels in this gold and score nothing either way; their evidence is the corpus scan, not this table.
+
+**Number — corpus scan (shape audit over slice redacted text).** Helpers in `janasunani/evaluation/pii_scorecard.py` (`find_shaped_pii` / `scan_texts` / `scan_corpus_parquet`): grep-shaped PII over redacted text — mobile (three 6-9-led groupings inc. +91/0), Aadhaar (12-digit 2-9-led, 4-4-4), PAN (`[A-Z]{5}\d{4}[A-Z]`), EMAIL (non-government only; `nic.in`/`gov.in`/`mil.in` excluded). Tested in `tests/test_corpus_scan.py` (40 cases: shaped regex + zero-cleartext on fixtures + parquet helper).
+
+*Slice `Sambalpur/2024`*: `grievance_redactions.grievance_redacted` for the demo slice scanned via `scan_corpus_parquet` / `scan_texts` — **0 of 55,544** redacted texts contain a mobile, Aadhaar, PAN or non-government email shape (`texts_with_pii=0`, `by_entity {PHONE:0, AADHAAR:0, PAN:0, EMAIL:0}`; `assert_zero_shaped_pii` passes). The lake-side `data/interim/complaints.parquet:grievance_redacted` (or `pages.parquet:redacted_text`) path is equivalent — both are the same `redact_text` output, read through the same helper with `column=` pluggable.
+
+**Caveat — what each number can and cannot support.** The per-entity table measures the analyzer on 89 real scanned pages — the release-critical missed-PII rate — but is small enough that a few pages move it. The corpus scan is the complementary claim: it holds at 55,544, but only checks the four shaped classes we know how to grep; it cannot see a name or other freetext PII a human would catch. Report both together, per DELIVERY §"We come in lower".
+
 # Capabilities awaiting acceptance evidence
 
 ## Capability — Additional duplicate discovery
