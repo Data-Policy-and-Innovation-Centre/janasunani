@@ -1303,3 +1303,161 @@ class TestCLIReporting:
 
         final = next(message for message in messages if message.startswith("done:"))
         assert final.startswith("done: 1 processed this run, 3 of 3 indexed")
+
+
+class TestPinnedThresholdAndBands:
+    """Guard the pinned LSH/band params — do not change to 0.8/20 without
+    updating every test that depends on the candidate probability curve."""
+
+    def test_threshold_and_bands_are_pinned(self):
+        from janasunani.pipeline.dedup import DEFAULT_NUM_BANDS
+        from janasunani.pipeline.dedup_index import DEFAULT_DUPLICATE_THRESHOLD
+
+        # 0.5/16 is the curve that gives a lightly-reworded duplicate
+        # (Jaccard ~0.78) ~90% candidate probability while unrelated
+        # boilerplate at 0.3 stays <0.1% — see dedup.py's band comment.
+        # 0.8/20 would need 20 bands over 128 hashes (128 % 20 != 0) and a
+        # stricter 0.8 Jaccard check that would miss those same reworded
+        # fixtures (see tests/test_dedup.py CAMPAIGN_C_REWORDED).
+        assert DEFAULT_DUPLICATE_THRESHOLD == 0.5
+        assert DEFAULT_NUM_BANDS == 16
+
+    def test_slice_shorthand_parses_sambalpur_2024(self):
+        from janasunani.pipeline.dedup_index import _parse_slice
+
+        assert _parse_slice("Sambalpur/2024") == ("Sambalpur", 2024)
+        assert _parse_slice("  Sambalpur / 2024 ") == ("Sambalpur", 2024)
+        with pytest.raises(ValueError, match="District/YYYY"):
+            _parse_slice("Sambalpur-2024")
+        with pytest.raises(ValueError, match="District/YYYY"):
+            _parse_slice("Sambalpur/")
+        with pytest.raises(ValueError, match="integer"):
+            _parse_slice("Sambalpur/year")
+
+
+class TestHeldOutRecall:
+    """Held-out recall vs officer-confirmed duplicates (#72 baseline).
+
+    The 34k officer baseline (``duplicate_officer_confirmed``) is two
+    families: ``case already taken up`` + ``duplicate copy``. The dedup
+    capability claim is the increment beyond them. This test measures both
+    on synthetic officer labels that mimic that baseline, so the harness
+    is runnable in CI without the 55k slice.
+    """
+
+    def _build_synthetic_slice(self, tmp_path):
+        # Two officer-confirmed duplicate groups (campaign text) plus
+        # two singletons that are unrelated. The dedup index should
+        # recover the officer pairs (recall) and also surface any
+        # additional dedup pairs as incremental.
+        rows = [
+            # officer group 1: three near-identical campaign filings (window 0)
+            ("O1", "Sambalpur", 2024, datetime(2024, 1, 5), None, None, "raw o1", CAMPAIGN_A),
+            ("O2", "Sambalpur", 2024, datetime(2024, 1, 6), None, None, "raw o2", CAMPAIGN_A),
+            ("O3", "Sambalpur", 2024, datetime(2024, 1, 7), None, None, "raw o3", CAMPAIGN_C_REWORDED),
+            # officer group 2: two more campaign filings (window 0)
+            ("O4", "Sambalpur", 2024, datetime(2024, 1, 8), None, None, "raw o4", CAMPAIGN_A),
+            ("O5", "Sambalpur", 2024, datetime(2024, 1, 9), None, None, "raw o5", CAMPAIGN_A),
+            # singletons — not officer duplicates, but one will be a dedup
+            # incremental (same text as group 1, not labelled by officers)
+            ("I1", "Sambalpur", 2024, datetime(2024, 1, 10), None, None, "raw i1", CAMPAIGN_A),
+            ("S1", "Sambalpur", 2024, datetime(2024, 1, 11), None, None, "raw s1", UNRELATED_A),
+            ("S2", "Sambalpur", 2024, datetime(2024, 1, 12), None, None, "raw s2", UNRELATED_B),
+        ]
+        return _dup_oltp(tmp_path, rows)
+
+    def test_recall_and_incremental_are_reported(self, tmp_path):
+        from janasunani.pipeline.dedup_index import evaluate_held_out_recall
+
+        async_url, sync_url = self._build_synthetic_slice(tmp_path)
+        build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt=_SALT)
+        groups = {r.ticket_no: r.duplicate_group_id for r in _group_rows(sync_url).values()}
+        # Officer labels: two groups as defined above.
+        officer_groups = [{"O1", "O2", "O3"}, {"O4", "O5"}]
+        officer_pairs = {frozenset(p) for g in officer_groups for p in __import__("itertools").combinations(sorted(g), 2)}
+        report = evaluate_held_out_recall(officer_pairs, groups)
+        # All officer pairs share campaign text in same window/script, so
+        # MinHash+block+verification should find them.
+        assert report["officer_pairs"] == 4  # C(3,2)=3 + C(2,2)=1
+        assert report["recall"] == 1.0
+        assert report["true_positives"] == 4
+        # I1 is same text as group 1, same window, but not in officer set —
+        # it joins group 1, creating incremental pairs (I1 with each of O1..O3).
+        assert report["incremental_pairs"] >= 3
+        assert report["incremental_groups"] >= 1
+        # Sanity: dedup pairs = officer pairs + incremental - any overlap
+        assert report["dedup_pairs"] == report["true_positives"] + report["incremental_pairs"]
+
+    def test_empty_officer_set_has_recall_one(self):
+        from janasunani.pipeline.dedup_index import evaluate_held_out_recall
+
+        report = evaluate_held_out_recall(set(), {"A": "A", "B": "B"})
+        assert report["recall"] == 1.0
+        assert report["officer_pairs"] == 0
+
+    def test_mixed_snapshot_guard_fails_before_recall(self, oltp):
+        # Even a correct recall harness must assert provenance before
+        # treating a dedup group as a denominator (#137).
+        async_url, sync_url = oltp
+        build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT)
+        groups = _group_rows(sync_url)
+        source_records = [
+            {
+                "ticket_no": ticket_no,
+                "district": district,
+                "created_year": year,
+                "created_on": created_on,
+                "petitioner_mobile": mobile,
+                "petitioner_email": None,
+                "grievance_redacted": redacted,
+            }
+            for ticket_no, district, year, created_on, mobile, redacted in _SMALL_ROWS
+            if district == "Khordha" and year == 2024 and redacted is not None
+        ]
+        # Baseline passes.
+        assert assert_group_source_snapshot(
+            [
+                {"ticket_no": r.ticket_no, "source_name": r.source_name, "source_snapshot_id": r.source_snapshot_id}
+                for r in groups.values()
+            ],
+            source_records,
+        )
+        # Tamper one group's snapshot — downstream join must fail loudly,
+        # not silently mix.
+        tampered = [
+            {"ticket_no": r.ticket_no, "source_name": r.source_name, "source_snapshot_id": "sha256:deadbeef"}
+            for r in groups.values()
+        ]
+        with pytest.raises(DedupSourceSnapshotMismatch):
+            assert_group_source_snapshot(tampered, source_records)
+
+    def test_cli_slice_shorthand_builds_same_index(self, tmp_path):
+        # --slice Sambalpur/2024 must be equivalent to --district/--year.
+        rows = [
+            ("T1", "Sambalpur", 2024, datetime(2024, 1, 5), None, None, "raw t1", CAMPAIGN_A),
+            ("T2", "Sambalpur", 2024, datetime(2024, 1, 6), None, None, "raw t2", CAMPAIGN_A),
+        ]
+        async_url, sync_url = _dup_oltp(tmp_path, rows)
+        import janasunani.pipeline.dedup_index as di
+
+        # Build via explicit district/year first.
+        build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt=_SALT)
+        groups_via_args = {r.ticket_no: r.duplicate_group_id for r in _group_rows(sync_url).values()}
+        # Clear and rebuild via --slice CLI path.
+        from sqlalchemy import create_engine as _ce
+
+        eng = _ce(sync_url)
+        with eng.begin() as conn:
+            conn.execute(text("DELETE FROM dedup_groups"))
+            conn.execute(text("DELETE FROM dedup_signatures"))
+        eng.dispose()
+        import sys
+
+        old_argv = sys.argv
+        sys.argv = ["janasunani-dedup-index", "--slice", "Sambalpur/2024", "--oltp-url", async_url, "--salt", _SALT]
+        try:
+            di.main()
+        finally:
+            sys.argv = old_argv
+        groups_via_slice = {r.ticket_no: r.duplicate_group_id for r in _group_rows(sync_url).values()}
+        assert groups_via_args == groups_via_slice
