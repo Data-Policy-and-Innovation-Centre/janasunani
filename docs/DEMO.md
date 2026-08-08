@@ -197,6 +197,8 @@ The **13 August freeze** is gated by a single laptop command that proves every [
 ```bash
 make rehearsal
 # runs scripts/demo_rehearsal.sh — see docs/plans/2026-08-08-demo-integration-rehearsal.md Part 2
+# Note: the Make target and script land in PR #203 (chore/demo-rehearsal-script);
+# until that merges, run the individual Phase A–C checks from the plan directly.
 ```
 
 What it checks (four phases, fail-fast):
@@ -206,12 +208,12 @@ What it checks (four phases, fail-fast):
 - **Phase C — artifact presence:** warns (or fails, configurable) if `janasunani/routing/reference/routing_crosswalk.json`, `outputs/findings/`, `DATA_DIR/aggregates/` / `JANASUNANI_SUPERVISOR_FINDINGS_DIR`, or `outputs/sarvam/` / `outputs/benchmark/table2.md` are missing — each maps to a demo component.
 - **Phase D — optional real models:** `JANASUNANI_RUN_MODEL_SMOKE=1` runs `tests/test_inference_model_smoke.py`.
 
-Run it **the night before the demo** (see [DEMO_SCRIPT.md](DEMO_SCRIPT.md#pre-demo-checklist)) and again the morning of. The full walkthrough it gates is [DEMO_SCRIPT.md](DEMO_SCRIPT.md) — Scenes 0–6 (30–40 min, with privacy preamble, OLTP-vs-lake note, routing ladder, triage banner, supervisor 61% talking point, benchmark Table 2, and pre-demo checklist).
+Run it **the night before the demo** (see [DEMO_SCRIPT.md](DEMO_SCRIPT.md#pre-demo-checklist)) and again the morning of. The full walkthrough it gates is [DEMO_SCRIPT.md](DEMO_SCRIPT.md) — Scenes 0–6 (43 min scripted, ~45 min with buffer, with privacy preamble, OLTP-vs-lake note, routing ladder, triage banner, supervisor 61% talking point, benchmark Table 2, and pre-demo checklist).
 
 | Artifact | Where |
 |---|---|
 | Timed walkthrough (Scenes 0–6) | [DEMO_SCRIPT.md](DEMO_SCRIPT.md) |
-| Automated gate | [`scripts/demo_rehearsal.sh`](../scripts/demo_rehearsal.sh) |
+| Automated gate | [`scripts/demo_rehearsal.sh`](../scripts/demo_rehearsal.sh) (via PR #203) |
 | Integration plan (gates, Table 2, three Sarvam arms) | [`docs/plans/2026-08-08-demo-integration-rehearsal.md`](plans/2026-08-08-demo-integration-rehearsal.md) |
 | Delivery scope & benchmark Table 2 | [DELIVERY.md](DELIVERY.md) Table 1 & 2 |
 

@@ -1,9 +1,9 @@
-# Client demo script — 14 August 2026 (30–40 min)
+# Client demo script — 14 August 2026 (43 min scripted, ~45 min with buffer)
 
 *Timed walkthrough on the **laptop stack** (`make up` on `127.0.0.1:8000` / `:3000`).*
-*Owner: one accountable engineer · Rehearsal gate: [`scripts/demo_rehearsal.sh`](../scripts/demo_rehearsal.sh) · Bring-up: [`DEMO.md`](DEMO.md) · Delivery: [`DELIVERY.md`](DELIVERY.md) Table 1 · Plan: [`docs/plans/2026-08-08-demo-integration-rehearsal.md`](plans/2026-08-08-demo-integration-rehearsal.md) Part 3*
+*Owner: one accountable engineer · Rehearsal gate: [`scripts/demo_rehearsal.sh`](../scripts/demo_rehearsal.sh) (via PR #203) · Bring-up: [`DEMO.md`](DEMO.md) · Delivery: [`DELIVERY.md`](DELIVERY.md) Table 1 · Plan: [`docs/plans/2026-08-08-demo-integration-rehearsal.md`](plans/2026-08-08-demo-integration-rehearsal.md) Part 3*
 
-This script is the **spoken walkthrough** for the client demo. The runbook for bringing the stack up is [`DEMO.md`](DEMO.md); the automated freeze gate is [`scripts/demo_rehearsal.sh`](../scripts/demo_rehearsal.sh) (see [DEMO.md §7](DEMO.md#7-rehearsal-gate-13-aug)). Nothing here pulls from `data/` — all live samples are synthetic or pre-approved.
+This script is the **spoken walkthrough** for the client demo. The runbook for bringing the stack up is [`DEMO.md`](DEMO.md); the automated freeze gate is [`scripts/demo_rehearsal.sh`](../scripts/demo_rehearsal.sh) (via PR #203 — see [DEMO.md §7](DEMO.md#7-rehearsal-gate-13-aug)). Nothing here pulls from `data/` — all live samples are synthetic or pre-approved.
 
 ---
 
@@ -26,7 +26,7 @@ Say it when you submit: *"You will see this grievance immediately on its own pag
 
 ---
 
-## Timing overview (38 min scripted, fits 30–40 min)
+## Timing overview (43 min scripted, ~45 min with buffer)
 
 | Scene | Time | What to show | Fallback if the live path is slow or flat |
 |---|---|---|---|
@@ -38,7 +38,7 @@ Say it when you submit: *"You will see this grievance immediately on its own pag
 | **5. Evidence table** | 5 min | PII per-entity table, dedup prevalence (55,544 / 10,963 groups), Sarvam divergence; benchmark Table 2 | Present methodology + cached outputs if live Sarvam fails |
 | **6. A/B framework** | 3 min | Design slide only — no live software | N/A |
 
-Total with preamble and buffer: **~40 min** including questions. If time is short, cut Scene 3 to a screenshot and keep Scenes 4–5.
+Total with preamble and buffer: **~45 min** including questions. If time is short, cut Scene 3 (7 min) to fit 30–38 min and keep Scenes 4–5.
 
 ```mermaid
 flowchart LR
@@ -90,11 +90,11 @@ flowchart LR
    - **Redaction** — `redaction.redacted_text` with `spans` marked; show the name/phone/email replaced by typed tokens. Note: PII offsets are over the *original* text, and raw page text never reaches downstream outputs (see [`ROADMAP.md` §3.2](ROADMAP.md#32-what-is-actually-pii-free-and-where)).
    - **Category** — `classification.category` (MuRIL). Name the category and note the spread: the headline 71% spans ~0.85 for police cases to ~0.51 for social welfare — we report the spread, not the average.
    - **Summary** — one-paragraph BART summary of the redacted text.
-   - **Routing badge** — `routing.department`, `routing.office` (if mapped), `routing.confidence`, and **`routing.method`**.
+   - **Routing badge** — `routing.dept`, `routing.office` (if mapped), `routing.confidence`, and **`routing.method`**.
 
 **Routing ladder fallback — say this verbatim if `method` is not `learned`:**
 
-> "Routing degrades through a ladder: **`learned` → `rules` → `fallback`**. `learned` means the crosswalk at `janasunani/routing/reference/routing_crosswalk.json` matched this category+district with empirical evidence — hover the badge for `support` and `share`. `rules` means the DVC-tracked department mappings matched but the learned crosswalk did not. `fallback` routes to the general grievance cell with low confidence rather than failing. `method: "mock"` on this stack would be a bug — the real processor never reports `mock` (see [DEMO.md §4](DEMO.md#4-launch--health-gate) and [PERFORMANCE.md §1](PERFORMANCE.md#1-live-demo-path)). If you see `fallback` today, the artifact was not committed — run `janasunani-build-crosswalk` and follow the rehearsal error message."
+> "Routing degrades through a ladder: **`learned` → `rules` → `fallback`**. `learned` means the crosswalk at `janasunani/routing/reference/routing_crosswalk.json` matched this category+district with empirical evidence — hover the badge for `support` and `share`. `rules` means the DVC-tracked department mappings matched but the learned crosswalk did not. `fallback` routes to the general grievance cell with low confidence rather than failing. `method: "mock"` on this stack would be a bug — the real processor never reports `mock` (see [DEMO.md §4](DEMO.md#4-launch--health-gate) and [PERFORMANCE.md §1](PERFORMANCE.md#1-live-demo-path)). `fallback` is **not** proof the artifact is missing — `Crosswalk.lookup()` legitimately returns `None` when no entry matches this category+district or when the best entry's `confidence < 0.3` (`MIN_CONFIDENCE`), then falling through to `rules` → `fallback`. Distinguish the cases via the rehearsal gate (Phase C): a missing `routing_crosswalk.json` fails with 'crosswalk missing' — only then run `janasunani-build-crosswalk` — while an unmatched or low-confidence `fallback` is a valid route."
 
 Concrete `curl` you can paste if the UI is not up:
 
@@ -144,10 +144,10 @@ Do not present a missing scorer as a product decision — present the `Unavailab
    ```
 
 2. Narrate the two gates the pipeline applies:
-   - **OCR** (`ocr_model: "pytesseract"` + `pages[].extracted_text`) — Poppler renders PDFs via `pdftoppm`/`pdfinfo`; Tesseract extracts text (Oriya requires `ori` traineddata — see pre-demo checklist).
+   - **OCR** (`extraction.ocr_model: "pytesseract"` + `extraction.pages` + `extraction.extracted_text`) — Poppler renders PDFs via `pdftoppm`/`pdfinfo`; Tesseract extracts text (Oriya requires `ori` traineddata — see pre-demo checklist). `ExtractionResult` has scalar fields `ocr_model`/`pages`/`extracted_text`; there is no `pages[]` array.
    - **Page-type filter** — only grievance-bearing pages (`Letter` / `Form` / `Text`) are fed to PII → summarizer → categorizer. A document with no such page is rejected with **HTTP 422** — that is the gate working, not an error to hide.
 
-3. Show the same downstream fields as Scene 1 now populated from the document: `pages`, `redaction`, `classification`, `summary`, `routing`, `triage`.
+3. Show the same downstream fields as Scene 1 now populated from the document: `extraction` (with `ocr_model`/`pages`/`extracted_text`), `redaction`, `classification`, `summary`, `routing`, `triage`.
 
 **Fallback:** if OCR stalls or `tesseract`/`poppler` is missing, fall back to a **pre-submitted result** (a captured JSON from a prior `make up` run) and walk the same fields. Do not install packages live in the demo — the rehearsal gate checks them the night before.
 
@@ -159,7 +159,7 @@ State the timing honestly: first document after boot is slower (~9–10 s) than 
 
 **Goal:** the one place the demo earns its keep — three facts no SQL dashboard produces, plus the one that needs no ML at all.
 
-Open `/supervisor` (or `GET /supervisor` / `GET /supervisor/dashboard` — the route label in the UI). The page reads **published aggregates** from `DATA_DIR/aggregates/` or `JANASUNANI_SUPERVISOR_FINDINGS_DIR` (small CSVs), with strict schema allowlist + reconciliation. An `Unavailable*` panel means the aggregate is missing or stale, not that the number is zero.
+Open `/supervisor` (or `GET /supervisor` — the API route; the frontend page is also `/supervisor` on port 3000). The page reads **published aggregates** from `DATA_DIR/aggregates/` or `JANASUNANI_SUPERVISOR_FINDINGS_DIR` (small CSVs), with strict schema allowlist + reconciliation. An `Unavailable*` panel means the aggregate is missing or stale, not that the number is zero.
 
 Walk three panels in order:
 
@@ -260,7 +260,7 @@ make rehearsal
 # Phase D: optional real-model smoke (JANASUNANI_RUN_MODEL_SMOKE=1)
 ```
 
-The script is [`scripts/demo_rehearsal.sh`](../scripts/demo_rehearsal.sh) — see [DEMO.md §7](DEMO.md#7-rehearsal-gate-13-aug). It must exit 0 on the **demo laptop** (not CI) before the 13 Aug freeze. If it warns about `Unavailable*` panels, that is the expected degraded state — fail only if all supervisor panels are unavailable.
+The script is [`scripts/demo_rehearsal.sh`](../scripts/demo_rehearsal.sh) (via PR #203) — see [DEMO.md §7](DEMO.md#7-rehearsal-gate-13-aug). It must exit 0 on the **demo laptop** (not CI) before the 13 Aug freeze once #203 has merged; until then run the Phase A–C checks from the plan directly. If it warns about `Unavailable*` panels, that is the expected degraded state — fail only if all supervisor panels are unavailable.
 
 Also verify:
 
@@ -302,5 +302,5 @@ Questions, then offer the rehearsal log (`make rehearsal` output) and the benchm
 
 ---
 
-*Cross-links: runbook [`DEMO.md`](DEMO.md) · rehearsal [`scripts/demo_rehearsal.sh`](../scripts/demo_rehearsal.sh) · delivery [`DELIVERY.md`](DELIVERY.md) · architecture [`ARCHITECTURE.md`](ARCHITECTURE.md) · performance [`PERFORMANCE.md`](PERFORMANCE.md) · deploy [`DEPLOY.md`](DEPLOY.md)*
+*Cross-links: runbook [`DEMO.md`](DEMO.md) · rehearsal [`scripts/demo_rehearsal.sh`](../scripts/demo_rehearsal.sh) (via PR #203) · delivery [`DELIVERY.md`](DELIVERY.md) · architecture [`ARCHITECTURE.md`](ARCHITECTURE.md) · performance [`PERFORMANCE.md`](PERFORMANCE.md) · deploy [`DEPLOY.md`](DEPLOY.md)*
 
