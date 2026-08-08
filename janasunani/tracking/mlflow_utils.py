@@ -8,6 +8,7 @@ let operators resolve the exact mirrored artifact.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 import os
 from pathlib import Path
 from typing import Mapping, Optional
@@ -173,3 +174,198 @@ def _create_model_version(
     for key, value in tags.items():
         client.set_model_version_tag(name, model_version.version, key, value)
     return model_version.version
+
+
+# ---------------------------------------------------------------------------
+# Benchmark run logger — Unit F (demo-integration-rehearsal Part 5)
+# ---------------------------------------------------------------------------
+
+_VALID_BENCHMARK_VARIANTS: set[str] = {
+    "standard",
+    "sarvam_digitise",
+    "sarvam_extract",
+    "sarvam_both",
+}
+
+_BENCHMARK_EXPERIMENT_DEFAULT = "janasunani-demo-benchmark"
+
+
+def _get_git_sha() -> str | None:
+    """Return short HEAD sha or None if not in a git repo."""
+    try:
+        import subprocess
+
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+        if result.returncode == 0:
+            sha = result.stdout.strip()
+            return sha if sha else None
+    except Exception:
+        pass
+    return None
+
+
+def log_benchmark_run(
+    *,
+    pipeline_variant: str,
+    sarvam_arm: str | None = None,
+    schema_version: str | None = None,
+    slice_id: str | None = None,
+    ocr_engine: str | None = None,
+    sample_n: int | None = None,
+    git_sha: str | None = None,
+    # Metrics
+    latency_e2e_mean: float | None = None,
+    latency_e2e_se: float | None = None,
+    cost_per_doc_rupees: float | None = None,
+    cost_per_1k_tokens: float | None = None,
+    category_accuracy_pipeline: float | None = None,
+    category_accuracy_sarvam_extract: float | None = None,
+    category_diff_ci_low: float | None = None,
+    category_diff_ci_high: float | None = None,
+    ocr_divergence_rate: float | None = None,
+    summary_divergence_rate: float | None = None,
+    # Generic extensions
+    extra_params: Mapping[str, str] | None = None,
+    extra_metrics: Mapping[str, float] | None = None,
+    metrics: Mapping[str, float] | None = None,
+    params: Mapping[str, str] | None = None,
+    artifacts: list[Path | str] | None = None,
+    experiment_name: str = _BENCHMARK_EXPERIMENT_DEFAULT,
+    tracking_uri: str | None = None,
+    artifact_uri: str | None = None,
+) -> str:
+    """Log a benchmark comparison run to MLflow.
+
+    This is the narrow MLflow surface for the 14 Aug demo. It logs a
+    single benchmark variant comparison as one MLflow run so operators can
+    compare ``standard`` vs ``sarvam_*`` side-by-side in the UI. It does
+    NOT switch live serving.
+
+    Params (logged as MLflow params, all string-typed):
+      pipeline_variant (required): one of standard / sarvam_digitise /
+        sarvam_extract / sarvam_both
+      sarvam_arm: digitise | extract | both (when Sarvam is involved)
+      schema_version: pinned grievance extract schema version (e.g. v1)
+      slice_id: slice label like Sambalpur/2024
+      ocr_engine: pytesseract | sarvam
+      sample_n: number of documents/pages in the benchmark sample
+      git_sha: git HEAD sha for reproducibility
+
+    Metrics (logged as MLflow metrics, all float-typed):
+      latency_e2e_mean, latency_e2e_se,
+      cost_per_doc_rupees, cost_per_1k_tokens,
+      category_accuracy_pipeline, category_accuracy_sarvam_extract,
+      category_diff_ci_low, category_diff_ci_high,
+      ocr_divergence_rate, summary_divergence_rate
+
+    Artifacts (optional): list of file or directory paths to log under the
+    run. Typical: table2.md, table2.json, latency.json,
+    sarvam_scorecard.json. Missing paths are skipped with a warning
+    (the run still succeeds).
+
+    Generic ``params`` / ``metrics`` / ``extra_params`` / ``extra_metrics``
+    allow callers to pass additional keys without changing this signature.
+
+    Returns the MLflow run_id.
+    """
+    if pipeline_variant not in _VALID_BENCHMARK_VARIANTS:
+        raise ValueError(
+            f"unknown pipeline_variant {pipeline_variant!r}; "
+            f"valid: {sorted(_VALID_BENCHMARK_VARIANTS)}"
+        )
+
+    # Build param dict — explicit args win over generic maps
+    param_dict: dict[str, str] = {}
+    if params:
+        param_dict.update({k: str(v) for k, v in params.items() if v is not None})
+    if extra_params:
+        for k, v in extra_params.items():
+            if k not in param_dict and v is not None:
+                param_dict[k] = str(v)
+
+    # Explicit typed params override generic
+    explicit_params: dict[str, str | None] = {
+        "pipeline_variant": pipeline_variant,
+        "sarvam_arm": sarvam_arm,
+        "schema_version": schema_version,
+        "slice_id": slice_id,
+        "ocr_engine": ocr_engine,
+        "sample_n": str(sample_n) if sample_n is not None else None,
+        "git_sha": git_sha or _get_git_sha(),
+    }
+    for k, v in explicit_params.items():
+        if v is not None:
+            param_dict[k] = str(v)
+
+    # Build metric dict
+    metric_dict: dict[str, float] = {}
+    if metrics:
+        for k, v in metrics.items():
+            if v is not None:
+                metric_dict[k] = float(v)
+    if extra_metrics:
+        for k, v in extra_metrics.items():
+            if k not in metric_dict and v is not None:
+                metric_dict[k] = float(v)
+
+    explicit_metrics: dict[str, float | None] = {
+        "latency_e2e_mean": latency_e2e_mean,
+        "latency_e2e_se": latency_e2e_se,
+        "cost_per_doc_rupees": cost_per_doc_rupees,
+        "cost_per_1k_tokens": cost_per_1k_tokens,
+        "category_accuracy_pipeline": category_accuracy_pipeline,
+        "category_accuracy_sarvam_extract": category_accuracy_sarvam_extract,
+        "category_diff_ci_low": category_diff_ci_low,
+        "category_diff_ci_high": category_diff_ci_high,
+        "ocr_divergence_rate": ocr_divergence_rate,
+        "summary_divergence_rate": summary_divergence_rate,
+    }
+    for k, v in explicit_metrics.items():
+        if v is not None:
+            metric_dict[k] = float(v)
+
+    experiment_id = ensure_experiment(
+        experiment_name, tracking_uri=tracking_uri, artifact_uri=artifact_uri
+    )
+
+    # Start run and log
+    with mlflow.start_run(experiment_id=experiment_id) as run:
+        if param_dict:
+            mlflow.log_params(param_dict)
+        if metric_dict:
+            # Filter out NaN/inf which MLflow rejects
+            clean_metrics = {
+                k: float(v)
+                for k, v in metric_dict.items()
+                if v is not None and math.isfinite(float(v))
+            }
+            if clean_metrics:
+                mlflow.log_metrics(clean_metrics)
+        # Artifacts
+        if artifacts:
+            for art in artifacts:
+                p = Path(art)
+                if not p.exists():
+                    # Log warning but do not fail the run — a missing
+                    # optional artifact (e.g. table2.md not yet generated)
+                    # should not block benchmark comparison.
+                    import warnings
+
+                    warnings.warn(
+                        f"benchmark artifact not found, skipping: {p}",
+                        stacklevel=2,
+                    )
+                    continue
+                if p.is_dir():
+                    mlflow.log_artifacts(p.as_posix())
+                else:
+                    mlflow.log_artifact(p.as_posix())
+        run_id = run.info.run_id
+
+    return run_id
