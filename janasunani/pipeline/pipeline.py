@@ -3,7 +3,9 @@ from janasunani.pipeline.db import initialize_database
 from loguru import logger
 
 # The canonical order stages run in. Used when config.stages is None
-# (i.e. "run everything").
+# (i.e. "run everything"). Six stages only — no 7th spam/triage stage
+# gating yet (that is Unit 14 / Phase 14); keep this tuple as the
+# source of truth for CLI choices and for the E2E rehearsal.
 STAGE_ORDER = [
     "format_classifier",
     "ocr_extraction",

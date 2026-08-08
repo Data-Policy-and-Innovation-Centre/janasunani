@@ -31,6 +31,11 @@ from janasunani.serving.schemas import (
     TriageResult,
 )
 
+# Real processor is intentionally NOT imported at top level — it pulls
+# torch/transformers/presidio via janasunani.inference.service and would
+# break the import-light contract for the mock skeleton. Use
+# get_processor() below for a lazy, env-aware seam.
+
 
 class GrievanceProcessor(Protocol):
     """What Phase 8/9 must provide. Exactly one of text/document is set."""
@@ -181,3 +186,25 @@ def _mock_triage(text: str) -> TriageResult:
             spam=mock_low_signal,
         )
     return TriageResult(spam=mock_low_signal)
+
+def get_processor(prefer_real: bool = True) -> GrievanceProcessor:
+    """Return a GrievanceProcessor for the current environment.
+
+    Lazy, import-light seam for Unit 3 rehearsal: when heavy ML extras
+    (pipeline-core, pii, categorizer) and the DVC-mirrored models are
+    present, this returns the warm PipelineGrievanceProcessor (real code
+    path, routing via RuleRouter -> method "fallback" until Unit 7 crosswalk).
+    Otherwise it falls back to MockGrievanceProcessor so the API contract
+    and frontend can still be exercised in a light CI env.
+
+    The inference stack is imported inside the function — never at module
+    top level — preserving the per-extra lazy-import contract.
+    """
+    if not prefer_real:
+        return MockGrievanceProcessor()
+    try:
+        from janasunani.inference.service import build_processor
+
+        return build_processor()  # type: ignore[return-value]
+    except Exception:
+        return MockGrievanceProcessor()
