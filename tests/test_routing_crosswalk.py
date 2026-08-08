@@ -281,18 +281,17 @@ class TestArtifactRoundTripAndDegradation:
     def test_the_shipped_artifact_loads_with_semantically_valid_entries(self):
         """Schema migrations must include the packaged aggregate, not only
         newly built artifacts. ``load_crosswalk`` validates every table, key,
-        and entry before returning. The legacy artifact has no valid
-        category+district evidence: its old full-key tables retained only
-        winners, not the losing-department counts needed to re-aggregate that
-        rung. It must therefore fall through to its original category evidence
-        until rebuilt from source rows."""
+        and entry before returning. The rebuilt artifact now carries real
+        category+district evidence (971 keys) built from source rows -- the
+        legacy gap where ``by_category_district`` was empty because only
+        winners were retained is closed."""
         loaded = load_crosswalk(DEFAULT_ARTIFACT)
 
         assert loaded is not None
         assert loaded.by_full
         assert loaded.by_subcategory
         assert loaded.by_category
-        assert loaded.by_category_district == {}
+        assert loaded.by_category_district
 
         category_hit = loaded.lookup("Agriculture & Farming")
         assert category_hit is not None
@@ -301,9 +300,9 @@ class TestArtifactRoundTripAndDegradation:
 
         district_hit = loaded.lookup("Water Supply", district="Angul")
         assert district_hit is not None
-        assert district_hit.width == "category"
+        assert district_hit.width == "category+district"
         assert district_hit.dept == "Panchayati Raj & Drinking Water"
-        assert district_hit.support == 15560
+        assert district_hit.support == 434
 
     def test_save_then_load_preserves_the_tables(self, tmp_path, crosswalk):
         path = save_crosswalk(crosswalk, tmp_path / "cw.json")
