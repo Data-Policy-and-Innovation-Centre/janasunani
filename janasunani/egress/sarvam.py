@@ -593,6 +593,220 @@ class SarvamVisionAdapter:
             )
             return DigitiseOutcome(text=fallback(), ocr_model="pytesseract")
 
+    # ------------------------------------------------------------------
+    # Transliteration probe — romanized Odia ↔ Odia script (Phase 17)
+    # ------------------------------------------------------------------
+    # Sarvam's transliteration surface is a synchronous text API (Roman ↔
+    # native script, bidirectional, Odia is od-IN, 1 000 chars per
+    # request) — distinct from the async Vision job API above. It is still
+    # authorized-external (same MoU, same audit log, same kill switch), and
+    # is the probe that lets romanized-Odia grievances be hashed/indexed in
+    # the same script as native Odia. The chunking and per-chunk audit
+    # follow the provider's documented limit; the fallback is identity
+    # (dpic-infra IndicXlit would be the production counterpart, but
+    # returning the original text keeps the contract fallback-safe).
+    TRANSLITERATION_MAX_CHARS = 1000
+
+    def transliterate(
+        self,
+        text: str,
+        source_language_code: str,
+        target_language_code: str,
+        context: SarvamAuditContext,
+    ) -> str:
+        """Transliterate via Sarvam text API with chunking at 1000 chars.
+
+        One audit row per chunk. Raises SarvamDisabled / SarvamGovernanceError
+        / SarvamError like the Vision path; callers that need a fallback
+        should use transliterate_or_fallback.
+        """
+        if not self.enabled:
+            raise SarvamDisabled("Sarvam hosted egress is disabled")
+        if not self.route.egress_permitted:
+            controls = ", ".join(self.route.unverified_controls)
+            raise SarvamGovernanceError(
+                f"Sarvam hosted egress is gated by unverified controls: {controls}"
+            )
+        if not self.api_key:
+            raise SarvamError(
+                "SARVAM_API_KEY is required when Sarvam is enabled "
+                "(SARVAM_API_SUBSCRIPTION_KEY is accepted for compatibility)"
+            )
+        if not text:
+            return ""
+        # Chunk at the provider's documented limit — Indic→Indic is not
+        # supported, so callers must ensure source/target are valid.
+        chunks = [
+            text[i : i + self.TRANSLITERATION_MAX_CHARS]
+            for i in range(0, len(text), self.TRANSLITERATION_MAX_CHARS)
+        ]
+        results: list[str] = []
+        for idx, chunk in enumerate(chunks):
+            # Idempotency key per chunk: same derivation as Vision, but with
+            # the transliteration form (+ chunk index for chunking stability).
+            form: dict[str, Any] = {
+                "input": chunk,
+                "source_language_code": source_language_code,
+                "target_language_code": target_language_code,
+                "chunk_index": idx,
+                "chunk_count": len(chunks),
+            }
+            idempotency_key = self._idempotency_key(
+                context,
+                "transliterate",
+                chunk.encode("utf-8"),
+                filename=f"transliterate-chunk-{idx}",
+                form=form,
+            )
+            chunk_bytes = len(chunk.encode("utf-8"))
+            payload = self._post_transliterate(
+                chunk=chunk,
+                source_language_code=source_language_code,
+                target_language_code=target_language_code,
+                context=context,
+                idempotency_key=idempotency_key,
+                bytes_sent=chunk_bytes,
+            )
+            # Sarvam returns {"transliterated_text": "..."} or {"output": "..."}
+            transliterated = (
+                payload.get("transliterated_text")
+                or payload.get("output")
+                or payload.get("text")
+                or ""
+            )
+            if not isinstance(transliterated, str):
+                raise SarvamError("Sarvam transliteration response missing text")
+            results.append(transliterated)
+        return "".join(results)
+
+    def transliterate_or_fallback(
+        self,
+        text: str,
+        source_language_code: str,
+        target_language_code: str,
+        context: SarvamAuditContext,
+        fallback: Callable[[str], str],
+    ) -> str:
+        """Transliterate if enabled, else return fallback (dpic-infra).
+
+        Disabled path logs one audit row (bytes 0, event disabled) and
+        returns fallback(text) without any network call. Enabled path that
+        raises logs fallback and returns fallback(text). The fallback is the
+        kill-switch contract: every authorized-external call has a
+        maintained dpic-infra counterpart.
+        """
+        # Use a single idempotency key for the disabled audit — consistent
+        # with digitise_or_fallback's single audit row for disabled.
+        form: dict[str, Any] = {
+            "input": text[: self.TRANSLITERATION_MAX_CHARS],
+            "source_language_code": source_language_code,
+            "target_language_code": target_language_code,
+            "chunk_index": 0,
+            "chunk_count": 1,
+        }
+        # For disabled we don't need chunk-accurate bytes; 0 signals no egress.
+        idempotency_key = self._idempotency_key(
+            context,
+            "transliterate",
+            text.encode("utf-8"),
+            filename="transliterate",
+            form=form,
+        )
+        if not self.enabled:
+            self._audit(
+                context,
+                "transliterate",
+                "disabled",
+                target_language_code,
+                0,
+                None,
+                {},
+                idempotency_key,
+            )
+            return fallback(text)
+        try:
+            return self.transliterate(
+                text, source_language_code, target_language_code, context
+            )
+        except SarvamError as exc:
+            self._audit(
+                context,
+                "transliterate",
+                "fallback",
+                target_language_code,
+                0,
+                None,
+                {"reason": type(exc).__name__},
+                idempotency_key,
+            )
+            return fallback(text)
+
+    def _post_transliterate(
+        self,
+        *,
+        chunk: str,
+        source_language_code: str,
+        target_language_code: str,
+        context: SarvamAuditContext,
+        idempotency_key: str,
+        bytes_sent: int,
+    ) -> dict[str, Any]:
+        self._wait_for_submission_slot()
+        try:
+            response = self._transport().post(
+                f"{self.route.endpoint}/transliterate",
+                headers={
+                    "api-subscription-key": self.api_key,
+                    "Idempotency-Key": idempotency_key,
+                },
+                json={
+                    "input": chunk,
+                    "source_language_code": source_language_code,
+                    "target_language_code": target_language_code,
+                },
+            )
+        except Exception as exc:
+            self._audit(
+                context,
+                "transliterate",
+                "transliterate_error",
+                target_language_code,
+                bytes_sent,
+                None,
+                {"error": type(exc).__name__},
+                idempotency_key,
+            )
+            if isinstance(exc, SarvamError):
+                raise
+            raise SarvamError("Sarvam transliterate request failed") from exc
+        try:
+            payload = self._json_response(response, "transliterate")
+        except Exception as exc:
+            self._audit(
+                context,
+                "transliterate",
+                "transliterate_error",
+                target_language_code,
+                bytes_sent,
+                None,
+                {"error": type(exc).__name__},
+                idempotency_key,
+            )
+            if isinstance(exc, SarvamError):
+                raise
+            raise SarvamError("Sarvam transliterate request failed") from exc
+        self._audit(
+            context,
+            "transliterate",
+            "transliterate",
+            target_language_code,
+            bytes_sent,
+            None,
+            self._response_metadata(payload, response.status_code),
+            idempotency_key,
+        )
+        return payload
+
     def _run_job(
         self,
         *,

@@ -149,6 +149,15 @@ class Settings(BaseSettings):
         "SARVAM_API_SUBSCRIPTION_KEY"
     )
 
+    # Tier declaration for the single authorized-external egress route.
+    # The hosted Sarvam endpoint is the only third-party destination that may
+    # receive citizen document bytes, per the GoO-Sarvam MoU + ACS Vishal Dev
+    # sign-off. Value is the trust_tier recorded alongside the route
+    # declaration in janasunani/egress/sarvam.py (PROVIDER_REGISTRY) and is
+    # asserted by tests/test_egress_boundary.py — keep the two in sync.
+    SARVAM_TRUST_TIER: str = "authorized-external"
+    SARVAM_AUTHORIZATION_REFERENCE: str = "GoO-Sarvam MoU; ACS Vishal Dev (IT) sign-off"
+
     model_config = SettingsConfigDict(env_file=ROOT_DIR / ".env", extra="ignore")
 
     @field_validator("DEBUG", mode="before")
