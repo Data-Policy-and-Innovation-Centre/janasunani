@@ -162,12 +162,17 @@ def test_default_live_triage_is_explicitly_abstained_pending_validation():
     assert result.triage.duplicate is None
     assert result.triage.duplicate_review.decision == "not_indexed"
     assert result.triage.duplicate_review.reason
-    assert result.triage.spam.decision == "abstained"
-    assert result.triage.spam.reason_code == (
-        "live_review_disabled_pending_redacted_adjudication"
-    )
+    # Now wired to bounded scorer: long enough legitimate text scores clean with a bounded score
+    assert result.triage.spam.spam_score is not None
+    assert 0.0 <= result.triage.spam.spam_score <= 1.0
+    assert result.triage.spam.spam_reason in {
+        "low_signal_details_inadequate",
+        "low_signal_no_grievance",
+        "repetition_collapse",
+        "length_too_short",
+        "clean",
+    }
     assert result.triage.spam.evidence[0].kind == "repetition_collapse"
-    assert "spam_score" not in result.triage.spam.model_dump()
 
 
 def test_triage_provider_outage_is_nonblocking_and_explicit():

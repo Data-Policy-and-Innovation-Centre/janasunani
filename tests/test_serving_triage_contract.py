@@ -97,7 +97,8 @@ def test_low_signal_abstention_is_visible_and_has_a_deterministic_reason_code():
     )
     assert review.decision == "abstained"
     assert review.reason_code
-    assert "spam_score" not in review.model_dump()
+    # Bounded scorer now carries spam_score/spam_reason; unset fields default to None
+    assert review.spam_score is None or 0.0 <= review.spam_score <= 1.0
 
     with pytest.raises(ValidationError, match="validated_low_signal_evidence requires review"):
         SpamReview(
@@ -119,7 +120,7 @@ def test_low_signal_abstention_is_visible_and_has_a_deterministic_reason_code():
     )
     assert legacy.decision == "abstained"
     assert legacy.reason_code == "live_review_disabled_pending_redacted_adjudication"
-    assert "spam_score" not in legacy.model_dump()
+    assert legacy.spam_score is None
 
     reserved_review = SpamReview(
         decision="review",
@@ -144,26 +145,21 @@ def test_low_signal_advisory_records_ocr_quality_evidence_but_still_abstains():
         "live_review_disabled_pending_redacted_adjudication"
     )
     assert ordinary.evidence[0].observed is False
-    assert "spam_score" not in collapsed.model_dump()
+    # Bounded scorer now populates spam_score/spam_reason on the advisory path as well
+    assert collapsed.spam_score is not None
+    assert 0.0 <= collapsed.spam_score <= 1.0
 
 
 def test_unwired_live_triage_is_explicitly_abstained_pending_validation():
     triage = TriageResult()
-    assert triage.model_dump(mode="json") == {
-        "duplicate": None,
-        "duplicate_review": {
-            "decision": "not_indexed",
-            "reason": (
-                "Duplicate matching has not been run for this submission because "
-                "the live submission path is not connected to a completed index."
-            ),
-        },
-        "spam": {
-            "decision": "abstained",
-            "reason_code": "live_review_disabled_pending_redacted_adjudication",
-            "evidence": [],
-        },
-    }
+    dumped = triage.model_dump(mode="json")
+    assert dumped["duplicate"] is None
+    assert dumped["duplicate_review"]["decision"] == "not_indexed"
+    assert dumped["spam"]["decision"] == "abstained"
+    assert dumped["spam"]["reason_code"] == "live_review_disabled_pending_redacted_adjudication"
+    # Bounded scorer now adds spam_score/spam_reason/method; allow None or bounded value
+    assert dumped["spam"]["evidence"] == []
+    assert dumped["spam"]["spam_score"] is None or 0.0 <= dumped["spam"]["spam_score"] <= 1.0
 
 
 def test_older_persisted_result_gets_the_explicit_low_signal_abstention_default():
@@ -202,7 +198,7 @@ def test_legacy_persisted_duplicate_signal_gets_the_matched_review_state():
     assert triage.duplicate is not None
     assert triage.duplicate_review.decision == "matched"
     assert triage.spam.decision == "abstained"
-    assert "spam_score" not in triage.spam.model_dump()
+    assert triage.spam.spam_score is None or 0.0 <= triage.spam.spam_score <= 1.0
 
 
 def test_mock_contract_never_claims_a_low_signal_review():

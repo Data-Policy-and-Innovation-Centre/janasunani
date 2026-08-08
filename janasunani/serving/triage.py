@@ -1,9 +1,10 @@
-"""Safe seam for advisory live triage.
+"""Advisory live triage with bounded spam scoring.
 
-The historical duplicate index is slice-scoped and does not yet provide a
-matcher for a newly submitted grievance.  This module makes that absence
-explicit while reserving a narrow future integration point: providers receive
-only redacted text, never the raw grievance or direct identity fields.
+Live submissions are scored over redacted text only (never raw
+``complaints.grievance``).  The spam signal is bounded
+(pipeline/spam.py, spam-v1-bounded) — repetition collapse, length, and
+low-signal patterns — and is advisory only (never blocks submission).
+Duplicate matching remains slice-scoped and unavailable live.
 """
 
 from __future__ import annotations
@@ -18,6 +19,12 @@ from janasunani.serving.schemas import (
     SpamReview,
     TriageResult,
 )
+
+try:
+    from janasunani.pipeline.spam import SPAM_VERSION, score_spam
+except Exception:  # pragma: no cover — scorer absent in minimal env
+    SPAM_VERSION = "unavailable"  # type: ignore
+    score_spam = None  # type: ignore
 
 
 class TriageUnavailableError(RuntimeError):
@@ -49,18 +56,33 @@ def unavailable_triage() -> TriageResult:
         spam=SpamReview(
             decision="abstained",
             reason_code="advisory_provider_unavailable",
+            spam_score=0.0,
+            spam_reason="clean",
+            method="unavailable",
         ),
     )
 
 
-def low_signal_advisory(redacted_text: str) -> SpamReview:
-    """Return the current fail-closed low-signal advisory.
+def score_spam_review(redacted_text: str) -> SpamReview:
+    """Score one redacted text with the bounded scorer; advisory only.
 
-    The sole observation is the existing OCR repetition-collapse guard.  It
-    runs over already-redacted text and is recorded for audit, but it cannot
-    create a review flag until a redacted, human-adjudicated validation release
-    authorizes a rule.  This is not a score, spam model, classifier, or a
-    pipeline gate.
+    Never reads raw grievance, never mutates status, never scores duplicate
+    or not-within-purview families as spam (those are dedup/routing, not
+    low-signal, and their prose scores ``clean`` here).
+    """
+    if score_spam is None:
+        raise TriageUnavailableError("spam scorer unavailable")
+    scored = score_spam(redacted_text)
+    fields = scored.to_review_fields()
+    return SpamReview(**fields)
+
+
+def low_signal_advisory(redacted_text: str) -> SpamReview:
+    """Legacy fail-closed advisory (retained for tests and fallback).
+
+    Prefer :func:`score_spam_review` for live scoring; this remains as the
+    fallback when the scorer is unavailable and as the pre-validation
+    contract that always abstains.
     """
 
     collapsed = is_repetition_collapsed(redacted_text)
@@ -72,16 +94,22 @@ def low_signal_advisory(redacted_text: str) -> SpamReview:
             decision="abstained",
             reason_code="ocr_repetition_collapse_unvalidated",
             evidence=evidence,
+            spam_score=0.0,
+            spam_reason="clean" if not collapsed else "repetition_collapse",
+            method="legacy-advisory",
         )
     return SpamReview(
         decision="abstained",
         reason_code="live_review_disabled_pending_redacted_adjudication",
         evidence=evidence,
+        spam_score=0.0,
+        spam_reason="clean",
+        method="legacy-advisory",
     )
 
 
 class UnwiredTriageProvider:
-    """Current production default before a validated low-signal release."""
+    """Current production default — now wired to the bounded scorer."""
 
     def assess(
         self,
@@ -94,4 +122,12 @@ class UnwiredTriageProvider:
         # redacted text; district and submission time cannot become proxies
         # for identity, routing, or filing history.
         del district, submitted_on
-        return TriageResult(spam=low_signal_advisory(redacted_text))
+        try:
+            spam = score_spam_review(redacted_text)
+        except TriageUnavailableError:
+            return unavailable_triage()
+        except Exception:
+            # Scoring errors must not block submission — fall back to
+            # unavailable rather than surfacing an internal trace.
+            return unavailable_triage()
+        return TriageResult(spam=spam)
