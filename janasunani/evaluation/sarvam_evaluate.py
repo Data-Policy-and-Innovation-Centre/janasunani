@@ -313,25 +313,33 @@ def main(argv: list[str] | None = None) -> int:
     else:
         from janasunani.egress.sarvam import SarvamAuditContext as _Ctx  # noqa: F401  # ensure import works
 
-    # Lazy pytesseract + renderer — require pipeline-core when processing pages
-    # Under `uv run --extra serving` this import fails; the original code
-    # swallowed it and later skipped every Sarvam call with image=None while
-    # still exiting 0 with full cost metadata, producing an empty benchmark.
-    # Fail explicitly so the operator installs the correct extra.
+    # Lazy pytesseract + renderer — only needed when actually processing
+    # Under `uv run --extra serving` Pillow/pdf2image are absent; the old code
+    # swallowed the ImportError and later skipped every Sarvam call with
+    # image=None while still exiting 0 with full cost, producing an empty
+    # benchmark. For live runs we must fail explicitly; for --dry-run (CI)
+    # we allow empty rendering so `uv run --extra serving pytest` stays green.
+    render_import_error: Exception | None = None
     try:
         from janasunani.pipeline.stages.ocr_extraction.page_renderer import render_page
     except Exception as exc:  # noqa: BLE001
-        # If we have real pages to process (not just --help/--dry-run stub),
-        # the renderer is required. Dry-run still needs it for local OCR
-        # comparison, so fail in the same way.
+        render_page = None  # type: ignore[assignment]
+        render_import_error = exc
+
+    # Fail fast for live runs where renderer is required (would otherwise
+    # silently skip every Sarvam call and report pages_submitted with no work)
+    if render_page is None and adapter is not None:
         logger.error(
             "page_renderer not available — install pipeline-core extra: "
-            f"uv run --extra pipeline-core janasunani-evaluate-sarvam ({type(exc).__name__}: {exc})"
+            f"uv run --extra pipeline-core janasunani-evaluate-sarvam ({type(render_import_error).__name__}: {render_import_error})"
         )
-        # Only fail when pages exist; allows --help without renderer
-        if pages:
-            return 1
-        render_page = None  # type: ignore[assignment]
+        return 1
+    if render_page is None and render_import_error is not None:
+        # Dry-run without renderer: keep going with empty images (CI)
+        logger.warning(
+            f"page_renderer unavailable ({type(render_import_error).__name__}); "
+            "using empty images for --dry-run / test — install pipeline-core for real OCR"
+        )
 
     # pylint: disable=import-error
     records: list[PageRecord] = []
