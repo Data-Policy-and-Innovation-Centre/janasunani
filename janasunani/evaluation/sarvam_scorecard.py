@@ -37,6 +37,7 @@ recorded Sarvam markdown fixtures; no live network call is made.
 from __future__ import annotations
 
 import math
+import random
 import re
 import unicodedata
 from collections import defaultdict
@@ -44,7 +45,19 @@ from dataclasses import asdict, dataclass
 from statistics import NormalDist
 from typing import Any
 
+from janasunani.config import DEMO_SLICE_DISTRICT, DEMO_SLICE_LABEL, DEMO_SLICE_YEAR
+
 NORMALIZER_VERSION = "1.0"
+
+# Benchmark sampling — few hundred pages from Sambalpur/2024 slice,
+# stratified handwritten/printed per #127/#84. Cost at 50p/page digitise
+# is few-hundred rupees; size is powered for ~10-point category gaps.
+BENCHMARK_SAMPLE_SIZE = 300
+BENCHMARK_MIN_SAMPLE = 200
+BENCHMARK_MAX_SAMPLE = 400
+# Deterministic seed so the same Sambalpur/2024 slice sample is reproducible
+# across runs; the stratification, not the randomness, is the control.
+BENCHMARK_SAMPLE_SEED = 42
 
 # ---------------------------------------------------------------------------
 # Normaliser — frozen before output is read
@@ -294,6 +307,219 @@ def required_pages_mcnemar(gap: float, discordance: float, alpha: float = 0.05, 
 
 
 # ---------------------------------------------------------------------------
+# Sampling — stratified few-hundred-page sample from Sambalpur/2024 (few hundred)
+# ---------------------------------------------------------------------------
+
+def stratified_sample(
+    pages: list[PageRecord],
+    n: int = BENCHMARK_SAMPLE_SIZE,
+    seed: int = BENCHMARK_SAMPLE_SEED,
+) -> list[PageRecord]:
+    """Stratified sample of *n* pages, balanced handwritten vs printed.
+
+    The Sambalpur/2024 slice is the demo source; its handwritten share is
+    not 50/50 in the wild, but a braided sample ensures both surfaces are
+    reportable separately (per #84). The implementation is deterministic
+    (seeded) so the same slice produces the same audit-cost sample across
+    runs.
+
+    Stratification key is PageRecord.handwritten_bucket(). Buckets with no
+    members are omitted; allocation is proportional to bucket size, with at
+    least one per present bucket when n permits. Within each bucket the
+    selection is a seeded shuffle. If n >= len(pages), returns a shuffled
+    copy.
+
+    Few-hundred-page invariant: callers should use 200–400; the function
+    accepts any positive n but the report flags compliance separately.
+    """
+    if n <= 0:
+        raise ValueError("n must be positive")
+    if not pages:
+        return []
+    if n >= len(pages):
+        rng = random.Random(seed)
+        shuffled = list(pages)
+        rng.shuffle(shuffled)
+        return shuffled
+    # bucket by handwritten status
+    buckets: dict[str, list[PageRecord]] = defaultdict(list)
+    for p in pages:
+        buckets[p.handwritten_bucket()].append(p)
+    # proportional allocation
+    total = len(pages)
+    # initial proportional floor
+    allocation: dict[str, int] = {}
+    remaining = n
+    # sort buckets by size descending for stable allocation of remainders
+    sorted_buckets = sorted(buckets.items(), key=lambda kv: len(kv[1]), reverse=True)
+    for bucket_name, members in sorted_buckets:
+        # at least 1 per present bucket when possible
+        prop = len(members) / total
+        count = max(1, int(round(prop * n))) if n >= len(buckets) else int(round(prop * n))
+        # clamp to bucket size and remaining
+        count = min(count, len(members), remaining - (len(sorted_buckets) - len(allocation) - 1))
+        # ensure at least 1 if possible
+        if count < 1 and len(members) > 0 and remaining > 0:
+            count = 1
+        allocation[bucket_name] = count
+        remaining -= count
+    # adjust for rounding drift
+    # if we overshot or undershot due to rounding, fix by moving 1s
+    while remaining != 0 and allocation:
+        # find bucket that can give or take
+        if remaining > 0:
+            # give to largest bucket that still has headroom
+            for bucket_name, members in sorted_buckets:
+                if allocation[bucket_name] < len(members):
+                    allocation[bucket_name] += 1
+                    remaining -= 1
+                    if remaining == 0:
+                        break
+            if remaining > 0:
+                break  # no headroom
+        else:
+            # remaining < 0 : take from largest allocation
+            for bucket_name, _ in sorted(sorted_buckets, key=lambda kv: allocation[kv[0]], reverse=True):
+                if allocation[bucket_name] > 1:
+                    allocation[bucket_name] -= 1
+                    remaining += 1
+                    if remaining == 0:
+                        break
+            if remaining < 0:
+                break
+    rng = random.Random(seed)
+    sampled: list[PageRecord] = []
+    for bucket_name, members in buckets.items():
+        count = allocation.get(bucket_name, 0)
+        if count <= 0:
+            continue
+        shuffled = list(members)
+        rng.shuffle(shuffled)
+        sampled.extend(shuffled[:count])
+    # final shuffle so output is not bucket-grouped
+    rng.shuffle(sampled)
+    return sampled
+
+
+def sample_compliance(n_pages: int) -> dict[str, Any]:
+    """Whether the sample size is the intended few hundred (200–400)."""
+    return {
+        "n_pages": n_pages,
+        "is_few_hundred": BENCHMARK_MIN_SAMPLE <= n_pages <= BENCHMARK_MAX_SAMPLE,
+        "recommended": BENCHMARK_SAMPLE_SIZE,
+        "min": BENCHMARK_MIN_SAMPLE,
+        "max": BENCHMARK_MAX_SAMPLE,
+        "slice": DEMO_SLICE_LABEL,
+        "slice_district": DEMO_SLICE_DISTRICT,
+        "slice_year": DEMO_SLICE_YEAR,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Per-category accuracy — the spread that headlines hide
+# ---------------------------------------------------------------------------
+
+def per_category_table(pages: list[PageRecord]) -> dict[str, dict[str, Any]]:
+    """Per-category accuracy for pipeline vs Sarvam, grouped by gold label.
+
+    One row per gold_category value (e.g. Police 0.85 vs Welfare 0.51).
+    De-duplicated by ticket like the headline metric (one category per
+    ticket). Tickets without a gold label are omitted.
+
+    Returns mapping category -> {n_tickets, pipeline_accuracy,
+    sarvam_accuracy, pipeline_correct, sarvam_correct, difference}.
+    """
+    ticket_gold: dict[str, str | None] = {}
+    ticket_pipe: dict[str, str | None] = {}
+    ticket_sarvam: dict[str, str | None] = {}
+    for p in pages:
+        for d, val in [
+            (ticket_gold, p.gold_category),
+            (ticket_pipe, p.pipeline_category),
+            (ticket_sarvam, p.sarvam_category),
+        ]:
+            if p.ticket not in d:
+                d[p.ticket] = val
+            elif d[p.ticket] is None and val is not None:
+                d[p.ticket] = val
+    # group tickets by gold category
+    groups: dict[str, list[str]] = defaultdict(list)
+    for ticket, gold in ticket_gold.items():
+        if gold is not None:
+            groups[gold].append(ticket)
+    out: dict[str, dict[str, Any]] = {}
+    for category in sorted(groups):
+        tickets = groups[category]
+        pipe_correct = [1 if ticket_pipe.get(t) == category else 0 for t in tickets]
+        sarv_correct = [1 if ticket_sarvam.get(t) == category else 0 for t in tickets]
+        pipe_acc = sum(pipe_correct) / len(pipe_correct) if pipe_correct else 0.0
+        sarv_acc = sum(sarv_correct) / len(sarv_correct) if sarv_correct else 0.0
+        out[category] = {
+            "n_tickets": len(tickets),
+            "pipeline_correct": sum(pipe_correct),
+            "sarvam_correct": sum(sarv_correct),
+            "pipeline_accuracy": pipe_acc,
+            "sarvam_accuracy": sarv_acc,
+            "difference": sarv_acc - pipe_acc,
+        }
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Transliteration probe — romanized Odia if present (Phase 17 → Phase 21)
+# ---------------------------------------------------------------------------
+
+_ODIA_SCRIPT_RE = re.compile(r"[\u0B00-\u0B7F]")
+
+def is_romanized_odia_candidate(page: PageRecord) -> bool:
+    """Heuristic for a page that is Odia content in Latin script.
+
+    True when the page's language signals Odia but its text has Latin
+    without Odia script — i.e. romanized Odia that transliteration would
+    need to normalize before hashing/embedding. English pages are not
+    candidates; only Odia-language pages rendered in Latin.
+    """
+    lang = (page.language or "").lower()
+    is_odia_lang = "odia" in lang or "oriya" in lang or "od-in" in lang
+    if not is_odia_lang:
+        return False
+    text = page.pytesseract_text or page.sarvam_markdown or ""
+    if not text.strip():
+        return False
+    has_latin = bool(re.search(r"[A-Za-z]", text))
+    has_odia = bool(_ODIA_SCRIPT_RE.search(text))
+    # romanized = Odia language but latin script, no native script
+    return has_latin and not has_odia
+
+
+def transliteration_probe(pages: list[PageRecord]) -> dict[str, Any]:
+    """Probe for romanized Odia presence and the action it triggers.
+
+    If any page is a romanized-Odia candidate, the report notes that a
+    Sarvam transliteration probe (od-IN, 1000 chars/chunk) would be the
+    next step; otherwise it is not applicable. No network call is made
+    here — the probe is a corpus-conditional recommendation, and the actual
+    transliteration goes through janasunani/egress/sarvam.py with its audit
+    log and kill switch.
+    """
+    romanized = [p for p in pages if is_romanized_odia_candidate(p)]
+    return {
+        "n_total": len(pages),
+        "n_romanized_candidates": len(romanized),
+        "probe_applicable": len(romanized) > 0,
+        "romanized_ticket_ids": [p.ticket for p in romanized[:5]],
+        "note": (
+            "If romanized Odia present, run Sarvam transliteration "
+            "(source en-IN, target od-IN, 1000 chars/chunk) via "
+            "janasunani/egress/sarvam.py (authorized-external, audit-logged, "
+            "kill-switch to dpic-infra IndicXlit) before hashing/embedding."
+            if romanized
+            else "No romanized Odia detected in this sample; transliteration probe not applicable."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Scorecard assembly
 # ---------------------------------------------------------------------------
 
@@ -321,6 +547,12 @@ class ScorecardReport:
     by_handwritten: dict[str, dict[str, Any]]
     by_language: dict[str, dict[str, Any]]
     notes: str
+    # Phase 17 extensions — per-category spread, transliteration probe,
+    # and sample compliance (few-hundred, stratified from Sambalpur/2024).
+    # Optional with defaults so existing callers stay green.
+    per_category: dict[str, Any] | None = None
+    transliteration_probe_result: dict[str, Any] | None = None
+    sample_info: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -471,6 +703,43 @@ def build_scorecard(pages: list[PageRecord]) -> ScorecardReport:
             "Transcription cannot be produced by an agent because it is the ground truth "
             "an agent would be measured against."
         )
+    # Phase 17 extensions
+    per_cat = per_category_table(pages)
+    trans_probe = transliteration_probe(pages)
+    samp_info = sample_compliance(n_pages)
+    # augment notes with per-category spread headline if available
+    if per_cat:
+        # headline spread like Police 0.85 vs Welfare 0.51 — report in notes for discoverability
+        best = max(per_cat.items(), key=lambda kv: kv[1]["sarvam_accuracy"])
+        worst = min(per_cat.items(), key=lambda kv: kv[1]["sarvam_accuracy"])
+        notes_parts.append(
+            f"Per-category spread: {best[0]} {best[1]['sarvam_accuracy']:.2f} vs "
+            f"{worst[0]} {worst[1]['sarvam_accuracy']:.2f} (Sarvam) — "
+            "headline accuracy hides this; see per_category table."
+        )
+    if trans_probe["probe_applicable"]:
+        notes_parts.append(
+            f"Romanized Odia probe applicable: {trans_probe['n_romanized_candidates']}/"
+            f"{trans_probe['n_total']} pages are romanized Odia candidates; "
+            "Sarvam transliteration (od-IN, 1000 chars/chunk) via "
+            "janasunani/egress/sarvam.py is the next step before hashing/embedding."
+        )
+    # few-hundred compliance note
+    if not samp_info["is_few_hundred"]:
+        notes_parts.append(
+            f"Sample size {n_pages} is outside the intended few-hundred "
+            f"({BENCHMARK_MIN_SAMPLE}–{BENCHMARK_MAX_SAMPLE}) window for the "
+            f"{DEMO_SLICE_LABEL} stratified benchmark; "
+            "cost and power are calibrated for 200–400 at 10 req/min Vision."
+        )
+    else:
+        notes_parts.append(
+            f"Sample size {n_pages} is within the few-hundred "
+            f"({BENCHMARK_MIN_SAMPLE}–{BENCHMARK_MAX_SAMPLE}) benchmark window for "
+            f"{DEMO_SLICE_LABEL} (stratified handwritten/printed); "
+            "Vision divergence reported per-surface with no accuracy verdict "
+            "(no transcription ground truth)."
+        )
     notes = " ".join(notes_parts)
 
     return ScorecardReport(
@@ -487,4 +756,7 @@ def build_scorecard(pages: list[PageRecord]) -> ScorecardReport:
         by_handwritten=by_handwritten,
         by_language=by_language,
         notes=notes,
+        per_category=per_cat if per_cat else None,
+        transliteration_probe_result=trans_probe,
+        sample_info=samp_info,
     )
