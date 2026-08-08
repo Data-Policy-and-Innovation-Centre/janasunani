@@ -427,17 +427,9 @@ def _try_run_spam_sidecar(config: PipelineConfig, sidecar_path: Path) -> bool:
     # Score over redacted_text; fallback to extracted if redacted missing
     texts = [r["redacted_text"] or r["extracted_text"] or "" for r in rows]
     combined = " ".join(texts)
-    try:
-        scored = score_spam(combined)
-    except Exception:
-        with connect(config.db_path) as con:
-            rows2 = con.execute("SELECT redacted_text FROM pages").fetchall()
-            redacted = " ".join(r["redacted_text"] or "" for r in rows2)
-        spam_score = 0.07 if len(redacted.split()) > 8 else 0.68
-        spam_reason = "clean" if spam_score < 0.5 else "low_signal_details_inadequate"
-        sidecar_path.parent.mkdir(parents=True, exist_ok=True)
-        sidecar_path.write_text(json.dumps({"spam_score": spam_score, "spam_reason": spam_reason}), encoding="utf-8")
-        return False
+    # Real scorer is CI-safe (import-light). If import succeeded, a failure
+    # on valid redacted input must fail the test — no fabricated fallback.
+    scored = score_spam(combined)
     import json as _json
 
     sidecar_path.parent.mkdir(parents=True, exist_ok=True)
@@ -485,20 +477,20 @@ def test_spam_sidecar_after_pii_before_page_type_writes_bounded_score(tmp_path):
 
 def test_learned_routing_with_crosswalk_for_known_category_district(tmp_path):
     """When the committed crosswalk is present, known category+district yields learned."""
-    from janasunani.routing.crosswalk import DEFAULT_ARTIFACT
+    from janasunani.routing.crosswalk import DEFAULT_ARTIFACT, load_crosswalk
 
     assert DEFAULT_ARTIFACT.exists(), "routing_crosswalk.json must be committed for demo"
+    assert load_crosswalk() is not None, "crosswalk must load (corrupt JSON must not degrade silently)"
     from janasunani.routing.rules import DEFAULT_ROUTER
 
-    # Known category that is well-supported in the artifact should be learned
+    # Known well-supported category must hit the learned rung — accepting
+    # rules/fallback would mask a corrupt or missing crosswalk.
     result = DEFAULT_ROUTER.route(category="Energy")
-    assert result.method in {"learned", "rules", "fallback"}
-    assert result.method != "mock"
-    if result.method == "learned":
-        assert result.empirical_evidence is not None
-        assert result.empirical_evidence.support >= 3
-        assert result.empirical_evidence.width in {"category", "category+district", "category+subcategory", "category+subcategory+district"}
-        assert 0.0 < result.confidence <= 0.95
+    assert result.method == "learned", f"Energy must be learned, got {result.method}"
+    assert result.empirical_evidence is not None
+    assert result.empirical_evidence.support >= 3
+    assert result.empirical_evidence.width in {"category", "category+district", "category+subcategory", "category+subcategory+district"}
+    assert 0.0 < result.confidence <= 0.95
 
     # Known category+district that has a district rung
     district_result = DEFAULT_ROUTER.route(category="Water Supply", district="Angul")
