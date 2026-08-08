@@ -197,8 +197,7 @@ The **13 August freeze** is gated by a single laptop command that proves every [
 ```bash
 make rehearsal
 # runs scripts/demo_rehearsal.sh — see docs/plans/2026-08-08-demo-integration-rehearsal.md Part 2
-# Note: the Make target and script land in PR #203 (chore/demo-rehearsal-script);
-# until that merges, run the individual Phase A–C checks from the plan directly.
+# Freeze tag after passing: git tag demo-2026-08-14-rc1 && git push origin demo-2026-08-14-rc1
 ```
 
 What it checks (four phases, fail-fast):
@@ -216,5 +215,8 @@ Run it **the night before the demo** (see [DEMO_SCRIPT.md](DEMO_SCRIPT.md#pre-de
 | Automated gate | [`scripts/demo_rehearsal.sh`](../scripts/demo_rehearsal.sh) (via PR #203) |
 | Integration plan (gates, Table 2, three Sarvam arms) | [`docs/plans/2026-08-08-demo-integration-rehearsal.md`](plans/2026-08-08-demo-integration-rehearsal.md) |
 | Delivery scope & benchmark Table 2 | [DELIVERY.md](DELIVERY.md) Table 1 & 2 |
+| Freeze tag (13 Aug 12:00 — nothing merges after) | `demo-2026-08-14-rc1` — `git tag demo-2026-08-14-rc1 && git push origin demo-2026-08-14-rc1` after `make rehearsal` passes |
 
 > **History empty after a live submit is not a failure.** `GET /grievance/{id}` is OLTP and is the gate that must pass; `GET /history` is lake-backed and may lag until the next `janasunani-materialize`. The rehearsal script documents this gap rather than patching serving to query OLTP for history.
+
+> **Freeze rule:** nothing merges after Unit G branch cut at **13 Aug 12:00**; Friday 14 Aug is demo only. This section documents the freeze tag created by Unit G (`chore/demo-integration-freeze`).

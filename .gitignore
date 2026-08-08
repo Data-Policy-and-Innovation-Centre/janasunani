@@ -223,10 +223,12 @@ outputs/*
 !outputs/tables/
 !outputs/reports/
 !outputs/findings/
+!outputs/benchmark/
 outputs/figures/*
 outputs/tables/*
 outputs/reports/*
 outputs/findings/*
+outputs/benchmark/*
 !data/raw/.gitkeep
 !data/clean/.gitkeep
 !data/interim/.gitkeep
@@ -240,6 +242,7 @@ mlruns/
 !outputs/tables/.gitkeep
 !outputs/reports/.gitkeep
 !outputs/findings/.gitkeep
+!outputs/benchmark/.gitkeep
 .DS_Store
 
 # Claude Code: machine-local settings + agent scratch worktrees
