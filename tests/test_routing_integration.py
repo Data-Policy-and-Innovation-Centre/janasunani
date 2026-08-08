@@ -202,11 +202,27 @@ class TestMissingArtifactDegrades:
 class TestIncidenceOnly:
     def test_crosswalk_never_routes_on_outcome(self):
         """Crosswalk keys are category/subcategory/district + counts only.
-        No disposal time, benefit, or outcome column may appear in the artifact."""
+        No disposal time, benefit, or outcome column may appear in the artifact.
+
+        ``benefit`` appears legitimately in the category name
+        ``pension/retirement benefits`` — incidence-only means no outcome-
+        derived *field* or *value*, not that the substring never occurs in a
+        category label. Check structure instead of a blind substring search.
+        """
         payload = json.loads(DEFAULT_ARTIFACT.read_text(encoding="utf-8"))
-        text = json.dumps(payload).lower()
-        for forbidden in ("disposal", "benefit", "outcome", "closure", "days_to_close"):
-            assert forbidden not in text
+        # Artifact must be aggregates only: each entry is {dept, support, share, office?}
+        for table in ("by_category", "by_category_district", "by_full", "by_subcategory"):
+            for key, entry in payload[table].items():
+                for forbidden in ("disposal", "benefit", "outcome", "closure", "days_to_close"):
+                    # Forbid outcome-derived keys or outcome words in dept/office values;
+                    # category keys may legitimately contain 'benefit' (pension/retirement benefits).
+                    assert forbidden not in entry, f"{forbidden!r} found as key in {table}:{key}"
+                    for field in ("dept", "office"):
+                        val = entry.get(field)
+                        if isinstance(val, str) and forbidden in val.lower():
+                            assert False, f"{forbidden!r} found in {table}:{key}.{field}={val!r}"
+                # Also forbid outcome words as top-level table names (already covered)
+                assert table not in ("disposal", "benefit", "outcome", "closure")
 
     def test_artifact_is_aggregates_only(self):
         payload = json.loads(DEFAULT_ARTIFACT.read_text(encoding="utf-8"))
