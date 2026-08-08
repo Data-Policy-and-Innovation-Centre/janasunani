@@ -150,6 +150,8 @@ janasunani-dedup-index = "janasunani.pipeline.dedup_index:main"
 janasunani-api = "janasunani.serving.api:main"
 janasunani-api-live = "janasunani.inference.serve:main"
 janasunani-demo-preflight = "janasunani.inference.serve:preflight_main"
+janasunani-spam-score = "janasunani.pipeline.spam:main"
+janasunani-spam-scorecard = "janasunani.evaluation.spam_scorecard:main"
 
 [build-system]
 requires = ["hatchling"]

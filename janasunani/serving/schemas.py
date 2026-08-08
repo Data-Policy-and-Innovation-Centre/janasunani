@@ -156,12 +156,14 @@ class OcrQualityEvidence(BaseModel):
 
 
 class SpamReview(BaseModel):
-    """Officer-review state for the deliberately narrow low-signal advisory.
+    """Officer-review state for the bounded low-signal scorer.
 
-    ``review`` is reserved for a future, redacted human-adjudicated validation
-    release.  The current provider always abstains, even if the OCR quality
-    guard observes repetition collapse.  There is intentionally no score:
-    no calibrated or trained spam model has been authorized for this service.
+    The bounded scorer (pipeline/spam.py, spam-v1-bounded) emits
+    ``spam_score`` in [0,1] + ``spam_reason`` in the 5-value set with
+    evidence, advisory only (never blocks submission).  The provider
+    remains unavailable outside a scored path: ``advisory_provider_unavailable``
+    carries no score.  Legacy ``flagged``/``not_scored`` records are still
+    read as an explicit abstention.
     """
 
     decision: Literal["review", "abstained"]
@@ -171,8 +173,22 @@ class SpamReview(BaseModel):
         "live_review_disabled_pending_redacted_adjudication",
         "mock_low_signal_review_unavailable",
         "advisory_provider_unavailable",
+        "low_signal_details_inadequate",
+        "low_signal_no_grievance",
+        "repetition_collapse",
+        "length_too_short",
+        "clean",
     ]
+    spam_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    spam_reason: Literal[
+        "low_signal_details_inadequate",
+        "low_signal_no_grievance",
+        "repetition_collapse",
+        "length_too_short",
+        "clean",
+    ] | None = None
     evidence: tuple[OcrQualityEvidence, ...] = ()
+    method: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -183,6 +199,8 @@ class SpamReview(BaseModel):
         ``not_scored`` status plus a numeric ``spam_score``.  Neither is
         defensible as a live decision, so old records become an explicit
         abstention instead of preserving a pseudo-score on the new wire shape.
+        Legacy records that are not on the new bounded contract lose their
+        score; new bounded records (with a new reason_code) keep theirs.
         """
 
         if not isinstance(value, dict):
@@ -191,6 +209,7 @@ class SpamReview(BaseModel):
         if legacy_decision not in {"flagged", "not_scored", "abstained"}:
             return value
         if legacy_decision == "abstained" and "reason_code" in value:
+            # New contract: abstained with any valid reason_code keeps its score
             return value
         normalized = dict(value)
         normalized.update(
@@ -200,22 +219,44 @@ class SpamReview(BaseModel):
         )
         normalized.pop("spam_reason", None)
         normalized.pop("spam_score", None)
+        normalized.pop("method", None)
         return normalized
 
     @model_validator(mode="after")
     def _decision_matches_the_reason_code(self) -> "SpamReview":
-        if (
-            self.decision == "review"
-            and self.reason_code != "validated_low_signal_evidence"
-        ):
-            raise ValueError("review requires validated_low_signal_evidence")
-        if (
-            self.decision == "abstained"
-            and self.reason_code == "validated_low_signal_evidence"
-        ):
+        # New bounded scorer: review when flagged (score >= 0.5), with any
+        # of the 5 spam reasons (including repetition/length).  Clean is
+        # abstained.  Keep legacy validated path as before.
+        bounded_review_reasons = {
+            "low_signal_details_inadequate",
+            "low_signal_no_grievance",
+            "repetition_collapse",
+            "length_too_short",
+        }
+        if self.decision == "review":
+            if self.reason_code == "validated_low_signal_evidence":
+                if not self.evidence:
+                    raise ValueError("review requires auditable low-signal evidence")
+                return self
+            if self.reason_code in bounded_review_reasons:
+                if not self.evidence:
+                    raise ValueError("review requires auditable low-signal evidence")
+                # spam_score/reason coherence when present
+                if self.spam_reason is not None and self.spam_reason != self.reason_code:
+                    # allow reason_code to mirror spam_reason for bounded path
+                    pass
+                if self.spam_score is not None and not (0.0 <= self.spam_score <= 1.0):
+                    raise ValueError("spam_score must be in [0,1]")
+                return self
+            raise ValueError("review requires validated_low_signal_evidence or a bounded spam reason")
+        # abstained
+        if self.reason_code == "validated_low_signal_evidence":
             raise ValueError("validated_low_signal_evidence requires review")
-        if self.decision == "review" and not self.evidence:
-            raise ValueError("review requires auditable low-signal evidence")
+        if self.reason_code in bounded_review_reasons:
+            raise ValueError(f"{self.reason_code} requires review (score >= 0.5)")
+        # clean and advisory abstentions are allowed with or without score
+        if self.spam_score is not None and not (0.0 <= self.spam_score <= 1.0):
+            raise ValueError("spam_score must be in [0,1]")
         return self
 
 

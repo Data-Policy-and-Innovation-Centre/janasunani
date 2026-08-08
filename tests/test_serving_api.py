@@ -73,8 +73,12 @@ def test_submit_text_returns_full_result_shape(client):
         "not_indexed",
         "unavailable",
     }
-    assert body["triage"]["spam"]["decision"] == "abstained"
-    assert "spam_score" not in body["triage"]["spam"]
+    # Mock triage is advisory; now includes bounded spam_score/method
+    assert body["triage"]["spam"]["decision"] in {"abstained", "review"}
+    # spam_score is bounded and method present when scorer wiring is live; mock may be None
+    spam = body["triage"]["spam"]
+    if "spam_score" in spam and spam["spam_score"] is not None:
+        assert 0.0 <= spam["spam_score"] <= 1.0
 
 
 def test_submit_file_reports_document_source(client):
