@@ -630,7 +630,7 @@ deliver:
 	rclone copy $(call sh_quote,$(EXHIBITS_LOCAL_RAW)) $(call sh_quote,$(EXHIBITS_REMOTE_RAW)) --progress
 	@echo "Exhibits delivered. Existing Box files were not deleted."
 
-.PHONY: docs docs-clean infra status
+.PHONY: docs docs-clean infra ssh status
 
 # Word renders of the planning docs, for circulation outside the repo.
 # Outputs are gitignored (docs/*.docx): the Markdown is the source of truth.
@@ -692,6 +692,22 @@ CPU_BOX_SSH    ?= ubuntu@52.66.116.80
 infra:
 	@uv run python scripts/infra_status.py --host "$(CPU_BOX_SSH)" \
 	  $(if $(SITE),--site "$(SITE)") $(if $(SG_ID),--sg-id "$(SG_ID)") $(ARGS)
+
+# Open tcp/22 to your current IP if it is not already permitted, then SSH in.
+#
+# The security group pins SSH to a single /32. When an ISP lease moves, SSH
+# fails with no ICMP and a closed port, which looks exactly like the box being
+# down. This checks AWS instead of guessing.
+#
+#   make ssh                      open if needed, then connect
+#   make ssh CHECK=1              report what would change, touch nothing
+#   make ssh PRUNE=1              also revoke other /32 SSH rules (issue #32)
+#   make ssh ARGS="uptime"        run one command instead of a login shell
+#
+# PRUNE is opt-in: a stale-looking /32 may be a colleague who is connected.
+ssh:
+	@uv run python scripts/box_ssh.py --host "$(CPU_BOX_SSH)" \
+	  $(if $(CHECK),--check) $(if $(PRUNE),--prune) $(ARGS)
 
 status:
 	@echo "=== Git ==="
