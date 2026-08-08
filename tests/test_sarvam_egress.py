@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from janasunani.config import Settings
 from janasunani.egress.sarvam import (
     AUTHORIZATION_REFERENCE,
     GovernanceControl,
@@ -873,6 +874,38 @@ def test_prefers_documented_api_key_environment_variable(monkeypatch, tmp_path):
     monkeypatch.setenv("SARVAM_API_SUBSCRIPTION_KEY", "legacy")
     adapter = SarvamVisionAdapter(enabled=False, audit_log=SqliteAuditLog(tmp_path / "audit.sqlite"))
     assert adapter.api_key == "preferred"
+
+
+def test_adapter_reads_sarvam_key_from_dotenv_only(tmp_path, monkeypatch):
+    env_file = tmp_path / ".env"
+    env_file.write_text("SARVAM_API_KEY=dotenv-only-key\n")
+    monkeypatch.delenv("SARVAM_API_KEY", raising=False)
+    monkeypatch.delenv("SARVAM_API_SUBSCRIPTION_KEY", raising=False)
+    monkeypatch.setattr(
+        "janasunani.egress.sarvam.Settings",
+        lambda: Settings(_env_file=env_file),
+    )
+    adapter = SarvamVisionAdapter(
+        enabled=False,
+        audit_log=SqliteAuditLog(tmp_path / "audit.sqlite"),
+    )
+    assert adapter.api_key == "dotenv-only-key"
+
+
+def test_falls_back_to_legacy_subscription_key(monkeypatch, tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("SARVAM_API_SUBSCRIPTION_KEY=legacy-only\n")
+    monkeypatch.delenv("SARVAM_API_KEY", raising=False)
+    monkeypatch.delenv("SARVAM_API_SUBSCRIPTION_KEY", raising=False)
+    monkeypatch.setattr(
+        "janasunani.egress.sarvam.Settings",
+        lambda: Settings(_env_file=env_file),
+    )
+    adapter = SarvamVisionAdapter(
+        enabled=False,
+        audit_log=SqliteAuditLog(tmp_path / "audit.sqlite"),
+    )
+    assert adapter.api_key == "legacy-only"
 
 
 def test_extract_is_a_distinct_operation_and_requires_one_pinned_schema_source(tmp_path):
