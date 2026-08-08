@@ -36,7 +36,7 @@ The document-reading half of that comparison is gated by something else entirely
 
 **Committed** means we will demonstrate it. **Bounded** means we will demonstrate it on a defined slice rather than the full 1.37 million. **Framework only** means a design and a calculation, not running software.
 
-The portion of the backlog is not yet fixed. We will settle it after a brainstorming session and name it here, whether that is one district, one year or one category. Vague now is honest; vague on 14 August would not be.
+The portion of the backlog is fixed via #64 (07 Aug 2026, pre-committed highest-volume district×year, no ED override): **Sambalpur 2024 — 55,544 complaints with grievance text** (Ganjam 2024 46,678; Balangir 2024 38,248). The dedup backfill over this slice completed 07 Aug 14:14 on the CPU box (`55,544 of 55,544 indexed, 10,963 duplicate groups`, comparison_pairs=16,138,623). All overnight jobs now read this constant (`janasunani/config.py:DEMO_SLICE_LABEL`).
 
 ### Benchmark record
 
