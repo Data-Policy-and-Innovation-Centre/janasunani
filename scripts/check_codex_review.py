@@ -57,11 +57,17 @@ GraphQLFetch = Callable[[str, dict[str, Any]], Any]
 
 @dataclass(frozen=True)
 class Verdict:
-    """Outcome of the gate, shaped for a GitHub check run."""
+    """Outcome of the gate, shaped for a GitHub check run.
+
+    ``head_sha`` is the commit the verdict was actually computed against, and
+    the only sha it may be posted to. Re-reading the head at posting time would
+    stamp a pass earned by a reviewed commit onto whatever was pushed since.
+    """
 
     conclusion: str  # "success" | "failure"
     title: str
     summary: str
+    head_sha: str
 
     @property
     def ok(self) -> bool:
@@ -241,9 +247,24 @@ def is_docs_only(files: Sequence[dict[str, Any]]) -> bool:
     if not files:
         return False
     return all(
-        any(fnmatch.fnmatch(entry["filename"], pattern) for pattern in DOCS_ONLY_PATTERNS)
+        any(fnmatch.fnmatch(path, pattern) for pattern in DOCS_ONLY_PATTERNS)
         for entry in files
+        for path in _entry_paths(entry)
     )
+
+
+def _entry_paths(entry: dict[str, Any]) -> list[str]:
+    """Both sides of a rename.
+
+    GitHub puts the destination in ``filename`` and the source in
+    ``previous_filename``. Judging on the destination alone would read
+    `janasunani/pipeline/run.py` -> `docs/run.md` as a docs change, and a pure
+    rename adds no lines, so it would clear the size cap too.
+    """
+    paths = [entry["filename"]]
+    if entry.get("previous_filename"):
+        paths.append(entry["previous_filename"])
+    return paths
 
 
 def changed_lines(files: Iterable[dict[str, Any]]) -> int:
@@ -262,7 +283,12 @@ def evaluate(rest: RestFetch, graphql: GraphQLFetch, repo: str, pr_number: int) 
     labels = {label["name"] for label in pull.get("labels") or []}
 
     if SKIP_LABEL in labels:
-        return Verdict("success", "Codex review not required", f"Skipped by `{SKIP_LABEL}`.")
+        return Verdict(
+            "success",
+            "Codex review not required",
+            f"Skipped by `{SKIP_LABEL}`.",
+            head_sha,
+        )
 
     files = rest(f"pulls/{pr_number}/files") or []
     if is_docs_only(files) and changed_lines(files) <= DOCS_ONLY_MAX_LINES:
@@ -271,10 +297,11 @@ def evaluate(rest: RestFetch, graphql: GraphQLFetch, repo: str, pr_number: int) 
             "Codex review not required",
             f"Docs-only branch, {changed_lines(files)} changed lines; "
             "CONTRIBUTING.md exempts small ones.",
+            head_sha,
         )
 
     if pull.get("draft"):
-        return Verdict("success", "Draft", "Codex reviews on ready-for-review.")
+        return Verdict("success", "Draft", "Codex reviews on ready-for-review.", head_sha)
 
     reviews = rest(f"pulls/{pr_number}/reviews") or []
     reviewed = reviewed_shas(reviews)
@@ -290,6 +317,7 @@ def evaluate(rest: RestFetch, graphql: GraphQLFetch, repo: str, pr_number: int) 
             "failure",
             f"Codex has not reviewed {head_sha[:10]}",
             _stale_summary(head_sha, reviewed, thumbs_up, head_time),
+            head_sha,
         )
 
     unresolved = unresolved_codex_threads(graphql, owner, name, pr_number)
@@ -301,10 +329,13 @@ def evaluate(rest: RestFetch, graphql: GraphQLFetch, repo: str, pr_number: int) 
             "CONTRIBUTING.md: every finding ends fixed, filed as an issue, or "
             "rejected in a reply that shows the evidence. Reply, then resolve "
             f"the thread.\n\n{listed}",
+            head_sha,
         )
 
     how = "reviewed with findings, all answered" if reviewed_head else "cleared with :+1:"
-    return Verdict("success", "Codex review passed", f"Head `{head_sha[:10]}` {how}.")
+    return Verdict(
+        "success", "Codex review passed", f"Head `{head_sha[:10]}` {how}.", head_sha
+    )
 
 
 def _stale_summary(
@@ -331,14 +362,15 @@ def _stale_summary(
 # --------------------------------------------------------------------------
 
 
-def post_check_run(repo: str, token: str, head_sha: str, name: str, verdict: Verdict) -> None:
+def post_check_run(repo: str, token: str, name: str, verdict: Verdict) -> None:
+    """Post to the sha the verdict was computed against, never a re-read one."""
     _request(
         f"{API_ROOT}/repos/{repo}/check-runs",
         token,
         method="POST",
         body={
             "name": name,
-            "head_sha": head_sha,
+            "head_sha": verdict.head_sha,
             "status": "completed",
             "conclusion": verdict.conclusion,
             "output": {"title": verdict.title, "summary": verdict.summary},
@@ -373,8 +405,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"{verdict.conclusion}: {verdict.title}\n{verdict.summary}")
 
     if args.post_check_run:
-        head_sha = rest(f"pulls/{args.pr}")["head"]["sha"]
-        post_check_run(args.repo, token, head_sha, args.check_name, verdict)
+        post_check_run(args.repo, token, args.check_name, verdict)
         return 0
     return 0 if verdict.ok else 1
 

@@ -302,6 +302,68 @@ def test_changed_lines_counts_both_sides_of_the_diff():
     assert check.changed_lines(files) == 16
 
 
+def test_renaming_code_into_docs_is_not_docs_only():
+    """A pure rename adds no lines, so the size cap would not catch it either."""
+    files = [
+        {
+            "filename": "docs/run.md",
+            "previous_filename": "janasunani/pipeline/run.py",
+            "status": "renamed",
+            "additions": 0,
+            "deletions": 0,
+        }
+    ]
+    assert check.is_docs_only(files) is False
+
+
+def test_renaming_one_doc_to_another_stays_docs_only():
+    files = [
+        {
+            "filename": "docs/ROADMAP.md",
+            "previous_filename": "ROADMAP.md",
+            "status": "renamed",
+            "additions": 0,
+            "deletions": 0,
+        }
+    ]
+    assert check.is_docs_only(files) is True
+
+
+# --------------------------------------------------------------------------
+# The verdict is bound to the sha it was computed against
+# --------------------------------------------------------------------------
+
+
+def test_verdict_carries_the_evaluated_head():
+    api = FakeGitHub(reviews=[codex_review(HEAD[:10])], threads=[thread(resolved=True)])
+    assert api.evaluate().head_sha == HEAD
+
+
+def test_check_run_is_posted_to_the_evaluated_head_not_a_refetched_one():
+    """A push landing mid-run must not inherit the previous head's pass."""
+    old, new = "a" * 40, "b" * 40
+    api = FakeGitHub(head_sha=old, reviews=[codex_review(old[:10])], threads=[])
+    verdict = api.evaluate()
+    assert verdict.ok
+
+    api.head_sha = new  # the branch moves while the gate is still running
+    posted: dict[str, Any] = {}
+
+    def fake_request(url, token, method="GET", body=None):
+        posted.update(body)
+        return {}
+
+    original = check._request
+    check._request = fake_request
+    try:
+        check.post_check_run(REPO, "token", "codex-review", verdict)
+    finally:
+        check._request = original
+
+    assert posted["head_sha"] == old
+    assert posted["conclusion"] == "success"
+
+
 def test_skip_label_is_exempt():
     api = FakeGitHub(labels=["codex-review-not-required"])
     verdict = api.evaluate()
