@@ -1169,6 +1169,78 @@ async def _group_duplicates(
     }
 
 
+# --- held-out recall ----------------------------------------------------
+
+
+def _groups_to_pairs(groups: dict[str, str]) -> set[frozenset[str]]:
+    """All unordered ticket pairs that share a duplicate_group_id (size>1).
+
+    Singletons contribute no pairs. Each non-singleton group of *m* members
+    contributes C(m,2) pairs. Used only for recall measurement against
+    officer-confirmed duplicates (#72); the grouping path itself streams
+    buckets without ever materialising this set for the full slice.
+    """
+    members_by_group: dict[str, list[str]] = defaultdict(list)
+    for ticket, gid in groups.items():
+        members_by_group[gid].append(ticket)
+    pairs: set[frozenset[str]] = set()
+    for members in members_by_group.values():
+        if len(members) > 1:
+            for a, b in combinations(sorted(members), 2):
+                pairs.add(frozenset((a, b)))
+    return pairs
+
+
+def evaluate_held_out_recall(
+    officer_pairs: set[frozenset[str]],
+    dedup_groups: dict[str, str],
+) -> dict[str, int | float]:
+    """Recall of dedup groups against officer-confirmed duplicate pairs.
+
+    ``officer_pairs`` is the held-out set: unordered ticket pairs officers
+    already marked as duplicate via the two governed families
+    (``case already taken up`` + ``duplicate copy`` — ~34k baseline per
+    ROADMAP §5.2, queryable via ``duplicate_recall.sql``). ``dedup_groups``
+    is the post-``build_dedup_index`` mapping ``{ticket: duplicate_group_id}``.
+
+    Returns ``{"officer_pairs": int, "true_positives": int, "recall": float,
+    "dedup_pairs": int, "incremental_pairs": int, "incremental_groups": int}``
+    where ``incremental_pairs`` are dedup pairs with no officer label — the
+    actual capability claim — and ``incremental_groups`` counts dedup groups
+    that contain at least one incremental pair. Recall is ``1.0`` when
+    ``officer_pairs`` is empty (nothing to miss).
+
+    Callers that join dedup_groups to a lake must call
+    ``assert_group_source_snapshot`` first (#137); this helper does not touch
+    the DB and assumes its inputs already passed that guard.
+    """
+    dedup_pairs = _groups_to_pairs(dedup_groups)
+    true_positives = len(officer_pairs & dedup_pairs)
+    recall = true_positives / len(officer_pairs) if officer_pairs else 1.0
+    incremental_pairs = dedup_pairs - officer_pairs
+    # Groups that contributed at least one incremental pair.
+    incremental_groups = 0
+    members_by_group: dict[str, list[str]] = defaultdict(list)
+    for ticket, gid in dedup_groups.items():
+        members_by_group[gid].append(ticket)
+    for members in members_by_group.values():
+        if len(members) > 1:
+            has_incremental = any(
+                frozenset(pair) in incremental_pairs
+                for pair in combinations(sorted(members), 2)
+            )
+            if has_incremental:
+                incremental_groups += 1
+    return {
+        "officer_pairs": len(officer_pairs),
+        "true_positives": true_positives,
+        "recall": recall,
+        "dedup_pairs": len(dedup_pairs),
+        "incremental_pairs": len(incremental_pairs),
+        "incremental_groups": incremental_groups,
+    }
+
+
 # --- orchestration -----------------------------------------------------
 
 
@@ -1251,6 +1323,22 @@ def build_dedup_index(
     return asyncio.run(run())
 
 
+def _parse_slice(slice_label: str) -> tuple[str, int]:
+    """Parse ``District/YYYY`` into ``(district, year)`` for ``--slice``."""
+    if "/" not in slice_label:
+        raise ValueError(f"--slice must be District/YYYY, got {slice_label!r}")
+    district, year_str = slice_label.split("/", 1)
+    district = district.strip()
+    year_str = year_str.strip()
+    if not district or not year_str:
+        raise ValueError(f"--slice must be District/YYYY, got {slice_label!r}")
+    try:
+        year = int(year_str)
+    except ValueError as exc:
+        raise ValueError(f"--slice year must be an integer, got {year_str!r}") from exc
+    return district, year
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
@@ -1259,8 +1347,9 @@ def main() -> None:
             "duplicate groups."
         )
     )
-    parser.add_argument("--district", required=True, help="District name, as stored in complaints.district.")
-    parser.add_argument("--year", required=True, type=int, help="created_year to process.")
+    parser.add_argument("--district", required=False, default=None, help="District name, as stored in complaints.district.")
+    parser.add_argument("--year", required=False, type=int, default=None, help="created_year to process.")
+    parser.add_argument("--slice", required=False, default=None, help="Shorthand for --district/--year as District/YYYY (e.g. Sambalpur/2024).")
     parser.add_argument(
         "--oltp-url", default=None, help="OLTP DB URL (default: settings.OLTP_DB_URL)."
     )
@@ -1304,10 +1393,22 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+    # --slice is syntactic sugar for --district/--year (Sambalpur/2024).
+    district = args.district
+    year = args.year
+    if args.slice:
+        slice_district, slice_year = _parse_slice(args.slice)
+        if district is not None and district != slice_district:
+            parser.error("--district conflicts with --slice district")
+        if year is not None and year != slice_year:
+            parser.error("--year conflicts with --slice year")
+        district, year = slice_district, slice_year
+    if district is None or year is None:
+        parser.error("--district/--year or --slice is required")
 
     counts = build_dedup_index(
-        args.district,
-        args.year,
+        district,
+        year,
         oltp_url=args.oltp_url,
         salt=args.salt,
         window_days=args.window_days,
@@ -1325,8 +1426,8 @@ def main() -> None:
         counts["slice_signatures"],
         counts["comparison_pairs"],
         counts["large_buckets"],
-        args.district,
-        args.year,
+        district,
+        year,
     )
 
 
