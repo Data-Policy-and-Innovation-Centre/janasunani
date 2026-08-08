@@ -155,6 +155,7 @@ janasunani-api-live = "janasunani.inference.serve:main"
 janasunani-demo-preflight = "janasunani.inference.serve:preflight_main"
 janasunani-spam-score = "janasunani.pipeline.spam:main"
 janasunani-spam-scorecard = "janasunani.evaluation.spam_scorecard:main"
+janasunani-evaluate-benchmark = "janasunani.evaluation.benchmark_report:main"
 
 [build-system]
 requires = ["hatchling"]
