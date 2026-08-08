@@ -37,6 +37,14 @@ DOCUMENTS_DIR = RAW_DATA_DIR / "documents"
 # duplicating the literal.
 DEFAULT_OLTP_DB_URL = f"sqlite+aiosqlite:///{OLTP_DATA_DIR.as_posix()}/janasunani.db"
 
+# Demo slice — frozen via #64 (pre-committed highest-volume district×year, closed 07 Aug 2026).
+# The box backfill (#71) indexed this slice on 07 Aug 14:14: 55,544 signatures, 10,963 groups.
+DEMO_SLICE_DISTRICT = "Sambalpur"
+DEMO_SLICE_YEAR = 2024
+DEMO_SLICE_LABEL = f"{DEMO_SLICE_DISTRICT}/{DEMO_SLICE_YEAR}"
+DEMO_SLICE_SIZE = 55544
+DEMO_SLICE_GROUPS = 10963  # dedup_groups over the slice (box run 07 Aug 14:14, digest-guarded via #137)
+
 OUTPUTS_DIR = ROOT_DIR / "outputs"
 FIGURES_DIR = OUTPUTS_DIR / "figures"
 REPORTS_DIR = OUTPUTS_DIR / "reports"

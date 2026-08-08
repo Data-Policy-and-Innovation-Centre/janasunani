@@ -82,12 +82,12 @@ The only place phase status is recorded.
 | 6 | II | Model tracking (DVC is the tracker; MLflow helpers merged, unused) | 🔄 |
 | 7 | II | CI (ruff + pytest on a Postgres service container) | ✅ *(docs pending)* |
 | 8 | II | Real-time inference core (warm processor, live CLI) | ✅ |
-| 9 | II | Routing (rules built; crosswalk + learned scorer deferred; demo = `fallback`) | 🔄 |
+| 9 | II | Routing (rules built; crosswalk built, wiring pending — now `demo` via #33/`#74` bounded) | 🔄 |
 | 10 | II | Serving API (default mock + opt-in live wiring) | ✅ |
 | 11 | II | Demo frontend (Next.js, DPIC-branded; first cut) | 🔄 |
 | 12 | II | Demo integration & cloud deployment | 🔄 |
 | 13 | II | **Pipeline completion**: PII gold set, Presidio tuning, end-to-end run *(a)* | 🔄 *(gold set underway, #15)* |
-| 14 | II | **Spam & duplicate detection** *(b)* | 🔄 *(dedup index backfill runner merged, #71 — no real slice run yet, spam scoring not started)* |
+| 14 | II | **Spam & duplicate detection** *(b)* | 🔄 *(Sambalpur/2024 via #64: 55,544/55,544 indexed, 10,963 groups on 07 Aug 14:14 via #71 — recall + spam scorer + prevalence to do)* |
 | 15 | II | **Structured analytics I**: metrics layer, dashboards, spikes *(c)* — metric-registry slice: governed total-filings definition and protected grouped releases; cluster/citizen metrics remain unavailable pending dedup lake artifacts | 🔄 |
 | 16 | II | **A/B instrumentation + retrospective impact evidence** *(d)* | ⬜ |
 | 17 | II | **Sarvam benchmark + provider registry + egress control** *(e)* | ⬜ |
