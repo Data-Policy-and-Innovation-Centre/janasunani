@@ -17,6 +17,11 @@ The clean signal carries no commit sha, so freshness for that path is decided
 on time: the reaction must be newer than the head commit. A force-push of an
 older commit can therefore keep a stale :+1: valid; pushing new work cannot.
 
+There is a third thing Codex does: when the account is out of review credits
+it answers with an ordinary comment and reads nothing. That stays a failure --
+the diff really was not reviewed -- but it is reported as itself, because the
+usual "comment `@codex review`" advice cannot succeed in that state.
+
 Stdlib only, so the workflow runs it without installing the project.
 """
 
@@ -41,6 +46,11 @@ API_ROOT = "https://api.github.com"
 CODEX_LOGINS = {"chatgpt-codex-connector", "chatgpt-codex-connector[bot]"}
 
 REVIEWED_COMMIT_RE = re.compile(r"Reviewed commit:\*\*\s*`([0-9a-f]{7,40})`")
+
+# Out of review credits, Codex answers `@codex review` with a plain issue
+# comment and never looks at the diff. Without recognising it the check sits
+# red telling you to do the one thing that cannot work.
+QUOTA_RE = re.compile(r"usage limits for code reviews", re.IGNORECASE)
 
 # CONTRIBUTING.md exempts "small docs-only or config-only branches". Docs-only
 # is decidable from the diff; config-only is not, so it goes through the label.
@@ -170,10 +180,26 @@ def reviewed_shas(reviews: Iterable[dict[str, Any]]) -> list[str]:
     return found
 
 
-def latest_thumbs_up(rest: RestFetch, pr_number: int) -> datetime | None:
+def latest_quota_refusal(comments: Iterable[dict[str, Any]]) -> datetime | None:
+    """When Codex last declined to review because the account is out of credits."""
+    newest: datetime | None = None
+    for comment in comments:
+        if not is_codex((comment.get("user") or {}).get("login")):
+            continue
+        if not QUOTA_RE.search(comment.get("body") or ""):
+            continue
+        stamp = parse_timestamp(comment["created_at"])
+        if newest is None or stamp > newest:
+            newest = stamp
+    return newest
+
+
+def latest_thumbs_up(
+    rest: RestFetch, pr_number: int, comments: Iterable[dict[str, Any]]
+) -> datetime | None:
     """When Codex last signalled "clean" on the PR body or a comment."""
     targets = [f"issues/{pr_number}/reactions"]
-    for comment in rest(f"issues/{pr_number}/comments") or []:
+    for comment in comments:
         if (comment.get("reactions") or {}).get("total_count"):
             targets.append(f"issues/comments/{comment['id']}/reactions")
 
@@ -307,12 +333,28 @@ def evaluate(rest: RestFetch, graphql: GraphQLFetch, repo: str, pr_number: int) 
     reviewed = reviewed_shas(reviews)
     reviewed_head = any(head_sha.startswith(sha) for sha in reviewed)
 
-    thumbs_up = latest_thumbs_up(rest, pr_number)
+    comments = rest(f"issues/{pr_number}/comments") or []
+    thumbs_up = latest_thumbs_up(rest, pr_number, comments)
     head_commit = rest(f"commits/{head_sha}")
     head_time = parse_timestamp(head_commit["commit"]["committer"]["date"])
     cleared_head = thumbs_up is not None and thumbs_up > head_time
 
     if not reviewed_head and not cleared_head:
+        quota = latest_quota_refusal(comments)
+        if quota is not None and quota > head_time:
+            # Still a failure: the diff was not reviewed, and passing here
+            # would disable the gate exactly when it cannot do its job. Only
+            # the advice changes, because asking again will not help.
+            return Verdict(
+                "failure",
+                "Codex is out of review credits",
+                f"Codex declined to review `{head_sha[:10]}` at "
+                f"{quota:%Y-%m-%d %H:%M UTC}: the account has hit its code "
+                "review usage limit, so `@codex review` will not help. Add "
+                f"credits, or take the documented override with the "
+                f"`{SKIP_LABEL}` label and say why in the pull request.",
+                head_sha,
+            )
         return Verdict(
             "failure",
             f"Codex has not reviewed {head_sha[:10]}",

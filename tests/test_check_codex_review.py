@@ -255,6 +255,69 @@ def test_unresolved_thread_fails_even_when_a_fresh_thumbs_up_exists():
 
 
 # --------------------------------------------------------------------------
+# Codex out of review credits
+# --------------------------------------------------------------------------
+
+# Verbatim from PR #221, where the account hit its limit mid-review-round.
+QUOTA_BODY = (
+    "You have reached your Codex usage limits for code reviews. You can see "
+    "your limits in the [Codex usage dashboard](https://chatgpt.com/codex/"
+    "cloud/settings/usage).\nTo continue using code reviews, you can upgrade "
+    "your account or add credits to your account."
+)
+
+
+def quota_comment(at: str) -> dict[str, Any]:
+    return {"id": 7, "user": CODEX, "body": QUOTA_BODY, "created_at": at}
+
+
+def test_quota_refusal_is_reported_as_itself_not_as_a_missing_review():
+    api = FakeGitHub(comments=[quota_comment("2026-08-08T19:03:54Z")])
+    verdict = api.evaluate()
+    assert not verdict.ok
+    assert verdict.title == "Codex is out of review credits"
+    assert "`@codex review` will not help" in verdict.summary
+    assert "codex-review-not-required" in verdict.summary
+
+
+def test_quota_refusal_still_fails_the_gate():
+    """Passing here would switch the gate off exactly when it cannot do its job."""
+    api = FakeGitHub(comments=[quota_comment("2026-08-08T19:03:54Z")])
+    assert api.evaluate().conclusion == "failure"
+
+
+def test_quota_refusal_predating_the_head_does_not_change_the_message():
+    """Credits may have been topped up since; the ordinary advice applies again."""
+    api = FakeGitHub(comments=[quota_comment("2026-08-08T11:00:00Z")])
+    verdict = api.evaluate()
+    assert not verdict.ok
+    assert verdict.title.startswith("Codex has not reviewed")
+
+
+def test_a_review_of_the_head_beats_an_earlier_quota_refusal():
+    api = FakeGitHub(
+        comments=[quota_comment("2026-08-08T12:05:00Z")],
+        reviews=[codex_review(HEAD[:10])],
+        threads=[thread(resolved=True)],
+    )
+    assert api.evaluate().ok
+
+
+def test_quota_wording_from_a_human_is_not_the_signal():
+    api = FakeGitHub(
+        comments=[
+            {
+                "id": 7,
+                "user": HUMAN,
+                "body": "we have reached your Codex usage limits for code reviews",
+                "created_at": "2026-08-08T19:03:54Z",
+            }
+        ]
+    )
+    assert api.evaluate().title.startswith("Codex has not reviewed")
+
+
+# --------------------------------------------------------------------------
 # Exemptions
 # --------------------------------------------------------------------------
 
