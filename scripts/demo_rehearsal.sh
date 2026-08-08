@@ -174,6 +174,22 @@ phase_b_stack() {
   fi
   ok "health: processor:pipeline"
 
+  # Guard: refuse to persist synthetic grievance to non-throwaway stack without explicit confirmation
+  # Health only checks processor, so a localhost SSH tunnel to prod would still pass.
+  if [ "${REHEARSAL_ALLOW_PERSISTENT_API:-0}" != "1" ]; then
+    EFFECTIVE_OLTP_URL="$(uv run python -c "from janasunani.config import Settings; print(Settings().OLTP_DB_URL)" 2>/dev/null || echo "")"
+    DEMO_OLTP_URL="postgresql+asyncpg://postgres:demo@127.0.0.1:${PG_PORT:-5544}/janasunani"
+    if echo "$EFFECTIVE_OLTP_URL" | grep -q "postgresql" && [ "$EFFECTIVE_OLTP_URL" != "$DEMO_OLTP_URL" ]; then
+      fail "refusing to POST synthetic grievance — effective OLTP is non-demo postgres ($EFFECTIVE_OLTP_URL); set REHEARSAL_ALLOW_PERSISTENT_API=1 to confirm throwaway target or run 'make db' for local stack (see AGENTS.md)"
+      return 1
+    fi
+    DEFAULT_API_URL="http://127.0.0.1:${API_PORT:-8000}"
+    if [ "$API_URL" != "http://127.0.0.1:8000" ] && [ "$API_URL" != "$DEFAULT_API_URL" ]; then
+      fail "refusing to POST synthetic grievance to non-default API_URL ($API_URL) — set REHEARSAL_ALLOW_PERSISTENT_API=1 to confirm throwaway target (localhost tunnel to prod would persist to live DB)"
+      return 1
+    fi
+  fi
+
   # 2. Text submission — English grievance with district
   info "  POST /grievance (text + district) and validate response shape"
   TMPDIR_REHEARSAL="$(mktemp -d)"
@@ -221,7 +237,7 @@ method = data["routing"]["method"]
 if method == "mock":
     print(f"routing.method is mock — expected learned|rules|fallback", file=sys.stderr)
     sys.exit(1)
-print(f"submit ok: id={data.get('grievance_id')} routing.method={method} spam_score={score}")
+print(f"submit ok: id={data.get('id')} routing.method={method} spam_score={score}")
 PY
   then
     fail "POST /grievance response failed shape validation"
@@ -229,10 +245,10 @@ PY
   fi
   ok "POST /grievance shape"
 
-  # Extract grievance_id for round-trip
-  GRIEVANCE_ID="$(python3 -c "import json; print(json.load(open('$SUBMIT_JSON'))['grievance_id'])" 2>/dev/null || true)"
+  # Extract id for round-trip (GrievanceResult contract uses `id`, not `grievance_id`)
+  GRIEVANCE_ID="$(python3 -c "import json; print(json.load(open('$SUBMIT_JSON'))['id'])" 2>/dev/null || true)"
   if [ -z "$GRIEVANCE_ID" ]; then
-    fail "could not extract grievance_id from submission response"
+    fail "could not extract id from submission response"
     return 1
   fi
 
@@ -248,10 +264,10 @@ PY
 import json, sys
 a = json.load(open(sys.argv[1]))
 b = json.load(open(sys.argv[2]))
-if a["grievance_id"] != b["grievance_id"]:
-    print(f"grievance_id mismatch: {a['grievance_id']} vs {b['grievance_id']}", file=sys.stderr)
+if a["id"] != b["id"]:
+    print(f"id mismatch: {a['id']} vs {b['id']}", file=sys.stderr)
     sys.exit(1)
-# At least grievance_id and ticket_no should match
+# At least id and ticket_no should match
 if a.get("ticket_no") != b.get("ticket_no"):
     print(f"ticket_no mismatch", file=sys.stderr)
     sys.exit(1)
@@ -273,38 +289,28 @@ PY
   if ! python3 - "$SUPERVISOR_JSON" <<'PY'
 import json, sys
 data = json.loads(open(sys.argv[1]).read())
-# Supervisor shape: closurePanel, workloadPanel, spikePanel — each may be
-# Available or Unavailable. Warn if any is Unavailable*, fail only if all are.
-panels = ["closurePanel", "workloadPanel", "spikePanel"]
-if not any(k in data for k in panels):
-    # Some deployments use snake_case; accept either
-    panels = [k for k in data.keys() if "panel" in k.lower() or "Panel" in k]
-    if not panels:
-        print(f"supervisor response has no panel keys: {list(data.keys())[:10]}", file=sys.stderr)
-        sys.exit(2)
-    # If we fell back to discovery, check those
-    unavailable = sum(1 for k in panels if "Unavailable" in str(data[k]))
-    if unavailable == len(panels):
-        print(f"all supervisor panels unavailable: {panels}", file=sys.stderr)
-        sys.exit(1)
-    if unavailable:
-        print(f"WARN: {unavailable}/{len(panels)} supervisor panels unavailable", file=sys.stderr)
-    sys.exit(0)
-
+# Supervisor contract per janasunani/serving/schemas.py:SupervisorDashboard
+# Top-level keys are workload, spike, closure; availability via provenance.state
+expected = ["workload", "spike", "closure"]
+if not all(k in data for k in expected):
+    print(f"supervisor response missing workload/spike/closure: {list(data.keys())[:10]}", file=sys.stderr)
+    sys.exit(2)
 unavailable = 0
-for k in panels:
-    v = data.get(k)
-    if v is None:
+for k in expected:
+    v = data.get(k) or {}
+    prov = v.get("provenance") if isinstance(v, dict) else {}
+    state = prov.get("state") if isinstance(prov, dict) else ""
+    if state == "unavailable":
         unavailable += 1
+    elif state == "recorded":
         continue
-    # Panels may be tagged with type discriminator containing "Unavailable"
-    if "Unavailable" in str(v):
+    else:
         unavailable += 1
-if unavailable == len(panels):
+if unavailable == len(expected):
     print(f"all supervisor panels unavailable", file=sys.stderr)
     sys.exit(1)
 if unavailable:
-    print(f"WARN: {unavailable}/{len(panels)} supervisor panels unavailable", file=sys.stderr)
+    print(f"WARN: {unavailable}/{len(expected)} supervisor panels unavailable", file=sys.stderr)
 PY
   then
     rc=$?
@@ -319,14 +325,11 @@ PY
       return 1
     fi
   else
-    # Check if python printed a WARN about partial unavailability (exit 0 but stderr)
-    # We already handled exit codes; partial WARN is captured above but python still exits 0
-    # Detect via a second lighter check that re-uses the same logic? Simpler: re-run without exit logic to log.
     if python3 - "$SUPERVISOR_JSON" <<'PY2'
 import json, sys
 data=json.loads(open(sys.argv[1]).read())
-panels=["closurePanel","workloadPanel","spikePanel"]
-unavailable=sum(1 for k in panels if "Unavailable" in str(data.get(k)))
+expected=["workload","spike","closure"]
+unavailable=sum(1 for k in expected if (data.get(k) or {}).get("provenance", {}).get("state") == "unavailable")
 if unavailable:
     sys.exit(1)
 PY2
@@ -413,7 +416,7 @@ phase_c_artifacts() {
     check_artifact "outputs/findings" "closure findings" 0
   fi
 
-  # 3. Aggregates — DATA_DIR/aggregates or JANASUNANI_SUPERVISOR_FINDINGS_DIR
+  # 3. Aggregates — explicit JANASUNANI_SUPERVISOR_FINDINGS_DIR only; data/ probe requires opt-in per AGENTS.md
   AGG_DIR="${JANASUNANI_SUPERVISOR_FINDINGS_DIR:-}"
   if [ -n "$AGG_DIR" ] && [ -d "$AGG_DIR" ]; then
     AGG_COUNT="$(find "$AGG_DIR" -type f -name "*.csv" | wc -l | tr -d ' ')"
@@ -423,10 +426,7 @@ phase_c_artifacts() {
       check_artifact "$AGG_DIR/*.csv" "aggregates in JANASUNANI_SUPERVISOR_FINDINGS_DIR" 0
     fi
   else
-    # Default location per janasunani/config.py DATA_DIR/aggregates
-    if [ -d "data/interim" ]; then
-      # data/interim is the lake; aggregates are data/interim or data/aggregates depending on findings publish
-      # Try both data/aggregates and the env-configured path
+    if [ "${REHEARSAL_ALLOW_DATA:-0}" = "1" ]; then
       if [ -d "data/aggregates" ] && [ "$(find data/aggregates -type f -name "*.csv" 2>/dev/null | wc -l | tr -d ' ')" -gt 0 ]; then
         ok "aggregates: data/aggregates/"
       else
@@ -434,7 +434,7 @@ phase_c_artifacts() {
         info "  hint: run 'uv run janasunani-publish-workload' / 'janasunani-publish-intelligence --publish-aggregates' to publish"
       fi
     else
-      check_artifact "data/aggregates" "aggregates" 0
+      warn "aggregates: no JANASUNANI_SUPERVISOR_FINDINGS_DIR configured — skipping data/ probe per AGENTS.md (set REHEARSAL_ALLOW_DATA=1 to inspect data/ or configure JANASUNANI_SUPERVISOR_FINDINGS_DIR outside data/)"
     fi
   fi
 

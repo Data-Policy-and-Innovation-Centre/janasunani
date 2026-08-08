@@ -86,6 +86,16 @@ else
 fi
 ok "pipeline run complete — $PIPELINE_DB"
 
+# Guard: refuse to write rehearsal rows to non-throwaway OLTP without explicit confirmation
+# OLTP_URL may be empty while .env still points at production Postgres (python-dotenv).
+if [ "${JANASUNANI_ALLOW_PRODUCTION_E2E:-0}" != "1" ]; then
+  EFFECTIVE_OLTP_URL="$(uv run python -c "from janasunani.config import Settings; print(Settings().OLTP_DB_URL)" 2>/dev/null || echo "$OLTP_URL")"
+  DEMO_OLTP_URL="postgresql+asyncpg://postgres:demo@127.0.0.1:${PG_PORT:-5544}/janasunani"
+  if echo "$EFFECTIVE_OLTP_URL" | grep -q "postgresql" && [ "$EFFECTIVE_OLTP_URL" != "$DEMO_OLTP_URL" ]; then
+    fail "refusing to export to non-demo OLTP ($EFFECTIVE_OLTP_URL) — set JANASUNANI_ALLOW_PRODUCTION_E2E=1 to confirm or run 'make db' for throwaway (see AGENTS.md data-loss guard)"
+  fi
+fi
+
 # 4. Export to OLTP
 info "export to OLTP (OLTP_DB_URL=${OLTP_URL:-<default sqlite>})"
 if [ -n "$OLTP_URL" ]; then
