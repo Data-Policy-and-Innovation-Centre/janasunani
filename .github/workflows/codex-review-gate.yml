@@ -93,6 +93,14 @@ jobs:
         run: |
           set -euo pipefail
 
+          # The trusted copy is the base branch, so until this lands there the
+          # gate has nothing to run. Stay quiet rather than failing every open
+          # pull request on a workflow that is not deployed yet.
+          if [ ! -f scripts/check_codex_review.py ]; then
+            echo "::notice::Gate not yet on the base branch; nothing to enforce."
+            exit 0
+          fi
+
           for pr in $NUMBERS; do
             echo "::group::PR #$pr"
             python3 scripts/check_codex_review.py \
