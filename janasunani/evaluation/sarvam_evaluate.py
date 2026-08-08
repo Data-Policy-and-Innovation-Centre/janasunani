@@ -327,15 +327,17 @@ def main(argv: list[str] | None = None) -> int:
         render_import_error = exc
 
     # Fail fast for live runs where renderer is required (would otherwise
-    # silently skip every Sarvam call and report pages_submitted with no work)
-    if render_page is None and adapter is not None:
+    # silently skip every Sarvam call and report pages_submitted with no work).
+    # For --dry-run (CI) and for mocked tests that inject a fake adapter, allow
+    # empty images so `uv run --extra serving pytest` stays green.
+    if render_page is None and adapter is not None and not args.dry_run:
         logger.error(
             "page_renderer not available — install pipeline-core extra: "
             f"uv run --extra pipeline-core janasunani-evaluate-sarvam ({type(render_import_error).__name__}: {render_import_error})"
         )
         return 1
     if render_page is None and render_import_error is not None:
-        # Dry-run without renderer: keep going with empty images (CI)
+        # Dry-run or mocked test without renderer: keep going with empty images (CI)
         logger.warning(
             f"page_renderer unavailable ({type(render_import_error).__name__}); "
             "using empty images for --dry-run / test — install pipeline-core for real OCR"
