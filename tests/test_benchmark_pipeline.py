@@ -8,17 +8,12 @@ for the four variants standard / sarvam_digitise / sarvam_extract / sarvam_both.
 from __future__ import annotations
 
 import json
-import sys
-from pathlib import Path
 
 import pytest
 
 # Import the harness directly (import-light, no heavy ML deps)
 from scripts.benchmark_pipeline import (
     ALL_KEYS,
-    DEFAULT_N_IMAGE,
-    DEFAULT_N_TEXT,
-    DEFAULT_REPEATS,
     E2E_KEY,
     STAGES,
     VALID_VARIANTS,
