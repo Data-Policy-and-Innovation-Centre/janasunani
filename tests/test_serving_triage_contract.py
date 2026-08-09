@@ -1,5 +1,7 @@
 """Typed, advisory-only serving contract for issues #73 and #109."""
 
+import json
+
 import pytest
 from pydantic import ValidationError
 
@@ -244,3 +246,77 @@ def test_learned_routing_requires_aggregate_evidence():
             method="rules",
             empirical_evidence=evidence,
         )
+
+
+def test_a_campaign_survives_a_serialized_round_trip_with_signatories():
+    """Codex asked for a serialized provider response, not a hand-built object.
+
+    `store.py` persists `model_dump()` and re-validates on read, so a field
+    that only works in memory is not actually in the contract.
+    """
+    from janasunani.serving.schemas import DuplicateSignal
+
+    signal = DuplicateSignal(
+        duplicate_kind="campaign",
+        duplicate_group_id="GRP-1",
+        related_filings=18,
+        distinct_signatories=16,
+    )
+    restored = DuplicateSignal.model_validate(json.loads(signal.model_dump_json()))
+    assert restored.distinct_signatories == 16
+    assert restored.related_filings == 18
+
+
+def test_a_legacy_campaign_without_signatories_still_loads():
+    """Requiring the field would make every campaign recorded before it exists
+    unreadable, because the result store re-validates on read."""
+    from janasunani.serving.schemas import DuplicateSignal
+
+    restored = DuplicateSignal.model_validate(
+        {
+            "duplicate_kind": "campaign",
+            "duplicate_group_id": "GRP-legacy",
+            "related_filings": 18,
+        }
+    )
+    assert restored.distinct_signatories is None
+
+
+def test_more_signatories_than_filings_is_rejected():
+    """A counting bug that would inflate the ratio the badge is gated on."""
+    import pytest as _pytest
+
+    from janasunani.serving.schemas import DuplicateSignal
+
+    with _pytest.raises(ValueError, match="cannot exceed related_filings"):
+        DuplicateSignal(
+            duplicate_kind="campaign",
+            duplicate_group_id="GRP-2",
+            related_filings=3,
+            distinct_signatories=9,
+        )
+
+
+def test_the_mock_processor_emits_a_displayable_campaign():
+    """The regression Codex found: the guard must not blank the demo flow.
+
+    Every bucket-1 campaign the mock emits must carry enough evidence for the
+    frontend to render the badge, or the signatory gate removed a working
+    demo surface instead of rejecting an unverified group.
+    """
+    from janasunani.serving.processor import _mock_triage
+
+    # The bucket is a hash of the text, so vary the text rather than the ids.
+    seen_campaign = False
+    for index in range(64):
+        triage = _mock_triage(f"water supply irregular in ward {index}")
+        duplicate = triage.duplicate
+        if duplicate is not None and duplicate.duplicate_kind == "campaign":
+            seen_campaign = True
+            assert duplicate.distinct_signatories is not None, (
+                "a campaign the API emits carries no signatory evidence, so the "
+                "frontend guard will withhold the badge and the demo loses it"
+            )
+            assert duplicate.distinct_signatories >= 2
+            assert duplicate.distinct_signatories <= duplicate.related_filings
+    assert seen_campaign, "no campaign was produced; the assertion above never ran"

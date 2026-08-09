@@ -83,6 +83,27 @@ export type DuplicateDisplayState =
 const CAMPAIGN_MIN_SIGNATORIES = 2;
 const CAMPAIGN_SIGNATORY_RATIO = 0.5;
 
+/** Reason codes that mean the screening did not run, whatever score came back. */
+const UNSCORED_REASON_CODES = new Set<string>([
+  "advisory_provider_unavailable",
+  "live_review_disabled_pending_redacted_adjudication",
+]);
+
+/**
+ * Whether a spam score reflects an actual assessment.
+ *
+ * `unavailable_triage()` returns `spam_score: 0.0` and `spam_reason: "clean"`
+ * next to `reason_code: "advisory_provider_unavailable"`, so a null check
+ * alone cannot tell "screened and found clean" from "screening failed". The
+ * two must never render the same way: reporting a failed screening as a clean
+ * result is the kind of false reassurance an officer would act on.
+ */
+export function wasActuallyScored(spam: SpamReview): boolean {
+  if (spam.spam_score == null) return false;
+  if (spam.method === "unavailable") return false;
+  return !UNSCORED_REASON_CODES.has(spam.reason_code);
+}
+
 export function classifyDuplicateDisplay(
   duplicate: DuplicateSignal | null | undefined,
 ): DuplicateDisplayState {
@@ -150,6 +171,9 @@ export interface SpamReview {
   // (legacy records, advisory-unavailable). Advisory only — never a verdict.
   spam_score?: number | null;
   spam_reason?: SpamReason | null;
+  // Which scorer produced this, mirroring SpamReview.method on the wire.
+  // "unavailable" means no screening ran, whatever spam_score says.
+  method?: string | null;
   evidence: OcrQualityEvidence[];
 }
 

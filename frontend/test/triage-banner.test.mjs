@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const { classifyDuplicateDisplay, SPAM_REASON_MESSAGES } = await import(
+const { classifyDuplicateDisplay,
+  wasActuallyScored, SPAM_REASON_MESSAGES } = await import(
   "../lib/types.ts"
 );
 
@@ -139,4 +140,66 @@ test("the 'clean' message does not assert the grievance is genuine", () => {
   assert.equal(message.includes("legitimate"), false);
   assert.equal(message.includes("valid grievance"), false);
   assert.match(message, /not confirmation|screening/);
+});
+
+// --- Codex findings on #227 ---------------------------------------------
+
+test("a campaign the API actually emits is still displayed", () => {
+  // The mock processor emits bucket-1 campaigns. Before distinct_signatories
+  // reached the serving contract, the signatory guard classified every one of
+  // them as withheld, removing the campaign badge from the demo flow rather
+  // than rejecting an unverified group.
+  const display = classifyDuplicateDisplay({
+    duplicate_kind: "campaign",
+    duplicate_group_id: "GRP-1",
+    related_filings: 18,
+    distinct_signatories: 16,
+  });
+  assert.equal(display.kind, "campaign");
+  assert.equal(display.distinctSignatories, 16);
+});
+
+test("an unavailable screening does not report a clean score", () => {
+  // unavailable_triage() returns spam_score 0.0 and spam_reason "clean" next
+  // to reason_code "advisory_provider_unavailable". Reporting that as a clean
+  // result is false reassurance an officer would act on.
+  assert.equal(
+    wasActuallyScored({
+      decision: "abstained",
+      reason_code: "advisory_provider_unavailable",
+      spam_score: 0.0,
+      spam_reason: "clean",
+      method: "unavailable",
+      evidence: [],
+    }),
+    false,
+  );
+});
+
+test("a real clean score is still shown", () => {
+  assert.equal(
+    wasActuallyScored({
+      decision: "abstained",
+      reason_code: "clean",
+      spam_score: 0.07,
+      spam_reason: "clean",
+      method: "spam-v1-bounded",
+      evidence: [],
+    }),
+    true,
+  );
+});
+
+test("the legacy disabled-review state is not treated as scored", () => {
+  assert.equal(
+    wasActuallyScored({
+      decision: "abstained",
+      reason_code: "live_review_disabled_pending_redacted_adjudication",
+      spam_score: 0.0,
+      spam_reason: "clean",
+      method: "legacy-advisory",
+      evidence: [],
+    }),
+    false,
+  );
 });

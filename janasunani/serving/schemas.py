@@ -105,6 +105,22 @@ class DuplicateSignal(BaseModel):
     duplicate_group_id: str = Field(min_length=1)
     duplicate_ticket_no: Optional[str] = None
     related_filings: Optional[int] = Field(default=None, ge=2)
+    #: Distinct filers behind a campaign, never the group size.
+    #:
+    #: A campaign badge says "this is a collective grievance, not spam", and it
+    #: must never be attachable to one actor. The Sambalpur 2024 index holds a
+    #: group of 26,203 filings resolving to a single identity key, against
+    #: genuine campaigns at 1,155 signatories over 1,291 filings. On group size
+    #: alone those are indistinguishable; on signatories they are not.
+    #:
+    #: Optional rather than required, deliberately. ``store.py`` re-validates
+    #: persisted results on read, so making it mandatory would make every
+    #: campaign recorded before this field existed unreadable. A provider that
+    #: omits it is saying "I cannot evidence this", and the display guard
+    #: withholds the badge for exactly that case. The contract enforces
+    #: consistency when the number is present; the UI enforces what may be
+    #: claimed when it is absent.
+    distinct_signatories: Optional[int] = Field(default=None, ge=1)
 
     @model_validator(mode="after")
     def _kind_has_the_right_context(self) -> "DuplicateSignal":
@@ -113,10 +129,20 @@ class DuplicateSignal(BaseModel):
                 raise ValueError("resubmission requires duplicate_ticket_no")
             if self.related_filings is not None:
                 raise ValueError("resubmission must not carry related_filings")
+            if self.distinct_signatories is not None:
+                raise ValueError("resubmission must not carry distinct_signatories")
         elif self.duplicate_ticket_no is not None:
             raise ValueError("campaign must not carry duplicate_ticket_no")
         elif self.related_filings is None:
             raise ValueError("campaign requires related_filings")
+        elif (
+            self.distinct_signatories is not None
+            and self.distinct_signatories > self.related_filings
+        ):
+            # More signatories than filings is not a thin campaign, it is a
+            # counting bug, and it would inflate the ratio the badge is gated
+            # on in exactly the wrong direction.
+            raise ValueError("distinct_signatories cannot exceed related_filings")
         return self
 
 

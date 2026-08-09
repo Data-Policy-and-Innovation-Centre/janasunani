@@ -2,6 +2,7 @@ import Link from "next/link";
 import {
   SPAM_REASON_MESSAGES,
   classifyDuplicateDisplay,
+  wasActuallyScored,
   type TriageResult,
 } from "@/lib/types";
 import { Badge } from "./ui";
@@ -17,16 +18,21 @@ export function TriageBanner({ triage }: { triage: TriageResult }) {
     (evidence) => evidence.kind === "repetition_collapse",
   );
   const duplicateDisplay = classifyDuplicateDisplay(duplicate);
-  // Advisory only: a numeric score never determines review outcome, so its
-  // display always carries that caveat alongside the value.
-  const spamScoreLine =
-    spam.spam_score != null ? (
-      <p className="mt-1 text-xs text-text-secondary">
-        low-signal: <code>{spam.spam_reason ?? spam.reason_code}</code>{" "}
-        (spam_score {spam.spam_score.toFixed(2)}). Advisory only — it does
-        not determine the review outcome.
-      </p>
-    ) : null;
+  // A failed screening is not a clean result. `unavailable_triage()` returns
+  // spam_score 0.0 and spam_reason "clean" alongside
+  // reason_code "advisory_provider_unavailable", so rendering on a non-null
+  // score alone would report "clean (spam_score 0.00)" for a screening that
+  // never ran. Show the number only when something actually scored it.
+  //
+  // Advisory either way: a numeric score never determines the review outcome,
+  // so the caveat travels with the value.
+  const spamScoreLine = wasActuallyScored(spam) ? (
+    <p className="mt-1 text-xs text-text-secondary">
+      low-signal: <code>{spam.spam_reason ?? spam.reason_code}</code>{" "}
+      (spam_score {spam.spam_score!.toFixed(2)}). Advisory only — it does
+      not determine the review outcome.
+    </p>
+  ) : null;
 
   return (
     <section
