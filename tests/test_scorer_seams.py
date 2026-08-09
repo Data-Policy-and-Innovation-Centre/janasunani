@@ -273,3 +273,36 @@ def test_an_injected_router_is_the_one_the_processor_uses():
     )
     assert router.calls, "the injected router was bypassed"
     assert result.routing.dept == "Test Department"
+
+
+def test_router_status_rejects_a_corrupt_crosswalk(tmp_path, monkeypatch):
+    """Codex finding on #234: presence is not validity.
+
+    `load_crosswalk` returns None for a file that exists but is corrupt, and
+    the router then falls through to the mapping tables. A status probe based
+    on `is_file()` reports "first rung is learned" for exactly that file,
+    reproducing the false assurance the probe exists to prevent.
+    """
+    import janasunani.routing.crosswalk as crosswalk_mod
+
+    corrupt = tmp_path / "routing_crosswalk.json"
+    corrupt.write_text("{not valid json")
+    monkeypatch.setattr(crosswalk_mod, "DEFAULT_ARTIFACT", corrupt)
+    monkeypatch.delenv(ROUTER_ENV_VAR, raising=False)
+
+    name, ok, detail = router_status()
+    assert name == ROUTER_DEFAULT
+    assert ok is False
+    assert "unreadable or structurally invalid" in detail
+
+
+def test_router_status_distinguishes_missing_from_corrupt(tmp_path, monkeypatch):
+    """The two need different operator actions, so they must read differently."""
+    import janasunani.routing.crosswalk as crosswalk_mod
+
+    monkeypatch.setattr(crosswalk_mod, "DEFAULT_ARTIFACT", tmp_path / "absent.json")
+    monkeypatch.delenv(ROUTER_ENV_VAR, raising=False)
+
+    _, ok, detail = router_status()
+    assert ok is False
+    assert "missing" in detail

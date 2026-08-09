@@ -97,12 +97,18 @@ def router_from_env(value: str | None = None) -> RoutingProvider:
 def router_status() -> tuple[str, bool, str]:
     """Report ``(name, ok, detail)`` naming the rung that will answer first.
 
-    Deliberately cheap: it inspects the crosswalk artifact on disk rather than
-    constructing the router, so preflight can run before any model is warm.
-    ``ok`` is False only when the selection is degraded relative to what was
-    configured, not when routing is merely unavailable-but-expected.
+    Validates by **loading** the crosswalk, not by checking that a file
+    exists. Those differ exactly where it matters: ``load_crosswalk`` returns
+    ``None`` for a file that is present but corrupt or structurally invalid,
+    and the router then falls through to the mapping tables. A presence check
+    would report "first rung is learned" for precisely that file, which is the
+    same false assurance this probe was added to prevent. Reproducing the bug
+    inside the check for it would be worse than having no check.
+
+    The cost is loading one JSON artifact, which preflight can afford: it
+    already opens a real OLTP connection when one is configured.
     """
-    from janasunani.routing.crosswalk import DEFAULT_ARTIFACT
+    from janasunani.routing.crosswalk import DEFAULT_ARTIFACT, load_crosswalk
 
     configured = os.environ.get(ROUTER_ENV_VAR, "").strip().lower() or ROUTER_DEFAULT
 
@@ -120,15 +126,35 @@ def router_status() -> tuple[str, bool, str]:
             f"{ROUTER_ENV_VAR}={configured!r} is unknown; falling back to the default router",
         )
 
-    if DEFAULT_ARTIFACT.is_file():
+    try:
+        # Pass the path explicitly: `load_crosswalk`'s default is bound at
+        # definition time, so relying on it would report on a different file
+        # than the one named in the detail string.
+        crosswalk = load_crosswalk(DEFAULT_ARTIFACT)
+    except Exception as exc:  # pragma: no cover - load_crosswalk is documented not to raise
+        return (
+            ROUTER_DEFAULT,
+            False,
+            f"crosswalk could not be loaded ({exc}); routing degrades to mapping "
+            "tables then fallback",
+        )
+
+    if crosswalk is not None:
         return (
             ROUTER_DEFAULT,
             True,
-            f"crosswalk artifact present at {DEFAULT_ARTIFACT.name}; first rung is learned",
+            f"crosswalk loaded from {DEFAULT_ARTIFACT.name}; first rung is learned",
         )
+
+    present = DEFAULT_ARTIFACT.is_file()
+    reason = (
+        "present but unreadable or structurally invalid"
+        if present
+        else "missing"
+    )
     return (
         ROUTER_DEFAULT,
         False,
-        "crosswalk artifact missing; routing degrades to mapping tables then fallback "
-        "(run janasunani-build-crosswalk to restore method:learned)",
+        f"crosswalk artifact {reason}; routing degrades to mapping tables then "
+        "fallback (run janasunani-build-crosswalk to restore method:learned)",
     )
