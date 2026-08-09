@@ -20,11 +20,18 @@ The repo is one Python package (`janasunani/`) built **phase by phase** (see
   document-processing pipeline, and the AWS infrastructure (an always-on CPU
   box + an on-demand GPU box).
 - **The demo — in progress:** single-grievance inference, hybrid
-  routing, FastAPI serving, and the Next.js demo. The serving API skeleton is on
-  `main`; the routing engine, live persistence, lake-backed history, MLflow
-  registry, and a first-cut DPIC-branded Next.js frontend are ongoing on feature
-  branches. Phase 8 now provides an opt-in real local-model server behind the
-  same contract; the default API remains mocked for frontend development.
+  routing, FastAPI serving, and the Next.js demo. On `main`: the serving API in
+  both flavours (mock by default, opt-in real local models behind the same
+  contract), live persistence, the empirical routing crosswalk wired ahead of
+  the ORTPSA mapping tables, the DPIC-branded Next.js frontend, spam scoring
+  and the duplicate index, the intelligence findings (workload, spikes,
+  themes), and the Sarvam benchmark behind egress control. `make up` brings the
+  API and the frontend up together. MLflow helpers are merged but used only by
+  the benchmark harness, not as a registry.
+
+  Per-phase status is in [docs/ROADMAP.md](docs/ROADMAP.md) §2, which is the
+  only place it is recorded — code being on `main` is not the same as a phase
+  being closed.
 
   Re-scoped 2026-07-27 to five components: pipeline replication, spam & duplicate
   detection, the intelligence layer, A/B testing of AI automation, and a Sarvam
@@ -91,13 +98,39 @@ uv run janasunani-closure-finding --print-sql  # the view definitions, for hando
 Governed SQL marts plus the findings built on them, with the caveats each number
 must be quoted with: [janasunani/analytics/README.md](janasunani/analytics/README.md).
 
+### 2c · Intelligence layer (workload, spikes, themes)
+
+```bash
+uv run janasunani-publish-workload      # filings vs distinct problems (dedup-adjusted)
+uv run janasunani-publish-intelligence  # EWMA spike decomposition over category × district × week
+uv run janasunani-publish-themes        # concentrated-and-rising themes within one category
+```
+
+Aggregates only, computed from redacted text and digest-guarded dedup groups —
+never raw grievance text. The workload and spike outputs need the dedup index
+(§4b) to exist first.
+
+### 2d · Routing crosswalk (history → category/district → department)
+
+```bash
+uv run janasunani-build-crosswalk       # → janasunani/routing/reference/routing_crosswalk.json
+```
+
+The ORTPSA master tables carry no category-to-department link, so the crosswalk
+is learned from where complaints were actually sent. It is the first rung of
+the live router, ahead of the mapping tables and the generic fallback. It
+records incidence, not outcome quality: see the module docstring in
+[janasunani/routing/crosswalk.py](janasunani/routing/crosswalk.py) before
+quoting it as a recommendation.
+
 ### 3 · Document pipeline (scanned docs → text/redaction/summary/category)
 
 Heavy deps live in four extras (`pipeline-core`, `pii`, `ocr-deepseek`,
-`categorizer`). `pii` is a small, compiler-free redaction/evaluation
-environment, intentionally separate from the inherited `numpy<2` pipeline
-environment. Run the stages that need each extra in sequential invocations
-against the same artifact DB:
+`categorizer`), alongside the light `serving` extra and `demo`, the
+conflict-free set the live API runs on. `pii` is a small, compiler-free
+redaction/evaluation environment, intentionally separate from the inherited
+`numpy<2` pipeline environment. Run the stages that need each extra in
+sequential invocations against the same artifact DB:
 
 ```bash
 uv run --extra pipeline-core janasunani-pipeline run \
@@ -140,6 +173,19 @@ uv run janasunani-export-pipeline --db data/processed/pipeline.sqlite  # → OLT
 uv run --extra pii janasunani-evaluate-pii --gold <gold.jsonl> # gate: coverage ≥ 0.8056
 ```
 
+### 4b · Triage over a corpus slice (redact → dedup → spam)
+
+```bash
+uv run --extra pii janasunani-redact-grievance --district Sambalpur --year 2024
+uv run janasunani-dedup-index --slice Sambalpur/2024   # near-duplicate groups → OLTP
+uv run janasunani-spam-score --slice Sambalpur/2024    # prevalence CSV + Markdown
+uv run janasunani-spam-scorecard --slice Sambalpur/2024
+```
+
+Slice-at-a-time by design: everything downstream reads the redacted text, not
+the raw grievance. The dedup index is what the workload and spike findings
+(§2c) count distinct problems with.
+
 ### 5 · Sample English complaints + documents (evaluation bundles)
 
 ```bash
@@ -163,24 +209,54 @@ Downloads each complaint's document to S3 (or local disk in dev) and records
 status back into OLTP. *Currently parked: live Janasunani API credentials are
 unavailable.*
 
-### 7 · Demo API (default mock or opt-in live processor)
+### 7 · Demo API and frontend (default mock or opt-in live processor)
+
+```bash
+make up                                       # API + Next.js UI together; Ctrl-C stops both
+make down                                     # tear down API, frontend, throwaway Postgres
+make rehearsal                                # the 13 Aug freeze gate (static + stack + artifacts)
+```
+
+Or one piece at a time:
 
 ```bash
 uv run --extra serving janasunani-api        # mock; http://127.0.0.1:8000, docs at /docs
 
+make models                                  # DVC-pull only the demo model artifacts
 uv run --extra demo janasunani-demo-preflight # check models + OCR binaries are ready
 uv run --extra demo janasunani-api-live       # real models behind the same contract
+make frontend                                 # Next.js UI on :3000, pointed at the API
 ```
 
 The full endpoint surface the frontend builds against (`POST /grievance`,
 `GET /grievance/{id}`, `GET /history`, `/health`) with a mocked processor
 returning the real response shapes — no models load. The live command (the
 conflict-free `demo` extra) strictly loads local DVC model artifacts and runs
-pytesseract, Presidio, MuRIL, BART, and rules routing behind the same contract,
-persisting each submission to `live_grievances` when `OLTP_DB_URL` is set.
+pytesseract, Presidio, MuRIL, BART, and the crosswalk → mappings → fallback
+router behind the same contract, persisting each submission to `live_grievances`
+when `OLTP_DB_URL` is set. `/health` reports `{"processor":"pipeline"}` once
+warm-up finishes; the mock returns `routing.method: "mock"` and the UI badges it
+as such.
 Full step-by-step bring-up (preflight → Postgres/migrations → launch → health →
 submit): **[docs/DEMO.md](docs/DEMO.md)**.
 Contract details: [janasunani/serving/README.md](janasunani/serving/README.md).
+Frontend: [frontend/README.md](frontend/README.md).
+
+### 8 · Benchmark and the Sarvam head-to-head
+
+```bash
+uv run python scripts/benchmark_pipeline.py          # per-stage latency, ticket-clustered SE
+uv run janasunani-evaluate-sarvam --input <dir> --out outputs/sarvam --dry-run
+uv run janasunani-evaluate-benchmark                 # → outputs/benchmark/ (Table 2)
+uv run janasunani-evaluate-benchmark --check         # validate existing outputs, regenerate nothing
+```
+
+`--dry-run` renders and runs pytesseract only: no Sarvam call, no spend. Dropping
+it sends citizen text off the box through the audited egress channel in
+[janasunani/egress/sarvam.py](janasunani/egress/sarvam.py), which logs every call
+to an audit DB and enforces the run's rate and spend limits. Read
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) "Security invariants" before the
+first real run.
 
 ### Tests (the gate for every change)
 
@@ -191,7 +267,9 @@ uv run ruff check .
 ```
 
 **Never against the production Postgres container** — see
-[tests/README.md](tests/README.md).
+[tests/README.md](tests/README.md). The complete pre-PR list (lockfile,
+standards sync, DVC dag, nbstripout) is in
+[CONTRIBUTING.md](CONTRIBUTING.md#required-checks).
 
 ### Cloud
 
@@ -208,19 +286,40 @@ The GPU box is a `gpu_box_count = 0/1` toggle (~$1/hr while up).
   storage layers, environments, infrastructure, invariants.
 - [docs/DEMO.md](docs/DEMO.md) — live-inference demo runbook (preflight →
   Postgres/migrations → `janasunani-api-live` → health → submit).
+- [docs/DELIVERY.md](docs/DELIVERY.md) — the dated commitment for 14 August:
+  what is promised, who owns it, what the fallback is. Governs demo scope.
 - [docs/DEPLOY.md](docs/DEPLOY.md) — end-to-end cloud deployment runbook
   (provision → migrate → run → back up; the two boxes and hard rules).
+- [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) — the timed 43-minute client
+  walkthrough on the laptop stack.
+- [docs/PERFORMANCE.md](docs/PERFORMANCE.md) — measured numbers, with the
+  commit and date each was measured against.
+- [docs/FINDINGS.md](docs/FINDINGS.md) — the five reproducible findings for the
+  demonstration.
+- [docs/PII_GOLD_ENSEMBLE.md](docs/PII_GOLD_ENSEMBLE.md) — the ensemble-gold
+  protocol standing in for the human annotation pass.
+- [docs/AB_PLAN.md](docs/AB_PLAN.md) — the A/B estimator, power calculation and
+  assignment design. Locked before any outcome data is viewed.
+- [docs/CPU_BOX_RUNBOOK.md](docs/CPU_BOX_RUNBOOK.md) — operating the CPU box.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — required checks, data and PII policy,
+  gold-metric gates, PR size, and the review protocol.
+  [AGENTS.md](AGENTS.md) covers where things live and how to run them.
 - Per-package detail: [db](janasunani/db/README.md) ·
   [migration](janasunani/migration/README.md) ·
   [ingestion](janasunani/ingestion/README.md) ·
   [olap](janasunani/olap/README.md) ·
+  [analytics](janasunani/analytics/README.md) ·
   [pipeline](janasunani/pipeline/README.md) ·
   [inference](janasunani/inference/README.md) ·
   [serving](janasunani/serving/README.md) ·
+  [frontend](frontend/README.md) ·
   [deploy](deploy/README.md) ·
   [terraform](deploy/terraform/README.md) ·
   [scripts](scripts/README.md) ·
   [tests](tests/README.md)
+
+`routing`, `egress`, `evaluation`, `tracking`, and `pii` have no package README
+yet; their module docstrings carry the design notes.
 
 ## Contributor reference
 
@@ -299,24 +398,23 @@ make deliver                        # publish figures/tables/reports to Box
 
 ### Contributing
 
+**[CONTRIBUTING.md](CONTRIBUTING.md) is authoritative** for the full pre-PR
+check list, the data and PII policy, the gold-metric gates, PR size, and the
+review protocol. `uv run pytest` on its own is not the gate — the suite needs
+extras, and the PII suite runs in its own environment. Org-wide commit, branch
+and review conventions live in
+[.dpic/standards/agent-conventions.md](.dpic/standards/agent-conventions.md),
+synced from `dpic-org` and not edited here.
+
 Keep pull requests small enough for a reviewer to understand in one sitting.
 Separate unrelated changes into separate PRs, especially when data, analysis
 logic, and report formatting change independently.
 
-Before opening a PR, run:
-
-```bash
-uv run ruff check .
-uv run pytest
-```
-
-Use Ruff for Python linting. Prefer small, explicit functions and project-local
-helpers over one-off notebook-only logic when code will be reused.
-
-If you work with notebooks, install the output-stripping hook once
-(`uv run nbstripout --install`) and commit notebooks only after outputs have
-been stripped. Do not commit large rendered notebook outputs, temporary
-exports, or local execution artifacts.
+Prefer small, explicit functions and project-local helpers over one-off
+notebook-only logic when code will be reused. If you work with notebooks,
+install the output-stripping hook once (`uv run nbstripout --install`) and
+commit notebooks only after outputs have been stripped. Do not commit large
+rendered notebook outputs, temporary exports, or local execution artifacts.
 
 Data files under `data/` are proprietary by default. Do not commit raw,
 interim, processed, or output data directly to Git. Use DVC for approved data
