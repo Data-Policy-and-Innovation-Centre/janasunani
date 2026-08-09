@@ -1304,6 +1304,136 @@ def test_e2e_pipeline_script_covers_required_steps():
     assert "set -e" in text or "set -euo pipefail" in text
 
 
+def test_e2e_pipeline_script_resets_the_default_scratch_db_before_running():
+    """#215: a stale PIPELINE_DB from a prior run must not silently make the
+    rehearsal non-isolated (every stage skips already-processed rows, the
+    exporter re-upserts old ones into OLTP). Static check that the reset
+    guard and the `init-db` call are both present; the guard's actual
+    refuse/reset behavior is exercised for real below."""
+    text = E2E_PIPELINE_SH_PATH.read_text()
+    assert "init-db" in text
+    assert 'DEFAULT_PIPELINE_DB="data/output/pipeline-e2e.sqlite"' in text
+    assert "E2E_ALLOW_DB_RESET" in text
+    assert 'rm -f "$PIPELINE_DB"' in text
+
+
+def test_e2e_pipeline_script_refuses_to_delete_a_non_default_pipeline_db(tmp_path):
+    """#215 regression test: the destructive `rm -f "$PIPELINE_DB"` path must
+    never fire against a database this script did not itself pick as
+    disposable -- e.g. the pipeline CLI's OWN default artifact DB
+    (data/output/pipeline.sqlite), which a real ingestion run may have
+    populated. Runs the real script (copied verbatim, like the deploy.sh
+    stub tests above) against a stale non-default PIPELINE_DB and confirms
+    it refuses and exits non-zero *before* touching the file -- not a grep
+    over the script text."""
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    script_copy = scripts_dir / "e2e_pipeline.sh"
+    shutil.copy(E2E_PIPELINE_SH_PATH, script_copy)
+    script_copy.chmod(0o755)
+
+    stale_db = tmp_path / "pipeline.sqlite"  # NOT the script's own default name
+    marker = b"stale artifact db -- must not be touched by the guard"
+    stale_db.write_bytes(marker)
+
+    fixture = ROOT_DIR / "tests" / "fixtures" / "demo_letter.png"
+    assert fixture.exists(), "test fixture missing"
+
+    env = dict(os.environ)
+    env["FIXTURE"] = str(fixture)
+    env["PIPELINE_DB"] = str(stale_db)
+    env.pop("E2E_ALLOW_DB_RESET", None)
+    env.pop("E2E_ALLOW_REUSE_DB", None)
+
+    result = subprocess.run(
+        ["bash", str(script_copy)],
+        cwd=scripts_dir,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    combined = result.stdout + result.stderr
+
+    assert result.returncode != 0, combined
+    assert "refusing to remove" in combined, combined
+    assert "E2E_ALLOW_DB_RESET" in combined
+    # The guard must fire before anything destructive happens -- the stale
+    # file must survive completely untouched.
+    assert stale_db.read_bytes() == marker
+
+
+def test_e2e_pipeline_script_allows_reuse_with_explicit_opt_in(tmp_path):
+    """The companion positive case: E2E_ALLOW_REUSE_DB=1 must let a
+    non-default, pre-existing PIPELINE_DB through without deleting it."""
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    script_copy = scripts_dir / "e2e_pipeline.sh"
+    shutil.copy(E2E_PIPELINE_SH_PATH, script_copy)
+    script_copy.chmod(0o755)
+
+    stale_db = tmp_path / "pipeline.sqlite"
+    marker = b"stale artifact db -- reuse must not touch this"
+    stale_db.write_bytes(marker)
+
+    fixture = ROOT_DIR / "tests" / "fixtures" / "demo_letter.png"
+
+    env = dict(os.environ)
+    env["FIXTURE"] = str(fixture)
+    env["PIPELINE_DB"] = str(stale_db)
+    env["E2E_ALLOW_REUSE_DB"] = "1"
+    # Point MODELS_DIR at a location with no models -- the script only warns
+    # on a missing models dir, and we don't need the run to actually
+    # succeed; we only need to observe the DB guard's own decision before
+    # the (heavy, model-dependent) pipeline run step runs.
+    env["MODELS_DIR"] = str(tmp_path / "no-models")
+
+    result = subprocess.run(
+        ["bash", str(script_copy)],
+        cwd=scripts_dir,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    combined = result.stdout + result.stderr
+
+    # The guard itself must not refuse or delete -- whatever happens
+    # downstream (the real pipeline run needs models this environment may
+    # not have) is out of scope for this test.
+    assert "refusing to remove" not in combined, combined
+    assert "reusing existing pipeline DB" in combined, combined
+    assert stale_db.read_bytes() == marker
+
+
+def test_demo_rehearsal_script_checks_specific_closure_artifact_names():
+    """#216: the closure gate must check for the exact filenames
+    janasunani/serving/intelligence.py's closure reader accepts
+    (_CLOSURE_ARTIFACT_NAMES), not "any file present in outputs/findings/".
+    A PII/discard finding sitting in that directory must not make the gate
+    report closure artifacts as available."""
+    text = REHEARSAL_SH_PATH.read_text()
+    assert "closure_finding_summary.csv" in text
+    assert "closure_recording_no_action.csv" in text
+    # The old bug: gating success on "any file in outputs/findings/ exists"
+    # rather than one of the two specific names above.
+    assert 'find outputs/findings -type f | wc -l' not in text
+
+
+def test_demo_rehearsal_script_honors_the_aggregates_dir_env_var():
+    """#218: JANASUNANI_SUPERVISOR_AGGREGATES_DIR (workload/spike) must not
+    be silently overwritten with JANASUNANI_SUPERVISOR_FINDINGS_DIR
+    (closure) -- the two are configured separately in
+    janasunani/serving/intelligence.py's supervisor_provider_from_env /
+    ArtifactSupervisorProvider, and the rehearsal's AGG_DIR must mirror that
+    same fallback (aggregates dir first, findings dir only as a fallback)."""
+    text = REHEARSAL_SH_PATH.read_text()
+    assert (
+        'AGG_DIR="${JANASUNANI_SUPERVISOR_AGGREGATES_DIR:-${JANASUNANI_SUPERVISOR_FINDINGS_DIR:-}}"'
+        in text
+    )
+
+
 def test_makefile_has_rehearsal_target():
     """`make rehearsal` must exist and delegate to scripts/demo_rehearsal.sh."""
     text = MAKEFILE_PATH.read_text()

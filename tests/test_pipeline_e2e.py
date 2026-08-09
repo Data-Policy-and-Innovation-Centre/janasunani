@@ -397,50 +397,62 @@ def test_stage_order_is_six_and_no_spam_stage():
     assert len(STAGE_ORDER) == 6
 
 
-def _try_run_spam_sidecar(config: PipelineConfig, sidecar_path: Path) -> bool:
-    """Score redacted_text as a sidecar after PII — never gates page-type.
+def _try_run_spam_sidecar(config: PipelineConfig, sidecar_path: Path) -> None:
+    """Score redacted_text via the production live-triage path, then write a
+    JSON probe for the downstream count-reconciliation assertions below.
 
-    Uses the bounded scorer (pipeline/spam) over redacted_text only; writes
-    a JSON sidecar with spam_score in [0,1] and spam_reason. Returns True if
-    the real scorer ran, False if simulated (still writes a valid sidecar so
-    downstream hops can be verified and counts reconcile).
+    ``spam.json`` here is a **test probe file, not a production artifact**
+    (issue #219): no production batch writer emits a per-page spam sidecar —
+    batch spam scores the lake slice instead (``janasunani.pipeline.spam:main``,
+    ``janasunani-spam-score``), and live submissions score through exactly
+    the path exercised here: ``janasunani.serving.triage.UnwiredTriageProvider``,
+    which wraps the bounded ``spam-v1-bounded`` scorer via
+    ``score_spam_review``. Going through the provider — rather than calling
+    ``score_spam`` directly, as this helper used to — means a break anywhere
+    in that live wiring (the provider, ``score_spam_review``, or the scorer
+    itself) fails this test loudly. The prior version's ``except ImportError``
+    branch fabricated a deterministic score whenever the import failed for
+    any reason, so the gate stayed green even with the real path broken —
+    there is no such fallback here.
     """
     import json
+    from datetime import UTC, datetime
 
-    try:
-        from janasunani.pipeline.spam import score_spam  # noqa: F401
-    except ImportError:
-        # Simulate: read redacted_text and write a deterministic sidecar
-        with connect(config.db_path) as con:
-            rows = con.execute("SELECT page_id, redacted_text FROM pages").fetchall()
-            redacted = " ".join(r["redacted_text"] or "" for r in rows)
-        # simple bounded score for simulation
-        spam_score = 0.07 if len(redacted.split()) > 8 else 0.68
-        spam_reason = "clean" if spam_score < 0.5 else "low_signal_details_inadequate"
-        sidecar_path.parent.mkdir(parents=True, exist_ok=True)
-        sidecar_path.write_text(json.dumps({"spam_score": spam_score, "spam_reason": spam_reason}), encoding="utf-8")
-        return False
-    from janasunani.pipeline.spam import score_spam
+    from janasunani.serving.triage import UnwiredTriageProvider
 
     with connect(config.db_path) as con:
         rows = con.execute("SELECT page_id, redacted_text, extracted_text FROM pages").fetchall()
     # Score over redacted_text; fallback to extracted if redacted missing
     texts = [r["redacted_text"] or r["extracted_text"] or "" for r in rows]
     combined = " ".join(texts)
-    # Real scorer is CI-safe (import-light). If import succeeded, a failure
-    # on valid redacted input must fail the test — no fabricated fallback.
-    scored = score_spam(combined)
-    import json as _json
+
+    result = UnwiredTriageProvider().assess(
+        redacted_text=combined, district=None, submitted_on=datetime.now(UTC)
+    )
+    spam = result.spam
+    assert spam.reason_code != "advisory_provider_unavailable", (
+        "production spam scorer unavailable via UnwiredTriageProvider.assess "
+        "— refusing to fabricate a score to keep this test green"
+    )
+    assert spam.spam_score is not None
+    assert 0.0 <= spam.spam_score <= 1.0
+    assert spam.spam_reason in ("low_signal_details_inadequate", "low_signal_no_grievance", "repetition_collapse", "length_too_short", "clean")
 
     sidecar_path.parent.mkdir(parents=True, exist_ok=True)
-    sidecar_path.write_text(_json.dumps({"spam_score": scored.spam_score, "spam_reason": scored.spam_reason}), encoding="utf-8")
-    assert 0.0 <= scored.spam_score <= 1.0
-    assert scored.spam_reason in ("low_signal_details_inadequate", "low_signal_no_grievance", "repetition_collapse", "length_too_short", "clean")
-    return True
+    sidecar_path.write_text(
+        json.dumps({"spam_score": spam.spam_score, "spam_reason": spam.spam_reason}),
+        encoding="utf-8",
+    )
 
 
 def test_spam_sidecar_after_pii_before_page_type_writes_bounded_score(tmp_path):
-    """Spam signal is a sidecar after PII, before page-type — not a pipeline gate."""
+    """Spam signal is a sidecar after PII, before page-type — not a pipeline gate.
+
+    Exercises the production live-triage path (``UnwiredTriageProvider`` ->
+    ``score_spam_review`` -> ``score_spam``), the same wiring
+    ``scripts/demo_rehearsal.sh`` Phase B checks via a live ``POST
+    /grievance``'s ``triage.spam.spam_score`` — see issue #219.
+    """
     input_dir = tmp_path / "input"
     db = tmp_path / "pipeline.sqlite"
     sidecar = tmp_path / "sidecar" / "spam.json"

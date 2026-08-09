@@ -403,38 +403,49 @@ phase_c_artifacts() {
     info "  hint: run 'uv run janasunani-build-crosswalk' and commit the artifact to restore method:learned"
   fi
 
-  # 2. Closure summary in outputs/findings/ (Unit 4a)
+  # 2. Closure summary in outputs/findings/ (Unit 4a) — must be one of the
+  #    two filenames janasunani/serving/intelligence.py's closure reader
+  #    (_CLOSURE_ARTIFACT_NAMES) actually accepts. Any other file present in
+  #    the directory (a PII/discard finding, say) does not make the
+  #    supervisor closure panel available, so the gate must not report
+  #    success on that alone.
   if [ -d "outputs/findings" ]; then
-    FINDINGS_COUNT="$(find outputs/findings -type f | wc -l | tr -d ' ')"
-    if [ "$FINDINGS_COUNT" -gt 0 ]; then
-      ok "findings: outputs/findings/ ($FINDINGS_COUNT file(s))"
-      ls -1 outputs/findings | head -20 | sed 's/^/    /'
-    else
-      check_artifact "outputs/findings/closure_finding_summary.csv" "closure findings (outputs/findings/ empty)" 0
+    ls -1 outputs/findings | head -20 | sed 's/^/    /'
+  fi
+  closure_ok=""
+  for name in closure_finding_summary.csv closure_recording_no_action.csv; do
+    if [ -f "outputs/findings/$name" ]; then
+      ok "closure: outputs/findings/$name"
+      closure_ok=1
+      break
     fi
-  else
-    check_artifact "outputs/findings" "closure findings" 0
+  done
+  if [ -z "$closure_ok" ]; then
+    check_artifact "outputs/findings/closure_finding_summary.csv" "closure findings (neither closure_finding_summary.csv nor closure_recording_no_action.csv present)" 0
   fi
 
-  # 3. Aggregates — explicit JANASUNANI_SUPERVISOR_FINDINGS_DIR only; data/ probe requires opt-in per AGENTS.md
-  AGG_DIR="${JANASUNANI_SUPERVISOR_FINDINGS_DIR:-}"
+  # 3. Aggregates — explicit JANASUNANI_SUPERVISOR_AGGREGATES_DIR, falling
+  #    back to JANASUNANI_SUPERVISOR_FINDINGS_DIR (mirrors
+  #    ArtifactSupervisorProvider's own fallback in intelligence.py); data/
+  #    probe requires opt-in per AGENTS.md
+  AGG_DIR="${JANASUNANI_SUPERVISOR_AGGREGATES_DIR:-${JANASUNANI_SUPERVISOR_FINDINGS_DIR:-}}"
   if [ -n "$AGG_DIR" ] && [ -d "$AGG_DIR" ]; then
     AGG_COUNT="$(find "$AGG_DIR" -type f -name "*.csv" | wc -l | tr -d ' ')"
     if [ "$AGG_COUNT" -gt 0 ]; then
       ok "aggregates: $AGG_DIR ($AGG_COUNT csv(s))"
     else
-      check_artifact "$AGG_DIR/*.csv" "aggregates in JANASUNANI_SUPERVISOR_FINDINGS_DIR" 0
+      check_artifact "$AGG_DIR/*.csv" "aggregates in JANASUNANI_SUPERVISOR_AGGREGATES_DIR/JANASUNANI_SUPERVISOR_FINDINGS_DIR" 0
     fi
   else
     if [ "${REHEARSAL_ALLOW_DATA:-0}" = "1" ]; then
       if [ -d "data/aggregates" ] && [ "$(find data/aggregates -type f -name "*.csv" 2>/dev/null | wc -l | tr -d ' ')" -gt 0 ]; then
         ok "aggregates: data/aggregates/"
       else
-        check_artifact "data/aggregates/*.csv" "workload/spike aggregates (data/aggregates/ or JANASUNANI_SUPERVISOR_FINDINGS_DIR)" 0
+        check_artifact "data/aggregates/*.csv" "workload/spike aggregates (data/aggregates/ or JANASUNANI_SUPERVISOR_AGGREGATES_DIR/JANASUNANI_SUPERVISOR_FINDINGS_DIR)" 0
         info "  hint: run 'uv run janasunani-publish-workload' / 'janasunani-publish-intelligence --publish-aggregates' to publish"
       fi
     else
-      warn "aggregates: no JANASUNANI_SUPERVISOR_FINDINGS_DIR configured — skipping data/ probe per AGENTS.md (set REHEARSAL_ALLOW_DATA=1 to inspect data/ or configure JANASUNANI_SUPERVISOR_FINDINGS_DIR outside data/)"
+      warn "aggregates: no JANASUNANI_SUPERVISOR_AGGREGATES_DIR/JANASUNANI_SUPERVISOR_FINDINGS_DIR configured — skipping data/ probe per AGENTS.md (set REHEARSAL_ALLOW_DATA=1 to inspect data/ or configure one of them outside data/)"
     fi
   fi
 
