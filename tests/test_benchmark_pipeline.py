@@ -319,9 +319,13 @@ def test_real_run_records_per_stage_from_the_timing_sink():
 
 
 def test_cli_multi_variants(tmp_path):
+    # `--fake` is explicit: this asserts the CLI's output shape, not latency.
+    # Without it the harness builds a real processor, which needs the DVC-
+    # mirrored models that CI deliberately does not pull.
     out = tmp_path / "latency.json"
     rc = bench_mod.main(
         [
+            "--fake",
             "--variants",
             "standard",
             "sarvam_digitise",
@@ -345,7 +349,7 @@ def test_cli_multi_variants(tmp_path):
 def test_cli_no_warm_discard(tmp_path):
     out = tmp_path / "latency.json"
     rc = bench_mod.main(
-        ["--variant", "standard", "--n-docs", "2", "--n-image-docs", "0", "--repeats", "2", "--output", str(out), "--no-warm-discard"]
+        ["--fake", "--variant", "standard", "--n-docs", "2", "--n-image-docs", "0", "--repeats", "2", "--output", str(out), "--no-warm-discard"]
     )
     assert rc == 0
     data = json.loads(out.read_text())
