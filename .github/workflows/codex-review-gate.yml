@@ -13,10 +13,11 @@ name: Codex Review Gate
 #      branch, not the pull request head. The check run is therefore created
 #      against `head_sha` through the API rather than reported by the job.
 #
-# Branch protection should require the check named `codex-review`, which this
-# job creates through the API. The job itself is deliberately named something
-# else: a job called `codex-review` would produce a second, always-green check
-# run under the same name, and protection would accept that one instead.
+# The `no-push-only-pr` ruleset on `main` should require the check named
+# `codex-review`, which this job creates through the API. The job itself is
+# deliberately named something else: a job called `codex-review` would produce
+# a second, always-green check run under the same name, and the ruleset would
+# accept that one instead.
 
 on:
   pull_request:

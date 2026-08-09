@@ -35,8 +35,22 @@ change:
 uv lock --upgrade-package dpic && uv sync && uv run dpic-sync-standards
 ```
 
-CI runs Lint, Pipeline, and Data Check on every pull request. It does not run
-the heavy ML extras, and it never executes a data stage.
+CI runs Lint, Pipeline, Data Check, and the Codex Review Gate on every pull
+request. It does not run the heavy ML extras, and it never executes a data
+stage.
+
+`main` is governed by the `no-push-only-pr` ruleset: no force-push, no
+deletion, and changes land only through a pull request. Its required status
+checks are `ruff`, `test-and-validate-pipeline`, and `no-raw-data-in-git`, and
+**every review thread must be resolved** before the merge button unlocks. No
+approving review is required, and nobody can bypass the ruleset.
+
+The Codex Review Gate publishes a check run named `codex-review` that turns
+that protocol into a pass/fail signal
+([.github/workflows/codex-review-gate.yml](.github/workflows/codex-review-gate.yml)).
+`codex-review` is **not yet in the ruleset's required checks**, so today it
+reports without blocking a merge. Making it binding means adding that context
+to the ruleset: add the check name, not the job that creates it.
 
 Every feature ships with pytest tests that exercise the real code path. Green
 before "done", not after review.
@@ -116,8 +130,10 @@ restating the description.
    path, and confirm the tests would fail without the fix.
 2. **Request a Codex review** by commenting `@codex review` on the pull
    request. Do this for anything touching the pipeline, serving, deploy, PII,
-   or data paths, and re-request after pushing a material change. Small
-   docs-only or config-only branches do not need one.
+   or data paths. Codex names the commit it read, and the gate binds its
+   verdict to that sha, so **re-request after every push**, not only after a
+   material change. A clean run leaves no review at all, only a :+1: reaction;
+   the gate accepts that when the reaction is newer than the head commit.
 3. **Handle the findings under the protocol** in
    [.dpic/standards/agent-conventions.md](.dpic/standards/agent-conventions.md).
    Findings are claims to verify, not instructions to execute. Reproduce before
@@ -132,4 +148,20 @@ restating the description.
 
 Do not merge with review comments left unanswered. Every finding ends in one of
 three states: fixed in the branch, filed as an issue, or rejected in a reply
-that shows the evidence.
+that shows the evidence — and then **the thread is resolved**. Resolving is what
+both the ruleset and the gate count, so a finding answered in a reply but left
+open blocks the merge outright.
+
+### When the review is not required
+
+The gate decides this itself; it is not a judgement call at merge time.
+
+- **Docs-only branches** are exempt automatically, up to 400 changed lines.
+  Past that the branch goes through the normal review: a docs change large
+  enough to restate a policy is worth reading.
+- **Config-only branches** cannot be told apart from a diff, so they need the
+  `codex-review-not-required` label. Say in the pull request why.
+
+If Codex answers `@codex review` with a plain comment about usage limits, the
+account is out of review credits and read nothing. The check stays red and
+re-commenting cannot clear it; wait for the quota, or use the label and say so.
