@@ -18,18 +18,20 @@ from typing import Any, Callable, Optional, Protocol
 from janasunani.config import DEFAULT_OLTP_DB_URL, MODELS_DIR, Settings
 from janasunani.inference.ocr import OcrQualityError, OcrResult
 from janasunani.pipeline.stages.page_type_classifier import PAGE_TYPE_CLASS_BY_LABEL
+from janasunani.routing.provider import RoutingProvider, router_from_env, router_status
 from janasunani.serving.schemas import (
     ClassificationResult,
     ExtractionResult,
     GrievanceResult,
     PIIEntity,
     RedactionResult,
-    RoutingResult,
 )
 from janasunani.serving.triage import (
     TriageProvider,
     TriageUnavailableError,
     UnwiredTriageProvider,
+    triage_provider_from_env,
+    triage_status,
     unavailable_triage,
 )
 
@@ -61,14 +63,10 @@ class _Summarizer(Protocol):
     def summarize(self, text: str) -> str: ...
 
 
-class _Router(Protocol):
-    def route(
-        self,
-        *,
-        category: str,
-        subcategory: Optional[str] = None,
-        district: Optional[str] = None,
-    ) -> RoutingResult: ...
+#: The routing seam now lives with the routers it describes. Kept as an alias
+#: because this private name is the annotation on the processor constructor and
+#: is imported by tests.
+_Router = RoutingProvider
 
 
 class PipelineGrievanceProcessor:
@@ -552,6 +550,38 @@ def _routing_mappings_check() -> DependencyCheck:
     return DependencyCheck("routing mappings", True, detail, required=False)
 
 
+def _router_check() -> DependencyCheck:
+    """Which routing rung will actually answer the first live submission.
+
+    ``_routing_mappings_check`` above covers the CSV masters, which are the
+    *second* rung. This one covers the selection itself, because those are
+    different failures: the masters can be present and healthy while the
+    crosswalk artifact is missing, and the demo then serves ``method:"rules"``
+    or ``"fallback"`` while everyone believes routing is learned.
+    PERFORMANCE.md recorded exactly that state on 7 August.
+    """
+    try:
+        name, ok, detail = router_status()
+    except Exception as exc:  # pragma: no cover - defensive; never raise
+        return DependencyCheck("router", False, f"unavailable: {exc}", required=False)
+    return DependencyCheck(f"router ({name})", ok, detail, required=False)
+
+
+def _triage_check() -> DependencyCheck:
+    """Which spam scorer is live, and whether it is learned or heuristic.
+
+    Reported so the distinction cannot be lost between the code and the
+    narrative: what ships today is ``spam-v1-bounded``, a deterministic
+    cascade, and a demo that calls it a trained model is claiming #74 without
+    having built it.
+    """
+    try:
+        name, ok, detail = triage_status()
+    except Exception as exc:  # pragma: no cover - defensive; never raise
+        return DependencyCheck("triage", False, f"unavailable: {exc}", required=False)
+    return DependencyCheck(f"triage ({name})", ok, detail, required=False)
+
+
 # The exact columns janasunani/serving/history.py's LakeHistory.search()
 # selects. Duplicated here (not imported) rather than sharing a constant with
 # janasunani.serving.history: preflight lives in this module specifically so
@@ -737,17 +767,30 @@ def preflight(models_dir: str | Path | None = None) -> list[DependencyCheck]:
     # OLTP_DB_URL is explicitly set: it opens a real, timeout-bounded
     # connection (_OLTP_PROBE_TIMEOUT_S) rather than just checking presence.
     checks.append(_routing_mappings_check())
+    checks.append(_router_check())
+    checks.append(_triage_check())
     checks.append(_lake_check())
     checks.append(_oltp_check())
     return checks
 
 
-def build_processor(models_dir: str | Path | None = None) -> PipelineGrievanceProcessor:
+def build_processor(
+    models_dir: str | Path | None = None,
+    *,
+    router: "RoutingProvider | None" = None,
+    triage_provider: TriageProvider | None = None,
+) -> PipelineGrievanceProcessor:
     """Strictly construct and warm the production processor.
 
     Local page-type and categorizer artifacts are mandatory.  Any missing
     dependency, artifact, public BART load, or Presidio initialization error
     propagates and aborts startup; this function never substitutes the mock.
+
+    ``router`` and ``triage_provider`` are the swap points. Both default to
+    the environment factories rather than to a hard-coded singleton, which is
+    what lets a trained model replace either one without a call-site change.
+    Explicit injection still wins over the environment, matching the idiom
+    ``create_app`` already uses for its providers.
     """
     root = _resolve_models_root(models_dir)
     categorizer_dir = root / "categorizer"
@@ -785,8 +828,6 @@ def build_processor(models_dir: str | Path | None = None) -> PipelineGrievancePr
     from janasunani.pipeline.stages.ocr_extraction.pytesseract_backend import (
         extract_text,
     )
-    from janasunani.routing.rules import DEFAULT_ROUTER
-
     def run_ocr(document_bytes: bytes, document_name: str) -> OcrResult:
         from janasunani.inference.ocr import ocr_document
 
@@ -806,7 +847,10 @@ def build_processor(models_dir: str | Path | None = None) -> PipelineGrievancePr
         detect_pii=detect_pii_spans,
         categorizer=categorizer,
         summarizer=summarizer,
-        router=DEFAULT_ROUTER,
+        router=router if router is not None else router_from_env(),
         is_english_compatible=_is_english,
         detect_language=_detect_language,
+        triage_provider=(
+            triage_provider if triage_provider is not None else triage_provider_from_env()
+        ),
     )
