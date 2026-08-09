@@ -84,6 +84,19 @@ rewrite the baseline. The two closure entrypoints also reconcile the portable
 window-function mart against an independently structured DuckDB `arg_max`
 query before writing either artifact.
 
+The intelligence-layer findings (Phase 15) sit alongside them and read the
+dedup index and the redacted text rather than the action history:
+
+```bash
+uv run janasunani-publish-workload      # filings vs distinct problems, digest-guarded
+uv run janasunani-publish-intelligence  # EWMA spike decomposition, category × district × week
+uv run janasunani-publish-themes        # concentrated-and-rising themes within one category
+```
+
+These read the **redacted** text only, and label a spike by which measure drove
+it — filings, distinct problems, or distinct citizens — so a campaign is not
+reported as a false spike.
+
 Two house rules, enforced by tests rather than by convention:
 
 - **Aggregates only.** No finding prints a row of citizen writing. Where one

@@ -10,8 +10,23 @@ as scripts rather than DVC stages. Each is safe to re-run.
 | `sample_english_complaints.py` | Sample English complaints (subject + document) into a zip (below). |
 | `bootstrap_pii_gold.py` | OCR a bundle + pre-annotate with the production analyzer → draft gold JSONL for the PII eval (below). |
 | `evaluate_pii_redaction.py` | Thin wrapper over `janasunani-evaluate-pii` (the PII gold-JSONL gate). |
+| `rederive_pii_draft.py` | Rebuild a gold file's pre-annotation draft from the gold's own text (below). |
+| `verify_pii_gold.py` | Review a corrected PII gold file by statistics and structure, without printing citizen text. |
+| `benchmark_pipeline.py` | Per-stage latency with ticket-clustered SE, feeding the benchmark report. |
+| `demo_rehearsal.sh` | The 13 Aug freeze gate on the laptop stack, behind `make rehearsal`. |
+| `e2e_pipeline.sh` | Tier-3 end-to-end pipeline rehearsal over a non-PII fixture (pipeline → export → materialize → smoke). Not CI. |
 | `setup.sh` | Workspace setup backing `make setup` (uv, rclone, AWS CLI, hooks). |
 | `infra_status.py` | Read-only health pass over the cloud infra, behind `make infra` (below). |
+| `box_ssh.py` | Open tcp/22 to your current IP, then SSH to the CPU box, behind `make ssh`. |
+| `md_to_docx.py` | Render a repo Markdown doc to a DPIC-branded Word file, behind `make docs`. |
+| `analysis/` | One-off analysis scripts behind the findings CLIs (closure, discards, duplicates, misrouting, Sarvam sampling). |
+
+Two are repository checks rather than data jobs:
+
+| Script | What it does |
+|---|---|
+| `check_codex_review.py` | Turns the Codex review signal into the `codex-review` check. Run by [the gate workflow](../.github/workflows/codex-review-gate.yml), not by hand; see [CONTRIBUTING §Review](../CONTRIBUTING.md#review). Stdlib only, so it runs without installing the project. |
+| `check_provenance_sidecars.py` | Verifies `data/external/*.provenance.json` holds metadata and nothing else. Nothing invokes it yet — run it by hand when a sidecar changes. |
 
 ## infra_status.py
 
