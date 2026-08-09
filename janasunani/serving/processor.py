@@ -181,6 +181,11 @@ def _mock_triage(text: str) -> TriageResult:
                 duplicate_kind="campaign",
                 duplicate_group_id=group_id,
                 related_filings=18,
+                # 16 people behind 18 filings: the shape of a real collective
+                # grievance, and what the badge is allowed to claim. A mock
+                # that omitted this would be modelling a state the contract no
+                # longer permits.
+                distinct_signatories=16,
             ),
             duplicate_review=DuplicateReview(decision="matched"),
             spam=mock_low_signal,
