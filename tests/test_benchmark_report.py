@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 from pathlib import Path
 
@@ -225,6 +226,87 @@ def test_cli_check_detects_corrupt_json(tmp_path: Path):
     p.write_text(json.dumps(data))
     rc = benchmark_report.main(["--out", str(tmp_path), "--check"])
     assert rc == 1
+
+
+def test_cli_check_detects_corrupt_markdown(tmp_path: Path):
+    # #212: --check must validate the Markdown artifact too, not just
+    # confirm table2.md exists. A corrupt/stale Markdown must fail --check
+    # even though table2.json is untouched and schema-valid.
+    rc = benchmark_report.main(["--out", str(tmp_path)])
+    assert rc == 0
+    md_path = tmp_path / "table2.md"
+    md_path.write_text("CORRUPT")
+    rc = benchmark_report.main(["--out", str(tmp_path), "--check"])
+    assert rc == 1
+
+
+def test_cli_check_passes_when_markdown_matches_json(tmp_path: Path):
+    rc = benchmark_report.main(["--out", str(tmp_path)])
+    assert rc == 0
+    rc = benchmark_report.main(["--out", str(tmp_path), "--check"])
+    assert rc == 0
+
+
+def test_cli_check_fails_on_stale_report_without_allow_stale(tmp_path: Path):
+    # #214: --check must fail (nonzero) on a >7d-old generated_at unless
+    # --allow-stale is passed — a warning-only check cannot enforce the
+    # rehearsal freeze window.
+    rc = benchmark_report.main(["--out", str(tmp_path)])
+    assert rc == 0
+    json_path = tmp_path / "table2.json"
+    md_path = tmp_path / "table2.md"
+    data = json.loads(json_path.read_text())
+    stale_ts = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=8)).isoformat()
+    data["generated_at"] = stale_ts
+    json_path.write_text(json.dumps(data, indent=2, sort_keys=True, default=str))
+    # Regenerate the Markdown from the same stale data so only the
+    # staleness check (not the #212 Markdown check) is under test here.
+    md_path.write_text(benchmark_report.render_markdown(data))
+
+    rc = benchmark_report.main(["--out", str(tmp_path), "--check"])
+    assert rc == 1
+
+    rc = benchmark_report.main(["--out", str(tmp_path), "--check", "--allow-stale"])
+    assert rc == 0
+
+
+def _regenerate_with(tmp_path: Path, mutate) -> None:
+    """Write table2.json through *mutate*, keeping the Markdown consistent."""
+    json_path = tmp_path / "table2.json"
+    data = json.loads(json_path.read_text())
+    mutate(data)
+    json_path.write_text(json.dumps(data, indent=2, sort_keys=True, default=str))
+    (tmp_path / "table2.md").write_text(benchmark_report.render_markdown(data))
+
+
+def test_check_fails_when_generated_at_is_missing(tmp_path: Path):
+    """Codex finding on #226: the freshness gate must not be skippable.
+
+    A stale artifact could otherwise pass --check by deleting the field the
+    gate reads and regenerating the Markdown around it, which is exactly how
+    an out-of-date table reaches a demo unnoticed.
+    """
+    assert benchmark_report.main(["--out", str(tmp_path)]) == 0
+    _regenerate_with(tmp_path, lambda d: d.pop("generated_at", None))
+
+    assert benchmark_report.main(["--out", str(tmp_path), "--check"]) == 1
+    # The escape hatch still works, and says what it is not checking.
+    assert benchmark_report.main(["--out", str(tmp_path), "--check", "--allow-stale"]) == 0
+
+
+@pytest.mark.parametrize("bad", ["", "not-a-timestamp", "2026-13-45T99:99:99", 12345])
+def test_check_fails_when_generated_at_is_unparseable(tmp_path: Path, bad):
+    assert benchmark_report.main(["--out", str(tmp_path)]) == 0
+    _regenerate_with(tmp_path, lambda d: d.__setitem__("generated_at", bad))
+
+    assert benchmark_report.main(["--out", str(tmp_path), "--check"]) == 1
+    assert benchmark_report.main(["--out", str(tmp_path), "--check", "--allow-stale"]) == 0
+
+
+def test_a_fresh_report_still_passes_check(tmp_path: Path):
+    """The guard must not turn a good report red."""
+    assert benchmark_report.main(["--out", str(tmp_path)]) == 0
+    assert benchmark_report.main(["--out", str(tmp_path), "--check"]) == 0
 
 
 def test_cli_latency_path(tmp_path: Path):

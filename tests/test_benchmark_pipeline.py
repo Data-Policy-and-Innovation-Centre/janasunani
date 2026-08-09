@@ -8,6 +8,10 @@ for the four variants standard / sarvam_digitise / sarvam_extract / sarvam_both.
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -18,6 +22,7 @@ from scripts.benchmark_pipeline import (
     STAGES,
     VALID_VARIANTS,
     _clustered_se,
+    _fake_process,
     _percentile,
     compute_stage_stats,
     latency_json_payload,
@@ -28,6 +33,8 @@ from scripts.benchmark_pipeline import (
 
 # Also import the script as module for CLI tests
 import scripts.benchmark_pipeline as bench_mod
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_valid_variants_are_exactly_four_expected():
@@ -305,6 +312,88 @@ def test_cli_no_warm_discard(tmp_path):
     data = json.loads(out.read_text())
     assert data["warm_discarded"] is False
     assert data["stages"]["e2e"]["n"] == 4  # 2 docs * 2 repeats
+
+
+def test_fake_process_same_call_is_deterministic():
+    # Same inputs, same process: must be bit-identical (sanity before the
+    # cross-process PYTHONHASHSEED check below).
+    t1 = _fake_process("standard", "SYN-TXT-0001", 1, seed=42)
+    t2 = _fake_process("standard", "SYN-TXT-0001", 1, seed=42)
+    assert t1.e2e == t2.e2e
+    assert t1.per_stage == t2.per_stage
+
+
+def test_fake_process_timings_stable_across_pythonhashseed():
+    """Regression for #208: rng_seed must not be derived from hash().
+
+    Python salts hash() per-interpreter via PYTHONHASHSEED, so seeding the
+    RNG from hash((seed, ticket, repeat_idx, variant)) made identical
+    --seed + docs produce different fake latency means/SEs across
+    machines/runs. The fix (hashlib.sha256 digest) must give the same
+    fake timings for the same inputs regardless of PYTHONHASHSEED.
+    """
+    script = (
+        "import json, sys; "
+        "from scripts.benchmark_pipeline import _fake_process; "
+        "t = _fake_process('sarvam_extract', 'SYN-TXT-0007', 2, seed=42); "
+        "print(json.dumps({'e2e': t.e2e, 'per_stage': t.per_stage}))"
+    )
+    outputs = []
+    for hashseed in ("0", "1", "1337"):
+        env = dict(os.environ)
+        env["PYTHONHASHSEED"] = hashseed
+        proc = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=str(REPO_ROOT),
+            check=True,
+        )
+        outputs.append(json.loads(proc.stdout.strip()))
+    assert outputs[0] == outputs[1] == outputs[2], (
+        f"fake timings differ across PYTHONHASHSEED: {outputs}"
+    )
+
+
+def test_cli_repeats_one_with_warm_discard_rejected(tmp_path, capsys):
+    # #209: --repeats 1 with default warmup discard means every observation
+    # is the discarded warm one — the harness must reject this instead of
+    # silently writing an all-zero latency report with exit 0.
+    out = tmp_path / "latency.json"
+    with pytest.raises(SystemExit) as exc:
+        bench_mod.main(
+            ["--repeats", "1", "--output", str(out), "--fake", "--n-docs", "2", "--n-image-docs", "0"]
+        )
+    assert exc.value.code == 2
+    assert not out.exists()
+    err = capsys.readouterr().err
+    assert "--repeats" in err
+    assert "--no-warm-discard" in err
+
+
+def test_cli_repeats_one_with_no_warm_discard_is_allowed(tmp_path):
+    # The sole observation is retained (not discarded) when warmup discard
+    # is explicitly turned off, so repeats=1 is legitimate there.
+    out = tmp_path / "latency.json"
+    rc = bench_mod.main(
+        [
+            "--repeats",
+            "1",
+            "--no-warm-discard",
+            "--output",
+            str(out),
+            "--fake",
+            "--n-docs",
+            "2",
+            "--n-image-docs",
+            "0",
+        ]
+    )
+    assert rc == 0
+    data = json.loads(out.read_text())
+    assert data["stages"]["e2e"]["n"] == 2
+    assert data["stages"]["e2e"]["mean_seconds"] > 0
 
 
 def test_benchmark_end_to_end_structure_matches_output_spec(tmp_path):
