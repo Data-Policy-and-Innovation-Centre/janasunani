@@ -31,6 +31,7 @@ available; this harness reports wall-clock only.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import random
@@ -322,8 +323,15 @@ def _fake_process(
     statistics path deterministically. When callers want real sleep, set
     ``BENCHMARK_FAKE_SLEEP=1``.
     """
-    # Seed per ticket+repeat for deterministic per-doc variation
-    rng_seed = hash((seed, ticket, repeat_idx, variant)) & 0xFFFFFFFF
+    # Seed per ticket+repeat for deterministic per-doc variation. Python's
+    # hash() is salted per-interpreter via PYTHONHASHSEED, so it must not
+    # feed the RNG here — the same --seed would silently produce different
+    # fake latency means/SEs across machines and runs. A stable digest keeps
+    # outputs/benchmark/latency.json reproducible for a given seed+docs.
+    digest = hashlib.sha256(
+        f"{seed}:{ticket}:{repeat_idx}:{variant}".encode()
+    ).digest()
+    rng_seed = int.from_bytes(digest[:8], "big") & 0xFFFFFFFF
     rng = random.Random(rng_seed)
     return _fake_timings_for_variant(variant, ticket, repeat_idx, rng)
 
@@ -672,6 +680,14 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("at least one of --n-docs or --n-image-docs must be > 0")
 
     discard_warm = not args.no_warm_discard
+    if args.repeats == 1 and discard_warm:
+        # With repeats=1 and warmup discard on, every observation is the
+        # discarded warm one — the harness would silently write an
+        # all-zero latency report (mean 0, se 0, n=0) with exit 0.
+        parser.error(
+            "--repeats must be >= 2 when discarding warmup, "
+            "or pass --no-warm-discard"
+        )
 
     # Fake mode is explicit and non-publishable; real mode wires processor.
     # For backward compat with existing tests that call main() without --fake,
