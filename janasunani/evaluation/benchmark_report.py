@@ -42,6 +42,10 @@ DEFAULT_SPAM_ALT_PATH: Path = DEFAULT_OUT_DIR / "spam.json"
 DEFAULT_DEDUP_PATH: Path = DEFAULT_OUT_DIR / "dedup.json"
 NOT_MEASURED: str = "not_measured"
 
+#: A report older than this fails ``--check`` unless ``--allow-stale``.
+#: Kept in step with the mtime warning in ``scripts/demo_rehearsal.sh``.
+STALE_REPORT_DAYS: int = 7
+
 
 def _try_load_json(path: Path | None) -> dict[str, Any] | None:
     if path is None:
@@ -786,23 +790,48 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:
             print(f"check failed: unreadable {json_path}: {exc}")
             return 1
+        # A missing or unparseable timestamp is a failure, not a skip. The
+        # freshness gate is only enforceable if the field it reads is
+        # required: otherwise a stale artifact passes --check by deleting or
+        # corrupting `generated_at` and regenerating the Markdown around it,
+        # which is the one way an out-of-date table reaches a demo unnoticed.
         gen = data.get("generated_at")
-        if gen:
+        ts: _dt.datetime | None = None
+        if not gen:
+            if args.allow_stale:
+                print("warning: table2.json has no generated_at; freshness not checked")
+            else:
+                errors.append(
+                    "table2.json has no generated_at; the freshness gate cannot be "
+                    "enforced without it (regenerate, or pass --allow-stale)"
+                )
+        else:
             try:
                 ts = _dt.datetime.fromisoformat(gen)
-                if ts.tzinfo is None:
-                    ts = ts.replace(tzinfo=_dt.timezone.utc)
-                age_days = (_dt.datetime.now(tz=_dt.timezone.utc) - ts).total_seconds() / 86400.0
-                if age_days > 7:
-                    if args.allow_stale:
-                        print(f"warning: table2.json is {age_days:.1f} days old (>7d); regenerate before freeze")
-                    else:
-                        errors.append(
-                            f"table2.json is {age_days:.1f} days old (>7d); "
-                            "regenerate or pass --allow-stale"
-                        )
-            except Exception:
-                pass
+            except (TypeError, ValueError) as exc:
+                if args.allow_stale:
+                    print(f"warning: table2.json generated_at is unparseable ({exc})")
+                else:
+                    errors.append(
+                        f"table2.json generated_at is not a parseable ISO timestamp "
+                        f"({gen!r}); regenerate or pass --allow-stale"
+                    )
+
+        if ts is not None:
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=_dt.timezone.utc)
+            age_days = (_dt.datetime.now(tz=_dt.timezone.utc) - ts).total_seconds() / 86400.0
+            if age_days > STALE_REPORT_DAYS:
+                if args.allow_stale:
+                    print(
+                        f"warning: table2.json is {age_days:.1f} days old "
+                        f"(>{STALE_REPORT_DAYS}d); regenerate before freeze"
+                    )
+                else:
+                    errors.append(
+                        f"table2.json is {age_days:.1f} days old "
+                        f"(>{STALE_REPORT_DAYS}d); regenerate or pass --allow-stale"
+                    )
         # The rehearsal and demo display the Markdown artifact directly, so
         # a schema-valid JSON with a stale or corrupt table2.md must still
         # fail the check — render_markdown is deterministic given the JSON

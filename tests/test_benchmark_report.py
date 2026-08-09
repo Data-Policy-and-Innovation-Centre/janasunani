@@ -270,6 +270,45 @@ def test_cli_check_fails_on_stale_report_without_allow_stale(tmp_path: Path):
     assert rc == 0
 
 
+def _regenerate_with(tmp_path: Path, mutate) -> None:
+    """Write table2.json through *mutate*, keeping the Markdown consistent."""
+    json_path = tmp_path / "table2.json"
+    data = json.loads(json_path.read_text())
+    mutate(data)
+    json_path.write_text(json.dumps(data, indent=2, sort_keys=True, default=str))
+    (tmp_path / "table2.md").write_text(benchmark_report.render_markdown(data))
+
+
+def test_check_fails_when_generated_at_is_missing(tmp_path: Path):
+    """Codex finding on #226: the freshness gate must not be skippable.
+
+    A stale artifact could otherwise pass --check by deleting the field the
+    gate reads and regenerating the Markdown around it, which is exactly how
+    an out-of-date table reaches a demo unnoticed.
+    """
+    assert benchmark_report.main(["--out", str(tmp_path)]) == 0
+    _regenerate_with(tmp_path, lambda d: d.pop("generated_at", None))
+
+    assert benchmark_report.main(["--out", str(tmp_path), "--check"]) == 1
+    # The escape hatch still works, and says what it is not checking.
+    assert benchmark_report.main(["--out", str(tmp_path), "--check", "--allow-stale"]) == 0
+
+
+@pytest.mark.parametrize("bad", ["", "not-a-timestamp", "2026-13-45T99:99:99", 12345])
+def test_check_fails_when_generated_at_is_unparseable(tmp_path: Path, bad):
+    assert benchmark_report.main(["--out", str(tmp_path)]) == 0
+    _regenerate_with(tmp_path, lambda d: d.__setitem__("generated_at", bad))
+
+    assert benchmark_report.main(["--out", str(tmp_path), "--check"]) == 1
+    assert benchmark_report.main(["--out", str(tmp_path), "--check", "--allow-stale"]) == 0
+
+
+def test_a_fresh_report_still_passes_check(tmp_path: Path):
+    """The guard must not turn a good report red."""
+    assert benchmark_report.main(["--out", str(tmp_path)]) == 0
+    assert benchmark_report.main(["--out", str(tmp_path), "--check"]) == 0
+
+
 def test_cli_latency_path(tmp_path: Path):
     latency = {
         "stages": {
