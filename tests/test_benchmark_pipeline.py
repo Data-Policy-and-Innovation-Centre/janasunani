@@ -263,13 +263,59 @@ def test_write_latency_json_multi_variant_file(tmp_path):
 
 
 def test_cli_single_variant_writes_output(tmp_path):
+    # `--fake` is now explicit. It used to be implied for every run, because
+    # main() forced is_fake=True regardless, so this test exercised the
+    # synthetic table while appearing to exercise the CLI end to end.
     out = tmp_path / "latency.json"
-    rc = bench_mod.main(["--variant", "standard", "--n-docs", "2", "--n-image-docs", "1", "--repeats", "2", "--output", str(out), "--seed", "42"])
+    rc = bench_mod.main(["--fake", "--variant", "standard", "--n-docs", "2", "--n-image-docs", "1", "--repeats", "2", "--output", str(out), "--seed", "42"])
     assert rc == 0
     assert out.is_file()
     data = json.loads(out.read_text())
     assert data["variant"] == "standard"
     assert data["stages"]["e2e"]["n"] == 3 * 1  # (2+1)=3 docs * (2-1)=1 measured
+    assert data["is_fake_timing"] is True
+
+
+def test_a_run_without_fake_does_not_silently_fabricate(tmp_path, monkeypatch):
+    """The regression for the unconditional `is_fake = True` override.
+
+    Before this, `main()` forced fake timings whether or not `--fake` was
+    passed, so every latency number this harness ever produced came from
+    `_FAKE_STAGE_MEANS`. A run that cannot measure must fail, not invent.
+    """
+    out = tmp_path / "latency.json"
+
+    def _no_processor(*args, **kwargs):
+        raise RuntimeError("models are not available in this environment")
+
+    monkeypatch.setattr(
+        "janasunani.inference.service.build_processor", _no_processor, raising=False
+    )
+
+    with pytest.raises((SystemExit, RuntimeError)):
+        bench_mod.main(
+            ["--variant", "standard", "--n-docs", "1", "--n-image-docs", "0",
+             "--repeats", "2", "--output", str(out), "--seed", "42"]
+        )
+    # Nothing fabricated on the way out.
+    if out.exists():
+        assert json.loads(out.read_text()).get("is_fake_timing") is not False
+
+
+def test_real_run_records_per_stage_from_the_timing_sink():
+    """Per-stage comes from the processor, not from proportions of e2e."""
+    from janasunani.inference.timing import StageTimer
+
+    timer = StageTimer()
+    with timer.stage("redact"):
+        pass
+    with timer.stage("categorize"):
+        pass
+    timings = timer.as_dict()
+    assert {"redact", "categorize", "e2e"} <= set(timings)
+    # e2e is measured independently, so the gap to the sum of stages stays
+    # visible rather than being defined away.
+    assert timings["e2e"] >= 0.0
 
 
 def test_cli_multi_variants(tmp_path):

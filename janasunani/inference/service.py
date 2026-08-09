@@ -17,6 +17,7 @@ from typing import Any, Callable, Optional, Protocol
 
 from janasunani.config import DEFAULT_OLTP_DB_URL, MODELS_DIR, Settings
 from janasunani.inference.ocr import OcrQualityError, OcrResult
+from janasunani.inference.timing import NullTimer, StageTimer, TimingSink
 from janasunani.pipeline.stages.page_type_classifier import PAGE_TYPE_CLASS_BY_LABEL
 from janasunani.routing.provider import RoutingProvider, router_from_env, router_status
 from janasunani.serving.schemas import (
@@ -87,6 +88,7 @@ class PipelineGrievanceProcessor:
         detect_language: Callable[[str], str],
         triage_provider: TriageProvider | None = None,
         now: Callable[[], datetime] | None = None,
+        timing_sink: TimingSink | None = None,
     ) -> None:
         self._ocr = ocr
         self._redact = redact
@@ -98,6 +100,9 @@ class PipelineGrievanceProcessor:
         self._detect_language = detect_language
         self._triage_provider = triage_provider or UnwiredTriageProvider()
         self._now = now or (lambda: datetime.now(UTC))
+        # Side channel only. Timings must never reach GrievanceResult, which is
+        # the frozen serving contract the frontend and result store depend on.
+        self._timing_sink = timing_sink
 
     def process(
         self,
@@ -115,6 +120,7 @@ class PipelineGrievanceProcessor:
             document_name=document_name,
             document_bytes=document_bytes,
         )
+        timer = StageTimer() if self._timing_sink is not None else NullTimer()
 
         if text is not None:
             extracted_text = text
@@ -122,7 +128,8 @@ class PipelineGrievanceProcessor:
         else:
             assert document_name is not None and document_bytes is not None
             try:
-                ocr_result = self._ocr(document_bytes, document_name)
+                with timer.stage("ocr"):
+                    ocr_result = self._ocr(document_bytes, document_name)
             except OcrQualityError as exc:
                 # Quality-rejected input is a legitimate client error -> 422.
                 raise InferenceInputError(
@@ -163,9 +170,10 @@ class PipelineGrievanceProcessor:
             extracted_text = ocr_result.full_text
             # Redact each selected page before joining so no irrelevant page
             # (identification, bill, miscellaneous) reaches either model.
-            model_text_source = "\n\n".join(
-                self._redact(page_text) for page_text in relevant_pages
-            )
+            with timer.stage("redact"):
+                model_text_source = "\n\n".join(
+                    self._redact(page_text) for page_text in relevant_pages
+                )
             extraction = ExtractionResult(
                 source="document",
                 extracted_text=extracted_text,
@@ -173,39 +181,47 @@ class PipelineGrievanceProcessor:
                 pages=ocr_result.pages,
             )
 
-        redacted_text = self._redact(extracted_text)
-        pii_entities = [
-            PIIEntity(entity=span.entity, start=span.start, end=span.end)
-            for span in self._detect_pii(extracted_text)
-        ]
+        with timer.stage("redact"):
+            redacted_text = self._redact(extracted_text)
+        with timer.stage("detect_pii"):
+            pii_entities = [
+                PIIEntity(entity=span.entity, start=span.start, end=span.end)
+                for span in self._detect_pii(extracted_text)
+            ]
         redaction = RedactionResult(
             redacted_text=redacted_text,
             entities=pii_entities,
         )
         submitted_on = self._now()
-        try:
-            # The provider is intentionally called after redaction, never on
-            # raw OCR or typed citizen text.  Its result is advisory only.
-            triage = self._triage_provider.assess(
-                redacted_text=redaction.redacted_text,
-                district=district,
-                submitted_on=submitted_on,
-            )
-        except TriageUnavailableError:
-            # A triage outage cannot reject or delay a grievance.  Do not
-            # surface the provider exception: it may contain infrastructure
-            # details and is not an officer-facing explanation.
-            logger.warning("advisory triage unavailable; accepting grievance without it")
-            triage = unavailable_triage()
+        with timer.stage("triage"):
+            try:
+                # The provider is intentionally called after redaction, never on
+                # raw OCR or typed citizen text.  Its result is advisory only.
+                triage = self._triage_provider.assess(
+                    redacted_text=redaction.redacted_text,
+                    district=district,
+                    submitted_on=submitted_on,
+                )
+            except TriageUnavailableError:
+                # A triage outage cannot reject or delay a grievance.  Do not
+                # surface the provider exception: it may contain infrastructure
+                # details and is not an officer-facing explanation.
+                logger.warning(
+                    "advisory triage unavailable; accepting grievance without it"
+                )
+                triage = unavailable_triage()
 
         classifier_text = (
             redacted_text if extraction.source == "text" else model_text_source
         )
-        language = self._detect_language(classifier_text)
-        is_english = self._is_english_compatible(classifier_text)
+        with timer.stage("detect_language"):
+            language = self._detect_language(classifier_text)
+            is_english = self._is_english_compatible(classifier_text)
         if is_english:
-            category = self._categorizer.predict(classifier_text)
-            summary = self._summarizer.summarize(classifier_text)
+            with timer.stage("categorize"):
+                category = self._categorizer.predict(classifier_text)
+            with timer.stage("summarize"):
+                summary = self._summarizer.summarize(classifier_text)
         else:
             # Same gate as the categorizer: BART is only warmed for the
             # English demo target, and would otherwise hallucinate a summary
@@ -213,7 +229,10 @@ class PipelineGrievanceProcessor:
             # document paths share this single check).
             category = "Uncategorized"
             summary = UNSUPPORTED_LANGUAGE_SUMMARY
-        routing = self._router.route(category=category, district=district)
+        with timer.stage("route"):
+            routing = self._router.route(category=category, district=district)
+
+        timer.emit(self._timing_sink)
 
         return GrievanceResult(
             id=grievance_id,
@@ -779,6 +798,7 @@ def build_processor(
     *,
     router: "RoutingProvider | None" = None,
     triage_provider: TriageProvider | None = None,
+    timing_sink: TimingSink | None = None,
 ) -> PipelineGrievanceProcessor:
     """Strictly construct and warm the production processor.
 
@@ -853,4 +873,5 @@ def build_processor(
         triage_provider=(
             triage_provider if triage_provider is not None else triage_provider_from_env()
         ),
+        timing_sink=timing_sink,
     )
