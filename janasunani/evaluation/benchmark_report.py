@@ -783,25 +783,47 @@ def main(argv: list[str] | None = None) -> int:
         errors = validate_report(json_path)
         try:
             data = json.loads(json_path.read_text())
-            gen = data.get("generated_at")
-            if gen and not args.allow_stale:
-                try:
-                    ts = _dt.datetime.fromisoformat(gen)
-                    if ts.tzinfo is None:
-                        ts = ts.replace(tzinfo=_dt.timezone.utc)
-                    age_days = (_dt.datetime.now(tz=_dt.timezone.utc) - ts).total_seconds() / 86400.0
-                    if age_days > 7:
+        except Exception as exc:
+            print(f"check failed: unreadable {json_path}: {exc}")
+            return 1
+        gen = data.get("generated_at")
+        if gen:
+            try:
+                ts = _dt.datetime.fromisoformat(gen)
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=_dt.timezone.utc)
+                age_days = (_dt.datetime.now(tz=_dt.timezone.utc) - ts).total_seconds() / 86400.0
+                if age_days > 7:
+                    if args.allow_stale:
                         print(f"warning: table2.json is {age_days:.1f} days old (>7d); regenerate before freeze")
-                except Exception:
-                    pass
-        except Exception:
-            pass
+                    else:
+                        errors.append(
+                            f"table2.json is {age_days:.1f} days old (>7d); "
+                            "regenerate or pass --allow-stale"
+                        )
+            except Exception:
+                pass
+        # The rehearsal and demo display the Markdown artifact directly, so
+        # a schema-valid JSON with a stale or corrupt table2.md must still
+        # fail the check — render_markdown is deterministic given the JSON
+        # payload, so any mismatch means the Markdown is out of date.
+        try:
+            expected_md = render_markdown(data)
+            actual_md = md_path.read_text()
+        except Exception as exc:
+            errors.append(f"unreadable {md_path}: {exc}")
+        else:
+            if actual_md != expected_md:
+                errors.append(
+                    f"{md_path} does not match render_markdown(table2.json) "
+                    "— stale or corrupt Markdown artifact; regenerate"
+                )
         if errors:
             print("check failed — schema errors:")
             for e in errors:
                 print(f"  - {e}")
             return 1
-        print(f"check ok: {json_path} and {md_path} are valid (reference_only=True, {len(json.loads(json_path.read_text()).get('rows', []))} rows)")
+        print(f"check ok: {json_path} and {md_path} are valid (reference_only=True, {len(data.get('rows', []))} rows)")
         return 0
     if args.latency:
         latency_result = _try_load_json(args.latency)

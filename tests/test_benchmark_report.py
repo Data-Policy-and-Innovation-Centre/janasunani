@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 from pathlib import Path
 
@@ -225,6 +226,48 @@ def test_cli_check_detects_corrupt_json(tmp_path: Path):
     p.write_text(json.dumps(data))
     rc = benchmark_report.main(["--out", str(tmp_path), "--check"])
     assert rc == 1
+
+
+def test_cli_check_detects_corrupt_markdown(tmp_path: Path):
+    # #212: --check must validate the Markdown artifact too, not just
+    # confirm table2.md exists. A corrupt/stale Markdown must fail --check
+    # even though table2.json is untouched and schema-valid.
+    rc = benchmark_report.main(["--out", str(tmp_path)])
+    assert rc == 0
+    md_path = tmp_path / "table2.md"
+    md_path.write_text("CORRUPT")
+    rc = benchmark_report.main(["--out", str(tmp_path), "--check"])
+    assert rc == 1
+
+
+def test_cli_check_passes_when_markdown_matches_json(tmp_path: Path):
+    rc = benchmark_report.main(["--out", str(tmp_path)])
+    assert rc == 0
+    rc = benchmark_report.main(["--out", str(tmp_path), "--check"])
+    assert rc == 0
+
+
+def test_cli_check_fails_on_stale_report_without_allow_stale(tmp_path: Path):
+    # #214: --check must fail (nonzero) on a >7d-old generated_at unless
+    # --allow-stale is passed — a warning-only check cannot enforce the
+    # rehearsal freeze window.
+    rc = benchmark_report.main(["--out", str(tmp_path)])
+    assert rc == 0
+    json_path = tmp_path / "table2.json"
+    md_path = tmp_path / "table2.md"
+    data = json.loads(json_path.read_text())
+    stale_ts = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=8)).isoformat()
+    data["generated_at"] = stale_ts
+    json_path.write_text(json.dumps(data, indent=2, sort_keys=True, default=str))
+    # Regenerate the Markdown from the same stale data so only the
+    # staleness check (not the #212 Markdown check) is under test here.
+    md_path.write_text(benchmark_report.render_markdown(data))
+
+    rc = benchmark_report.main(["--out", str(tmp_path), "--check"])
+    assert rc == 1
+
+    rc = benchmark_report.main(["--out", str(tmp_path), "--check", "--allow-stale"])
+    assert rc == 0
 
 
 def test_cli_latency_path(tmp_path: Path):
