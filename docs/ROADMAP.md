@@ -82,7 +82,7 @@ The only place phase status is recorded.
 | 6 | II | Model tracking (DVC is the tracker; MLflow helpers merged, unused) | 🔄 |
 | 7 | II | CI (ruff + pytest on a Postgres service container) | ✅ *(docs pending)* |
 | 8 | II | Real-time inference core (warm processor, live CLI) | ✅ |
-| 9 | II | Routing (rules built; crosswalk built, wiring pending — now `demo` via #33/`#74` bounded) | 🔄 |
+| 9 | II | Routing (rules + empirical crosswalk, wired — `method:"learned"`) | ✅ *(crosswalk landed #33, closed 07 Aug; outcome-based scorer deferred, #106)* |
 | 10 | II | Serving API (default mock + opt-in live wiring) | ✅ |
 | 11 | II | Demo frontend (Next.js, DPIC-branded; first cut) | 🔄 |
 | 12 | II | Demo integration & cloud deployment | 🔄 |
@@ -103,8 +103,12 @@ Anchor facts:
 
 - Verified corpus, local SQLite **and** cloud Postgres, which must match after any
   migration change: **1,371,288 complaints / 6,556,171 action-history rows**.
-- The demo ships with routing on **`method:"fallback"`**. Smarter routing is Part
-  III; the demo does not block on it.
+- The demo ships with routing on **`method:"learned"`**, backed by the empirical
+  crosswalk built from case history (issue #33, closed 7 Aug). Argmax accuracy:
+  60.9% category only, 67.5% + subcategory, 72.8% + subcategory + district. It
+  learns where cases were historically sent, not where they resolved best. A
+  learned outcome-based scorer (disposal time, citizen benefit, issue #106) is a
+  separate, harder problem and stays Part III.
 
 ### Phase renumbering (2026-07-27)
 
@@ -340,10 +344,14 @@ format/OCR under `pipeline-core`, PII under `pii`, page type/summary under
 - **9 Routing.** The deterministic `RuleRouter` / `MappingRouter` are built,
   producing the frozen `RoutingResult`. The master tables carry no
   category→department link (`intCategoryGrp` is NULL on all 62 categories), so the
-  crosswalk has to be learned from history:
+  crosswalk is learned from history:
   `(category, subcategory, district) → argmax(dept, office)`, measured at
-  60.9 / 67.5 / 72.8%. Crosswalk and learned scorer are deferred past the demo
-  (issue #33), which ships on `fallback`.
+  60.9 / 67.5 / 72.8%. The crosswalk is wired and live (issue #33, closed 7 Aug,
+  PR #198): `DEFAULT_ROUTER` tries it first (`method="learned"`), falling back to
+  `MappingRouter` then the generic fallback. This learns where cases were
+  historically sent, not where they resolved best. A learned outcome-based scorer
+  on disposal time and citizen benefit (issue #106) is a separate, harder problem
+  and stays deferred past the demo.
 - **10 Serving.** Three endpoints plus `/health` and CORS behind the frozen
   `serving/schemas.py` contract. The default app is mocked (`janasunani-api`);
   `janasunani-api-live` mounts the real processor. Live submissions persist to a

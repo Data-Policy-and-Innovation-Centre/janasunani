@@ -98,12 +98,18 @@ Legacy reference for comparison: the DSI report records **80.56% any-overlap,
 are synthetic and are not a substitute for the gold set. What they establish
 is a floor on a known failure mode, not a coverage claim.
 
-### What is not measured
+### The scorecard, now wired
 
-`janasunani.evaluation.pii_scorecard` cannot yet report a missed-PII rate. It
-passes empty predictions to the scorer, so every entity reads
-`overlap_recall=0.000`, `missed_rate=1.000` by construction. See #67. Its
-slicing, language split and thin-slice guard do work.
+`janasunani.evaluation.pii_scorecard` no longer passes empty predictions by
+construction. `score_per_language` calls `score_examples`, which wires the
+live Presidio recognizers (`detect_pii_spans`) by default; it falls back to
+empty predictions only if the analyzer cannot be imported, e.g. an
+environment without the `pii` extra (#67, closed). Its slicing, language
+split and thin-slice guard run against real predictions.
+
+The measured result is in DELIVERY.md: **49.6% overlap recall** on the
+corrected 89-page, 529-label gold set (PHONE 0.83, AADHAAR 0.86, EMAIL 0.75,
+NAME 0.44). English only — no Odia labelled set exists.
 
 ## 3. Models
 
@@ -138,6 +144,12 @@ against production Postgres.
 
 Provenance is complete: `source_name = oltp:complaints+grievance_redactions`,
 snapshot `sha256:a7a01cde…`. Zero legacy NULLs.
+
+Backfill confirmed complete on the CPU box, verified directly against
+production Postgres (read-only counts): `grievance_redactions` = 55,544 rows,
+`dedup_signatures` = 55,544 rows, `dedup_groups` populated, for
+Sambalpur/2024. The 7 Aug re-run logged `55544 redacted complaints, 55544
+already indexed`.
 
 ### Decomposition, and why the third number exists
 
@@ -200,11 +212,28 @@ issue's own baseline: top-10 strings are 36.7% of rows, top-500 pairs 60.3%.
 
 ## 6. Sarvam
 
-Not called. All three provider-held-data controls (`retention_terms`,
-`encryption_in_transit`, `encryption_at_rest`) are `verified=False`, so
-`route.live_use_ready is False`. With `enabled=True` and a real key the
-adapter falls back to pytesseract **without making a network call** and
-audits `reason="SarvamGovernanceError"`.
+Not called. Not because governance blocks it — because nobody has supplied
+`SARVAM_API_KEY` and run it.
+
+All three provider-held-data controls (`retention_terms`,
+`encryption_in_transit`, `encryption_at_rest`) are `verified=False`. That does
+not gate a live call. Evaluated directly against the registered route
+(`janasunani/egress/sarvam.py`):
+
+| | |
+|---|---|
+| `live_use_ready` | False |
+| `egress_permitted` | **True** |
+| `egress_basis` | `accepted_risk` |
+| Unverified controls | `retention_terms`, `encryption_in_transit`, `encryption_at_rest` |
+
+A `RiskAcceptance` is recorded on the route (authority: Additional Chief
+Secretary, Electronics & IT Department, Government of Odisha), so
+`egress_permitted` is true on `accepted_risk` even though `live_use_ready`
+stays false. The gate the adapter actually checks before a live call
+(`janasunani/egress/sarvam.py:625`, `:825`) is `route.egress_permitted`, not
+`live_use_ready`. With `enabled=True` and a real key, it would call Sarvam,
+not fall back to pytesseract.
 
 Sample size for the paired comparison, at 10 points detectable and 25%
 discordance: **194 pages** at 80% power / 5% level, **259** at 90% power,
@@ -222,16 +251,23 @@ discordance: **194 pages** at 80% power / 5% level, **259** at 90% power,
 
 ## 8. Known gaps
 
-Three places where the data now exists and nothing reads it:
+Two places where the data now exists and nothing reads it:
 
 - `spike.sql` hardcodes `NULL::INTEGER AS distinct_clusters` with no join, so
   the mart still reports `pending dedup index` (#78).
-- `RecordedWorkloadPanel` and `RecordedSpikePanel` are constructed nowhere, so
-  those two supervisor panels cannot go `recorded` (#178).
 - `UnwiredTriageProvider` returns spam only, so the duplicate and campaign
   banner branches cannot fire (#109).
 
+Fixed since this file's `ca58f31` baseline, not re-verified end to end:
+
+- `RecordedWorkloadPanel` and `RecordedSpikePanel` were flagged as
+  constructed nowhere (#178, still open). `janasunani/serving/intelligence.py`
+  now builds both from `workload.csv` / `spike.csv` (PR #201, commit
+  `ce0eaea`). Whether the panels reach `recorded` for the demo slice depends
+  on those two artifacts being published, which this file does not confirm.
+- The PII scorecard reported no measurement (#67, closed). It is wired now
+  — see §2.
+
 Plus:
 
-- The PII scorecard reports no measurement (#67).
 - The action-type lookup covers 22.4% against a ~62% target (#75).
