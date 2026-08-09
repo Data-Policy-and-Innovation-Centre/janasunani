@@ -405,3 +405,67 @@ def test_wrapper_script_delegates(tmp_path: Path):
     # Should exit 0 and produce outputs (wrapper injects --arm digitise)
     assert result.returncode == 0, f"wrapper failed: {result.stderr}\n{result.stdout}"
     assert (out / "sarvam_scorecard.json").is_file()
+
+
+def test_objects_inside_nested_arrays_are_validated():
+    """Codex follow-up on #232: an array of arrays stopped the traversal.
+
+    The first `items` had type "array", not "object", so the walk gave up and
+    everything below it bypassed both field validation and the depth cap.
+    """
+    from janasunani.egress.sarvam import _validate_extract_schema
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "pages": {
+                "type": "array",
+                "description": "pages, each holding a list of line items",
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {"line": {"type": "string"}},  # no description
+                    },
+                },
+            }
+        },
+    }
+    with pytest.raises(ValueError, match=r"pages\[\]\[\].line"):
+        _validate_extract_schema(schema)
+
+
+def test_arrays_count_toward_the_depth_cap():
+    """Each array level is one the provider descends too."""
+    from janasunani.egress.sarvam import _validate_extract_schema
+
+    items: dict = {"type": "object", "properties": {"leaf": {"type": "string", "description": "x"}}}
+    for _ in range(6):
+        items = {"type": "array", "items": items}
+
+    schema = {
+        "type": "object",
+        "properties": {"deep": {"type": "array", "description": "d", "items": items}},
+    }
+    with pytest.raises(ValueError, match="nests deeper than"):
+        _validate_extract_schema(schema)
+
+
+def test_a_well_formed_array_of_objects_is_accepted():
+    from janasunani.egress.sarvam import _validate_extract_schema
+
+    _validate_extract_schema(
+        {
+            "type": "object",
+            "properties": {
+                "attachments": {
+                    "type": "array",
+                    "description": "documents attached",
+                    "items": {
+                        "type": "object",
+                        "properties": {"kind": {"type": "string", "description": "kind"}},
+                    },
+                }
+            },
+        }
+    )

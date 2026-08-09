@@ -294,9 +294,31 @@ def _validate_properties(node: dict[str, Any], *, path: str, level: int) -> None
         if field_type == "object":
             _validate_properties(field, path=where, level=level + 1)
         elif field_type == "array":
-            items = field.get("items")
-            if isinstance(items, dict) and items.get("type") == "object":
-                _validate_properties(items, path=f"{where}[]", level=level + 1)
+            _validate_array_items(field, path=where, level=level + 1)
+
+
+def _validate_array_items(field: dict[str, Any], *, path: str, level: int) -> None:
+    """Walk down through nested arrays to whatever they finally contain.
+
+    An array of arrays of objects would otherwise stop traversal at the first
+    ``items`` whose type is not ``object``, so an inner field with no
+    description, or arbitrarily deeper nesting, would pass the guard and reach
+    the provider as an HTTP 400. Each array level counts toward the depth cap,
+    because each is a level the provider has to descend too.
+    """
+    items = field.get("items")
+    here = f"{path}[]"
+    while isinstance(items, dict) and items.get("type") == "array":
+        if level > MAX_EXTRACT_SCHEMA_DEPTH:
+            raise ValueError(
+                f"Extract schema nests deeper than {MAX_EXTRACT_SCHEMA_DEPTH} "
+                f"levels at {here}; Sarvam rejects it."
+            )
+        items = items.get("items")
+        here = f"{here}[]"
+        level += 1
+    if isinstance(items, dict) and items.get("type") == "object":
+        _validate_properties(items, path=here, level=level)
 
 
 @dataclass(frozen=True)
