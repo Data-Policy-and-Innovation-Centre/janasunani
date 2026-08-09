@@ -85,15 +85,89 @@ def test_extract_schema_guard_rejects_malformed_schemas(schema, expected):
         _validate_extract_schema(schema)
 
 
+def _nested_schema(object_levels: int) -> dict:
+    """A schema whose root is an object nested *object_levels* deep."""
+    node: dict = {"type": "string", "description": "leaf"}
+    for _ in range(object_levels):
+        node = {"type": "object", "description": "nested", "properties": {"child": node}}
+    return node
+
+
+def test_a_schema_exactly_at_the_depth_cap_is_accepted():
+    """Pin the boundary rather than leave the off-by-one implicit."""
+    from janasunani.egress.sarvam import MAX_EXTRACT_SCHEMA_DEPTH, _validate_extract_schema
+
+    _validate_extract_schema(_nested_schema(MAX_EXTRACT_SCHEMA_DEPTH))
+
+
 def test_extract_schema_guard_enforces_the_provider_depth_cap():
     from janasunani.egress.sarvam import MAX_EXTRACT_SCHEMA_DEPTH, _validate_extract_schema
 
-    node: dict = {"type": "string", "description": "leaf"}
-    for _ in range(MAX_EXTRACT_SCHEMA_DEPTH):
-        node = {"type": "object", "description": "nested", "properties": {"child": node}}
+    with pytest.raises(ValueError, match="nests deeper than"):
+        _validate_extract_schema(_nested_schema(MAX_EXTRACT_SCHEMA_DEPTH + 1))
 
-    with pytest.raises(ValueError, match="caps it at"):
-        _validate_extract_schema(node)
+
+def test_a_malformed_nested_field_is_caught_not_just_the_top_level():
+    """Codex finding on #232: the provider's field rules apply at every depth.
+
+    Validating only the root lets a nested field with no description through
+    the guard and into the HTTP 400 the guard exists to prevent.
+    """
+    from janasunani.egress.sarvam import _validate_extract_schema
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "petitioner": {
+                "type": "object",
+                "description": "who filed it",
+                "properties": {
+                    "name": {"type": "string"},  # no description
+                },
+            }
+        },
+    }
+    with pytest.raises(ValueError, match="petitioner.name"):
+        _validate_extract_schema(schema)
+
+
+def test_nested_objects_inside_arrays_are_validated_too():
+    from janasunani.egress.sarvam import _validate_extract_schema
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "attachments": {
+                "type": "array",
+                "description": "documents attached to the grievance",
+                "items": {
+                    "type": "object",
+                    "properties": {"kind": {"type": "string"}},  # no description
+                },
+            }
+        },
+    }
+    with pytest.raises(ValueError, match=r"attachments\[\].kind"):
+        _validate_extract_schema(schema)
+
+
+def test_a_well_formed_nested_schema_is_accepted():
+    from janasunani.egress.sarvam import _validate_extract_schema
+
+    _validate_extract_schema(
+        {
+            "type": "object",
+            "properties": {
+                "petitioner": {
+                    "type": "object",
+                    "description": "who filed it",
+                    "properties": {
+                        "district": {"type": "string", "description": "district name"},
+                    },
+                }
+            },
+        }
+    )
 
 
 def _make_dummy_input(tmp_path: Path, n: int = 2) -> Path:

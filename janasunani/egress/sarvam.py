@@ -248,38 +248,55 @@ def _validate_extract_schema(schema: dict[str, Any]) -> None:
             f"type={schema.get('type')!r}. A bare field map is rejected with "
             "HTTP 400 — wrap it as {'type': 'object', 'properties': {...}}."
         )
-    properties = schema.get("properties")
-    if not isinstance(properties, dict) or not properties:
+    _validate_properties(schema, path="", level=1)
+
+
+def _validate_properties(node: dict[str, Any], *, path: str, level: int) -> None:
+    """Validate one ``properties`` map and recurse into nested objects.
+
+    Recursion is the point. The provider's field rules apply at every depth,
+    so validating only the top level lets a nested field with no description
+    through this guard and straight into an HTTP 400 — the exact failure this
+    guard exists to convert into a legible error.
+
+    Depth is checked on the way down rather than by a separate walk, so a
+    schema that is both too deep and malformed reports the malformation it
+    hits first instead of a depth error that hides it.
+    """
+    if level > MAX_EXTRACT_SCHEMA_DEPTH:
+        where = path or "root"
         raise ValueError(
-            "Sarvam Extract schema needs a non-empty 'properties' map; got "
-            f"{properties!r}."
+            f"Extract schema nests deeper than {MAX_EXTRACT_SCHEMA_DEPTH} levels "
+            f"at {where}; Sarvam rejects it."
         )
+
+    properties = node.get("properties")
+    if not isinstance(properties, dict) or not properties:
+        where = f" at {path}" if path else ""
+        raise ValueError(
+            f"Sarvam Extract schema needs a non-empty 'properties' map{where}; "
+            f"got {properties!r}."
+        )
+
     for name, field in properties.items():
+        where = f"{path}.{name}" if path else str(name)
         if not isinstance(field, dict):
-            raise ValueError(f"Extract schema field {name!r} must be an object.")
-        if not field.get("type"):
-            raise ValueError(f"Extract schema field {name!r} needs a 'type'.")
+            raise ValueError(f"Extract schema field {where!r} must be an object.")
+        field_type = field.get("type")
+        if not field_type:
+            raise ValueError(f"Extract schema field {where!r} needs a 'type'.")
         if not str(field.get("description") or "").strip():
             raise ValueError(
-                f"Extract schema field {name!r} needs a non-empty 'description'. "
+                f"Extract schema field {where!r} needs a non-empty 'description'. "
                 "The description is what steers the model, so an empty one "
                 "silently degrades extraction quality."
             )
-
-    def depth(node: object, level: int = 1) -> int:
-        if not isinstance(node, dict):
-            return level
-        nested = node.get("properties")
-        if not isinstance(nested, dict) or not nested:
-            return level
-        return max(depth(child, level + 1) for child in nested.values())
-
-    found = depth(schema)
-    if found > MAX_EXTRACT_SCHEMA_DEPTH:
-        raise ValueError(
-            f"Extract schema nests {found} levels; Sarvam caps it at "
-            f"{MAX_EXTRACT_SCHEMA_DEPTH}."
-        )
+        if field_type == "object":
+            _validate_properties(field, path=where, level=level + 1)
+        elif field_type == "array":
+            items = field.get("items")
+            if isinstance(items, dict) and items.get("type") == "object":
+                _validate_properties(items, path=f"{where}[]", level=level + 1)
 
 
 @dataclass(frozen=True)
