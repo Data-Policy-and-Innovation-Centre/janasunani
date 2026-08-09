@@ -55,11 +55,18 @@ jobs:
     steps:
       # Never the pull request's own code. On `pull_request` the default
       # checkout is `refs/pull/N/merge`, which would run a contributor-edited
-      # gate script with this job's `checks: write` token -- a branch could
-      # post its own passing `codex-review` check. The script reads only the
-      # API, so the base copy is all it needs. The consequence is that edits
-      # to the gate are not exercised here; `tests/test_check_codex_review.py`
-      # covers them on the normal test job instead.
+      # gate script with this job's `checks: write` token. The script reads
+      # only the API, so the base copy is all it needs. The consequence is
+      # that edits to the gate are not exercised here;
+      # `tests/test_check_codex_review.py` covers them on the normal test job.
+      #
+      # This raises the cost of self-bypass; it does not close it, and an
+      # earlier version of this comment wrongly claimed it did. On a same-repo
+      # `pull_request` the *workflow definition* also comes from the merge ref,
+      # so a branch can delete this step and keep the token. Closing that needs
+      # the decision to run from a base-controlled event -- see #223. Fork PRs
+      # are not a way in: their `GITHUB_TOKEN` is read-only, so `checks: write`
+      # is never granted.
       - name: Check out trusted base copy of the gate
         uses: actions/checkout@v4
         with:

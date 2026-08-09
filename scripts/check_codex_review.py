@@ -14,8 +14,13 @@ is what the protocol already tracks -- fixed, filed as an issue, or rejected
 with evidence, then resolved.
 
 The clean signal carries no commit sha, so freshness for that path is decided
-on time: the reaction must be newer than the head commit. A force-push of an
-older commit can therefore keep a stale :+1: valid; pushing new work cannot.
+on time: the reaction must be newer than the head commit. That commit date is
+written by the committing client, not by GitHub, so anyone able to push can
+defeat this rung by backdating -- with `GIT_COMMITTER_DATE`, or by force-pushing
+older history. An earlier version of this docstring claimed pushing new work
+could not keep a stale :+1: valid. It can, and #224 tracks moving the
+comparison onto the server-assigned push time in the pull request timeline.
+The reviewed-a-named-sha path is unaffected.
 
 There is a third thing Codex does: when the account is out of review credits
 it answers with an ordinary comment and reads nothing. That stays a failure --
