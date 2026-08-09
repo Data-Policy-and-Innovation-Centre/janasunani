@@ -14,6 +14,7 @@ import pytest
 
 def test_grievance_schema_is_pinned_and_versioned():
     from janasunani.evaluation.sarvam_grievance_schema import (
+        GRIEVANCE_EXTRACT_FIELDS_V1,
         GRIEVANCE_EXTRACT_SCHEMA_V1,
         SCHEMA_VERSION,
         SUPPORTED_SCHEMA_VERSIONS,
@@ -25,15 +26,74 @@ def test_grievance_schema_is_pinned_and_versioned():
     assert SUPPORTED_SCHEMA_VERSIONS["v1"] is GRIEVANCE_EXTRACT_SCHEMA_V1
     schema = get_schema("v1")
     assert schema is GRIEVANCE_EXTRACT_SCHEMA_V1
-    # illustrative fields from plan
+    # illustrative fields from plan, now under the JSON Schema root
     for field in ("grievance_category", "summary", "district", "grievance_text"):
-        assert field in schema
-        assert schema[field]["type"] == "string"
-        assert "description" in schema[field]
+        assert field in GRIEVANCE_EXTRACT_FIELDS_V1
+        assert GRIEVANCE_EXTRACT_FIELDS_V1[field]["type"] == "string"
+        assert GRIEVANCE_EXTRACT_FIELDS_V1[field]["description"].strip()
     with pytest.raises(ValueError, match="unknown schema"):
         get_schema("v9")
     with pytest.raises(ValueError, match="unknown schema"):
         get_schema("")
+
+
+def test_pinned_schema_satisfies_the_provider_contract():
+    """The pinned schema must be a whole JSON Schema document.
+
+    Sarvam answers a bare field map with HTTP 400. Verified live on
+    2026-08-09: bare map -> 400 on every page, wrapped -> job completed.
+    The old assertions checked ``schema["summary"]["type"]``, which only
+    passes for the shape the provider rejects, so the test agreed with the
+    bug. This asserts the shape that actually submits.
+    """
+    from janasunani.egress.sarvam import _validate_extract_schema
+    from janasunani.evaluation.sarvam_grievance_schema import get_schema
+
+    schema = get_schema("v1")
+    assert schema["type"] == "object"
+    assert schema["properties"]
+    _validate_extract_schema(schema)  # must not raise
+
+
+def test_extract_rejects_a_bare_field_map_before_any_egress():
+    """The exact payload that failed 5 of 5 pages must now fail loudly."""
+    from janasunani.egress.sarvam import _validate_extract_schema
+    from janasunani.evaluation.sarvam_grievance_schema import GRIEVANCE_EXTRACT_FIELDS_V1
+
+    with pytest.raises(ValueError, match="must be"):
+        _validate_extract_schema(GRIEVANCE_EXTRACT_FIELDS_V1)
+
+
+@pytest.mark.parametrize(
+    "schema, expected",
+    [
+        ({"type": "array", "properties": {"a": {"type": "string", "description": "x"}}}, "must be"),
+        ({"type": "object"}, "non-empty 'properties'"),
+        ({"type": "object", "properties": {}}, "non-empty 'properties'"),
+        ({"type": "object", "properties": {"a": {"description": "x"}}}, "needs a 'type'"),
+        ({"type": "object", "properties": {"a": {"type": "string"}}}, "non-empty 'description'"),
+        (
+            {"type": "object", "properties": {"a": {"type": "string", "description": "  "}}},
+            "non-empty 'description'",
+        ),
+    ],
+)
+def test_extract_schema_guard_rejects_malformed_schemas(schema, expected):
+    from janasunani.egress.sarvam import _validate_extract_schema
+
+    with pytest.raises(ValueError, match=expected):
+        _validate_extract_schema(schema)
+
+
+def test_extract_schema_guard_enforces_the_provider_depth_cap():
+    from janasunani.egress.sarvam import MAX_EXTRACT_SCHEMA_DEPTH, _validate_extract_schema
+
+    node: dict = {"type": "string", "description": "leaf"}
+    for _ in range(MAX_EXTRACT_SCHEMA_DEPTH):
+        node = {"type": "object", "description": "nested", "properties": {"child": node}}
+
+    with pytest.raises(ValueError, match="caps it at"):
+        _validate_extract_schema(node)
 
 
 def _make_dummy_input(tmp_path: Path, n: int = 2) -> Path:
@@ -195,7 +255,13 @@ def test_evaluate_extract_arm_with_mocked_adapter(tmp_path: Path, monkeypatch: p
 
         def extract(self, doc_bytes, filename, language, context, schema=None, config_id=None):
             assert schema is not None
-            assert "grievance_category" in schema
+            # Assert the shape the provider actually accepts. The fake stands
+            # in for the transport, so it must hold the same contract the real
+            # endpoint does or the mock re-hides the HTTP 400.
+            from janasunani.egress.sarvam import _validate_extract_schema
+
+            _validate_extract_schema(schema)
+            assert "grievance_category" in schema["properties"]
             return {"grievance_category": "Police", "summary": "Sarvam summary text", "district": "Sambalpur"}
 
     # Patch the class used by evaluate

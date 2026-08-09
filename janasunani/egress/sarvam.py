@@ -225,6 +225,63 @@ class SarvamGovernanceError(SarvamError):
     """The external route lacks verified provider-held-data controls."""
 
 
+#: Sarvam Extract caps schema nesting at this depth.
+MAX_EXTRACT_SCHEMA_DEPTH = 4
+
+
+def _validate_extract_schema(schema: dict[str, Any]) -> None:
+    """Reject a schema Sarvam would answer with HTTP 400.
+
+    The provider requires a whole JSON Schema document, not the bare field
+    map. Handing it the field map fails at submission on every page, and the
+    audit row records only ``SarvamError``, so the cause is invisible in the
+    log. Every test injects a fake transport and cannot see a 400 either.
+    This guard is what turns that silent, uniform failure into an error that
+    names the problem before any bytes leave the box.
+
+    Raises ``ValueError`` (a caller bug, not a remote failure), so it is not
+    swallowed by the fallback-to-pytesseract path.
+    """
+    if schema.get("type") != "object":
+        raise ValueError(
+            "Sarvam Extract schema root must be {'type': 'object', ...}; got "
+            f"type={schema.get('type')!r}. A bare field map is rejected with "
+            "HTTP 400 — wrap it as {'type': 'object', 'properties': {...}}."
+        )
+    properties = schema.get("properties")
+    if not isinstance(properties, dict) or not properties:
+        raise ValueError(
+            "Sarvam Extract schema needs a non-empty 'properties' map; got "
+            f"{properties!r}."
+        )
+    for name, field in properties.items():
+        if not isinstance(field, dict):
+            raise ValueError(f"Extract schema field {name!r} must be an object.")
+        if not field.get("type"):
+            raise ValueError(f"Extract schema field {name!r} needs a 'type'.")
+        if not str(field.get("description") or "").strip():
+            raise ValueError(
+                f"Extract schema field {name!r} needs a non-empty 'description'. "
+                "The description is what steers the model, so an empty one "
+                "silently degrades extraction quality."
+            )
+
+    def depth(node: object, level: int = 1) -> int:
+        if not isinstance(node, dict):
+            return level
+        nested = node.get("properties")
+        if not isinstance(nested, dict) or not nested:
+            return level
+        return max(depth(child, level + 1) for child in nested.values())
+
+    found = depth(schema)
+    if found > MAX_EXTRACT_SCHEMA_DEPTH:
+        raise ValueError(
+            f"Extract schema nests {found} levels; Sarvam caps it at "
+            f"{MAX_EXTRACT_SCHEMA_DEPTH}."
+        )
+
+
 @dataclass(frozen=True)
 class SarvamAuditContext:
     """Identity required to make a document egress call auditable."""
@@ -515,6 +572,7 @@ class SarvamVisionAdapter:
             raise ValueError("provide exactly one of schema or config_id for Sarvam Extract")
         form: dict[str, Any] = {"language": language, "output_format": "json"}
         if schema is not None:
+            _validate_extract_schema(schema)
             form["schema"] = json.dumps(
                 schema,
                 sort_keys=True,
