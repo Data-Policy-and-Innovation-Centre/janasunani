@@ -1,0 +1,5 @@
+outs:
+- md5: 6bfa40f56aeff5f297ce8d507f3e7dd0
+  size: 4384
+  hash: md5
+  path: validation_5_page_scorecard.json

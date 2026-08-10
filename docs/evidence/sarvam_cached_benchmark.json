@@ -8,12 +8,12 @@
   "normalizer_version": "1.0",
   "credits_available_for_new_calls": false,
   "reproducibility": {
-    "tracked_aggregate_only": true,
-    "source_artifacts_tracked": false,
-    "source_artifact_hashes_available": false,
+    "tracked_aggregate_only": false,
+    "source_artifacts_tracked": true,
+    "source_artifact_hashes_available": true,
     "derivation_command_recorded": false,
     "latency_distribution_available": false,
-    "claim_limit": "The aggregate preserves reportable counts and ratios but cannot be independently reconstructed from tracked repository artifacts."
+    "claim_limit": "The aggregate and source snapshots are preserved, but the original sample manifest and derivation command were unavailable, so the aggregate cannot be independently reconstructed."
   },
   "runs": [
     {
@@ -31,7 +31,7 @@
       "pytesseract_normalized_characters": 4690,
       "sarvam_normalized_characters": 5831,
       "sarvam_to_pytesseract_character_ratio": 1.2433,
-      "source": "untracked outputs/sarvam_validation/sarvam_scorecard.json",
+      "source": "DVC-tracked data/external/sarvam_cached_v1/validation_5_page_scorecard.json",
       "limitations": [
         "No hand transcription; divergence is not OCR accuracy.",
         "No reportable category accuracy or summary comparison.",
@@ -68,13 +68,13 @@
       "estimated_list_price_completed_jobs_rupees": 90.5,
       "cost_basis": "list-price calculation; actual billing unavailable",
       "actual_billing_available": false,
-      "source": "aggregate audit of the local Sarvam sample manifest, benchmark log, and outputs/sarvam/sarvam_audit.sqlite",
+      "source": "aggregate audit of the unavailable local sample manifest and benchmark log plus DVC-tracked data/external/sarvam_cached_v1/interrupted_300_page_audit.sqlite",
       "limitations": [
         "The original runner did not checkpoint a scorecard before HTTP 402.",
         "No hand transcription; divergence and character length do not establish quality.",
         "Failed pages are excluded from paired divergence and may be non-random.",
         "The category-stratified sample is not handwriting- or language-stratified.",
-        "The sample manifest contains ticket and object identifiers and remains untracked."
+        "The original sample manifest contained ticket and object identifiers and was not recovered."
       ]
     }
   ],
