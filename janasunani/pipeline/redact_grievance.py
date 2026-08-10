@@ -223,24 +223,35 @@ async def _redact_slice(
             batch = await _load_pending_batch(
                 conn, district, year, size, version=version if refresh_stale else None
             )
-            if not batch:
-                break
+        if not batch:
+            break
 
-            # Naive UTC. Every timestamp column in this schema is TIMESTAMP
-            # WITHOUT TIME ZONE, and asyncpg refuses to bind a tz-aware value
-            # into one while SQLite silently accepts it -- so an aware value
-            # here passes every local test and fails on the first batch against
-            # the deployed Postgres. Same normalisation as db/crud.py.
-            now = datetime.now(timezone.utc).replace(tzinfo=None)
-            rows = [
-                {
-                    "ticket_no": ticket_no,
-                    "grievance_redacted": redact(text),
-                    "redacted_at": now,
-                    "analyzer_version": version,
-                }
-                for ticket_no, text in batch
-            ]
+        # Presidio runs here, off any open transaction. It is CPU-bound and
+        # sequential (one call per row -- parallelising it is blocked on the
+        # pii/pipeline-core numpy ABI conflict), so doing this inside
+        # engine.begin() held a write transaction open on the box that also
+        # hosts production Postgres for as long as the batch took to redact.
+        # If the process dies right here, the batch was never upserted, so
+        # the NOT EXISTS predicate in _load_pending_batch picks it back up on
+        # the next run -- same outcome as a rollback of the old transaction.
+        #
+        # Naive UTC. Every timestamp column in this schema is TIMESTAMP
+        # WITHOUT TIME ZONE, and asyncpg refuses to bind a tz-aware value
+        # into one while SQLite silently accepts it -- so an aware value
+        # here passes every local test and fails on the first batch against
+        # the deployed Postgres. Same normalisation as db/crud.py.
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        rows = [
+            {
+                "ticket_no": ticket_no,
+                "grievance_redacted": redact(text),
+                "redacted_at": now,
+                "analyzer_version": version,
+            }
+            for ticket_no, text in batch
+        ]
+
+        async with engine.begin() as conn:
             await conn.execute(
                 _dialect_upsert(
                     GrievanceRedaction, conn.dialect.name, rows, "ticket_no"
