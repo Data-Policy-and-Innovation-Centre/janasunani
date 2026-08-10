@@ -450,6 +450,18 @@ phase_c_artifacts() {
   #    deterministic break -- not a "not published yet" state -- so it fails
   #    outright rather than following the warn-unless-strict pattern used
   #    below for "nothing configured at all".
+  # supervisor_provider_from_env() (janasunani/serving/intelligence.py) gates
+  # the whole aggregate seam on JANASUNANI_SUPERVISOR_FINDINGS_DIR alone: if
+  # that variable is unset it returns UnavailableSupervisorProvider
+  # immediately, before ArtifactSupervisorProvider is ever constructed --
+  # JANASUNANI_SUPERVISOR_AGGREGATES_DIR is not consulted at all in that
+  # path, so workload.csv/spike.csv sitting there are never read live. Mirror
+  # that on/off gate before doing any per-file lookup below, so an
+  # aggregates-only configuration cannot report success for a provider that
+  # will never come up.
+  if [ -z "${JANASUNANI_SUPERVISOR_FINDINGS_DIR:-}" ] && [ -n "${JANASUNANI_SUPERVISOR_AGGREGATES_DIR:-}" ]; then
+    fail "JANASUNANI_SUPERVISOR_AGGREGATES_DIR is set but JANASUNANI_SUPERVISOR_FINDINGS_DIR is not; supervisor_provider_from_env() requires FINDINGS_DIR to enable the aggregate seam at all, so these aggregates would never be served"
+  else
   WORKLOAD_DIR=""
   for candidate in "${JANASUNANI_SUPERVISOR_AGGREGATES_DIR:-}" "${JANASUNANI_SUPERVISOR_FINDINGS_DIR:-}"; do
     [ -n "$candidate" ] || continue
@@ -491,6 +503,7 @@ phase_c_artifacts() {
     else
       warn "aggregates: no JANASUNANI_SUPERVISOR_AGGREGATES_DIR/JANASUNANI_SUPERVISOR_FINDINGS_DIR configured — skipping data/ probe per AGENTS.md (set REHEARSAL_ALLOW_DATA=1 to inspect data/ or configure one of them outside data/)"
     fi
+  fi
   fi
 
   # 4. Sarvam scorecard (if Unit 5 landed) — warn only

@@ -1593,14 +1593,23 @@ def test_phase_c_fails_when_aggregates_has_only_workload_csv(tmp_path):
     fallback chain) does not make the spike panel available. Counting "any
     csv present" let this pass; the gate must check workload.csv and
     spike.csv individually.
+
+    JANASUNANI_SUPERVISOR_FINDINGS_DIR is set (empty) so this test exercises
+    the per-file naming check under test, not the separate
+    findings-dir-must-be-set gate covered below.
     """
     aggregates = tmp_path / "aggregates"
     aggregates.mkdir()
     (aggregates / "workload.csv").write_text("a\n1\n")
+    findings = tmp_path / "findings-empty"
+    findings.mkdir()
 
     result = _run_phase_c(
         tmp_path,
-        env_extra={"JANASUNANI_SUPERVISOR_AGGREGATES_DIR": str(aggregates)},
+        env_extra={
+            "JANASUNANI_SUPERVISOR_AGGREGATES_DIR": str(aggregates),
+            "JANASUNANI_SUPERVISOR_FINDINGS_DIR": str(findings),
+        },
         findings=["closure_finding_summary.csv"],
     )
     assert "missing: spike.csv" in result.stdout
@@ -1611,15 +1620,51 @@ def test_phase_c_fails_on_unrelated_csv_in_aggregates_dir(tmp_path):
     """A directory holding some unrelated csv is not the same as holding
     workload.csv and spike.csv; the provider looks for those two names
     specifically, so an unrelated file must not report available.
+
+    JANASUNANI_SUPERVISOR_FINDINGS_DIR is set (empty) so this test exercises
+    the per-file naming check under test, not the separate
+    findings-dir-must-be-set gate covered below.
     """
     aggregates = tmp_path / "aggregates"
     aggregates.mkdir()
     (aggregates / "unrelated.csv").write_text("a\n1\n")
+    findings = tmp_path / "findings-empty"
+    findings.mkdir()
+
+    result = _run_phase_c(
+        tmp_path,
+        env_extra={
+            "JANASUNANI_SUPERVISOR_AGGREGATES_DIR": str(aggregates),
+            "JANASUNANI_SUPERVISOR_FINDINGS_DIR": str(findings),
+        },
+        findings=["closure_finding_summary.csv"],
+    )
+    assert "missing: workload.csv, spike.csv" in result.stdout
+    assert "FAILURES=1" in result.stdout
+
+
+def test_phase_c_fails_when_findings_dir_unset_even_with_complete_aggregates(tmp_path):
+    """Codex finding on #231: supervisor_provider_from_env() gates the whole
+    aggregate seam on JANASUNANI_SUPERVISOR_FINDINGS_DIR alone -- unset it
+    and the function returns UnavailableSupervisorProvider before
+    ArtifactSupervisorProvider (and therefore workload.csv/spike.csv in
+    JANASUNANI_SUPERVISOR_AGGREGATES_DIR) is ever consulted. Previously the
+    rehearsal reported "ok" here because it searched the aggregates dir
+    directly instead of mirroring that on/off switch -- a vacuous pass: the
+    gate said available while the live provider would never come up. An
+    aggregates-only configuration, even a complete one, must fail.
+    """
+    aggregates = tmp_path / "aggregates"
+    aggregates.mkdir()
+    (aggregates / "workload.csv").write_text("a\n1\n")
+    (aggregates / "spike.csv").write_text("a\n1\n")
 
     result = _run_phase_c(
         tmp_path,
         env_extra={"JANASUNANI_SUPERVISOR_AGGREGATES_DIR": str(aggregates)},
         findings=["closure_finding_summary.csv"],
     )
-    assert "missing: workload.csv, spike.csv" in result.stdout
+    assert "JANASUNANI_SUPERVISOR_FINDINGS_DIR" in result.stdout
     assert "FAILURES=1" in result.stdout
+    # The old vacuous-pass line must not appear.
+    assert "aggregates: " + str(aggregates) not in result.stdout
