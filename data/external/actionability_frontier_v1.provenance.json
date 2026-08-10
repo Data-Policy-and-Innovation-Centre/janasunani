@@ -1,0 +1,89 @@
+{
+  "schema_version": "janasunani.actionability-frontier-artifacts/v1",
+  "claim_status": "frontier-adjudicated development evidence; not officer-confirmed truth or a release gate",
+  "privacy": {
+    "source": "PII-redacted DPIC-controlled sample",
+    "contains_redacted_narratives": true,
+    "residual_pii_risk": true,
+    "git_contains_row_level_bytes": false,
+    "storage": "private DVC remote"
+  },
+  "sample": {
+    "records": 180,
+    "split_counts": {
+      "train": 60,
+      "validation": 60,
+      "test": 60
+    },
+    "sampling": "five records from each of four opaque weak-label strata plus forty previously unlabeled records per split",
+    "split_policy": "single_snapshot_hash_60_20_20_development_only",
+    "sha256": "95d0d3b7757ba5bd616dcffe4aefcf846cdc9f1ab2d0f7eaeba16a1077ecd096",
+    "tracking_mode": "direct DVC input",
+    "tracking_reason": "opaque item identifiers depend on a private salt that is intentionally not versioned; treating this as a reproducible stage would hide that dependency"
+  },
+  "direct_inputs": {
+    "judge_a.jsonl": {
+      "role": "frontier judge A output",
+      "sha256": "a251d7d6dfb49f36c498feb39957a5e1bcef0fe47b483abecae75e8aa11de33c"
+    },
+    "judge_b.jsonl": {
+      "role": "frontier judge B output",
+      "sha256": "ed1fcf0c68c09f84669edc4af2b00109b559aa02a44623f75652d3bbe8c39ee5"
+    },
+    "resolver.jsonl": {
+      "role": "canonical frontier resolver output",
+      "sha256": "22dcd6604aad84cbcdc52ee93673fbc64021dc52af88ead22f0881a4b53638ca"
+    },
+    "resolver_backup.jsonl": {
+      "role": "non-canonical preserved resolver backup",
+      "sha256": "9f7b228d1923dd63f6de2732283f4905fa1588b845183c07e11d4ba500911636"
+    }
+  },
+  "deterministic_stages": {
+    "actionability-adjudication-prepare": [
+      "consensus.jsonl",
+      "resolver_input.jsonl",
+      "adjudication_report.json"
+    ],
+    "actionability-adjudication-finalize": [
+      "gold.jsonl",
+      "gold.manifest.json"
+    ],
+    "actionability-local-candidate-benchmark": [
+      "outputs/evaluation/actionability_candidates_muril_high_catch.json"
+    ]
+  },
+  "canonical_reproducible_gold": {
+    "records": 174,
+    "sha256": "0504ddfbe79c3613250b5a10572f7b2b1d4e4c2628972098a83c61e4a7d94538",
+    "label_counts": {
+      "actionable": 140,
+      "underspecified": 13,
+      "irrelevant": 7,
+      "policy_blocked": 14,
+      "out_of_scope": 0
+    },
+    "policy": "exclude all resolver judgments marked uncertain",
+    "excluded_uncertain_resolver_rows": 6
+  },
+  "preserved_historical_gold": {
+    "artifact": "historical_gold_180.jsonl",
+    "manifest": "historical_gold_180.manifest.json",
+    "records": 180,
+    "sha256": "7459d387916e71c94c154f0ffa87b962991abbe830bf13757b5ed7da0e4a5630",
+    "status": "the original benchmark input is retained for auditability but is not canonical because it admitted six resolver judgments marked uncertain"
+  },
+  "preserved_nonreproducible_reports": {
+    "historical_candidates_strict.json": "192eec94265d01d0275f14ddfec1a97f3c29e0d2a0c95a483774c3e414fb8e7a",
+    "historical_candidates_sensitivity.json": "c01a276019f601bbefa4bb4198bda16a04c914ed8f5e4d61260a84ca1fb0d3d6",
+    "historical_candidates_high_catch.json": "d89ff324a31c4b74197dc78b13547721c57710b4a1fd871d6932b075dfa1585c",
+    "historical_candidates_muril_minilm_high_catch.json": "15de6c1ff7f2e336c4e938c645fe8f881c1449fa37cc13b63e472ab39a8babb2"
+  },
+  "limitations": [
+    "The adjudicators were separate Codex contexts, not independent model families or providers.",
+    "Exact hidden prompts, sampling configuration and provider retention evidence were unavailable.",
+    "The sample contains no defensible out_of_scope example and cannot validate the five-class serving contract.",
+    "The four historical candidate reports used the preserved 180-row historical gold; the reproducible benchmark uses the stricter 174-row canonical gold.",
+    "The historical MiniLM comparisons depend on an untracked local Hugging Face cache and are preserved as direct evidence rather than represented as reproducible stages."
+  ]
+}
