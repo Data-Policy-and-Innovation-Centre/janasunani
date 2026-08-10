@@ -217,6 +217,10 @@ data/output/*
 data/external/sarvam_cached_v1/*
 !data/external/sarvam_cached_v1/*.dvc
 !data/external/sarvam_cached_v1/provenance.json
+!data/external/actionability_frontier_v1/
+data/external/actionability_frontier_v1/*
+!data/external/actionability_frontier_v1/*.dvc
+!data/external/actionability_frontier_v1/*.provenance.json
 # Provenance sidecars for gold/draft artifacts: versions, checksums and span
 # counts only, written by scripts/rederive_pii_draft.py. They exist to be read
 # in review, so they belong in git. Never put citizen text in one.
