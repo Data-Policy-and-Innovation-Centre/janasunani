@@ -15,8 +15,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 _SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+_GATE_WORKFLOW_PATH = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "codex-review-gate.yml"
 
 
 def _load(name: str):
@@ -496,3 +498,25 @@ def test_paginated_review_threads_are_all_inspected():
     unresolved = check.unresolved_codex_threads(graphql, "owner", "name", 207)
     assert seen == [None, "cursor1"]
     assert len(unresolved) == 1
+
+
+def test_gate_workflow_queues_pending_runs_instead_of_cancelling_them():
+    """The gate fires on five overlapping per-PR triggers sharing one
+    concurrency group (push, review, review comment, issue comment, cron).
+    `cancel-in-progress: false` alone is not enough: GitHub still cancels a
+    *pending* run the instant another event queues behind it in the same
+    group -- that is the documented default, independent of
+    cancel-in-progress -- so a push followed quickly by `@codex review`
+    followed by a review submission still produced the CANCELLED `evaluate`
+    jobs this gate exists to eliminate (Codex round-N finding on #238).
+    `queue: max` is the only way to let more than one run wait in a group,
+    and GitHub rejects it paired with `cancel-in-progress: true`, so both
+    settings must hold together."""
+    workflow = yaml.safe_load(_GATE_WORKFLOW_PATH.read_text())
+    concurrency = workflow["concurrency"]
+
+    assert concurrency["cancel-in-progress"] is False
+    assert concurrency["queue"] == "max"
+    # Per-PR, not per-workflow-run or repo-wide: two different PRs must not
+    # queue behind each other.
+    assert "github.event.pull_request.number" in concurrency["group"]

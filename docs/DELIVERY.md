@@ -14,7 +14,7 @@ The full grievance history is loaded and verified: 1,371,288 complaints and 6,55
 
 All six pipeline stages are implemented: page classification, text extraction, removal of personal information, page-type filtering, summarisation, categorisation. End-to-end integration is unverified, since it has not yet been run start to finish in one pass.
 
-Live processing works. A grievance submitted through the web interface comes back with its redacted text, category, summary and routing. The interface is built; wiring it to the live models rather than to test responses is still in progress. Routing uses fixed rules; the learned version is later work.
+Live processing works. A grievance submitted through the web interface comes back with its redacted text, category, summary and routing. The interface is built; wiring it to the live models rather than to test responses is still in progress. Routing now runs on the empirical crosswalk learned from case history (issue #33, closed 7 August). Argmax accuracy: 60.9% on category alone, 67.5% with subcategory, 72.8% with subcategory and district. It learns where cases were historically sent, not where they resolved best. A learned outcome-based scorer on disposal time and citizen benefit (issue #106) is a separate, harder problem and stays later work.
 
 Deployment automation is written and reviewed but not yet run. The system is not switched on at our AWS server.
 

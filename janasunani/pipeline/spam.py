@@ -45,7 +45,7 @@ import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal, Optional, Protocol
 
 from janasunani.pipeline.ocr_quality import is_repetition_collapsed
 
@@ -164,6 +164,43 @@ def _is_no_grievance_like(text: str) -> bool:
     if low in {"test", "demo", "asdf", "blank"}:
         return True
     return False
+
+
+class SpamScorer(Protocol):
+    """Anything that can score one redacted text for low signal.
+
+    The return type is the load-bearing part. A scorer returns a
+    :class:`SpamScore`, never a ``SpamReview``, so it reaches the wire only
+    through :meth:`SpamScore.to_review_fields`. That adapter is what keeps
+    ``reason_code`` inside the closed set the serving contract admits: a
+    trained model cannot invent a new reason and have it silently published.
+
+    A learned scorer must also keep the two properties that make this signal
+    safe to show an officer: it is advisory, and it abstains rather than
+    guessing. Never auto-reject. A false positive is a citizen's grievance
+    discarded, which is a different class of harm from a mis-categorisation.
+    """
+
+    def score(
+        self,
+        redacted_text: str,
+        *,
+        is_repetition_collapsed: Optional[bool] = None,
+    ) -> SpamScore: ...
+
+
+class BoundedSpamScorer:
+    """Adapter presenting the shipped heuristic under the scorer Protocol."""
+
+    version = SPAM_VERSION
+
+    def score(
+        self,
+        redacted_text: str,
+        *,
+        is_repetition_collapsed: Optional[bool] = None,
+    ) -> SpamScore:
+        return score_spam(redacted_text, is_repetition_collapsed=is_repetition_collapsed)
 
 
 def score_spam(

@@ -1,5 +1,10 @@
 import Link from "next/link";
-import type { TriageResult } from "@/lib/types";
+import {
+  SPAM_REASON_MESSAGES,
+  classifyDuplicateDisplay,
+  wasActuallyScored,
+  type TriageResult,
+} from "@/lib/types";
 import { Badge } from "./ui";
 
 /**
@@ -8,21 +13,26 @@ import { Badge } from "./ui";
  */
 export function TriageBanner({ triage }: { triage: TriageResult }) {
   const { duplicate, duplicate_review, spam } = triage;
-  const lowSignalMessage = {
-    validated_low_signal_evidence:
-      "Validated low-signal evidence requests an officer review.",
-    ocr_repetition_collapse_unvalidated:
-      "The established OCR repetition-collapse guard observed a problem, but it is not an approved low-signal review rule.",
-    live_review_disabled_pending_redacted_adjudication:
-      "Low-signal review is disabled pending redacted human-adjudicated validation.",
-    mock_low_signal_review_unavailable:
-      "The mock demo does not run low-signal review.",
-    advisory_provider_unavailable:
-      "The advisory provider was unavailable, so no low-signal review was assigned.",
-  }[spam.reason_code];
+  const lowSignalMessage = SPAM_REASON_MESSAGES[spam.reason_code];
   const repetitionEvidence = spam.evidence.find(
     (evidence) => evidence.kind === "repetition_collapse",
   );
+  const duplicateDisplay = classifyDuplicateDisplay(duplicate);
+  // A failed screening is not a clean result. `unavailable_triage()` returns
+  // spam_score 0.0 and spam_reason "clean" alongside
+  // reason_code "advisory_provider_unavailable", so rendering on a non-null
+  // score alone would report "clean (spam_score 0.00)" for a screening that
+  // never ran. Show the number only when something actually scored it.
+  //
+  // Advisory either way: a numeric score never determines the review outcome,
+  // so the caveat travels with the value.
+  const spamScoreLine = wasActuallyScored(spam) ? (
+    <p className="mt-1 text-xs text-text-secondary">
+      low-signal: <code>{spam.spam_reason ?? spam.reason_code}</code>{" "}
+      (spam_score {spam.spam_score!.toFixed(2)}). Advisory only — it does
+      not determine the review outcome.
+    </p>
+  ) : null;
 
   return (
     <section
@@ -83,37 +93,42 @@ export function TriageBanner({ triage }: { triage: TriageResult }) {
           </article>
         )}
 
-        {duplicate?.duplicate_kind === "resubmission" &&
-          duplicate.duplicate_ticket_no && (
-            <article className="rounded-sm border border-hair bg-surface px-3 py-2">
-              <Badge tone="neutral">possible duplicate</Badge>
-              <p className="mt-1 text-sm text-text-body">
-                Possible duplicate of ticket{" "}
-                <Link
-                  href={`/history?q=${encodeURIComponent(duplicate.duplicate_ticket_no)}`}
-                  className="font-mono font-semibold text-maroon underline underline-offset-2"
-                >
-                  {duplicate.duplicate_ticket_no}
-                </Link>
-                . Review both filings before taking any action.
-              </p>
-            </article>
-          )}
+        {duplicateDisplay.kind === "resubmission" && (
+          <article className="rounded-sm border border-hair bg-surface px-3 py-2">
+            <Badge tone="neutral">possible duplicate</Badge>
+            <p className="mt-1 text-sm text-text-body">
+              Possible duplicate of ticket{" "}
+              <Link
+                href={`/history?q=${encodeURIComponent(duplicateDisplay.ticketNo)}`}
+                className="font-mono font-semibold text-maroon underline underline-offset-2"
+              >
+                {duplicateDisplay.ticketNo}
+              </Link>
+              . Review both filings before taking any action.
+            </p>
+          </article>
+        )}
 
-        {duplicate?.duplicate_kind === "campaign" &&
-          duplicate.related_filings && (
+        {duplicateDisplay.kind === "campaign" && (
           <article className="rounded-sm border border-positive bg-positive/10 px-3 py-2">
             <Badge tone="positive">collective grievance</Badge>
             <h3 className="mt-1 text-sm font-semibold text-text-dark">
               Part of a campaign
             </h3>
             <p className="mt-1 text-sm text-text-body">
-              {duplicate.related_filings} related filings were found. This is
-              a collective grievance, not spam; each filing remains visible
-              for review.
+              {duplicateDisplay.relatedFilings} related filings across{" "}
+              {duplicateDisplay.distinctSignatories} distinct signatories
+              were found. This is a collective grievance, not spam; each
+              filing remains visible for review.
             </p>
           </article>
         )}
+
+        {/* duplicateDisplay.kind === "withheld": a campaign-sized group
+            without signatory evidence that clears the threshold above. Not
+            rendered as campaign (would launder one filer as a movement) and
+            not rendered as spam (the scorer abstains by design). What, if
+            anything, this state should show is an open question — #180. */}
 
         {spam.decision === "review" && (
           <article className="rounded-sm border border-negative bg-negative/10 px-3 py-2">
@@ -126,6 +141,7 @@ export function TriageBanner({ triage }: { triage: TriageResult }) {
               Reason code: <code>{spam.reason_code}</code>. This advisory does
               not reject the grievance.
             </p>
+            {spamScoreLine}
           </article>
         )}
 
@@ -137,6 +153,7 @@ export function TriageBanner({ triage }: { triage: TriageResult }) {
               Reason code: <code>{spam.reason_code}</code>. No low-signal
               review was assigned.
             </p>
+            {spamScoreLine}
             {repetitionEvidence && (
               <p className="mt-1 text-xs text-text-secondary">
                 OCR repetition-collapse guard: {repetitionEvidence.observed ? "observed" : "not observed"}. No source text is shown here.

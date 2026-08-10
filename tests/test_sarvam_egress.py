@@ -67,6 +67,16 @@ class FakeClock:
         self.now += seconds
 
 
+def _wrap(fields: dict[str, Any]) -> dict[str, Any]:
+    """Wrap a field map as the JSON Schema document Sarvam Extract requires.
+
+    The provider rejects a bare field map with HTTP 400, so fixtures that pass
+    one are testing a request that could never succeed. See
+    ``_validate_extract_schema``.
+    """
+    return {"type": "object", "properties": fields}
+
+
 def _context() -> SarvamAuditContext:
     return SarvamAuditContext(ticket="T-42", stage="ocr_extraction", document_id="doc:1")
 
@@ -478,7 +488,7 @@ def test_extract_resume_key_is_stable_across_schema_dict_order(tmp_path):
             "page.png",
             "en-IN",
             _context(),
-            schema={"z_field": {"type": "string"}, "a_field": {"type": "number"}},
+            schema=_wrap({"z_field": {"type": "string", "description": "z"}, "a_field": {"type": "number", "description": "a"}}),
         )
 
     resumed_transport = RecordedTransport(
@@ -502,7 +512,7 @@ def test_extract_resume_key_is_stable_across_schema_dict_order(tmp_path):
         "page.png",
         "en-IN",
         _context(),
-        schema={"a_field": {"type": "number"}, "z_field": {"type": "string"}},
+        schema=_wrap({"a_field": {"type": "number", "description": "a"}, "z_field": {"type": "string", "description": "z"}}),
     )
 
     assert result == {"results": [{"a_field": 1, "z_field": "ok"}]}
@@ -531,7 +541,7 @@ def test_changed_result_defining_parameter_does_not_resume_recorded_job(
                 "page.png",
                 "en-IN",
                 _context(),
-                schema={"field": "number" if changed else "string"},
+                schema=_wrap({"field": {"type": "number" if changed else "string", "description": "f"}}),
             )
         return adapter.extract(
             b"fixture-png",
@@ -1072,7 +1082,7 @@ def test_extract_submission_omits_an_unsupported_model_field(tmp_path):
         "page.png",
         "en-IN",
         _context(),
-        schema={"complainant_name": "string"},
+        schema=_wrap({"complainant_name": {"type": "string", "description": "name"}}),
     )
 
     assert result == {"results": [{"complainant_name": "Example"}]}
@@ -1080,7 +1090,7 @@ def test_extract_submission_omits_an_unsupported_model_field(tmp_path):
     assert submission_data == {
         "language": "en-IN",
         "output_format": "json",
-        "schema": '{"complainant_name":"string"}',
+        "schema": '{"properties":{"complainant_name":{"description":"name","type":"string"}},"type":"object"}',
     }
     assert "model" not in submission_data
 

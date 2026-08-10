@@ -5,12 +5,21 @@ Live submissions are scored over redacted text only (never raw
 (pipeline/spam.py, spam-v1-bounded) — repetition collapse, length, and
 low-signal patterns — and is advisory only (never blocks submission).
 Duplicate matching remains slice-scoped and unavailable live.
+
+**What ships today is heuristic, not learned.** ``spam-v1-bounded`` is a
+cascade of deterministic rules. The learned scorer is #74. This module holds
+the seam that lets one replace the other without touching a call site, and
+``triage_status`` exists so a demo narrative cannot quietly describe the
+heuristic as a trained model.
 """
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from typing import Optional, Protocol
+
+from loguru import logger
 
 from janasunani.pipeline.ocr_quality import is_repetition_collapsed
 from janasunani.serving.schemas import (
@@ -21,14 +30,52 @@ from janasunani.serving.schemas import (
 )
 
 try:
-    from janasunani.pipeline.spam import SPAM_VERSION, score_spam
+    from janasunani.pipeline.spam import SPAM_VERSION, SpamScorer, score_spam
 except Exception:  # pragma: no cover — scorer absent in minimal env
     SPAM_VERSION = "unavailable"  # type: ignore
+    SpamScorer = object  # type: ignore
     score_spam = None  # type: ignore
+
+#: Environment variable selecting the triage implementation.
+TRIAGE_ENV_VAR = "JANASUNANI_TRIAGE"
+
+#: The shipped heuristic scorer.
+TRIAGE_BOUNDED = "bounded"
+
+#: Advisory triage disabled; every submission reports unavailable.
+TRIAGE_OFF = "off"
+
+#: A trained scorer, when one exists (#74).
+TRIAGE_MODEL = "model"
+
+SUPPORTED_TRIAGE_PROVIDERS = (TRIAGE_BOUNDED, TRIAGE_OFF, TRIAGE_MODEL)
 
 
 class TriageUnavailableError(RuntimeError):
     """An advisory provider could not be used without blocking submission."""
+
+
+class LearnedScorerUnresolved(RuntimeError):
+    """Base for the reasons ``_resolve_learned_scorer`` has no scorer to give.
+
+    Both subclasses degrade identically at request time -- neither may block
+    a citizen's submission -- but they are different states for an operator:
+    one says "produce and publish an artifact", the other says "the loader
+    hasn't been written yet, no artifact will fix it". Preflight needs to
+    tell them apart even though the request path does not.
+    """
+
+
+class ScorerArtifactAbsent(LearnedScorerUnresolved):
+    """No ``spam_scorer`` artifact resolves yet. Expected until #74 ships one."""
+
+
+class ScorerLoaderUnimplemented(LearnedScorerUnresolved):
+    """An artifact resolves, but nothing loads it into a ``SpamScorer`` yet.
+
+    A programming gap, not an operational one: supplying an artifact cannot
+    fix this by itself.
+    """
 
 
 class TriageProvider(Protocol):
@@ -131,3 +178,156 @@ class UnwiredTriageProvider:
             # unavailable rather than surfacing an internal trace.
             return unavailable_triage()
         return TriageResult(spam=spam)
+
+
+class OffTriageProvider:
+    """Report advisory triage as unavailable without scoring anything.
+
+    Distinct from a broken provider on purpose: this is an operator saying
+    "do not run triage", and the response says exactly that rather than
+    implying the text was assessed and found clean.
+    """
+
+    def assess(
+        self,
+        *,
+        redacted_text: str,
+        district: Optional[str],
+        submitted_on: datetime,
+    ) -> TriageResult:
+        del redacted_text, district, submitted_on
+        return unavailable_triage()
+
+
+class ScoredTriageProvider:
+    """Run an injected scorer, degrading exactly as the default provider does.
+
+    This is the seam a trained model plugs into. The scorer returns a
+    ``SpamScore``, never a ``SpamReview``, so the taxonomy is enforced by
+    ``SpamScore.to_review_fields`` rather than by the model's good behaviour:
+    a reason code outside the closed set cannot reach the wire.
+
+    The two ``except`` clauses are copied from ``UnwiredTriageProvider`` and
+    are the whole safety story. A learned scorer that fails to load, times
+    out, or returns nonsense degrades to advisory-unavailable. It never
+    blocks a citizen's submission and never surfaces a trace.
+    """
+
+    def __init__(self, scorer: "SpamScorer") -> None:
+        self._scorer = scorer
+
+    def assess(
+        self,
+        *,
+        redacted_text: str,
+        district: Optional[str],
+        submitted_on: datetime,
+    ) -> TriageResult:
+        del district, submitted_on
+        try:
+            scored = self._scorer.score(redacted_text)
+            spam = SpamReview(**scored.to_review_fields())
+        except TriageUnavailableError:
+            return unavailable_triage()
+        except Exception:
+            return unavailable_triage()
+        return TriageResult(spam=spam)
+
+
+def triage_provider_from_env(value: str | None = None) -> TriageProvider:
+    """Select a triage provider by environment, never raising.
+
+    Unset keeps the shipped bounded scorer. ``off`` disables advisory triage.
+    ``model`` selects a learned scorer and falls back to the bounded one when
+    no artifact resolves, so setting it early costs nothing.
+    """
+    configured = (value if value is not None else os.environ.get(TRIAGE_ENV_VAR, "")).strip().lower()
+    if not configured or configured == TRIAGE_BOUNDED:
+        return UnwiredTriageProvider()
+    if configured == TRIAGE_OFF:
+        return OffTriageProvider()
+    if configured == TRIAGE_MODEL:
+        try:
+            scorer = _resolve_learned_scorer()
+        except ScorerArtifactAbsent:
+            logger.warning(
+                "{}={} but no learned scorer artifact resolved; using the bounded scorer",
+                TRIAGE_ENV_VAR,
+                TRIAGE_MODEL,
+            )
+            return UnwiredTriageProvider()
+        except ScorerLoaderUnimplemented:
+            logger.warning(
+                "{}={} but a scorer artifact resolved and no loader is "
+                "implemented yet (#74); using the bounded scorer",
+                TRIAGE_ENV_VAR,
+                TRIAGE_MODEL,
+            )
+            return UnwiredTriageProvider()
+        return ScoredTriageProvider(scorer)
+    logger.warning(
+        "{}={!r} is not one of {}; using the bounded scorer",
+        TRIAGE_ENV_VAR,
+        configured,
+        ", ".join(SUPPORTED_TRIAGE_PROVIDERS),
+    )
+    return UnwiredTriageProvider()
+
+
+def _resolve_learned_scorer() -> "SpamScorer":
+    """Resolve a trained scorer artifact.
+
+    Raises rather than returning ``None`` so the two ways this can fail stay
+    distinguishable to callers: :class:`ScorerArtifactAbsent` when no
+    artifact resolves (expected until #74 ships one -- an operator fixes this
+    by publishing an artifact) and :class:`ScorerLoaderUnimplemented` when one
+    resolves but nothing loads it yet (a programming gap -- no artifact fixes
+    this). Collapsing both into ``None`` is what let a status probe tell an
+    operator to go fix an artifact that was never the problem.
+
+    Split out so the selection logic above is testable without a model, and so
+    the day a learned scorer lands there is one function to fill in.
+    """
+    from janasunani.tracking.artifacts import resolve_artifact
+
+    if resolve_artifact("spam_scorer") is None:
+        raise ScorerArtifactAbsent("no spam_scorer artifact resolved")
+    raise ScorerLoaderUnimplemented(
+        "a spam scorer artifact is present but no loader is implemented yet"
+    )
+
+
+def triage_status() -> tuple[str, bool, str]:
+    """Report ``(name, ok, detail)`` for preflight without scoring anything."""
+    configured = os.environ.get(TRIAGE_ENV_VAR, "").strip().lower() or TRIAGE_BOUNDED
+    if configured == TRIAGE_OFF:
+        return (TRIAGE_OFF, True, "advisory triage disabled by configuration")
+    if configured == TRIAGE_MODEL:
+        try:
+            _resolve_learned_scorer()
+        except ScorerArtifactAbsent:
+            return (
+                TRIAGE_BOUNDED,
+                False,
+                f"{TRIAGE_ENV_VAR}=model but no scorer artifact resolved; "
+                f"serving the bounded heuristic scorer ({SPAM_VERSION})",
+            )
+        except ScorerLoaderUnimplemented:
+            return (
+                TRIAGE_BOUNDED,
+                False,
+                f"{TRIAGE_ENV_VAR}=model and a scorer artifact resolved, but "
+                "its loader is not implemented yet (#74) -- publishing "
+                "another artifact will not fix this; serving the bounded "
+                f"heuristic scorer ({SPAM_VERSION})",
+            )
+        return (TRIAGE_MODEL, True, "learned scorer artifact resolved")
+    if configured not in SUPPORTED_TRIAGE_PROVIDERS:
+        return (
+            TRIAGE_BOUNDED,
+            False,
+            f"{TRIAGE_ENV_VAR}={configured!r} is unknown; serving the bounded scorer",
+        )
+    if score_spam is None:
+        return (TRIAGE_BOUNDED, False, "spam scorer import failed; triage reports unavailable")
+    return (TRIAGE_BOUNDED, True, f"bounded heuristic scorer ({SPAM_VERSION}); not a learned model")
