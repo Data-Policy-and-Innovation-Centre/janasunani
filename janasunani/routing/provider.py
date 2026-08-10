@@ -123,10 +123,25 @@ def router_status() -> tuple[str, bool, str]:
     a rung the deployed path does not read would fail an artifact that routes
     perfectly well.
 
-    The cost is loading one JSON artifact, which preflight can afford: it
-    already opens a real OLTP connection when one is configured.
+    A non-empty ``by_category`` is still not sufficient on its own: an entry
+    can be present and structurally valid yet fail ``Crosswalk.lookup``'s own
+    eligibility bar (``MIN_CONFIDENCE``, computed from support and share --
+    see ``CrosswalkRoute.confidence``). Four rows split evenly eight ways
+    loads fine and clears every structural check, but scores nowhere near
+    0.3. Reimplementing that threshold here would be a fifth parallel copy of
+    an eligibility rule that has already drifted from the real one four
+    times, so this instead calls ``crosswalk.lookup`` itself, once per
+    category in the table, and reports ``ok=True`` only when at least one of
+    those real calls actually returns a route. That is the same function and
+    the same thresholds the live router uses, so it cannot disagree with the
+    real router by construction -- there is no second copy of the rule left
+    to drift.
+
+    The cost is loading one JSON artifact and walking its category table,
+    which preflight can afford: it already opens a real OLTP connection when
+    one is configured.
     """
-    from janasunani.routing.crosswalk import DEFAULT_ARTIFACT, load_crosswalk
+    from janasunani.routing.crosswalk import DEFAULT_ARTIFACT, MIN_CONFIDENCE, load_crosswalk
 
     configured = os.environ.get(ROUTER_ENV_VAR, "").strip().lower() or ROUTER_DEFAULT
 
@@ -165,6 +180,27 @@ def router_status() -> tuple[str, bool, str]:
                 f"crosswalk loaded from {DEFAULT_ARTIFACT.name} but the "
                 "category table is empty; every lookup misses and routing "
                 "degrades to mapping tables then fallback (run "
+                "janasunani-build-crosswalk to restore method:learned)",
+            )
+        # Structural, not a sixth special case: this calls `Crosswalk.lookup`
+        # itself -- the exact function and thresholds a live request goes
+        # through -- rather than re-deriving "eligible" from the table's raw
+        # fields. `by_category` keys are already `_key(category, None, None)`
+        # (`_norm`-normalized, joined with the two empty rungs), and `_key`
+        # is idempotent under a second `_norm`, so splitting off the first
+        # segment and passing it back as `category` reaches the same table
+        # cell `lookup` would for the real (unnormalized) category text.
+        if not any(
+            crosswalk.lookup(category=key.split("|")[0]) is not None
+            for key in crosswalk.by_category
+        ):
+            return (
+                ROUTER_DEFAULT,
+                False,
+                f"crosswalk loaded from {DEFAULT_ARTIFACT.name} but no entry "
+                f"clears Crosswalk.lookup's confidence floor "
+                f"(MIN_CONFIDENCE={MIN_CONFIDENCE}); every lookup misses and "
+                "routing degrades to mapping tables then fallback (run "
                 "janasunani-build-crosswalk to restore method:learned)",
             )
         return (

@@ -32,8 +32,11 @@ from janasunani.serving.triage import (
     TRIAGE_OFF,
     OffTriageProvider,
     ScoredTriageProvider,
+    ScorerArtifactAbsent,
+    ScorerLoaderUnimplemented,
     TriageUnavailableError,
     UnwiredTriageProvider,
+    _resolve_learned_scorer,
     triage_provider_from_env,
     triage_status,
 )
@@ -171,6 +174,62 @@ def test_triage_status_flags_model_configured_without_an_artifact(monkeypatch):
     assert name == TRIAGE_BOUNDED
     assert ok is False
     assert "no scorer artifact resolved" in detail
+
+
+def test_resolve_learned_scorer_raises_artifact_absent_when_nothing_resolves(monkeypatch):
+    monkeypatch.delenv("JANASUNANI_SPAM_SCORER_ARTIFACT", raising=False)
+    monkeypatch.setenv("JANASUNANI_MODELS_DIR", "/nonexistent-for-this-test")
+    with pytest.raises(ScorerArtifactAbsent):
+        _resolve_learned_scorer()
+
+
+def test_resolve_learned_scorer_raises_loader_unimplemented_when_an_artifact_exists(
+    tmp_path, monkeypatch
+):
+    artifact = tmp_path / "spam_scorer"
+    artifact.write_bytes(b"not a real model, just needs to be a usable path")
+    monkeypatch.setenv("JANASUNANI_SPAM_SCORER_ARTIFACT", str(artifact))
+    with pytest.raises(ScorerLoaderUnimplemented):
+        _resolve_learned_scorer()
+
+
+def test_triage_status_distinguishes_absent_artifact_from_unimplemented_loader(
+    tmp_path, monkeypatch
+):
+    """Codex finding on #234: these are different operator states.
+
+    Absent means "train and publish an artifact". Present-but-unimplemented
+    means "write the loader" -- publishing another artifact will not help.
+    Collapsing both into "no scorer artifact resolved" sends an operator to
+    fix the wrong thing.
+    """
+    artifact = tmp_path / "spam_scorer"
+    artifact.write_bytes(b"not a real model, just needs to be a usable path")
+    monkeypatch.setenv(TRIAGE_ENV_VAR, TRIAGE_MODEL)
+    monkeypatch.setenv("JANASUNANI_SPAM_SCORER_ARTIFACT", str(artifact))
+
+    name, ok, detail = triage_status()
+    assert name == TRIAGE_BOUNDED
+    assert ok is False
+    assert "loader is not implemented" in detail
+    # Distinct from the absent-artifact wording covered by the test above.
+    assert "no scorer artifact resolved" not in detail
+
+
+def test_triage_provider_falls_back_to_bounded_when_the_loader_is_unimplemented(
+    tmp_path, monkeypatch
+):
+    """The request path degrades the same way for both failure states.
+
+    Only the diagnostic in `triage_status` needs to tell them apart; a live
+    submission must reach the bounded scorer either way, never an error.
+    """
+    artifact = tmp_path / "spam_scorer"
+    artifact.write_bytes(b"not a real model, just needs to be a usable path")
+    monkeypatch.setenv("JANASUNANI_SPAM_SCORER_ARTIFACT", str(artifact))
+
+    provider = triage_provider_from_env(TRIAGE_MODEL)
+    assert isinstance(provider, UnwiredTriageProvider)
 
 
 # --- a broken learned scorer must never reach the citizen -------------------
@@ -343,3 +402,90 @@ def test_router_status_rejects_an_empty_crosswalk(tmp_path, monkeypatch):
     # Distinct from the missing/corrupt wording, which need different fixes.
     assert "missing" not in detail
     assert "unreadable or structurally invalid" not in detail
+
+
+def test_router_status_rejects_a_crosswalk_with_no_eligible_route(tmp_path, monkeypatch):
+    """Codex finding on #234: a non-empty ``by_category`` can still route nowhere.
+
+    ``Crosswalk.lookup`` refuses a candidate below ``MIN_CONFIDENCE`` (0.3).
+    Confidence is ``share * evidence(support)``; a row with ``support=3``
+    (the minimum ``_valid_entry`` accepts) and ``share=0.1`` scores about
+    0.026 -- the exact example from the finding. A table where every entry
+    is this thin is structurally valid, loads without error, and is
+    non-empty, but a real ``crosswalk.lookup`` call against every category in
+    it returns ``None`` every time -- exactly what a live request would get.
+    The previous check (``by_category`` non-empty) reported ``ok=True`` for
+    this file; this must not.
+    """
+    import json
+
+    import janasunani.routing.crosswalk as crosswalk_mod
+
+    thin = tmp_path / "routing_crosswalk.json"
+    thin.write_text(
+        json.dumps(
+            {
+                "by_full": {},
+                "by_subcategory": {},
+                "by_category_district": {},
+                "by_category": {
+                    "general||": {"dept": "General Administration", "support": 3, "share": 0.1},
+                    "housing||": {"dept": "Housing Dept", "support": 3, "share": 0.1},
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(crosswalk_mod, "DEFAULT_ARTIFACT", thin)
+    monkeypatch.delenv(ROUTER_ENV_VAR, raising=False)
+
+    # Confirm the premise directly against the real `Crosswalk.lookup`, not
+    # just against `router_status`'s report of it.
+    crosswalk = crosswalk_mod.load_crosswalk(thin)
+    assert crosswalk is not None
+    assert crosswalk.by_category  # non-empty: the old gate would have passed it
+    assert crosswalk.lookup(category="general") is None
+    assert crosswalk.lookup(category="housing") is None
+
+    name, ok, detail = router_status()
+    assert name == ROUTER_DEFAULT
+    assert ok is False
+    assert "confidence floor" in detail
+    # Distinct from the empty-table wording -- this table has entries.
+    assert "empty" not in detail
+
+
+def test_router_status_accepts_a_crosswalk_with_at_least_one_eligible_route(
+    tmp_path, monkeypatch
+):
+    """The positive control for the fix above: one strong entry is enough."""
+    import json
+
+    import janasunani.routing.crosswalk as crosswalk_mod
+
+    mixed = tmp_path / "routing_crosswalk.json"
+    mixed.write_text(
+        json.dumps(
+            {
+                "by_full": {},
+                "by_subcategory": {},
+                "by_category_district": {},
+                "by_category": {
+                    # Too thin to clear MIN_CONFIDENCE on its own.
+                    "general||": {"dept": "General Administration", "support": 3, "share": 0.1},
+                    # Well-attested and concentrated: clears it easily.
+                    "housing||": {"dept": "Housing Dept", "support": 500, "share": 0.9},
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(crosswalk_mod, "DEFAULT_ARTIFACT", mixed)
+    monkeypatch.delenv(ROUTER_ENV_VAR, raising=False)
+
+    crosswalk = crosswalk_mod.load_crosswalk(mixed)
+    assert crosswalk is not None
+    assert crosswalk.lookup(category="housing") is not None
+
+    name, ok, detail = router_status()
+    assert name == ROUTER_DEFAULT
+    assert ok is True
+    assert "learned" in detail
