@@ -10,9 +10,15 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .model import FormatClassifier
-    from .stage import run_format_classifier
 
 __all__ = ["FormatClassifier", "run_format_classifier"]
+
+
+def run_format_classifier(config: Any) -> None:
+    """Run the stage without importing its optional dependencies at discovery time."""
+    from .stage import run_format_classifier as _run_format_classifier
+
+    _run_format_classifier(config)
 
 
 def __getattr__(name: str) -> Any:
@@ -20,8 +26,4 @@ def __getattr__(name: str) -> Any:
         from .model import FormatClassifier
 
         return FormatClassifier
-    if name == "run_format_classifier":
-        from .stage import run_format_classifier
-
-        return run_format_classifier
     raise AttributeError(name)
