@@ -162,6 +162,7 @@ janasunani-evaluate-routing = "janasunani.evaluation.historical:main"
 janasunani-model-release = "janasunani.tracking.materialize:main"
 janasunani-evaluate-summary = "janasunani.evaluation.summary:main"
 janasunani-audit-actionability-labels = "janasunani.evaluation.weak_labels:main"
+janasunani-import-sarvam-evidence = "janasunani.evaluation.sarvam_cached:main"
 
 [build-system]
 requires = ["hatchling"]

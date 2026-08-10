@@ -25,9 +25,14 @@ version so ``benchmark_report`` can compare runs without re-reading pages.
 from __future__ import annotations
 
 import argparse
+from collections import Counter
+from datetime import UTC, datetime
+import hashlib
 import json
+import os
 import sys
 from pathlib import Path
+import tempfile
 from typing import Any
 
 from loguru import logger
@@ -50,6 +55,8 @@ PRICE_DIGITISE = 0.50
 PRICE_EXTRACT = 1.00
 PRICE_BOTH = 1.50
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".gif"}
+PROGRESS_SCHEMA_VERSION = "janasunani.sarvam-progress/v1"
+PROGRESS_FILENAME = "sarvam_progress.json"
 
 
 def _price_for_arm(arm: str, n_pages: int) -> float:
@@ -86,6 +93,125 @@ def discover_pages(input_dir: Path, limit: int | None) -> list[tuple[Path, int]]
             if limit is not None and len(pages) >= limit:
                 return pages
     return pages
+
+
+def _input_snapshot_id(pages: list[tuple[Path, int]]) -> str:
+    """Content-address the exact document bytes and requested page inventory.
+
+    Filenames can contain ticket identifiers and mtimes change when a governed
+    sample is copied. Neither belongs in the identity. Hash each source file's
+    bytes once, then bind that digest to every requested page number so changed
+    pixels cannot retain the same snapshot merely by preserving size/mtime.
+    """
+
+    digest = hashlib.sha256()
+    file_digests: dict[Path, bytes] = {}
+    for path, number in pages:
+        resolved = path.resolve()
+        file_digest = file_digests.get(resolved)
+        if file_digest is None:
+            source_digest = hashlib.sha256()
+            with resolved.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    source_digest.update(chunk)
+            file_digest = source_digest.digest()
+            file_digests[resolved] = file_digest
+        value = file_digest + b"\0" + str(number).encode("ascii")
+        digest.update(len(value).to_bytes(8, "big"))
+        digest.update(value)
+    return f"sha256:{digest.hexdigest()}"
+
+
+def _write_progress_checkpoint(
+    *,
+    out_dir: Path,
+    pages: list[tuple[Path, int]],
+    pages_processed: int,
+    records: list[PageRecord],
+    failures: list[dict[str, str]],
+    page_lengths: list[dict[str, object]],
+    arm: str,
+    schema_version: str,
+    slice_label: str,
+    dry_run: bool,
+    complete: bool,
+) -> Path:
+    """Atomically persist safe aggregate progress after every page.
+
+    The checkpoint intentionally excludes page IDs, ticket IDs, transcripts,
+    summaries, categories attached to a ticket, and provider response bodies.
+    Accepted provider jobs remain resumable through the separately governed
+    audit log; this file preserves what can be reported if credits or the
+    process stop before the final scorecard write.
+    """
+    from janasunani.evaluation.sarvam_scorecard import normalize_text
+
+    failure_arms = Counter(row["arm"] for row in failures)
+    failure_types = Counter(row["error"] for row in failures)
+    eligible_pairs = records if arm in {"digitise", "both"} else []
+    divergence_n = sum(
+        normalize_text(row.pytesseract_text) != normalize_text(row.sarvam_markdown)
+        for row in eligible_pairs
+    )
+    partial: dict[str, object] | None = None
+    if records:
+        report = build_scorecard(records, slice_label=slice_label, arm=arm).to_dict()
+        partial = {
+            key: report.get(key)
+            for key in (
+                "category", "transcription_accuracy", "transcription_divergence",
+                "by_handwritten", "by_language", "per_category", "summary_divergence",
+            )
+        }
+    payload = {
+        "schema_version": PROGRESS_SCHEMA_VERSION,
+        "updated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "complete": complete,
+        "input_snapshot_id": _input_snapshot_id(pages),
+        "arm": arm,
+        "extract_schema_version": schema_version,
+        "slice": slice_label,
+        "dry_run": dry_run,
+        "pages_discovered": len(pages),
+        "pages_processed": pages_processed,
+        "pages_scored": len(records),
+        "pages_excluded": max(0, pages_processed - len(records)),
+        "failure_events": len(failures),
+        "failures_by_arm": dict(sorted(failure_arms.items())),
+        "failures_by_error": dict(sorted(failure_types.items())),
+        "pytesseract_normalized_characters": sum(
+            int(row.get("pytesseract_chars", 0)) for row in page_lengths
+        ),
+        "sarvam_normalized_characters": sum(
+            int(row.get("sarvam_chars", 0)) for row in page_lengths
+        ),
+        "paired_exact_divergence_count": divergence_n,
+        "paired_exact_divergence_n": len(eligible_pairs),
+        "maximum_list_price_rupees": 0.0 if dry_run else _price_for_arm(arm, len(pages)),
+        "actual_billing_available": False,
+        "partial_scorecard": partial,
+        "privacy": {
+            "contains_page_or_ticket_ids": False,
+            "contains_text_or_provider_payloads": False,
+            "mode": "0600",
+        },
+    }
+    out_dir.mkdir(parents=True, exist_ok=True)
+    destination = out_dir / PROGRESS_FILENAME
+    fd, temporary_name = tempfile.mkstemp(prefix=".sarvam-progress-", dir=out_dir)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, destination)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+    return destination
 
 
 def _load_metadata_join(
@@ -357,11 +483,12 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     # pylint: disable=import-error
+    out_dir.mkdir(parents=True, exist_ok=True)
     records: list[PageRecord] = []
     failures: list[dict[str, str]] = []
     page_lengths: list[dict[str, object]] = []
 
-    for path, number in pages:
+    for processed, (path, number) in enumerate(pages, 1):
         page_id = f"{path.stem}:p{number}"
         ticket = _ticket_of(path)
 
@@ -479,6 +606,19 @@ def main(argv: list[str] | None = None) -> int:
                 if sarvam_summary:
                     print("---- sarvam_summary ----")
                     print(sarvam_summary)
+            _write_progress_checkpoint(
+                out_dir=out_dir,
+                pages=pages,
+                pages_processed=processed,
+                records=records,
+                failures=failures,
+                page_lengths=page_lengths,
+                arm=args.arm,
+                schema_version=args.schema_version,
+                slice_label=args.slice,
+                dry_run=args.dry_run,
+                complete=False,
+            )
             continue
 
         records.append(
@@ -518,6 +658,20 @@ def main(argv: list[str] | None = None) -> int:
                 print("---- sarvam_summary ----")
                 print(sarvam_summary)
 
+        _write_progress_checkpoint(
+            out_dir=out_dir,
+            pages=pages,
+            pages_processed=processed,
+            records=records,
+            failures=failures,
+            page_lengths=page_lengths,
+            arm=args.arm,
+            schema_version=args.schema_version,
+            slice_label=args.slice,
+            dry_run=args.dry_run,
+            complete=False,
+        )
+
     out_dir.mkdir(parents=True, exist_ok=True)
     # Pass arm + slice so scorecard correctly hides non-measured arms (digitise vs extract)
     # and renders the selected slice (not demo constant).
@@ -545,6 +699,19 @@ def main(argv: list[str] | None = None) -> int:
     destination = out_dir / "sarvam_scorecard.json"
     destination.write_text(json.dumps(payload, indent=2, default=str))
     logger.success(f"scorecard -> {destination}")
+    _write_progress_checkpoint(
+        out_dir=out_dir,
+        pages=pages,
+        pages_processed=len(pages),
+        records=records,
+        failures=failures,
+        page_lengths=page_lengths,
+        arm=args.arm,
+        schema_version=args.schema_version,
+        slice_label=args.slice,
+        dry_run=args.dry_run,
+        complete=True,
+    )
 
     # Also print markdown to stdout for pipeline visibility
     print(render_markdown(report))

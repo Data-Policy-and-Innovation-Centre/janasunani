@@ -210,6 +210,15 @@ def test_evaluate_dry_run_digitise_arm(tmp_path: Path):
     assert data["schema_version"] == "v1"
     assert data["cost_rupees"] == 0.0  # dry-run
     assert "summary_divergence" in data
+    progress_path = out / "sarvam_progress.json"
+    progress = json.loads(progress_path.read_text())
+    assert progress["schema_version"] == "janasunani.sarvam-progress/v1"
+    assert progress["complete"] is True
+    assert progress["pages_processed"] == 2
+    assert progress["pages_scored"] == 2
+    assert progress["privacy"]["contains_page_or_ticket_ids"] is False
+    assert progress["privacy"]["contains_text_or_provider_payloads"] is False
+    assert progress_path.stat().st_mode & 0o777 == 0o600
     # markdown mentions arm/slice
     md = md_path.read_text()
     assert "Sarvam" in md
@@ -250,6 +259,70 @@ def test_evaluate_both_arm_cost(tmp_path: Path):
     assert _price_for_arm("digitise", 10) == pytest.approx(5.0)
     assert _price_for_arm("extract", 10) == pytest.approx(10.0)
     assert _price_for_arm("both", 10) == pytest.approx(15.0)
+
+
+def test_progress_checkpoint_contains_only_aggregates(tmp_path: Path):
+    from janasunani.evaluation.sarvam_evaluate import _write_progress_checkpoint
+    from janasunani.evaluation.sarvam_scorecard import PageRecord
+
+    page = tmp_path / "SECRET-TICKET_document.png"
+    page.write_bytes(b"pixels")
+    records = [
+        PageRecord(
+            ticket="SECRET-TICKET",
+            page_id="SECRET-TICKET:p1",
+            handwritten="printed",
+            language="English",
+            pytesseract_text="local grievance text",
+            sarvam_markdown="remote grievance text",
+        )
+    ]
+    destination = _write_progress_checkpoint(
+        out_dir=tmp_path / "out",
+        pages=[(page, 1)],
+        pages_processed=1,
+        records=records,
+        failures=[{"page_id": "SECRET-TICKET:p1", "error": "HTTP402", "arm": "extract"}],
+        page_lengths=[
+            {"page_id": "SECRET-TICKET:p1", "pytesseract_chars": 20, "sarvam_chars": 21}
+        ],
+        arm="both",
+        schema_version="v1",
+        slice_label="Sambalpur/2024",
+        dry_run=False,
+        complete=False,
+    )
+
+    encoded = destination.read_text()
+    assert "SECRET-TICKET" not in encoded
+    assert "grievance text" not in encoded
+    payload = json.loads(encoded)
+    assert payload["failure_events"] == 1
+    assert payload["failures_by_error"] == {"HTTP402": 1}
+    assert payload["paired_exact_divergence_count"] == 1
+
+
+def test_input_snapshot_is_content_addressed_not_filename_or_mtime(tmp_path: Path):
+    from janasunani.evaluation.sarvam_evaluate import _input_snapshot_id
+
+    first = tmp_path / "SECRET-TICKET_first.png"
+    renamed = tmp_path / "DIFFERENT-TICKET_copy.png"
+    first.write_bytes(b"pixel-content-v1")
+    renamed.write_bytes(first.read_bytes())
+
+    original = _input_snapshot_id([(first, 1)])
+    assert _input_snapshot_id([(renamed, 1)]) == original
+
+    stat = first.stat()
+    first.write_bytes(b"pixel-content-v2")
+    assert len(b"pixel-content-v1") == len(b"pixel-content-v2")
+    first.touch()
+    import os
+
+    os.utime(first, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+
+    assert _input_snapshot_id([(first, 1)]) != original
+    assert _input_snapshot_id([(renamed, 2)]) != original
 
 
 def test_evaluate_join_metadata_from_lake(tmp_path: Path):
