@@ -159,6 +159,7 @@ janasunani-evaluate-benchmark = "janasunani.evaluation.benchmark_report:main"
 janasunani-evaluate-sarvam = "janasunani.evaluation.sarvam_evaluate:main"
 janasunani-build-sarvam-sample = "janasunani.evaluation.sarvam_sample_builder:main"
 janasunani-evaluate-summary = "janasunani.evaluation.summary:main"
+janasunani-audit-actionability-labels = "janasunani.evaluation.weak_labels:main"
 
 [build-system]
 requires = ["hatchling"]
