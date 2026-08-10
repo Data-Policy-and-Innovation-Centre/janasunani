@@ -1,0 +1,40 @@
+{
+  "schema_version": "janasunani.sarvam-source-snapshots/v1",
+  "claim_status": "cached provider evidence; not OCR accuracy evidence and not a release gate",
+  "privacy": {
+    "contains_operational_ticket_and_document_identifiers": true,
+    "contains_provider_response_metadata": true,
+    "git_contains_row_level_bytes": false,
+    "storage": "private DVC remote"
+  },
+  "artifacts": {
+    "interrupted_300_page_audit.sqlite": {
+      "sha256": "247673d4d0e4a22b5ad88fa91af3e2e2711d3000e29c0e95299c2ac8faa36219",
+      "audit_events": 628,
+      "distinct_tickets": 15,
+      "distinct_documents": 65,
+      "role": "audit log for the paid run interrupted by credit exhaustion"
+    },
+    "validation_5_page_audit.sqlite": {
+      "sha256": "66d338c6bcddb8d67fc5c4fca0d11855b65a6c6411fcbf02c536d46a0d9f0ae2",
+      "audit_events": 46,
+      "distinct_tickets": 2,
+      "distinct_documents": 5,
+      "role": "audit log for the completed five-page validation run"
+    },
+    "validation_5_page_scorecard.json": {
+      "sha256": "c7c6f1214842d2532b4f12e549c91d701ec3df13a9b616f9a8eb57ed6767aeae",
+      "role": "machine-readable scorecard from the completed validation run"
+    },
+    "validation_5_page_scorecard.md": {
+      "sha256": "13e0283466a26edd129aa13707645bcec965d2637b1a5e8d8a89423c2f45a801",
+      "role": "human-readable scorecard from the completed validation run"
+    }
+  },
+  "limitations": [
+    "The original 300-page sample manifest and benchmark log were not recovered.",
+    "The paid run ended before it wrote a complete scorecard.",
+    "No hand transcription exists, so paired text divergence is not OCR accuracy.",
+    "Latency distributions and actual provider billing records were not recovered."
+  ]
+}
