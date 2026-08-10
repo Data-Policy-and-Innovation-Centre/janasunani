@@ -45,8 +45,8 @@ subsets/resume).
 | `format_classifier` | `pages` rows (discovery + page split + format label) | XGBoost/OpenCV; pickle at `models/format_classifier/`. Must run first — it populates `pages`. |
 | `ocr_extraction` | `pages.extracted_text` | Backends: `pytesseract` (CPU; needs the `tesseract` binary + `tesseract-lang` for Odia `ori`) or `deepseek` (GPU-only, fails fast without CUDA). Resumable: only NULL-text pages, known-bad pages skipped. |
 | `pii_tagger` | `pages.redacted_text` | **Presidio-based rebuild** (the legacy CRF weights died with the DSI Box). Custom Indian recognizers (mobile/Aadhaar/PAN), typed tokens `[NAME]`/`[PHONE]`/…, whole-page analysis (no 512-token window), covers mixed `English, Odia` pages, Indic-digit normalization. Fully in-process. Untuned against gold: Phase 13 scores it per entity and per language. |
-| `page_type_classifier` | `pages.page_type` | ViT from the DVC mirror (`models/page_type_classifier/`), HF fallback. The **signal/noise gate**: letters/forms are substance, IDs/bills are noise. |
-| `summarizer` | document summaries | BART (`facebook/bart-large-cnn`, public). Only summarizes target page types — gated on the page-type stage. |
+| `page_type_classifier` | `pages.page_type` | ViT from an operator override, pinned release, or DVC mirror (`models/page_type_classifier/`). Public HF IDs require explicit development opt-in. The **signal/noise gate**: letters/forms are substance, IDs/bills are noise. |
+| `summarizer` | document summaries | Locally pinned BART (`facebook/bart-large-cnn` family). Public HF loading requires explicit development opt-in. Only summarizes target page types — gated on the page-type stage. |
 | `categorizer` | `documents.grievance_category` | MuRIL from the DVC mirror (`models/categorizer/`). Feature = grievance text + joined **redacted** page text, mirroring training. English-only. |
 
 Stages run in canonical order regardless of the order given to `--stages`.
@@ -61,11 +61,15 @@ already gates the summarizer. It is the first stage needing corpus-level state (
 MinHash/LSH index built from the lake), which the per-run artifact DB does not
 provide. See [ROADMAP.md](../../docs/ROADMAP.md) §5.2.
 
-The reduced August implementation deliberately does **not** add that stage or
-gate later stages. The live serving path observes the existing OCR
-repetition-collapse guard only after redaction and abstains from low-signal
-review until a redacted, human-adjudicated validation release authorizes a
-rule. It emits no numeric spam score and never changes submission status.
+The reduced August implementation deliberately does **not** add that batch
+stage. The live serving path runs `spam-v1.1-bounded` only after redaction and
+emits a numeric, auditable review/abstention signal. Its narrow content-free
+guard skips automated category, summary and route selection in favor of manual
+grievance-cell intake; broader low-signal findings remain advisory and continue
+through the normal path. An optional checksummed five-class actionability
+artifact can add a separate advisory result, but the current binary development
+benchmark is not compatible with that serving contract and produced no
+deployable artifact. Neither signal changes submission status or auto-rejects.
 
 ## The dependency split (why `--stages` and lazy imports exist)
 

@@ -1,0 +1,82 @@
+{
+  "schema_version": "janasunani.sarvam-cached-evidence/v1",
+  "as_of": "2026-08-10",
+  "provider": "sarvam-hosted",
+  "model": "Sarvam Vision 1.5",
+  "slice": "Sambalpur/2024",
+  "extract_schema_version": "v1",
+  "normalizer_version": "1.0",
+  "credits_available_for_new_calls": false,
+  "reproducibility": {
+    "tracked_aggregate_only": true,
+    "source_artifacts_tracked": false,
+    "source_artifact_hashes_available": false,
+    "derivation_command_recorded": false,
+    "latency_distribution_available": false,
+    "claim_limit": "The aggregate preserves reportable counts and ratios but cannot be independently reconstructed from tracked repository artifacts."
+  },
+  "runs": [
+    {
+      "run_id": "sarvam-validation-5-page",
+      "status": "completed",
+      "arm": "both",
+      "pages_submitted": 5,
+      "pages_paired_scored": 5,
+      "tickets": 2,
+      "provider_failures": 0,
+      "recorded_cost_rupees": 7.5,
+      "cost_basis": "list-price calculation; actual billing unavailable",
+      "actual_billing_available": false,
+      "normalized_exact_text_divergence": 1.0,
+      "pytesseract_normalized_characters": 4690,
+      "sarvam_normalized_characters": 5831,
+      "sarvam_to_pytesseract_character_ratio": 1.2433,
+      "source": "untracked outputs/sarvam_validation/sarvam_scorecard.json",
+      "limitations": [
+        "No hand transcription; divergence is not OCR accuracy.",
+        "No reportable category accuracy or summary comparison.",
+        "Language is an en-IN request hint, not an observed language split.",
+        "Handwriting status is unknown."
+      ]
+    },
+    {
+      "run_id": "sarvam-300-page-interrupted",
+      "status": "interrupted_credit_exhaustion",
+      "arm": "both",
+      "sample_manifest_pages": 300,
+      "sample_manifest_tickets": 108,
+      "sample_manifest_categories": 31,
+      "sample_seed": 20260809,
+      "pages_attempted": 65,
+      "pages_paired_scored": 56,
+      "pages_excluded": 9,
+      "accepted_jobs": 127,
+      "accepted_digitise_jobs": 64,
+      "accepted_extract_jobs": 63,
+      "completed_jobs": 120,
+      "completed_digitise_jobs": 59,
+      "completed_extract_jobs": 61,
+      "provider_job_failures": 7,
+      "credit_exhaustion_http_402_submissions": 3,
+      "normalized_exact_text_divergence": 1.0,
+      "pytesseract_normalized_characters": 66171,
+      "sarvam_normalized_characters": 88306,
+      "sarvam_to_pytesseract_character_ratio": 1.3345,
+      "sarvam_longer_pages": 43,
+      "pytesseract_longer_pages": 13,
+      "estimated_list_price_accepted_jobs_rupees": 95.0,
+      "estimated_list_price_completed_jobs_rupees": 90.5,
+      "cost_basis": "list-price calculation; actual billing unavailable",
+      "actual_billing_available": false,
+      "source": "aggregate audit of the local Sarvam sample manifest, benchmark log, and outputs/sarvam/sarvam_audit.sqlite",
+      "limitations": [
+        "The original runner did not checkpoint a scorecard before HTTP 402.",
+        "No hand transcription; divergence and character length do not establish quality.",
+        "Failed pages are excluded from paired divergence and may be non-random.",
+        "The category-stratified sample is not handwriting- or language-stratified.",
+        "The sample manifest contains ticket and object identifiers and remains untracked."
+      ]
+    }
+  ],
+  "reporting_rule": "Report coverage, failures, list-price cost estimates, and paired divergence only. Do not claim latency, actual billed cost, OCR accuracy, category superiority, or summary quality until the corresponding governed evidence exists."
+}
