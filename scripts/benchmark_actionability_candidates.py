@@ -13,11 +13,9 @@ import hashlib
 import importlib.metadata
 import json
 import os
-import platform
 import sys
 import tempfile
 from collections import Counter
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Sequence
 
@@ -135,10 +133,9 @@ def build_report(
     )
     report: dict[str, object] = {
         "schema_version": SCHEMA_VERSION,
-        "created_at": datetime.now(UTC).isoformat(),
         "objective": "actionable_vs_officer_review",
         "gold": {
-            "path": str(gold_path.resolve()),
+            "path": gold_path.as_posix(),
             "sha256": _sha256(gold_path),
             "n": len(records),
             "split_counts": dict(sorted(Counter(row.split for row in records).items())),
@@ -161,7 +158,6 @@ def build_report(
         },
         "software": {
             "python": sys.version.split()[0],
-            "platform": platform.platform(),
             "numpy": importlib.metadata.version("numpy"),
             "scikit_learn": importlib.metadata.version("scikit-learn"),
             "torch": importlib.metadata.version("torch"),
