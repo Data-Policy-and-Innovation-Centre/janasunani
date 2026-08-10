@@ -41,9 +41,22 @@ permissions:
   contents: read
   pull-requests: read
 
+# Queue rather than cancel. This workflow fires on pull_request,
+# pull_request_review, pull_request_review_comment, issue_comment and a
+# 5-minute cron, and every per-PR trigger shares one group. With
+# cancel-in-progress the commonest sequence -- push a fix, then comment
+# `@codex review` -- had the comment's run cancel the push's run, leaving a
+# CANCELLED `evaluate` job attached to the head commit forever. The verdict
+# check itself was green, so every pull request sat at UNSTABLE with a
+# permanently unhappy check that had to be reasoned about by hand each time.
+#
+# Cancelling is safe for the verdict (each run posts against the head_sha it
+# actually evaluated, so a late run cannot mislabel a newer commit) but it is
+# not free: it makes a passing gate look like a failing one. Runs are short,
+# and the cron sweep keys on run_id so it never queues behind anything.
 concurrency:
   group: codex-review-gate-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr || github.run_id }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   evaluate:
