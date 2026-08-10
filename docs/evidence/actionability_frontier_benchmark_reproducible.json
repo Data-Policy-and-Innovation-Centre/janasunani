@@ -1,0 +1,541 @@
+{
+  "candidates": {
+    "muril_local": {
+      "candidate_validation": [
+        {
+          "actionable_review_rate": 0.04081632653061224,
+          "average_precision": 0.7021873877756231,
+          "brier_score": 0.20294279420238553,
+          "c": 0.1,
+          "review_precision": 0.7777777777777778,
+          "review_recall": 0.7,
+          "roc_auc": 0.942857142857143,
+          "threshold": 0.5323057667106691
+        },
+        {
+          "actionable_review_rate": 0.04081632653061224,
+          "average_precision": 0.7341971916971916,
+          "brier_score": 0.1444784000015383,
+          "c": 0.5,
+          "review_precision": 0.7777777777777778,
+          "review_recall": 0.7,
+          "roc_auc": 0.9489795918367346,
+          "threshold": 0.6140416090775185
+        },
+        {
+          "actionable_review_rate": 0.04081632653061224,
+          "average_precision": 0.6805207211089563,
+          "brier_score": 0.12402315118748464,
+          "c": 1,
+          "review_precision": 0.7777777777777778,
+          "review_recall": 0.7,
+          "roc_auc": 0.9448979591836735,
+          "threshold": 0.650525808871453
+        },
+        {
+          "actionable_review_rate": 0.08163265306122448,
+          "average_precision": 0.7808870214752568,
+          "brier_score": 0.1096737679825957,
+          "c": 2,
+          "review_precision": 0.6666666666666666,
+          "review_recall": 0.8,
+          "roc_auc": 0.953061224489796,
+          "threshold": 0.5461088418545869
+        },
+        {
+          "actionable_review_rate": 0.061224489795918366,
+          "average_precision": 0.7818484211866564,
+          "brier_score": 0.08960699646759349,
+          "c": 10,
+          "review_precision": 0.7272727272727273,
+          "review_recall": 0.8,
+          "roc_auc": 0.9510204081632654,
+          "threshold": 0.5355985173289554
+        }
+      ],
+      "encoder": {
+        "architectures": [
+          "BertForSequenceClassification"
+        ],
+        "artifact_file_count": 8,
+        "artifact_fingerprint": "sha256:8a94d0e448ccf0613cc74156151b1d25454169c87c8dbac1c485a323ed3bd3dc",
+        "batch_size": 16,
+        "device": "cpu",
+        "frozen": true,
+        "local_files_only": true,
+        "local_path": "models/categorizer",
+        "max_length": 256,
+        "name": "muril_local",
+        "pooling": "attention_masked_mean_then_l2_normalize",
+        "revision": null,
+        "role": "multilingual_candidate",
+        "transformers_model_type": "bert",
+        "trust_remote_code": false
+      },
+      "gold_label_distribution": {
+        "actionable": 140,
+        "irrelevant": 7,
+        "policy_blocked": 14,
+        "underspecified": 13
+      },
+      "limitations": [
+        "frozen encoder with a train-only linear probe",
+        "frontier-adjudicated development gold is not officer-confirmed truth",
+        "single-snapshot hash splits are not chronological release evidence",
+        "test split is report-only and did not select model or threshold",
+        "Wilson intervals are item-level and do not establish population representativeness",
+        "binary review does not replace the complete five-class production contract"
+      ],
+      "model_family": "frozen-transformer-mean-pool-logreg",
+      "model_version": "actionability-frozen-encoder-v1",
+      "objective": "actionable_vs_officer_review",
+      "probe": {
+        "candidate_c_values": [
+          0.1,
+          0.5,
+          1,
+          2,
+          10
+        ],
+        "class_weight": "balanced",
+        "classifier": "sklearn.linear_model.LogisticRegression",
+        "max_iter": 2000,
+        "random_state": 1729,
+        "solver": "lbfgs",
+        "training_split": "train"
+      },
+      "release_eligible": false,
+      "review_threshold": 0.5355985173289554,
+      "selected_c": 10,
+      "split_counts": {
+        "test": 57,
+        "train": 58,
+        "validation": 59
+      },
+      "test": {
+        "accuracy": 0.8596491228070176,
+        "accuracy_ci": [
+          0.7467553539065591,
+          0.927127238567614
+        ],
+        "actionable_review_rate": 0.09090909090909091,
+        "actionable_review_rate_ci": [
+          0.03592219322731624,
+          0.21159239166598606
+        ],
+        "actual_review": 13,
+        "by_non_actionable_reason": {
+          "irrelevant": {
+            "review_recall": 0.6666666666666666,
+            "support": 3
+          },
+          "out_of_scope": {
+            "review_recall": 0.0,
+            "support": 0
+          },
+          "policy_blocked": {
+            "review_recall": 1.0,
+            "support": 3
+          },
+          "underspecified": {
+            "review_recall": 0.5714285714285714,
+            "support": 7
+          }
+        },
+        "confusion": {
+          "false_review": 4,
+          "missed_review": 4,
+          "true_actionable": 40,
+          "true_review": 9
+        },
+        "f1": 0.6923076923076923,
+        "flagged": 13,
+        "n": 57,
+        "review_precision": 0.6923076923076923,
+        "review_precision_ci": [
+          0.4236934318054904,
+          0.873192963442895
+        ],
+        "review_recall": 0.6923076923076923,
+        "review_recall_ci": [
+          0.4236934318054904,
+          0.873192963442895
+        ],
+        "threshold": 0.5355985173289554
+      },
+      "test_by_language": {
+        "unknown_pending_adjudication": {
+          "accuracy": 0.8596491228070176,
+          "accuracy_ci": [
+            0.7467553539065591,
+            0.927127238567614
+          ],
+          "actionable_review_rate": 0.09090909090909091,
+          "actionable_review_rate_ci": [
+            0.03592219322731624,
+            0.21159239166598606
+          ],
+          "actual_review": 13,
+          "by_non_actionable_reason": {
+            "irrelevant": {
+              "review_recall": 0.6666666666666666,
+              "support": 3
+            },
+            "out_of_scope": {
+              "review_recall": 0.0,
+              "support": 0
+            },
+            "policy_blocked": {
+              "review_recall": 1.0,
+              "support": 3
+            },
+            "underspecified": {
+              "review_recall": 0.5714285714285714,
+              "support": 7
+            }
+          },
+          "confusion": {
+            "false_review": 4,
+            "missed_review": 4,
+            "true_actionable": 40,
+            "true_review": 9
+          },
+          "f1": 0.6923076923076923,
+          "flagged": 13,
+          "n": 57,
+          "review_precision": 0.6923076923076923,
+          "review_precision_ci": [
+            0.4236934318054904,
+            0.873192963442895
+          ],
+          "review_recall": 0.6923076923076923,
+          "review_recall_ci": [
+            0.4236934318054904,
+            0.873192963442895
+          ],
+          "threshold": 0.5355985173289554
+        }
+      },
+      "test_discrimination": {
+        "average_precision": 0.8114836269813646,
+        "brier_score": 0.10443214447978698,
+        "roc_auc": 0.9388111888111889
+      },
+      "validation": {
+        "accuracy": 0.9152542372881356,
+        "accuracy_ci": [
+          0.8164820473258972,
+          0.9632579669823632
+        ],
+        "actionable_review_rate": 0.061224489795918366,
+        "actionable_review_rate_ci": [
+          0.02104014667296749,
+          0.165204878357264
+        ],
+        "actual_review": 10,
+        "by_non_actionable_reason": {
+          "irrelevant": {
+            "review_recall": 0.5,
+            "support": 2
+          },
+          "out_of_scope": {
+            "review_recall": 0.0,
+            "support": 0
+          },
+          "policy_blocked": {
+            "review_recall": 1.0,
+            "support": 4
+          },
+          "underspecified": {
+            "review_recall": 0.75,
+            "support": 4
+          }
+        },
+        "confusion": {
+          "false_review": 3,
+          "missed_review": 2,
+          "true_actionable": 46,
+          "true_review": 8
+        },
+        "f1": 0.761904761904762,
+        "flagged": 11,
+        "n": 59,
+        "review_precision": 0.7272727272727273,
+        "review_precision_ci": [
+          0.434354698823871,
+          0.902539407099751
+        ],
+        "review_recall": 0.8,
+        "review_recall_ci": [
+          0.49016247153664183,
+          0.9433178485456247
+        ],
+        "threshold": 0.5355985173289554
+      },
+      "validation_discrimination": {
+        "average_precision": 0.7818484211866564,
+        "brier_score": 0.08960699646759349,
+        "roc_auc": 0.9510204081632654
+      }
+    },
+    "tfidf_word_char": {
+      "candidate_validation": [
+        {
+          "actionable_review_rate": 0.08163265306122448,
+          "c": 0.1,
+          "review_precision": 0.6666666666666666,
+          "review_recall": 0.8,
+          "threshold": 0.5030610130752182
+        },
+        {
+          "actionable_review_rate": 0.061224489795918366,
+          "c": 0.5,
+          "review_precision": 0.75,
+          "review_recall": 0.9,
+          "threshold": 0.49952706500062843
+        },
+        {
+          "actionable_review_rate": 0.08163265306122448,
+          "c": 1,
+          "review_precision": 0.7142857142857143,
+          "review_recall": 1.0,
+          "threshold": 0.4350314715184363
+        },
+        {
+          "actionable_review_rate": 0.061224489795918366,
+          "c": 2,
+          "review_precision": 0.75,
+          "review_recall": 0.9,
+          "threshold": 0.4507270657590858
+        },
+        {
+          "actionable_review_rate": 0.061224489795918366,
+          "c": 10,
+          "review_precision": 0.75,
+          "review_recall": 0.9,
+          "threshold": 0.3587926221990164
+        }
+      ],
+      "gold_label_distribution": {
+        "actionable": 140,
+        "irrelevant": 7,
+        "policy_blocked": 14,
+        "underspecified": 13
+      },
+      "limitations": [
+        "frontier-adjudicated development gold is not officer-confirmed truth",
+        "single-snapshot hash splits are not chronological release evidence",
+        "duplicate-group isolation is unavailable in this pilot sample",
+        "binary review does not replace the complete five-class production contract"
+      ],
+      "missing_five_class_support": [
+        "out_of_scope"
+      ],
+      "model_family": "tfidf-word-char-logreg",
+      "model_version": "actionability-review-tfidf-v1",
+      "objective": "actionable_vs_officer_review",
+      "release_eligible": false,
+      "review_threshold": 0.4350314715184363,
+      "sample_design": {
+        "limitation": "accuracy, precision, PPV, and review workload are specific to this designed sample composition and are not production prevalence",
+        "production_prevalence_representative": false,
+        "sampling_scheme": "fixed quotas across opaque sampling strata",
+        "sampling_stratum_counts": {
+          "s1": 15,
+          "s2": 14,
+          "s3": 14,
+          "s4": 14,
+          "s5": 117
+        }
+      },
+      "selected_c": 1,
+      "split_counts": {
+        "test": 57,
+        "train": 58,
+        "validation": 59
+      },
+      "test": {
+        "accuracy": 0.9473684210526315,
+        "accuracy_ci": [
+          0.8563044960283648,
+          0.9819397043663385
+        ],
+        "actionable_review_rate": 0.06818181818181818,
+        "actionable_review_rate_ci": [
+          0.023459395907381626,
+          0.18225044370221524
+        ],
+        "actual_review": 13,
+        "by_non_actionable_reason": {
+          "irrelevant": {
+            "review_recall": 1.0,
+            "support": 3
+          },
+          "out_of_scope": {
+            "review_recall": 0.0,
+            "support": 0
+          },
+          "policy_blocked": {
+            "review_recall": 1.0,
+            "support": 3
+          },
+          "underspecified": {
+            "review_recall": 1.0,
+            "support": 7
+          }
+        },
+        "confusion": {
+          "false_review": 3,
+          "missed_review": 0,
+          "true_actionable": 41,
+          "true_review": 13
+        },
+        "f1": 0.896551724137931,
+        "flagged": 16,
+        "n": 57,
+        "review_precision": 0.8125,
+        "review_precision_ci": [
+          0.5699111903802587,
+          0.9340840092857187
+        ],
+        "review_recall": 1.0,
+        "review_recall_ci": [
+          0.7719046276458018,
+          1.0
+        ],
+        "threshold": 0.4350314715184363
+      },
+      "test_discrimination": {
+        "average_precision": 0.9745879120879121,
+        "brier_score": 0.09576097456986903,
+        "roc_auc": 0.9912587412587412
+      },
+      "validation": {
+        "accuracy": 0.9322033898305084,
+        "accuracy_ci": [
+          0.838244756312555,
+          0.9733213810286955
+        ],
+        "actionable_review_rate": 0.08163265306122448,
+        "actionable_review_rate_ci": [
+          0.03220281766776369,
+          0.19189127596571282
+        ],
+        "actual_review": 10,
+        "by_non_actionable_reason": {
+          "irrelevant": {
+            "review_recall": 1.0,
+            "support": 2
+          },
+          "out_of_scope": {
+            "review_recall": 0.0,
+            "support": 0
+          },
+          "policy_blocked": {
+            "review_recall": 1.0,
+            "support": 4
+          },
+          "underspecified": {
+            "review_recall": 1.0,
+            "support": 4
+          }
+        },
+        "confusion": {
+          "false_review": 4,
+          "missed_review": 0,
+          "true_actionable": 45,
+          "true_review": 10
+        },
+        "f1": 0.8333333333333333,
+        "flagged": 14,
+        "n": 59,
+        "review_precision": 0.7142857142857143,
+        "review_precision_ci": [
+          0.45350915670106823,
+          0.8827862135542308
+        ],
+        "review_recall": 1.0,
+        "review_recall_ci": [
+          0.7224672001371109,
+          1.0
+        ],
+        "threshold": 0.4350314715184363
+      },
+      "validation_discrimination": {
+        "average_precision": 0.813203463203463,
+        "brier_score": 0.08993913455438475,
+        "roc_auc": 0.9653061224489796
+      }
+    }
+  },
+  "constraints": {
+    "max_actionable_review_rate": 0.1,
+    "min_review_precision": 0.6
+  },
+  "gold": {
+    "label_counts": {
+      "actionable": 140,
+      "irrelevant": 7,
+      "policy_blocked": 14,
+      "underspecified": 13
+    },
+    "label_source_counts": {
+      "frontier_adjudicated": 174
+    },
+    "n": 174,
+    "path": "data/external/actionability_frontier_v1/gold.jsonl",
+    "sample_design": {
+      "limitation": "accuracy, precision, PPV, and review workload are specific to this designed sample composition and are not production prevalence",
+      "production_prevalence_representative": false,
+      "sampling_scheme": "fixed quotas across opaque sampling strata",
+      "sampling_stratum_counts": {
+        "s1": 15,
+        "s2": 14,
+        "s3": 14,
+        "s4": 14,
+        "s5": 117
+      }
+    },
+    "sha256": "sha256:0504ddfbe79c3613250b5a10572f7b2b1d4e4c2628972098a83c61e4a7d94538",
+    "split_counts": {
+      "test": 57,
+      "train": 58,
+      "validation": 59
+    }
+  },
+  "limitations": [
+    "candidate selection is development-only and not a production promotion",
+    "accuracy, precision, PPV, and review workload are specific to this designed sample composition and are not production prevalence"
+  ],
+  "objective": "actionable_vs_officer_review",
+  "privacy": {
+    "aggregate_only": true,
+    "contains_grievance_text": false,
+    "contains_item_level_predictions": false
+  },
+  "protocol": {
+    "candidate_ranking_split": "validation",
+    "confidence_intervals": "two-sided 95% Wilson score intervals",
+    "encoder_training": "frozen",
+    "hyperparameter_selection_split": "validation",
+    "local_files_only": true,
+    "probe_training_split": "train",
+    "provider_calls": false,
+    "test_usage": "aggregate_report_only",
+    "threshold_selection_split": "validation"
+  },
+  "release_eligible": false,
+  "schema_version": "actionability-candidate-benchmark-v1",
+  "software": {
+    "numpy": "2.5.1",
+    "python": "3.13.0",
+    "scikit_learn": "1.8.0",
+    "torch": "2.12.1",
+    "transformers": "4.57.6"
+  },
+  "validation_ranking": [
+    "tfidf_word_char",
+    "muril_local"
+  ],
+  "validation_selected_candidate": "tfidf_word_char"
+}

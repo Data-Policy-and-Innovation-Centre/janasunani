@@ -1,5 +1,7 @@
 import json
+import sys
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 
 import numpy as np
 import pytest
@@ -7,6 +9,7 @@ import pytest
 from janasunani.evaluation.actionability import ActionabilityRecord
 from janasunani.evaluation.embedding_actionability import (
     LocalEncoderSpec,
+    TransformersMeanPoolEncoder,
     benchmark_frozen_encoder,
     binary_discrimination_metrics,
     resolve_cached_huggingface_snapshot,
@@ -170,3 +173,51 @@ def test_encoder_spec_records_role_without_loading_model(tmp_path):
         role="multilingual_candidate",
     )
     assert spec.role == "multilingual_candidate"
+
+
+def test_encoder_provenance_keeps_portable_configured_path(monkeypatch):
+    import janasunani.evaluation.embedding_actionability as embedding
+
+    configured_path = Path("models/categorizer")
+    resolved_path = Path("/private/worktree/models/categorizer")
+    monkeypatch.setattr(
+        embedding, "resolve_local_model_dir", lambda _path: resolved_path
+    )
+    monkeypatch.setattr(
+        embedding, "directory_fingerprint", lambda _path: ("sha256:test", 1)
+    )
+
+    torch = ModuleType("torch")
+    torch.device = lambda value: value
+    transformers = ModuleType("transformers")
+
+    class _Model:
+        config = SimpleNamespace(model_type="bert", architectures=["BertModel"])
+
+        def to(self, _device):
+            return self
+
+        def eval(self):
+            return None
+
+        def parameters(self):
+            return []
+
+    transformers.AutoTokenizer = SimpleNamespace(
+        from_pretrained=lambda *_args, **_kwargs: object()
+    )
+    transformers.AutoModel = SimpleNamespace(
+        from_pretrained=lambda *_args, **_kwargs: _Model()
+    )
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setitem(sys.modules, "transformers", transformers)
+
+    encoder = TransformersMeanPoolEncoder(
+        LocalEncoderSpec(
+            name="muril",
+            model_path=configured_path,
+            role="multilingual_candidate",
+        )
+    )
+
+    assert encoder.provenance["local_path"] == "models/categorizer"
