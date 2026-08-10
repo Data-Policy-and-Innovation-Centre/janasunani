@@ -389,3 +389,143 @@ stages:
       hash: md5
       md5: f8a1a3d705c68959429278db77bf0ac0
       size: 5538
+  full-benchmark-bundle:
+    cmd: uv run --frozen janasunani-build-benchmark-bundle --config
+      config/benchmark_bundle.json --output
+      outputs/benchmark/full_benchmark.json --markdown
+      outputs/benchmark/full_benchmark.md
+    deps:
+    - path: config/benchmark_bundle.json
+      hash: md5
+      md5: 77aff7def5c3fdf4118033ea9a55aa4c
+      size: 6232
+    - path: docs/evidence/sarvam_cached_benchmark.json
+      hash: md5
+      md5: b19e45a4bfd16cfdb6f2f3a831617cf2
+      size: 3730
+    - path: janasunani/evaluation/benchmark_bundle.py
+      hash: md5
+      md5: 25f480fb1d1f54268a1dc9bc143802f5
+      size: 9806
+    - path: outputs/evaluation/actionability_candidates_muril_high_catch.json
+      hash: md5
+      md5: ace52320363ec7d33390ad50fe9080f5
+      size: 16334
+    - path: outputs/evaluation/actionability_weak_label_audit.json
+      hash: md5
+      md5: f8a1a3d705c68959429278db77bf0ac0
+      size: 5538
+    - path: outputs/evaluation/pii_release.json
+      hash: md5
+      md5: a7a7cbebe68f24bf469b1e7f890990a4
+      size: 1771
+    - path: outputs/evaluation/routing_historical_all.json
+      hash: md5
+      md5: 9740b971cd6b815c80e6e8c83587a607
+      size: 316695
+    - path: outputs/evaluation/routing_historical_informative.json
+      hash: md5
+      md5: 91145c5adb596264ab36e57c4cef16f2
+      size: 315567
+    - path: pyproject.toml
+      hash: md5
+      md5: a75720710945819f44a16c502fb9c665
+      size: 10265
+    - path: uv.lock
+      hash: md5
+      md5: f895934178f603f5315683d02abc6449
+      size: 1038485
+    outs:
+    - path: outputs/benchmark/full_benchmark.json
+      hash: md5
+      md5: 6470542a250cef7adf9fd341eee729d9
+      size: 485678
+    - path: outputs/benchmark/full_benchmark.md
+      hash: md5
+      md5: 22a4860152d9ee46e8c831e773331318
+      size: 2635
+  pii-development-scorecard:
+    cmd: uv run --frozen --extra pii python -m
+      janasunani.evaluation.pii_scorecard --gold
+      data/external/pii_gold_draft_n50.jsonl --out
+      outputs/evaluation/pii_release.md --json-out
+      outputs/evaluation/pii_release.json
+    deps:
+    - path: data/external/pii_gold_draft_n50.jsonl
+      hash: md5
+      md5: c4862fcc95548934cfd5bf004e77542d
+      size: 164850
+    - path: janasunani/evaluation/pii_scorecard.py
+      hash: md5
+      md5: e4d5644f2b2563ff0b46ba91427c6df5
+      size: 17000
+    - path: janasunani/pipeline/pii_eval.py
+      hash: md5
+      md5: f2e706bc3e79276c347b5ebe4be061ba
+      size: 15536
+    - path: janasunani/pipeline/stages/pii_tagger.py
+      hash: md5
+      md5: a8bde50f8e4e03b883c729e81804a3ae
+      size: 36881
+    - path: pyproject.toml
+      hash: md5
+      md5: a75720710945819f44a16c502fb9c665
+      size: 10265
+    - path: uv.lock
+      hash: md5
+      md5: f895934178f603f5315683d02abc6449
+      size: 1038485
+    outs:
+    - path: outputs/evaluation/pii_release.json
+      hash: md5
+      md5: a7a7cbebe68f24bf469b1e7f890990a4
+      size: 1771
+    - path: outputs/evaluation/pii_release.md
+      hash: md5
+      md5: 834eefcaca8ceed3c8b9c8a41958df7e
+      size: 1223
+  routing-historical-benchmark:
+    cmd: uv run --frozen janasunani-evaluate-routing --complaints
+      data/interim/complaints.parquet --output
+      outputs/evaluation/routing_historical_all.json && uv run --frozen
+      janasunani-evaluate-routing --complaints data/interim/complaints.parquet
+      --informative-categories-only --output
+      outputs/evaluation/routing_historical_informative.json
+    deps:
+    - path: data/interim/complaints.parquet
+      hash: md5
+      md5: f0eeb1379c88a70ecf2fac5bad07868f
+      size: 410159639
+    - path: janasunani/evaluation/classification.py
+      hash: md5
+      md5: 5be5a49505010f6b20ec6a183f30fd0f
+      size: 12995
+    - path: janasunani/evaluation/historical.py
+      hash: md5
+      md5: ca4e5941527a4812ea33d7fbcb33c0a6
+      size: 8627
+    - path: janasunani/evaluation/routing.py
+      hash: md5
+      md5: 1a255d09e470173d3b2a43537259824c
+      size: 37902
+    - path: janasunani/evaluation/stats.py
+      hash: md5
+      md5: b3a53f566b6bb134331b12c9fb78afb6
+      size: 26269
+    - path: pyproject.toml
+      hash: md5
+      md5: a75720710945819f44a16c502fb9c665
+      size: 10265
+    - path: uv.lock
+      hash: md5
+      md5: f895934178f603f5315683d02abc6449
+      size: 1038485
+    outs:
+    - path: outputs/evaluation/routing_historical_all.json
+      hash: md5
+      md5: 9740b971cd6b815c80e6e8c83587a607
+      size: 316695
+    - path: outputs/evaluation/routing_historical_informative.json
+      hash: md5
+      md5: 91145c5adb596264ab36e57c4cef16f2
+      size: 315567
