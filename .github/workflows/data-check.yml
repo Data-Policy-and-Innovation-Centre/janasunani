@@ -20,7 +20,7 @@ jobs:
 
           bad_files="$(
             git ls-files 'data/**' 'outputs/**' |
-              grep -Ev '(^|/)\.gitkeep$|\.dvc$|^data/external/(.*/)?[^/]+\.provenance\.json$' || true
+              grep -Ev '(^|/)\.gitkeep$|\.dvc$|^data/external/(.*/)?([^/]+\.)?provenance\.json$' || true
           )"
 
           if [ -n "$bad_files" ]; then
@@ -43,6 +43,8 @@ jobs:
 
           sidecars="$(
             git ls-files \
+              'data/external/provenance.json' \
+              'data/external/**/provenance.json' \
               'data/external/*.provenance.json' \
               'data/external/**/*.provenance.json' || true
           )"
