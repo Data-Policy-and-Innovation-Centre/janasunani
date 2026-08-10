@@ -1446,3 +1446,120 @@ def test_makefile_has_rehearsal_target():
     # Must be .PHONY so make treats it as a command even if a file named
     # rehearsal exists
     assert re.search(r"\.PHONY:.*rehearsal", text), "rehearsal must be .PHONY"
+
+
+# --- Phase C behaviour, run against real directories -----------------------
+#
+# Codex findings on #231. Both were cases where the rehearsal's verdict and
+# ArtifactSupervisorProvider's behaviour disagreed, which is the one thing a
+# rehearsal gate must not do: it either passes a demo that will not work, or
+# fails a demo that would have.
+
+
+def _run_phase_c(tmp_path, *, env_extra=None, findings=()):
+    """Execute the real phase_c_artifacts body against a scratch tree."""
+    workdir = tmp_path / "repo"
+    (workdir / "outputs" / "findings").mkdir(parents=True)
+    for name in findings:
+        (workdir / "outputs" / "findings" / name).write_text("a,b\n1,2\n")
+
+    script = REHEARSAL_SH_PATH.read_text()
+    # Take the helpers and the phase C function verbatim, so the test runs the
+    # shipped logic rather than a paraphrase of it.
+    helpers = "\n".join(
+        line for line in script.splitlines()
+        if line.startswith(("info()", "ok()", "warn()", "log()", "fail()"))
+    )
+    start = script.index("phase_c_artifacts() {")
+    end = script.index("\n}\n", start) + 3
+    body = script[start:end]
+
+    harness = f"""
+set -u
+WARNINGS=0
+FAILURES=0
+REHEARSAL_SKIP_ARTIFACTS="${{REHEARSAL_SKIP_ARTIFACTS:-0}}"
+REHEARSAL_ALLOW_DATA="${{REHEARSAL_ALLOW_DATA:-0}}"
+STRICT="${{STRICT:-0}}"
+log() {{ echo "$1 $2"; }}
+{helpers}
+fail() {{ log "FAIL" "$1"; FAILURES=$((FAILURES+1)); }}
+check_artifact() {{ fail "missing: $2"; }}
+{body}
+phase_c_artifacts || true
+echo "WARNINGS=$WARNINGS FAILURES=$FAILURES"
+"""
+    env = dict(os.environ)
+    env.pop("JANASUNANI_SUPERVISOR_AGGREGATES_DIR", None)
+    env.pop("JANASUNANI_SUPERVISOR_FINDINGS_DIR", None)
+    env.update(env_extra or {})
+    return subprocess.run(
+        ["bash", "-c", harness],
+        cwd=workdir,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_phase_c_accepts_exactly_one_closure_artifact(tmp_path):
+    result = _run_phase_c(tmp_path, findings=["closure_finding_summary.csv"])
+    assert "closure: outputs/findings/closure_finding_summary.csv" in result.stdout
+
+
+def test_phase_c_rejects_two_closure_artifacts(tmp_path):
+    """The provider reports unavailable unless exactly one candidate exists.
+
+    Stopping at the first match let a strict rehearsal pass while the live
+    closure panel was unavailable, which is the transition state between the
+    two filenames.
+    """
+    result = _run_phase_c(
+        tmp_path,
+        findings=["closure_finding_summary.csv", "closure_recording_no_action.csv"],
+    )
+    assert "2 candidates present" in result.stdout
+    assert "FAILURES=0" not in result.stdout
+
+
+def test_phase_c_falls_back_to_findings_when_aggregates_is_empty(tmp_path):
+    """ArtifactSupervisorProvider searches both dirs, so the gate must too.
+
+    An aggregates dir that is set but empty does not make the panels
+    unavailable when the findings dir still holds the artifacts.
+    """
+    empty = tmp_path / "aggregates-empty"
+    empty.mkdir()
+    findings = tmp_path / "findings"
+    findings.mkdir()
+    (findings / "workload.csv").write_text("a\n1\n")
+    (findings / "spike.csv").write_text("a\n1\n")
+
+    result = _run_phase_c(
+        tmp_path,
+        env_extra={
+            "JANASUNANI_SUPERVISOR_AGGREGATES_DIR": str(empty),
+            "JANASUNANI_SUPERVISOR_FINDINGS_DIR": str(findings),
+        },
+        findings=["closure_finding_summary.csv"],
+    )
+    assert f"aggregates: {findings}" in result.stdout
+
+
+def test_phase_c_prefers_aggregates_when_it_has_content(tmp_path):
+    aggregates = tmp_path / "aggregates"
+    aggregates.mkdir()
+    (aggregates / "workload.csv").write_text("a\n1\n")
+    findings = tmp_path / "findings"
+    findings.mkdir()
+    (findings / "spike.csv").write_text("a\n1\n")
+
+    result = _run_phase_c(
+        tmp_path,
+        env_extra={
+            "JANASUNANI_SUPERVISOR_AGGREGATES_DIR": str(aggregates),
+            "JANASUNANI_SUPERVISOR_FINDINGS_DIR": str(findings),
+        },
+        findings=["closure_finding_summary.csv"],
+    )
+    assert f"aggregates: {aggregates}" in result.stdout

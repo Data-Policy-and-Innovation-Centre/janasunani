@@ -412,30 +412,53 @@ phase_c_artifacts() {
   if [ -d "outputs/findings" ]; then
     ls -1 outputs/findings | head -20 | sed 's/^/    /'
   fi
-  closure_ok=""
+  # ArtifactSupervisorProvider._load_closure() reports unavailable unless
+  # EXACTLY ONE candidate exists (len(candidates) != 1), so stopping at the
+  # first match let a strict rehearsal pass while the live closure panel was
+  # unavailable -- precisely the transition state between the two filenames.
+  # Count them instead of short-circuiting.
+  closure_found=""
+  closure_count=0
   for name in closure_finding_summary.csv closure_recording_no_action.csv; do
     if [ -f "outputs/findings/$name" ]; then
-      ok "closure: outputs/findings/$name"
-      closure_ok=1
-      break
+      closure_count=$((closure_count + 1))
+      closure_found="$name"
     fi
   done
-  if [ -z "$closure_ok" ]; then
+  if [ "$closure_count" -eq 1 ]; then
+    ok "closure: outputs/findings/$closure_found"
+  elif [ "$closure_count" -eq 0 ]; then
     check_artifact "outputs/findings/closure_finding_summary.csv" "closure findings (neither closure_finding_summary.csv nor closure_recording_no_action.csv present)" 0
+  else
+    check_artifact "outputs/findings/closure_finding_summary.csv" "closure findings ($closure_count candidates present; the provider requires exactly one and reports unavailable otherwise)" 0
   fi
 
   # 3. Aggregates — explicit JANASUNANI_SUPERVISOR_AGGREGATES_DIR, falling
   #    back to JANASUNANI_SUPERVISOR_FINDINGS_DIR (mirrors
   #    ArtifactSupervisorProvider's own fallback in intelligence.py); data/
   #    probe requires opt-in per AGENTS.md
-  AGG_DIR="${JANASUNANI_SUPERVISOR_AGGREGATES_DIR:-${JANASUNANI_SUPERVISOR_FINDINGS_DIR:-}}"
-  if [ -n "$AGG_DIR" ] && [ -d "$AGG_DIR" ]; then
-    AGG_COUNT="$(find "$AGG_DIR" -type f -name "*.csv" | wc -l | tr -d ' ')"
-    if [ "$AGG_COUNT" -gt 0 ]; then
-      ok "aggregates: $AGG_DIR ($AGG_COUNT csv(s))"
-    else
-      check_artifact "$AGG_DIR/*.csv" "aggregates in JANASUNANI_SUPERVISOR_AGGREGATES_DIR/JANASUNANI_SUPERVISOR_FINDINGS_DIR" 0
+  # ArtifactSupervisorProvider searches BOTH (aggregates_dir, findings_dir),
+  # so an aggregates dir that is set but absent or empty does not make its
+  # panels unavailable when the findings dir still holds the artifacts. The
+  # rehearsal must inspect the same fallback or it fails a strict run over a
+  # demo that would have worked.
+  AGG_FOUND=""
+  AGG_COUNT=0
+  for candidate in "${JANASUNANI_SUPERVISOR_AGGREGATES_DIR:-}" "${JANASUNANI_SUPERVISOR_FINDINGS_DIR:-}"; do
+    [ -n "$candidate" ] || continue
+    [ -d "$candidate" ] || continue
+    candidate_count="$(find "$candidate" -type f -name "*.csv" | wc -l | tr -d ' ')"
+    if [ "$candidate_count" -gt 0 ]; then
+      AGG_FOUND="$candidate"
+      AGG_COUNT="$candidate_count"
+      break
     fi
+  done
+  AGG_DIR="${JANASUNANI_SUPERVISOR_AGGREGATES_DIR:-${JANASUNANI_SUPERVISOR_FINDINGS_DIR:-}}"
+  if [ -n "$AGG_FOUND" ]; then
+    ok "aggregates: $AGG_FOUND ($AGG_COUNT csv(s))"
+  elif [ -n "$AGG_DIR" ]; then
+    check_artifact "$AGG_DIR/*.csv" "aggregates in JANASUNANI_SUPERVISOR_AGGREGATES_DIR/JANASUNANI_SUPERVISOR_FINDINGS_DIR (neither directory holds a csv)" 0
   else
     if [ "${REHEARSAL_ALLOW_DATA:-0}" = "1" ]; then
       if [ -d "data/aggregates" ] && [ "$(find data/aggregates -type f -name "*.csv" 2>/dev/null | wc -l | tr -d ' ')" -gt 0 ]; then
