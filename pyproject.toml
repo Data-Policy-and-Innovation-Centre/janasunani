@@ -158,6 +158,7 @@ janasunani-spam-scorecard = "janasunani.evaluation.spam_scorecard:main"
 janasunani-evaluate-benchmark = "janasunani.evaluation.benchmark_report:main"
 janasunani-evaluate-sarvam = "janasunani.evaluation.sarvam_evaluate:main"
 janasunani-build-sarvam-sample = "janasunani.evaluation.sarvam_sample_builder:main"
+janasunani-evaluate-summary = "janasunani.evaluation.summary:main"
 
 [build-system]
 requires = ["hatchling"]
