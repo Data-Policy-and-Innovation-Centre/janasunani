@@ -9,16 +9,19 @@ asserting on.
 from __future__ import annotations
 
 import json
+import sys
 
 import pytest
 
 from janasunani.evaluation.sarvam_sample_builder import (
+    PageCountBackendUnavailable,
     allocate,
     build_manifest,
     build_sample,
     draw_tickets,
     interleave,
     is_ambiguous_key,
+    page_count,
     prepare_out_dir,
     select_within_caps,
     write_manifest,
@@ -211,6 +214,35 @@ def test_documents_with_impossible_or_oversized_page_counts_are_skipped(pages):
         max_pages_per_document=8,
     )
     assert taken == []
+
+
+def test_page_count_raises_loudly_when_pdf2image_is_not_installed(tmp_path, monkeypatch):
+    """Codex finding on #233: a missing backend must not look like a bad document.
+
+    The console script declares no runtime dependency on `pdf2image` (it
+    lives only in the `pipeline-core`/`ocr-deepseek` extras), so a plain
+    `uv run janasunani-build-sarvam-sample` hits `ImportError` here. Before
+    the fix, the blanket `except Exception` caught it and returned a page
+    count of 0 -- indistinguishable from a corrupt PDF -- so every fetched
+    document was silently excluded and the CLI wrote an empty manifest and
+    exited 0. Setting `sys.modules["pdf2image"] = None` forces the same
+    `ImportError` regardless of whether pdf2image happens to be installed in
+    the environment running this test.
+    """
+    monkeypatch.setitem(sys.modules, "pdf2image", None)
+    pdf_path = tmp_path / "document.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n%fake\n")
+
+    with pytest.raises(PageCountBackendUnavailable):
+        page_count(pdf_path)
+
+
+def test_image_pages_do_not_need_the_pdf_backend(tmp_path, monkeypatch):
+    """The backend is only asked for when the file is actually a PDF."""
+    monkeypatch.setitem(sys.modules, "pdf2image", None)
+    image_path = tmp_path / "page.png"
+    image_path.write_bytes(b"fake-png-bytes")
+    assert page_count(image_path) == 1
 
 
 # --- the executable path ----------------------------------------------------
@@ -430,6 +462,37 @@ def test_build_sample_can_clear_a_non_empty_out_dir_on_request(tmp_path):
     assert on_disk == {d["file"] for d in manifest["documents"]}
 
 
+def test_build_sample_raises_loudly_when_the_page_backend_is_missing(tmp_path, monkeypatch):
+    """The composed path must fail loudly too, not just the unit under it.
+
+    Without `page_counter` overridden, `build_sample` uses the real
+    `page_count`, which needs `pdf2image` for the PDFs `FakeDocumentSource`
+    fetches. Before the fix this would have quietly produced an empty
+    manifest (every page count 0, every document excluded) and exited
+    successfully instead of raising.
+    """
+    monkeypatch.setitem(sys.modules, "pdf2image", None)
+    rows = _rows({"Housing": 4})
+
+    with pytest.raises(PageCountBackendUnavailable):
+        build_sample(
+            rows,
+            _source_for(rows),
+            out_dir=tmp_path / "stage",
+            slice_label="Sambalpur/2024",
+            seed=1,
+            target_pages=10,
+            floor=1,
+            max_documents=4,
+            max_pages_per_category=10,
+            max_pages_per_document=8,
+            # No page_counter override: exercise the real page_count.
+        )
+    # No manifest was written -- the failure must not look like a completed,
+    # merely-empty draw.
+    assert not (tmp_path / "stage" / "sample_manifest.json").exists()
+
+
 def test_prepare_out_dir_accepts_a_missing_or_already_empty_directory(tmp_path):
     fresh = tmp_path / "fresh"
     prepare_out_dir(fresh)
@@ -481,6 +544,38 @@ def test_allocation_never_exceeds_the_budget(counts, budget, floor):
     assert total <= budget, f"allocated {total} against a budget of {budget}"
     # And it should not leave the budget unspent when capacity exists.
     assert total == feasible or total >= min(feasible, sum(min(floor, c) for c in counts.values()))
+
+
+def test_allocation_rejects_floors_that_exceed_the_budget():
+    """Codex finding on #233: the floor stage was never checked against budget.
+
+    Three populated categories with `budget=2, floor=1` used to allocate 3
+    documents (the floor alone overshoots), which `choose_documents` then
+    resolved on its own by truncating in largest-category order -- silently
+    dropping whichever categories the floor was meant to protect. Infeasible
+    floor/budget combinations must be rejected, not quietly resolved twice in
+    two different places.
+    """
+    with pytest.raises(ValueError, match="floor"):
+        allocate({"A": 5, "B": 5, "C": 5}, budget=2, floor=1)
+
+
+def test_allocation_accepts_a_floor_that_exactly_fits_the_budget():
+    """The boundary case must not be rejected along with the infeasible one."""
+    alloc = allocate({"A": 5, "B": 5}, budget=2, floor=1)
+    assert alloc == {"A": 1, "B": 1}
+
+
+def test_choose_documents_propagates_the_infeasible_allocation_error():
+    """The composed path must not swallow the error and truncate instead."""
+    from janasunani.evaluation.sarvam_sample_builder import choose_documents
+
+    rows = _rows({"Housing": 5, "Social Welfare": 5, "Tourism": 5})
+    by_category, counts = draw_tickets(rows, seed=1)
+    source = _source_for(rows)
+
+    with pytest.raises(ValueError, match="floor"):
+        choose_documents(by_category, counts, source, max_documents=2, floor=1)
 
 
 def test_the_draw_does_not_depend_on_input_row_order():

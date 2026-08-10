@@ -29,6 +29,24 @@ that was quietly wrong:
    filled almost the entire COVID-19 cell, a category with 3 tickets in the
    whole slice. Cap pages per document as well.
 
+Two more found by review rather than a live run:
+
+4. **A missing page-counting backend must not look like a bad document.** The
+   console script declares no runtime dependency on ``pdf2image`` (it lives
+   only in the ``pipeline-core``/``ocr-deepseek`` extras), so
+   ``uv run janasunani-build-sarvam-sample`` without an extra hit ``ImportError``
+   here. A blanket ``except Exception`` caught it and treated it exactly like
+   an unreadable PDF: page count 0, excluded by ``select_within_caps``. Every
+   fetched PDF would fail the same way, and the CLI would exit 0 having
+   written an empty or truncated manifest. An absent backend must fail loudly.
+5. **A category floor must be checked against the budget before it is handed
+   out.** Independent rounding was fixed to respect the budget (largest
+   remainder, below), but the floor stage that runs before it was not: if the
+   floors alone already exceed the budget, the allocation is infeasible from
+   the start, and ``choose_documents`` was silently resolving that by
+   truncating in largest-category order -- dropping exactly the small
+   categories the floor exists to protect.
+
 Archived storage is the other operational fact worth encoding: roughly 90% of
 this corpus is in GLACIER, where ``GetObject`` fails outright. Restores must be
 requested and waited for, and the restore window has to outlast whatever the
@@ -57,19 +75,51 @@ PRICE_PER_PAGE_BOTH = 1.50
 IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".gif"})
 
 
+class PageCountBackendUnavailable(RuntimeError):
+    """The page-counting backend itself is missing -- not a bad document.
+
+    Must never be swallowed by the generic "unreadable document" path: doing
+    so is how a plain ``uv run janasunani-build-sarvam-sample`` (no extra)
+    used to silently zero out every PDF's page count and ship an empty or
+    truncated manifest while exiting 0.
+    """
+
+
 def page_count(path: Path) -> int:
     """Pages in a staged document. Images are one page; PDFs are asked.
 
-    Returns 0 for anything unreadable, which ``select_within_caps`` treats as
-    unusable. A document whose page count cannot be determined must not be
-    billed for, since pages are the billed unit.
+    Returns 0 for a document that is itself unreadable (corrupt PDF, wrong
+    magic bytes, ...), which ``select_within_caps`` treats as unusable. A
+    document whose page count cannot be determined must not be billed for,
+    since pages are the billed unit.
+
+    Raises :class:`PageCountBackendUnavailable` instead of returning 0 when
+    the *backend* -- ``pdf2image``, or the Poppler binaries it shells out to
+    -- is not installed. That is an environment problem, not a bad document:
+    ``pdf2image`` lives only in the ``pipeline-core``/``ocr-deepseek`` extras
+    (see ``pyproject.toml``), so the bare console script hits this every time
+    unless ``--extra pipeline-core`` was used to run it.
     """
     if path.suffix.lower() in IMAGE_SUFFIXES:
         return 1
     try:
         from pdf2image import pdfinfo_from_path
+        from pdf2image.exceptions import PDFInfoNotInstalledError
+    except ImportError as exc:
+        raise PageCountBackendUnavailable(
+            "pdf2image is not installed, so PDF pages cannot be counted. It is "
+            "not a base dependency of this CLI -- run with "
+            "`uv run --extra pipeline-core janasunani-build-sarvam-sample ...`."
+        ) from exc
 
+    try:
         return int(pdfinfo_from_path(str(path))["Pages"])
+    except PDFInfoNotInstalledError as exc:
+        raise PageCountBackendUnavailable(
+            "pdf2image is installed but Poppler (`pdfinfo`) is not, so PDF "
+            "pages cannot be counted. Install Poppler (`apt-get install "
+            "poppler-utils` / `brew install poppler`)."
+        ) from exc
     except Exception:
         logger.warning("could not read a page count from {}; excluding it", path.name)
         return 0
@@ -90,12 +140,31 @@ def allocate(counts: Mapping[str, int], budget: int, floor: int) -> dict[str, in
     categories on a budget of 5 returned 6. The whole point of this function is
     to respect a budget, so overshooting it is not a rounding detail.
 
-    Ties break on category name so the result is reproducible rather than
-    dependent on the input's ordering.
+    The floor stage is checked against the budget before any remainder is
+    apportioned. If the floors alone (each capped at what the category
+    actually has) already exceed ``budget``, the allocation is infeasible and
+    this raises ``ValueError`` rather than silently returning an
+    over-allocation: three populated categories with ``budget=2, floor=1``
+    used to return 3, and the caller (``choose_documents``) resolved that
+    itself by truncating in largest-category order -- dropping exactly the
+    small categories the floor exists to protect, and doing so differently
+    depending on how the categories happened to sort. Raising forces the
+    caller to pick a coherent floor/budget instead.
+
+    Ties in the remainder break on category name so the result is
+    reproducible rather than dependent on the input's ordering.
     """
     categories = sorted(counts)
     alloc = {c: min(floor, counts[c]) for c in categories}
-    remaining = max(0, budget - sum(alloc.values()))
+    floor_total = sum(alloc.values())
+    if floor_total > budget:
+        raise ValueError(
+            f"the floor alone ({floor_total} documents across {len(categories)} "
+            f"categories at floor={floor}) exceeds the budget ({budget}); this "
+            "allocation cannot be made to fit. Lower --floor, raise "
+            "--max-documents, or narrow the category set."
+        )
+    remaining = budget - floor_total
     headroom = {c: counts[c] - alloc[c] for c in categories}
     total_headroom = sum(headroom.values())
     if not remaining or not total_headroom:
@@ -518,7 +587,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.dry_run:
         by_category, counts = draw_tickets(rows, seed=args.seed)
-        alloc = allocate(counts, args.max_documents, args.floor)
+        try:
+            alloc = allocate(counts, args.max_documents, args.floor)
+        except ValueError as exc:
+            logger.error(str(exc))
+            return 1
         for category in sorted(alloc, key=lambda c: -counts[c]):
             logger.info("  {}: {} of {} available", category, alloc[category], counts[category])
         logger.info("planned documents: {}", sum(alloc.values()))
@@ -533,19 +606,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         restore_timeout_seconds=args.restore_timeout_seconds,
         profile=args.profile,
     )
-    build_sample(
-        rows,
-        source,
-        out_dir=args.out,
-        slice_label=f"{district}/{year}",
-        seed=args.seed,
-        target_pages=args.target_pages,
-        floor=args.floor,
-        max_documents=args.max_documents,
-        max_pages_per_category=args.max_pages_per_category,
-        max_pages_per_document=args.max_pages_per_document,
-        clean_out_dir=args.clean,
-    )
+    try:
+        build_sample(
+            rows,
+            source,
+            out_dir=args.out,
+            slice_label=f"{district}/{year}",
+            seed=args.seed,
+            target_pages=args.target_pages,
+            floor=args.floor,
+            max_documents=args.max_documents,
+            max_pages_per_category=args.max_pages_per_category,
+            max_pages_per_document=args.max_pages_per_document,
+            clean_out_dir=args.clean,
+        )
+    except (ValueError, PageCountBackendUnavailable) as exc:
+        logger.error(str(exc))
+        return 1
     return 0
 
 
