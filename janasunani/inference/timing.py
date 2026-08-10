@@ -16,7 +16,12 @@ shape is identical either way.
 **A broken sink cannot break a submission.** Measurement is not worth a 500.
 ``StageTimer`` swallows sink errors, and a stage that raises still records the
 time it burned before raising, because a slow failure is exactly the thing
-worth seeing in a latency profile.
+worth seeing in a latency profile. The caller (``PipelineGrievanceProcessor.
+process``) emits from an outer ``finally`` rather than only at the end of the
+happy path, so that recorded time actually reaches the sink instead of being
+discarded along with the exception -- and it marks those timings ``"ok": 0.0``
+so a report cannot silently mix a partial submission's numbers with a
+completed one's.
 
 Wall clock, via ``time.perf_counter``, not CPU time. The question being asked
 is "how long does a citizen wait", and on a 2 vCPU box that includes time lost
@@ -84,12 +89,25 @@ class StageTimer:
         timings["e2e"] = time.perf_counter() - self._started
         return timings
 
-    def emit(self, sink: TimingSink | None) -> None:
-        """Hand the timings to *sink*, swallowing anything it does about it."""
+    def emit(self, sink: TimingSink | None, *, ok: bool = True) -> None:
+        """Hand the timings to *sink*, swallowing anything it does about it.
+
+        ``ok`` distinguishes a submission that reached its normal return from
+        one whose caller is emitting from a `finally` after a stage raised.
+        Both cases must reach the sink -- a slow failure is exactly what a
+        latency profile should show -- but a report that cannot tell them
+        apart would silently average partial timings in with complete ones.
+        Carried as a value inside the emitted dict (``"ok": 1.0`` / ``0.0``)
+        rather than a second argument to *sink*, so the sink's own signature
+        -- a single ``dict[str, float]`` -- does not change; a sink such as
+        ``dict.update`` still works unmodified.
+        """
         if sink is None:
             return
+        payload = self.as_dict()
+        payload["ok"] = 1.0 if ok else 0.0
         try:
-            sink(self.as_dict())
+            sink(payload)
         except Exception:  # pragma: no cover - measurement must not break serving
             logger.warning("timing sink raised; discarding the measurement")
 
@@ -110,5 +128,5 @@ class NullTimer:
     def as_dict(self) -> dict[str, float]:
         return {}
 
-    def emit(self, sink: TimingSink | None) -> None:
-        del sink
+    def emit(self, sink: TimingSink | None, *, ok: bool = True) -> None:
+        del sink, ok

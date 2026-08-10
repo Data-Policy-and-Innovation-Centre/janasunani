@@ -121,134 +121,148 @@ class PipelineGrievanceProcessor:
             document_bytes=document_bytes,
         )
         timer = StageTimer() if self._timing_sink is not None else NullTimer()
+        # Tracks whether `process` reached its normal return, so the emitted
+        # timings are distinguishable from a submission that stopped partway
+        # through a raised stage -- otherwise a latency report would silently
+        # mix completed and partial measurements under the same label.
+        completed = False
+        try:
+            if text is not None:
+                extracted_text = text
+                extraction = ExtractionResult(source="text", extracted_text=text)
+            else:
+                assert document_name is not None and document_bytes is not None
+                try:
+                    with timer.stage("ocr"):
+                        ocr_result = self._ocr(document_bytes, document_name)
+                except OcrQualityError as exc:
+                    # Quality-rejected input is a legitimate client error -> 422.
+                    raise InferenceInputError(
+                        f"document OCR failed the quality check: {exc}"
+                    ) from exc
+                except Exception as exc:
+                    # Only genuine render/parse failures (corrupt or unsupported
+                    # file) map to a 422 here. `_is_document_input_failure` is
+                    # deliberately narrow: the injected page-type predictor also
+                    # runs inside `self._ocr` and is wrapped (see
+                    # `_guard_page_type_predict`) so its own bugs raise
+                    # `_PageTypeModelError` instead of a bare `ValueError`/
+                    # `IndexError` that could otherwise be misread as a corrupt
+                    # document — those propagate unchanged and become a 5xx.
+                    if not _is_document_input_failure(exc):
+                        raise
+                    raise InferenceInputError(
+                        f"document is corrupt or unsupported: {exc}"
+                    ) from exc
 
-        if text is not None:
-            extracted_text = text
-            extraction = ExtractionResult(source="text", extracted_text=text)
-        else:
-            assert document_name is not None and document_bytes is not None
-            try:
-                with timer.stage("ocr"):
-                    ocr_result = self._ocr(document_bytes, document_name)
-            except OcrQualityError as exc:
-                # Quality-rejected input is a legitimate client error -> 422.
-                raise InferenceInputError(
-                    f"document OCR failed the quality check: {exc}"
-                ) from exc
-            except Exception as exc:
-                # Only genuine render/parse failures (corrupt or unsupported
-                # file) map to a 422 here. `_is_document_input_failure` is
-                # deliberately narrow: the injected page-type predictor also
-                # runs inside `self._ocr` and is wrapped (see
-                # `_guard_page_type_predict`) so its own bugs raise
-                # `_PageTypeModelError` instead of a bare `ValueError`/
-                # `IndexError` that could otherwise be misread as a corrupt
-                # document — those propagate unchanged and become a 5xx.
-                if not _is_document_input_failure(exc):
-                    raise
-                raise InferenceInputError(
-                    f"document is corrupt or unsupported: {exc}"
-                ) from exc
+                if ocr_result.truncated:
+                    raise InferenceInputError(
+                        "document exceeds the live page limit; no partial result was used"
+                    )
+                if not ocr_result.full_text.strip():
+                    raise InferenceInputError("document OCR produced no text")
 
-            if ocr_result.truncated:
-                raise InferenceInputError(
-                    "document exceeds the live page limit; no partial result was used"
+                relevant_pages = [
+                    page_text
+                    for page_text, page_type in ocr_result.per_page
+                    if page_type in RELEVANT_PAGE_TYPES and page_text.strip()
+                ]
+                if not relevant_pages:
+                    raise InferenceInputError(
+                        "document contains no grievance-bearing pages"
+                    )
+
+                extracted_text = ocr_result.full_text
+                # Redact each selected page before joining so no irrelevant page
+                # (identification, bill, miscellaneous) reaches either model.
+                with timer.stage("redact"):
+                    model_text_source = "\n\n".join(
+                        self._redact(page_text) for page_text in relevant_pages
+                    )
+                extraction = ExtractionResult(
+                    source="document",
+                    extracted_text=extracted_text,
+                    ocr_model="pytesseract",
+                    pages=ocr_result.pages,
                 )
-            if not ocr_result.full_text.strip():
-                raise InferenceInputError("document OCR produced no text")
 
-            relevant_pages = [
-                page_text
-                for page_text, page_type in ocr_result.per_page
-                if page_type in RELEVANT_PAGE_TYPES and page_text.strip()
-            ]
-            if not relevant_pages:
-                raise InferenceInputError(
-                    "document contains no grievance-bearing pages"
-                )
-
-            extracted_text = ocr_result.full_text
-            # Redact each selected page before joining so no irrelevant page
-            # (identification, bill, miscellaneous) reaches either model.
             with timer.stage("redact"):
-                model_text_source = "\n\n".join(
-                    self._redact(page_text) for page_text in relevant_pages
-                )
-            extraction = ExtractionResult(
-                source="document",
-                extracted_text=extracted_text,
-                ocr_model="pytesseract",
-                pages=ocr_result.pages,
+                redacted_text = self._redact(extracted_text)
+            with timer.stage("detect_pii"):
+                pii_entities = [
+                    PIIEntity(entity=span.entity, start=span.start, end=span.end)
+                    for span in self._detect_pii(extracted_text)
+                ]
+            redaction = RedactionResult(
+                redacted_text=redacted_text,
+                entities=pii_entities,
             )
+            submitted_on = self._now()
+            with timer.stage("triage"):
+                try:
+                    # The provider is intentionally called after redaction, never on
+                    # raw OCR or typed citizen text.  Its result is advisory only.
+                    triage = self._triage_provider.assess(
+                        redacted_text=redaction.redacted_text,
+                        district=district,
+                        submitted_on=submitted_on,
+                    )
+                except TriageUnavailableError:
+                    # A triage outage cannot reject or delay a grievance.  Do not
+                    # surface the provider exception: it may contain infrastructure
+                    # details and is not an officer-facing explanation.
+                    logger.warning(
+                        "advisory triage unavailable; accepting grievance without it"
+                    )
+                    triage = unavailable_triage()
 
-        with timer.stage("redact"):
-            redacted_text = self._redact(extracted_text)
-        with timer.stage("detect_pii"):
-            pii_entities = [
-                PIIEntity(entity=span.entity, start=span.start, end=span.end)
-                for span in self._detect_pii(extracted_text)
-            ]
-        redaction = RedactionResult(
-            redacted_text=redacted_text,
-            entities=pii_entities,
-        )
-        submitted_on = self._now()
-        with timer.stage("triage"):
-            try:
-                # The provider is intentionally called after redaction, never on
-                # raw OCR or typed citizen text.  Its result is advisory only.
-                triage = self._triage_provider.assess(
-                    redacted_text=redaction.redacted_text,
-                    district=district,
-                    submitted_on=submitted_on,
-                )
-            except TriageUnavailableError:
-                # A triage outage cannot reject or delay a grievance.  Do not
-                # surface the provider exception: it may contain infrastructure
-                # details and is not an officer-facing explanation.
-                logger.warning(
-                    "advisory triage unavailable; accepting grievance without it"
-                )
-                triage = unavailable_triage()
+            classifier_text = (
+                redacted_text if extraction.source == "text" else model_text_source
+            )
+            with timer.stage("detect_language"):
+                language = self._detect_language(classifier_text)
+                is_english = self._is_english_compatible(classifier_text)
+            if is_english:
+                with timer.stage("categorize"):
+                    category = self._categorizer.predict(classifier_text)
+                with timer.stage("summarize"):
+                    summary = self._summarizer.summarize(classifier_text)
+            else:
+                # Same gate as the categorizer: BART is only warmed for the
+                # English demo target, and would otherwise hallucinate a summary
+                # over text it was never validated on (both the typed-text and
+                # document paths share this single check).
+                category = "Uncategorized"
+                summary = UNSUPPORTED_LANGUAGE_SUMMARY
+            with timer.stage("route"):
+                routing = self._router.route(category=category, district=district)
 
-        classifier_text = (
-            redacted_text if extraction.source == "text" else model_text_source
-        )
-        with timer.stage("detect_language"):
-            language = self._detect_language(classifier_text)
-            is_english = self._is_english_compatible(classifier_text)
-        if is_english:
-            with timer.stage("categorize"):
-                category = self._categorizer.predict(classifier_text)
-            with timer.stage("summarize"):
-                summary = self._summarizer.summarize(classifier_text)
-        else:
-            # Same gate as the categorizer: BART is only warmed for the
-            # English demo target, and would otherwise hallucinate a summary
-            # over text it was never validated on (both the typed-text and
-            # document paths share this single check).
-            category = "Uncategorized"
-            summary = UNSUPPORTED_LANGUAGE_SUMMARY
-        with timer.stage("route"):
-            routing = self._router.route(category=category, district=district)
-
-        timer.emit(self._timing_sink)
-
-        return GrievanceResult(
-            id=grievance_id,
-            ticket_no=ticket_no,
-            status="Submitted",
-            submitted_on=submitted_on,
-            extraction=extraction,
-            redaction=redaction,
-            classification=ClassificationResult(
-                category=category,
-                language=language,
-            ),
-            summary=summary,
-            routing=routing,
-            triage=triage,
-        )
+            result = GrievanceResult(
+                id=grievance_id,
+                ticket_no=ticket_no,
+                status="Submitted",
+                submitted_on=submitted_on,
+                extraction=extraction,
+                redaction=redaction,
+                classification=ClassificationResult(
+                    category=category,
+                    language=language,
+                ),
+                summary=summary,
+                routing=routing,
+                triage=triage,
+            )
+            completed = True
+            return result
+        finally:
+            # An outer `finally`, not a call at the end of the happy path: a
+            # stage's own `finally` (StageTimer.stage) already records elapsed
+            # time when that stage raises, but the previous code only reached
+            # `emit` after a normal return, so a raised stage discarded
+            # exactly the measurement that design was for. The original
+            # exception, if any, propagates unchanged -- this only ever adds a
+            # side-effecting emit, never swallows or replaces it.
+            timer.emit(self._timing_sink, ok=completed)
 
 
 def _validate_input(

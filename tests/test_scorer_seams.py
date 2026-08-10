@@ -306,3 +306,40 @@ def test_router_status_distinguishes_missing_from_corrupt(tmp_path, monkeypatch)
     _, ok, detail = router_status()
     assert ok is False
     assert "missing" in detail
+
+
+def test_router_status_rejects_an_empty_crosswalk(tmp_path, monkeypatch):
+    """Codex finding on #234: loading successfully is not the same as usable.
+
+    All four tables empty is structurally valid -- ``_valid_table({})``
+    succeeds -- so `load_crosswalk` returns a non-None `Crosswalk` for this
+    file. Every lookup still misses and falls through to the mapping tables,
+    so reporting "first rung is learned" here reproduces the exact false
+    assurance this probe exists to prevent, just from a different cause than
+    the corrupt-file case above.
+    """
+    import json
+
+    import janasunani.routing.crosswalk as crosswalk_mod
+
+    empty = tmp_path / "routing_crosswalk.json"
+    empty.write_text(
+        json.dumps(
+            {
+                "by_full": {},
+                "by_subcategory": {},
+                "by_category_district": {},
+                "by_category": {},
+            }
+        )
+    )
+    monkeypatch.setattr(crosswalk_mod, "DEFAULT_ARTIFACT", empty)
+    monkeypatch.delenv(ROUTER_ENV_VAR, raising=False)
+
+    name, ok, detail = router_status()
+    assert name == ROUTER_DEFAULT
+    assert ok is False
+    assert "empty" in detail
+    # Distinct from the missing/corrupt wording, which need different fixes.
+    assert "missing" not in detail
+    assert "unreadable or structurally invalid" not in detail

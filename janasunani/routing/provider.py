@@ -105,6 +105,20 @@ def router_status() -> tuple[str, bool, str]:
     same false assurance this probe was added to prevent. Reproducing the bug
     inside the check for it would be worse than having no check.
 
+    Loading successfully is still not sufficient: a crosswalk whose four
+    tables are all structurally valid but empty loads without error (an empty
+    dict is a valid, if useless, table -- see ``_valid_table``), yet every
+    lookup misses and routing falls straight through to the mapping tables.
+    That is the same false assurance under a different cause, so this also
+    checks that the base rung actually has entries. ``by_category`` is the
+    right table to gate on: ``Crosswalk.lookup`` always reaches it (it is the
+    only rung with no precondition on the caller supplying a subcategory or
+    district), so a populated ``by_category`` is necessary and sufficient for
+    the first live submission to have something to match against. The other
+    three tables cannot substitute: ``by_category_district`` is legitimately
+    empty in the currently shipped artifact (see the module docstring in
+    ``crosswalk.py``), so requiring it non-empty would fail a healthy artifact.
+
     The cost is loading one JSON artifact, which preflight can afford: it
     already opens a real OLTP connection when one is configured.
     """
@@ -140,6 +154,15 @@ def router_status() -> tuple[str, bool, str]:
         )
 
     if crosswalk is not None:
+        if not crosswalk.by_category:
+            return (
+                ROUTER_DEFAULT,
+                False,
+                f"crosswalk loaded from {DEFAULT_ARTIFACT.name} but the "
+                "category table is empty; every lookup misses and routing "
+                "degrades to mapping tables then fallback (run "
+                "janasunani-build-crosswalk to restore method:learned)",
+            )
         return (
             ROUTER_DEFAULT,
             True,
