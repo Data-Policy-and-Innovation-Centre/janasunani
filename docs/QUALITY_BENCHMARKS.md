@@ -65,10 +65,12 @@ contexts, with another context resolving disagreements or uncertainty. These
 are independent passes, not independent model families or providers; the exact
 serving model version, hidden prompts, sampling settings and provider-retention
 evidence were unavailable. Raw agreement was 99.44% and Cohen's kappa was
-0.985. The resulting labels contain 145 actionable, 14 underspecified, 7
-irrelevant and 14 policy-blocked cases, but no defensible `out_of_scope`
-example. This is **frontier-adjudicated development gold**, not officer-
-confirmed truth and not a complete five-class release set.
+0.985. Of 27 resolver judgments, 6 were explicitly marked uncertain. The
+committed finalization policy excludes them, leaving canonical development gold
+of 174 cases (58 train / 59 validation / 57 test): 140 actionable, 13
+underspecified, 7 irrelevant and 14 policy-blocked, with no defensible
+`out_of_scope` example. This is **frontier-adjudicated development gold**, not
+officer-confirmed truth and not a complete five-class release set.
 
 The sample is deliberately enriched: each split contains five records from
 each of four administrative weak-label strata plus 40 previously unlabelled
@@ -76,27 +78,25 @@ records. Source-stratum prevalence and inclusion probabilities were not
 retained, so accuracy and review precision describe this sample composition;
 they are not estimates of production prevalence or PPV.
 
-On the 60-case held-out development test, the validation-selected local
+On the 57-case held-out development test, the validation-selected local
 word+character TF-IDF review model produced the following result under the
 high-catch advisory policy selected on validation (minimum review precision
 60%; maximum actionable-review rate 10%):
 
 | Enriched-sample development metric | Held-out result (95% item-level Wilson CI) |
 |---|---:|
-| Accuracy | 91.67% (81.93–96.39) |
-| Non-actionable review recall | 100% (78.47–100) — 14/14 caught |
-| Review precision | 73.68% (51.21–88.19) — 14/19 flagged |
-| Actionable cases sent to review | 10.87% (4.73–23.04) — 5/46 |
-| ROC-AUC / average precision | 96.89% / 89.51% |
+| Accuracy | 94.74% (85.63–98.19) |
+| Non-actionable review recall | 100% (77.19–100) — 13/13 caught |
+| Review precision | 81.25% (56.99–93.41) — 13/16 flagged |
+| Actionable cases sent to review | 6.82% (2.35–18.23) — 3/44 |
+| ROC-AUC / average precision | 99.13% / 97.46% |
 
-The point estimate missed the test actionable-review target by 0.87 percentage
-points and the intervals are wide. Under the stricter 90%-precision / 5%-false-
-review policy, the validation-selected threshold abstained on every test case,
-so that policy is not operational. Frozen local MuRIL and cached MiniLM probes
-were also tested without provider calls and did not beat TF-IDF: MuRIL reached
-81.67% accuracy / 64.29% review recall; MiniLM reached 83.33% / 71.43%. The
-aggregate artifact is
-[`evidence/actionability_frontier_benchmark.json`](evidence/actionability_frontier_benchmark.json).
+The intervals remain wide. Frozen local MuRIL did not beat TF-IDF, reaching
+85.96% accuracy and 69.23% review recall. The canonical aggregate is
+[`evidence/actionability_frontier_benchmark_reproducible.json`](evidence/actionability_frontier_benchmark_reproducible.json).
+The original 180-row TF-IDF/MuRIL/MiniLM comparison is retained separately as
+[`evidence/actionability_frontier_benchmark.json`](evidence/actionability_frontier_benchmark.json),
+but it admitted six uncertain resolver labels and is historical evidence only.
 The binary benchmark is not exportable to the five-class serving interface; no
 actionability artifact was produced or activated from these results. No
 candidate is release-eligible. The next set needs officer review, explicit
