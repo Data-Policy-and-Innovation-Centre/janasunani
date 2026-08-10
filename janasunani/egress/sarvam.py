@@ -317,6 +317,17 @@ def _validate_array_items(field: dict[str, Any], *, path: str, level: int) -> No
         items = items.get("items")
         here = f"{here}[]"
         level += 1
+    # The loop only checks depth before each *further* array descent, so the
+    # level reached by the final descent — the one that just happened, into
+    # whatever the last array actually contains — is never checked here. A
+    # chain ending in a primitive would otherwise skip depth checking
+    # entirely, since only the isinstance(..., object) branch below checks
+    # it (via the recursive call), and a primitive never takes that branch.
+    if level > MAX_EXTRACT_SCHEMA_DEPTH:
+        raise ValueError(
+            f"Extract schema nests deeper than {MAX_EXTRACT_SCHEMA_DEPTH} "
+            f"levels at {here}; Sarvam rejects it."
+        )
     if isinstance(items, dict) and items.get("type") == "object":
         _validate_properties(items, path=here, level=level)
 

@@ -469,3 +469,38 @@ def test_a_well_formed_array_of_objects_is_accepted():
             },
         }
     )
+
+
+def _array_chain_schema(array_levels: int) -> dict:
+    """A schema whose root field is *array_levels* deep in arrays, ending in a primitive.
+
+    Unlike ``_nested_schema``, the chain never bottoms out in an object, so
+    only the depth check reachable from a primitive terminal can catch an
+    over-depth schema built this way.
+    """
+    node: dict = {"type": "string", "description": "leaf"}
+    for _ in range(array_levels):
+        node = {"type": "array", "description": "list", "items": node}
+    return {"type": "object", "properties": {"root": node}}
+
+
+def test_an_array_chain_exactly_at_the_depth_cap_ending_in_a_primitive_is_accepted():
+    """Pin the boundary for the array-only path, same as the object path."""
+    from janasunani.egress.sarvam import MAX_EXTRACT_SCHEMA_DEPTH, _validate_extract_schema
+
+    _validate_extract_schema(_array_chain_schema(MAX_EXTRACT_SCHEMA_DEPTH - 1))
+
+
+def test_extract_schema_guard_catches_an_over_depth_array_chain_ending_in_a_primitive():
+    """Codex finding on #232: the loop checks depth before each descent, never after.
+
+    A chain of arrays that bottoms out in a primitive (not an object) never
+    takes the ``isinstance(items, dict) and items.get("type") == "object"``
+    branch, so before this fix nothing checked the level reached by the
+    final descent and an over-depth schema like this one reached the
+    provider as an HTTP 400.
+    """
+    from janasunani.egress.sarvam import MAX_EXTRACT_SCHEMA_DEPTH, _validate_extract_schema
+
+    with pytest.raises(ValueError, match="nests deeper than"):
+        _validate_extract_schema(_array_chain_schema(MAX_EXTRACT_SCHEMA_DEPTH))
