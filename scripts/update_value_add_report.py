@@ -1,8 +1,10 @@
-"""Apply evidence-status corrections to the August 2026 value-add DOCX.
+"""Apply evidence-status corrections to the August 2026 working-draft DOCX.
 
 The source report was produced without a durable generator.  This narrow,
 idempotent patcher keeps the existing layout and makes the evidence corrections
-reproducible until the report is regenerated from a proper source document.
+reproducible until the report is regenerated from a complete, versioned bundle
+of quality, timing, and impact benchmark results. It does not certify that the
+final publication gate in docs/value-add-report/README.md has passed.
 """
 
 from __future__ import annotations
@@ -110,7 +112,7 @@ CELL_REPLACEMENTS = {
     (18, 0, 0, 0): "⚠  Eligibility denominators remain the highest-priority external data to acquire. A block with 200 housing complaints among 1,000 eligible households is a different fact from 200 among 10,000. Until current beneficiary lists are linked, documented and governed, the UI and report must not publish per-capita or per-eligible rates.",
     (19, 5, 1, 0): "No hard rural/urban flag exists in the structured record. District and block fields can support privacy-safe raw aggregates after deterministic boundary reconciliation, but they do not identify rurality or incidence. Distinct-signatory and filings-per-signatory measures can describe repeat concentration without inventing a population denominator.",
     (20, 0, 0, 0): "⚠  On rural/urban and disadvantaged groups — a candour note for reviewers. The complaint record does not contain a rural/urban flag or a caste/category field. The first map release may show privacy-safe district and block counts after deterministic boundary reconciliation, but it will not show per-capita rates, rural-versus-urban shares or SC/ST shares. Those claims require current, documented census, SECC or beneficiary denominators and approved linkage. We mark them as ‘needs linkage’ rather than filling the gap with a guess.",
-    (21, 1, 1, 0): "Advisory low-signal reason, never a rejection. The screenshot case now skips category/summary. On a 60-case frontier-adjudicated binary development test, the local review candidate caught 14/14 non-actionable cases and sent 5/46 actionable cases to review; it is not five-class serving-compatible or release-eligible.",
+    (21, 1, 1, 0): "Advisory low-signal reason, never a rejection. The screenshot case now skips category/summary. On the canonical 57-case frontier-adjudicated binary development test, the local review candidate caught all 13 complaints needing extra review and sent 3 of 44 ordinary complaints to review; it is not five-class serving-compatible or release-eligible.",
     (21, 1, 2, 0): "Administrative weak labels do not establish quality. The development result has no outside-purview support, wide intervals and a viewed test; an officer-adjudicated, stratified future set is still required. Officer always decides whether to proceed or seek clarification.",
     (21, 3, 1, 0): "MuRIL category candidate with confidence. The cited 71.04% and per-class spread are historical typed-subject reference; a governed production-domain scorecard is pending.",
     (21, 3, 2, 0): "Does not auto-assign. Promotion requires group-disjoint gold, per-class/top-k/calibration, abstention and language/source slices.",
@@ -134,8 +136,8 @@ CELL_REPLACEMENTS = {
     (25, 10, 2, 0): "janasunani/evaluation/historical.py; docs/QUALITY_BENCHMARKS.md",
     (25, 10, 3, 0): "janasunani-evaluate-routing (freeze a future slice before release)",
     (25, 12, 0, 0): "Actionability — development + weak-label audit",
-    (25, 12, 1, 0): "Frontier-adjudicated test n=60: 91.67% accuracy; 14/14 review recall; 14/19 review precision; 5/46 actionable sent to review. Weak labels n=106,683; office max TV 0.522 (pooling gate fails).",
-    (25, 12, 2, 0): "docs/evidence/actionability_frontier_benchmark.json; janasunani/evaluation/actionability.py; weak_labels.py",
+    (25, 12, 1, 0): "Canonical frontier-adjudicated test n=57: 94.74% accuracy; 13/13 review recall; 13/16 review precision; 3/44 actionable sent to review. Weak labels n=106,683; office max TV 0.522 (pooling gate fails).",
+    (25, 12, 2, 0): "docs/evidence/actionability_frontier_benchmark_reproducible.json; janasunani/evaluation/actionability.py; weak_labels.py",
     (25, 12, 3, 0): "Binary development only; not five-class serving-compatible; no outside-purview support; freeze officer-reviewed future test before promotion",
     (25, 21, 1, 0): "DRAFT: stepped-wedge ITT framework; unit/event semantics, MDEs, extract hash and pause rules still must be locked",
     (25, 22, 1, 0): "Cached: 5 completed pages + 56 paired successes from interrupted run; 7/127 accepted jobs failed; divergence/coverage only, no accuracy",

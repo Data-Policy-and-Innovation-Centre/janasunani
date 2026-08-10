@@ -1,4 +1,8 @@
-"""Create a short capability brief for prospective public-system partners."""
+"""Create the working-draft brief for prospective public-system partners.
+
+This generator summarizes currently available evidence. It does not certify
+the full-benchmark publication gate in docs/value-add-report/README.md.
+"""
 
 from __future__ import annotations
 
@@ -231,7 +235,7 @@ def create_brief(destination: Path) -> None:
     _callout(
         document,
         "Proof point from Janasunani",
-        "A chronological 2025 benchmark places the historical destination in the top three suggestions for 69.05% of 208,267 cases, rising to 79.68% where intake data is informative. In a separate 60-case frontier-adjudicated binary development test, a cheap local review model caught all 14 complaints needing extra review while also flagging 5 of 46 ordinary complaints. Pretrained MuRIL and MiniLM probes did not beat it. The binary model is not serving-compatible; these are proof points, not release or impact claims.",
+        "A chronological 2025 benchmark places the historical destination in the top three suggestions for 69.05% of 208,267 cases, rising to 79.68% where intake data is informative. In a separate 57-case canonical frontier-adjudicated binary development test, a cheap local review model caught all 13 complaints needing extra review while also flagging 3 of 44 ordinary complaints. A frozen local MuRIL probe did not beat it. The binary model is not serving-compatible; these are proof points, not release or impact claims.",
         fill=PALE_BLUE,
     )
     _callout(

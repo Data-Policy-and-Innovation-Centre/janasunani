@@ -1,4 +1,8 @@
-"""Create the short, non-technical Janasunani 2.0 officer decision brief."""
+"""Create the working-draft, non-technical Janasunani 2.0 officer brief.
+
+This generator summarizes currently available evidence. It does not certify
+the full-benchmark publication gate in docs/value-add-report/README.md.
+"""
 
 from __future__ import annotations
 
@@ -453,7 +457,7 @@ def create_brief(destination: Path) -> None:
     _evidence_table(document)
     _body(
         document,
-        "Two practical findings stand out. First, a small frontier-adjudicated binary development test caught all 14 complaints needing extra review, while also sending 5 of 46 ordinary complaints to review; it is not compatible with the five-class serving slot and produced no deployable artifact. Second, category plus district places the later historical destination in the top three for 69.05% of cases, rising to 79.68% where the intake category is informative. Both need a newly frozen, officer-reviewed release set.",
+        "Two practical findings stand out. First, the canonical frontier-adjudicated binary development test caught all 13 complaints needing extra review, while also sending 3 of 44 ordinary complaints to review; it is not compatible with the five-class serving slot and produced no deployable artifact. Second, category plus district places the later historical destination in the top three for 69.05% of cases, rising to 79.68% where the intake category is informative. Both need a newly frozen, officer-reviewed release set.",
         size=10,
         after=8,
     )
