@@ -430,35 +430,56 @@ phase_c_artifacts() {
   elif [ "$closure_count" -eq 0 ]; then
     check_artifact "outputs/findings/closure_finding_summary.csv" "closure findings (neither closure_finding_summary.csv nor closure_recording_no_action.csv present)" 0
   else
-    check_artifact "outputs/findings/closure_finding_summary.csv" "closure findings ($closure_count candidates present; the provider requires exactly one and reports unavailable otherwise)" 0
+    # Both candidate names exist on disk, so routing this through
+    # check_artifact (existence-based) would always report OK -- exactly the
+    # unavailable-but-passing state the provider hits (len(candidates) != 1).
+    # Emit the failure directly instead of through a helper that cannot see
+    # the count.
+    fail "closure findings ($closure_count candidates present; the provider requires exactly one and reports unavailable otherwise)"
   fi
 
-  # 3. Aggregates — explicit JANASUNANI_SUPERVISOR_AGGREGATES_DIR, falling
-  #    back to JANASUNANI_SUPERVISOR_FINDINGS_DIR (mirrors
-  #    ArtifactSupervisorProvider's own fallback in intelligence.py); data/
-  #    probe requires opt-in per AGENTS.md
-  # ArtifactSupervisorProvider searches BOTH (aggregates_dir, findings_dir),
-  # so an aggregates dir that is set but absent or empty does not make its
-  # panels unavailable when the findings dir still holds the artifacts. The
-  # rehearsal must inspect the same fallback or it fails a strict run over a
-  # demo that would have worked.
-  AGG_FOUND=""
-  AGG_COUNT=0
+  # 3. Aggregates — workload.csv and spike.csv are each searched
+  #    independently, in (JANASUNANI_SUPERVISOR_AGGREGATES_DIR,
+  #    JANASUNANI_SUPERVISOR_FINDINGS_DIR) order. This mirrors
+  #    ArtifactSupervisorProvider._load_workload() / _load_spike() exactly:
+  #    each walks that same two-directory fallback looking for its own named
+  #    file, not "any csv in the directory". Counting any *.csv let a
+  #    directory holding only workload.csv, or an unrelated csv, report
+  #    available while the provider's spike panel (or both panels) stayed
+  #    unavailable. A directory that is configured but incomplete is a known,
+  #    deterministic break -- not a "not published yet" state -- so it fails
+  #    outright rather than following the warn-unless-strict pattern used
+  #    below for "nothing configured at all".
+  WORKLOAD_DIR=""
   for candidate in "${JANASUNANI_SUPERVISOR_AGGREGATES_DIR:-}" "${JANASUNANI_SUPERVISOR_FINDINGS_DIR:-}"; do
     [ -n "$candidate" ] || continue
-    [ -d "$candidate" ] || continue
-    candidate_count="$(find "$candidate" -type f -name "*.csv" | wc -l | tr -d ' ')"
-    if [ "$candidate_count" -gt 0 ]; then
-      AGG_FOUND="$candidate"
-      AGG_COUNT="$candidate_count"
+    if [ -f "$candidate/workload.csv" ]; then
+      WORKLOAD_DIR="$candidate"
+      break
+    fi
+  done
+  SPIKE_DIR=""
+  for candidate in "${JANASUNANI_SUPERVISOR_AGGREGATES_DIR:-}" "${JANASUNANI_SUPERVISOR_FINDINGS_DIR:-}"; do
+    [ -n "$candidate" ] || continue
+    if [ -f "$candidate/spike.csv" ]; then
+      SPIKE_DIR="$candidate"
       break
     fi
   done
   AGG_DIR="${JANASUNANI_SUPERVISOR_AGGREGATES_DIR:-${JANASUNANI_SUPERVISOR_FINDINGS_DIR:-}}"
-  if [ -n "$AGG_FOUND" ]; then
-    ok "aggregates: $AGG_FOUND ($AGG_COUNT csv(s))"
+  if [ -n "$WORKLOAD_DIR" ] && [ -n "$SPIKE_DIR" ]; then
+    if [ "$WORKLOAD_DIR" = "$SPIKE_DIR" ]; then
+      ok "aggregates: $WORKLOAD_DIR (workload.csv, spike.csv)"
+    else
+      ok "aggregates: workload.csv in $WORKLOAD_DIR, spike.csv in $SPIKE_DIR"
+    fi
   elif [ -n "$AGG_DIR" ]; then
-    check_artifact "$AGG_DIR/*.csv" "aggregates in JANASUNANI_SUPERVISOR_AGGREGATES_DIR/JANASUNANI_SUPERVISOR_FINDINGS_DIR (neither directory holds a csv)" 0
+    missing="workload.csv"
+    [ -n "$WORKLOAD_DIR" ] && missing=""
+    if [ -z "$SPIKE_DIR" ]; then
+      if [ -n "$missing" ]; then missing="$missing, spike.csv"; else missing="spike.csv"; fi
+    fi
+    fail "aggregates in JANASUNANI_SUPERVISOR_AGGREGATES_DIR/JANASUNANI_SUPERVISOR_FINDINGS_DIR missing: $missing (checked both directories individually per artifact; the provider requires each by name)"
   else
     if [ "${REHEARSAL_ALLOW_DATA:-0}" = "1" ]; then
       if [ -d "data/aggregates" ] && [ "$(find data/aggregates -type f -name "*.csv" 2>/dev/null | wc -l | tr -d ' ')" -gt 0 ]; then

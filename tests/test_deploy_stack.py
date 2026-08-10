@@ -1462,14 +1462,27 @@ def _run_phase_c(tmp_path, *, env_extra=None, findings=()):
     (workdir / "outputs" / "findings").mkdir(parents=True)
     for name in findings:
         (workdir / "outputs" / "findings" / name).write_text("a,b\n1,2\n")
+    # Item 1 (routing crosswalk) always fails when the file is absent,
+    # regardless of strict mode. Stub it present so these tests measure only
+    # the closure/aggregates behaviour under test, not an unrelated failure.
+    crosswalk = workdir / "janasunani" / "routing" / "reference" / "routing_crosswalk.json"
+    crosswalk.parent.mkdir(parents=True)
+    crosswalk.write_text("{}\n")
 
     script = REHEARSAL_SH_PATH.read_text()
-    # Take the helpers and the phase C function verbatim, so the test runs the
-    # shipped logic rather than a paraphrase of it.
+    # Take the helpers, check_artifact, and the phase C function verbatim, so
+    # the test runs the shipped logic rather than a paraphrase of it. In
+    # particular, check_artifact must be the real existence-based helper, not
+    # a mock -- one of the bugs under test here is exactly that helper
+    # reporting OK for a path that exists but should not count as success.
     helpers = "\n".join(
         line for line in script.splitlines()
         if line.startswith(("info()", "ok()", "warn()", "log()", "fail()"))
     )
+    ca_start = script.index("check_artifact() {")
+    ca_end = script.index("\n}\n", ca_start) + 3
+    check_artifact_fn = script[ca_start:ca_end]
+
     start = script.index("phase_c_artifacts() {")
     end = script.index("\n}\n", start) + 3
     body = script[start:end]
@@ -1480,11 +1493,9 @@ WARNINGS=0
 FAILURES=0
 REHEARSAL_SKIP_ARTIFACTS="${{REHEARSAL_SKIP_ARTIFACTS:-0}}"
 REHEARSAL_ALLOW_DATA="${{REHEARSAL_ALLOW_DATA:-0}}"
-STRICT="${{STRICT:-0}}"
-log() {{ echo "$1 $2"; }}
+REHEARSAL_STRICT="${{REHEARSAL_STRICT:-0}}"
 {helpers}
-fail() {{ log "FAIL" "$1"; FAILURES=$((FAILURES+1)); }}
-check_artifact() {{ fail "missing: $2"; }}
+{check_artifact_fn}
 {body}
 phase_c_artifacts || true
 echo "WARNINGS=$WARNINGS FAILURES=$FAILURES"
@@ -1505,6 +1516,7 @@ echo "WARNINGS=$WARNINGS FAILURES=$FAILURES"
 def test_phase_c_accepts_exactly_one_closure_artifact(tmp_path):
     result = _run_phase_c(tmp_path, findings=["closure_finding_summary.csv"])
     assert "closure: outputs/findings/closure_finding_summary.csv" in result.stdout
+    assert "FAILURES=0" in result.stdout
 
 
 def test_phase_c_rejects_two_closure_artifacts(tmp_path):
@@ -1512,21 +1524,24 @@ def test_phase_c_rejects_two_closure_artifacts(tmp_path):
 
     Stopping at the first match let a strict rehearsal pass while the live
     closure panel was unavailable, which is the transition state between the
-    two filenames.
+    two filenames. A duplicate is a deterministic break (the provider will
+    unconditionally refuse to serve it), not a "not published yet" state, so
+    this must fail the run outright rather than only when --strict is set --
+    the failure count must actually move, not just the logged message.
     """
     result = _run_phase_c(
         tmp_path,
         findings=["closure_finding_summary.csv", "closure_recording_no_action.csv"],
     )
     assert "2 candidates present" in result.stdout
-    assert "FAILURES=0" not in result.stdout
+    assert "FAILURES=1" in result.stdout
 
 
 def test_phase_c_falls_back_to_findings_when_aggregates_is_empty(tmp_path):
     """ArtifactSupervisorProvider searches both dirs, so the gate must too.
 
     An aggregates dir that is set but empty does not make the panels
-    unavailable when the findings dir still holds the artifacts.
+    unavailable when the findings dir still holds both named artifacts.
     """
     empty = tmp_path / "aggregates-empty"
     empty.mkdir()
@@ -1543,10 +1558,16 @@ def test_phase_c_falls_back_to_findings_when_aggregates_is_empty(tmp_path):
         },
         findings=["closure_finding_summary.csv"],
     )
-    assert f"aggregates: {findings}" in result.stdout
+    assert f"aggregates: {findings} (workload.csv, spike.csv)" in result.stdout
+    assert "FAILURES=0" in result.stdout
 
 
-def test_phase_c_prefers_aggregates_when_it_has_content(tmp_path):
+def test_phase_c_workload_in_aggregates_spike_in_findings_passes(tmp_path):
+    """Each artifact falls back independently, per
+    ArtifactSupervisorProvider._load_workload() / _load_spike(): workload.csv
+    found in the aggregates dir and spike.csv found only in the findings dir
+    must still pass, because the provider would serve both panels.
+    """
     aggregates = tmp_path / "aggregates"
     aggregates.mkdir()
     (aggregates / "workload.csv").write_text("a\n1\n")
@@ -1562,4 +1583,43 @@ def test_phase_c_prefers_aggregates_when_it_has_content(tmp_path):
         },
         findings=["closure_finding_summary.csv"],
     )
-    assert f"aggregates: {aggregates}" in result.stdout
+    assert f"aggregates: workload.csv in {aggregates}, spike.csv in {findings}" in result.stdout
+    assert "FAILURES=0" in result.stdout
+
+
+def test_phase_c_fails_when_aggregates_has_only_workload_csv(tmp_path):
+    """ArtifactSupervisorProvider._load_spike() looks for spike.csv by name;
+    a directory holding only workload.csv (with no spike.csv anywhere in the
+    fallback chain) does not make the spike panel available. Counting "any
+    csv present" let this pass; the gate must check workload.csv and
+    spike.csv individually.
+    """
+    aggregates = tmp_path / "aggregates"
+    aggregates.mkdir()
+    (aggregates / "workload.csv").write_text("a\n1\n")
+
+    result = _run_phase_c(
+        tmp_path,
+        env_extra={"JANASUNANI_SUPERVISOR_AGGREGATES_DIR": str(aggregates)},
+        findings=["closure_finding_summary.csv"],
+    )
+    assert "missing: spike.csv" in result.stdout
+    assert "FAILURES=1" in result.stdout
+
+
+def test_phase_c_fails_on_unrelated_csv_in_aggregates_dir(tmp_path):
+    """A directory holding some unrelated csv is not the same as holding
+    workload.csv and spike.csv; the provider looks for those two names
+    specifically, so an unrelated file must not report available.
+    """
+    aggregates = tmp_path / "aggregates"
+    aggregates.mkdir()
+    (aggregates / "unrelated.csv").write_text("a\n1\n")
+
+    result = _run_phase_c(
+        tmp_path,
+        env_extra={"JANASUNANI_SUPERVISOR_AGGREGATES_DIR": str(aggregates)},
+        findings=["closure_finding_summary.csv"],
+    )
+    assert "missing: workload.csv, spike.csv" in result.stdout
+    assert "FAILURES=1" in result.stdout
