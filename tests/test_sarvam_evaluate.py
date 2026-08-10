@@ -504,3 +504,161 @@ def test_extract_schema_guard_catches_an_over_depth_array_chain_ending_in_a_prim
 
     with pytest.raises(ValueError, match="nests deeper than"):
         _validate_extract_schema(_array_chain_schema(MAX_EXTRACT_SCHEMA_DEPTH))
+
+
+# --- Table-driven depth accounting ------------------------------------------
+#
+# Three off-by-ones in the depth accounting have now reached review in a row,
+# each "fixed" by adding another check on top of the last. The accounting was
+# rewritten instead (see the module comment above `_validate_object` in
+# `janasunani/egress/sarvam.py`), and this table is what pins it down: every
+# shape below states the level its deepest node reaches, so the boundary is
+# asserted, not inferred from a single accept/reject pair.
+#
+# Level, per that module comment: the root schema object is level 1; every
+# object property, every array `items` step (including array-of-array), and
+# the object a chain of arrays finally bottoms out in each add one level. A
+# primitive field is a leaf and does not itself occupy a level.
+
+
+def _object_chain(levels: int) -> dict:
+    """root + nested objects, deepest level == *levels*."""
+    return _nested_schema(levels)
+
+
+def _array_chain_primitive(levels: int) -> dict:
+    """root + nested arrays ending in a primitive, deepest level == *levels*."""
+    return _array_chain_schema(levels - 1)
+
+
+def _array_chain_object(array_levels: int) -> dict:
+    """root -> *array_levels* nested arrays -> a terminal well-formed object.
+
+    Deepest level == *array_levels* + 2: one for the root, one per array, and
+    one more for the terminal object the innermost array's ``items``
+    descends into -- the exact descent Codex's finding on #232 showed was
+    not being counted (the walk reached this object with the innermost
+    array's level, unchanged).
+    """
+    node: dict = {
+        "type": "object",
+        "properties": {"leaf": {"type": "string", "description": "x"}},
+    }
+    for _ in range(array_levels):
+        node = {"type": "array", "description": "list", "items": node}
+    return {"type": "object", "properties": {"root": node}}
+
+
+def _mixed_chain_object_array_object() -> dict:
+    """root -> object -> array -> terminal object. Deepest level 4."""
+    return {
+        "type": "object",
+        "properties": {
+            "petitioner": {
+                "type": "object",
+                "description": "who filed it",
+                "properties": {
+                    "attachments": {
+                        "type": "array",
+                        "description": "documents",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "kind": {"type": "string", "description": "kind"},
+                            },
+                        },
+                    }
+                },
+            }
+        },
+    }
+
+
+def _mixed_chain_array_object_array_array_primitive() -> dict:
+    """root -> array -> object -> array -> array -> primitive. Deepest level 5."""
+    return {
+        "type": "object",
+        "properties": {
+            "pages": {
+                "type": "array",
+                "description": "pages, each an object with a grid of line segments",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "lines": {
+                            "type": "array",
+                            "description": "rows of line segments on the page",
+                            "items": {
+                                "type": "array",
+                                "description": "line segments in a row",
+                                "items": {"type": "string", "description": "segment text"},
+                            },
+                        }
+                    },
+                },
+            }
+        },
+    }
+
+
+DEPTH_ACCOUNTING_CASES = [
+    # (label, schema, deepest_level, accepted)
+    ("root + 4 nested objects", _object_chain(4), 4, True),
+    ("root + 5 nested objects", _object_chain(5), 5, False),
+    ("root + 3 nested arrays -> primitive", _array_chain_primitive(4), 4, True),
+    ("root + 4 nested arrays -> primitive", _array_chain_primitive(5), 5, False),
+    ("root + 2 nested arrays -> terminal object", _array_chain_object(2), 4, True),
+    (
+        "root + 3 nested arrays -> terminal object (Codex #232 repro)",
+        _array_chain_object(3),
+        5,
+        False,
+    ),
+    ("mixed: root -> object -> array -> object", _mixed_chain_object_array_object(), 4, True),
+    (
+        "mixed: root -> array -> object -> array -> array -> primitive",
+        _mixed_chain_array_object_array_array_primitive(),
+        5,
+        False,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "label, schema, deepest_level, accepted",
+    DEPTH_ACCOUNTING_CASES,
+    ids=[case[0] for case in DEPTH_ACCOUNTING_CASES],
+)
+def test_depth_accounting_table(label, schema, deepest_level, accepted):
+    """Pin the level each schema shape reaches, not just accept/reject.
+
+    ``deepest_level`` is asserted against ``MAX_EXTRACT_SCHEMA_DEPTH`` here so
+    that a future change to the cap makes the boundary this table encodes
+    explicit, rather than the table quietly agreeing with whatever the code
+    now does -- which is how the previous three off-by-ones went unnoticed.
+    """
+    from janasunani.egress.sarvam import MAX_EXTRACT_SCHEMA_DEPTH, _validate_extract_schema
+
+    assert (deepest_level <= MAX_EXTRACT_SCHEMA_DEPTH) == accepted, label
+    if accepted:
+        _validate_extract_schema(schema)
+    else:
+        with pytest.raises(ValueError, match="nests deeper than"):
+            _validate_extract_schema(schema)
+
+
+def test_codex_232_repro_root_three_arrays_terminal_object_is_rejected():
+    """Exact reproduction from the review finding: must be REJECTED at cap 4.
+
+    Before this fix, the array walk reached the terminal object passing
+    ``level`` unchanged from the innermost array's level (4), so this
+    schema -- whose terminal object is actually the fifth schema level --
+    was wrongly accepted; a direct reproduction printed
+    ``ACCEPTED root + 3 arrays + terminal object``. Fixed by having
+    ``_validate_array`` recurse into ``_validate_object`` at ``level + 1``,
+    the same rule it already used for array-of-array.
+    """
+    from janasunani.egress.sarvam import _validate_extract_schema
+
+    with pytest.raises(ValueError, match="nests deeper than"):
+        _validate_extract_schema(_array_chain_object(3))

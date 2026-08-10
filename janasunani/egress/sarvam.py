@@ -248,11 +248,39 @@ def _validate_extract_schema(schema: dict[str, Any]) -> None:
             f"type={schema.get('type')!r}. A bare field map is rejected with "
             "HTTP 400 — wrap it as {'type': 'object', 'properties': {...}}."
         )
-    _validate_properties(schema, path="", level=1)
+    _validate_object(schema, path="", level=1)
 
 
-def _validate_properties(node: dict[str, Any], *, path: str, level: int) -> None:
-    """Validate one ``properties`` map and recurse into nested objects.
+# --- Depth accounting -------------------------------------------------------
+#
+# "Level" means: the number of schema nodes the provider walks through to
+# reach this node, counting the root object itself as level 1. Every one of
+# the following is one more node, and so one more level, with no exceptions:
+#   - the root schema object                                   -> level 1
+#   - a `properties` entry whose type is `object`               -> parent + 1
+#   - an array field's `items` (the array itself is the field)  -> parent + 1
+#   - a further `items` inside an array-of-array                -> parent + 1
+#   - the object an array (or chain of arrays) finally contains -> parent + 1
+# A field whose type is a primitive (string, number, ...) is a leaf: it does
+# not itself occupy a level, because the provider does not descend past it.
+#
+# `_check_depth` is the single place that enforces the cap. `_validate_object`
+# and `_validate_array` are the only two places that assign a level to a
+# node, and each does it exactly once, at the point where it received that
+# node from its caller — so no node is ever validated at two different levels
+# and no descent (object property, array items, array-of-array, or the
+# object an array chain bottoms out in) can slip past uncounted.
+def _check_depth(level: int, path: str) -> None:
+    if level > MAX_EXTRACT_SCHEMA_DEPTH:
+        where = path or "root"
+        raise ValueError(
+            f"Extract schema nests deeper than {MAX_EXTRACT_SCHEMA_DEPTH} levels "
+            f"at {where}; Sarvam rejects it."
+        )
+
+
+def _validate_object(node: dict[str, Any], *, path: str, level: int) -> None:
+    """Validate one object node's ``properties`` map, recursing into nested containers.
 
     Recursion is the point. The provider's field rules apply at every depth,
     so validating only the top level lets a nested field with no description
@@ -263,12 +291,7 @@ def _validate_properties(node: dict[str, Any], *, path: str, level: int) -> None
     schema that is both too deep and malformed reports the malformation it
     hits first instead of a depth error that hides it.
     """
-    if level > MAX_EXTRACT_SCHEMA_DEPTH:
-        where = path or "root"
-        raise ValueError(
-            f"Extract schema nests deeper than {MAX_EXTRACT_SCHEMA_DEPTH} levels "
-            f"at {where}; Sarvam rejects it."
-        )
+    _check_depth(level, path)
 
     properties = node.get("properties")
     if not isinstance(properties, dict) or not properties:
@@ -292,44 +315,34 @@ def _validate_properties(node: dict[str, Any], *, path: str, level: int) -> None
                 "silently degrades extraction quality."
             )
         if field_type == "object":
-            _validate_properties(field, path=where, level=level + 1)
+            _validate_object(field, path=where, level=level + 1)
         elif field_type == "array":
-            _validate_array_items(field, path=where, level=level + 1)
+            _validate_array(field, path=where, level=level + 1)
 
 
-def _validate_array_items(field: dict[str, Any], *, path: str, level: int) -> None:
-    """Walk down through nested arrays to whatever they finally contain.
+def _validate_array(field: dict[str, Any], *, path: str, level: int) -> None:
+    """Validate one array node, recursing through array-of-array to whatever it finally contains.
 
-    An array of arrays of objects would otherwise stop traversal at the first
-    ``items`` whose type is not ``object``, so an inner field with no
-    description, or arbitrarily deeper nesting, would pass the guard and reach
-    the provider as an HTTP 400. Each array level counts toward the depth cap,
-    because each is a level the provider has to descend too.
+    ``level`` is this array's own level, already assigned by the caller (the
+    array field itself is one level deeper than the object it is a property
+    of). Every further descent through ``items`` — into another array or into
+    the terminal object — is one more level and gets one more depth check,
+    via the same recursive calls that assign it: an array-of-array recurses
+    into ``_validate_array`` at ``level + 1``, and an array whose items are an
+    object recurses into ``_validate_object`` at ``level + 1``. There is no
+    separate walk and no third place that re-derives the level, which is what
+    let three different off-by-ones through before.
     """
+    _check_depth(level, path)
+
     items = field.get("items")
-    here = f"{path}[]"
-    while isinstance(items, dict) and items.get("type") == "array":
-        if level > MAX_EXTRACT_SCHEMA_DEPTH:
-            raise ValueError(
-                f"Extract schema nests deeper than {MAX_EXTRACT_SCHEMA_DEPTH} "
-                f"levels at {here}; Sarvam rejects it."
-            )
-        items = items.get("items")
-        here = f"{here}[]"
-        level += 1
-    # The loop only checks depth before each *further* array descent, so the
-    # level reached by the final descent — the one that just happened, into
-    # whatever the last array actually contains — is never checked here. A
-    # chain ending in a primitive would otherwise skip depth checking
-    # entirely, since only the isinstance(..., object) branch below checks
-    # it (via the recursive call), and a primitive never takes that branch.
-    if level > MAX_EXTRACT_SCHEMA_DEPTH:
-        raise ValueError(
-            f"Extract schema nests deeper than {MAX_EXTRACT_SCHEMA_DEPTH} "
-            f"levels at {here}; Sarvam rejects it."
-        )
-    if isinstance(items, dict) and items.get("type") == "object":
-        _validate_properties(items, path=here, level=level)
+    where = f"{path}[]"
+    if isinstance(items, dict) and items.get("type") == "array":
+        _validate_array(items, path=where, level=level + 1)
+    elif isinstance(items, dict) and items.get("type") == "object":
+        _validate_object(items, path=where, level=level + 1)
+    # A primitive (or absent/malformed) `items` is a leaf: nothing further to
+    # descend into, so nothing further to validate.
 
 
 @dataclass(frozen=True)
