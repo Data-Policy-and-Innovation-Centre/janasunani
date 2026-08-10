@@ -24,11 +24,23 @@ FORMAT_MODEL = directories.MODELS / "format_classifier" / "page_split_v3.0_doc_s
 
 def test_format_classifier_resolution_import_does_not_require_opencv(monkeypatch):
     monkeypatch.setitem(sys.modules, "cv2", None)
-    sys.modules.pop("janasunani.pipeline.stages.format_classifier.resolution", None)
+    monkeypatch.delitem(
+        sys.modules, "janasunani.pipeline.stages.format_classifier.resolution", raising=False
+    )
     module = importlib.import_module(
         "janasunani.pipeline.stages.format_classifier.resolution"
     )
     assert callable(module.resolve_model_path)
+
+
+def test_format_classifier_entrypoint_export_does_not_require_opencv(monkeypatch):
+    monkeypatch.setitem(sys.modules, "cv2", None)
+    monkeypatch.delitem(
+        sys.modules, "janasunani.pipeline.stages.format_classifier", raising=False
+    )
+    module = importlib.import_module("janasunani.pipeline.stages.format_classifier")
+    assert callable(module.run_format_classifier)
+    assert hasattr(module, "run_format_classifier")
 
 
 def test_init_db_creates_schema_and_is_idempotent(tmp_path):
