@@ -23,7 +23,7 @@ publishing the thing you are refusing to publish defeats the gate.
 
 Stdlib only: it runs on a bare runner before any dependency is installed.
 
-    python3 scripts/check_provenance_sidecars.py data/external/**/*.provenance.json
+    python3 scripts/check_provenance_sidecars.py PATH [PATH ...]
 
 Exits 0 when every file passes, 1 otherwise.
 """
@@ -73,6 +73,7 @@ MAX_NOTE = 1000
 _MD5_RE = re.compile(r"^[0-9a-f]{32}$")
 _SHA256_RE = re.compile(r"^(sha256:)?[0-9a-f]{64}$")
 _ACTIONABILITY_SCHEMA = "actionability-adjudication-sample-v1"
+_ACTIONABILITY_FRONTIER_SCHEMA = "janasunani.actionability-frontier-artifacts/v1"
 _SARVAM_SCHEMA = "janasunani.sarvam-source-snapshots/v1"
 
 
@@ -165,6 +166,144 @@ def _check_actionability_sample(payload: dict[str, Any]) -> list[str]:
     return problems
 
 
+def _check_exact_keys(name: str, value: Any, expected: set[str]) -> list[str]:
+    if not isinstance(value, dict):
+        return [f"{name} must be an object"]
+    if set(value) != expected:
+        return [f"{name} does not have the exact allowlisted metadata keys"]
+    return []
+
+
+def _check_sha256(path: str, value: Any) -> list[str]:
+    if not isinstance(value, str) or not _SHA256_RE.fullmatch(value):
+        return [f"{path} is not a SHA-256 digest"]
+    return []
+
+
+def _check_nonnegative_int(path: str, value: Any) -> list[str]:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return [f"{path} must be a nonnegative integer"]
+    return []
+
+
+def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
+    """Validate the aggregate manifest for privately stored frontier artifacts."""
+    top_keys = {
+        "canonical_reproducible_gold",
+        "claim_status",
+        "deterministic_stages",
+        "direct_inputs",
+        "limitations",
+        "preserved_historical_gold",
+        "preserved_nonreproducible_reports",
+        "privacy",
+        "sample",
+        "schema_version",
+    }
+    problems = _check_exact_keys("actionability frontier sidecar", payload, top_keys)
+    if problems:
+        return problems
+
+    problems += _check_scalar("claim_status", payload["claim_status"], MAX_STRING)
+
+    privacy = payload["privacy"]
+    privacy_keys = {
+        "contains_redacted_narratives",
+        "git_contains_row_level_bytes",
+        "residual_pii_risk",
+        "source",
+        "storage",
+    }
+    problems += _check_exact_keys("actionability frontier privacy", privacy, privacy_keys)
+    if isinstance(privacy, dict):
+        for position, value in enumerate(privacy.values()):
+            problems += _check_scalar(f"privacy[{position}]", value, MAX_STRING)
+
+    sample = payload["sample"]
+    sample_keys = {
+        "records",
+        "sampling",
+        "sha256",
+        "split_counts",
+        "split_policy",
+        "tracking_mode",
+        "tracking_reason",
+    }
+    problems += _check_exact_keys("actionability frontier sample", sample, sample_keys)
+    if isinstance(sample, dict):
+        problems += _check_nonnegative_int("sample.records", sample.get("records"))
+        problems += _check_sha256("sample.sha256", sample.get("sha256"))
+        for key in {"sampling", "split_policy", "tracking_mode", "tracking_reason"}:
+            problems += _check_scalar(f"sample.{key}", sample.get(key), MAX_STRING)
+        split_counts = sample.get("split_counts")
+        problems += _check_exact_keys(
+            "actionability frontier split_counts", split_counts, {"train", "validation", "test"}
+        )
+        if isinstance(split_counts, dict):
+            for position, value in enumerate(split_counts.values()):
+                problems += _check_nonnegative_int(f"split_counts[{position}]", value)
+
+    inputs = payload["direct_inputs"]
+    allowed_inputs = {"judge_a.jsonl", "judge_b.jsonl", "resolver.jsonl", "resolver_backup.jsonl"}
+    problems += _check_exact_keys("actionability frontier direct_inputs", inputs, allowed_inputs)
+    if isinstance(inputs, dict):
+        for position, details in enumerate(inputs.values()):
+            problems += _check_exact_keys(f"direct_inputs[{position}]", details, {"role", "sha256"})
+            if isinstance(details, dict):
+                problems += _check_scalar(f"direct_inputs[{position}].role", details.get("role"), MAX_STRING)
+                problems += _check_sha256(f"direct_inputs[{position}].sha256", details.get("sha256"))
+
+    stages = payload["deterministic_stages"]
+    allowed_stages = {
+        "actionability-adjudication-prepare",
+        "actionability-adjudication-finalize",
+        "actionability-local-candidate-benchmark",
+    }
+    problems += _check_exact_keys("actionability frontier deterministic_stages", stages, allowed_stages)
+    if isinstance(stages, dict):
+        for position, outputs in enumerate(stages.values()):
+            problems += _check_string_list(f"deterministic_stages[{position}]", outputs)
+
+    canonical = payload["canonical_reproducible_gold"]
+    canonical_keys = {"excluded_uncertain_resolver_rows", "label_counts", "policy", "records", "sha256"}
+    problems += _check_exact_keys("actionability frontier canonical_gold", canonical, canonical_keys)
+    if isinstance(canonical, dict):
+        for key in {"records", "excluded_uncertain_resolver_rows"}:
+            problems += _check_nonnegative_int(f"canonical_gold.{key}", canonical.get(key))
+        problems += _check_sha256("canonical_gold.sha256", canonical.get("sha256"))
+        problems += _check_scalar("canonical_gold.policy", canonical.get("policy"), MAX_STRING)
+        labels = canonical.get("label_counts")
+        allowed_labels = {"actionable", "underspecified", "irrelevant", "policy_blocked", "out_of_scope"}
+        problems += _check_exact_keys("actionability frontier label_counts", labels, allowed_labels)
+        if isinstance(labels, dict):
+            for position, value in enumerate(labels.values()):
+                problems += _check_nonnegative_int(f"label_counts[{position}]", value)
+
+    historical = payload["preserved_historical_gold"]
+    historical_keys = {"artifact", "manifest", "records", "sha256", "status"}
+    problems += _check_exact_keys("actionability frontier historical_gold", historical, historical_keys)
+    if isinstance(historical, dict):
+        for key in {"artifact", "manifest", "status"}:
+            problems += _check_scalar(f"historical_gold.{key}", historical.get(key), MAX_STRING)
+        problems += _check_nonnegative_int("historical_gold.records", historical.get("records"))
+        problems += _check_sha256("historical_gold.sha256", historical.get("sha256"))
+
+    reports = payload["preserved_nonreproducible_reports"]
+    allowed_reports = {
+        "historical_candidates_strict.json",
+        "historical_candidates_sensitivity.json",
+        "historical_candidates_high_catch.json",
+        "historical_candidates_muril_minilm_high_catch.json",
+    }
+    problems += _check_exact_keys("actionability frontier preserved_reports", reports, allowed_reports)
+    if isinstance(reports, dict):
+        for position, digest in enumerate(reports.values()):
+            problems += _check_sha256(f"preserved_reports[{position}]", digest)
+
+    problems += _check_string_list("limitations", payload["limitations"], limit=MAX_NOTE)
+    return problems
+
+
 def _check_sarvam_snapshots(payload: dict[str, Any]) -> list[str]:
     allowed = {"artifacts", "claim_status", "limitations", "privacy", "schema_version"}
     problems: list[str] = []
@@ -231,6 +370,8 @@ def check_payload(payload: Any) -> list[str]:
     schema = payload.get("schema_version")
     if schema == _ACTIONABILITY_SCHEMA:
         return _check_actionability_sample(payload)
+    if schema == _ACTIONABILITY_FRONTIER_SCHEMA:
+        return _check_actionability_frontier(payload)
     if schema == _SARVAM_SCHEMA:
         return _check_sarvam_snapshots(payload)
 
