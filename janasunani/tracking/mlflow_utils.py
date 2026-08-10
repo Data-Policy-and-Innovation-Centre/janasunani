@@ -8,9 +8,11 @@ let operators resolve the exact mirrored artifact.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import math
 import os
 from pathlib import Path
+import re
 from typing import Mapping, Optional
 
 import mlflow
@@ -22,6 +24,14 @@ from janasunani.config import settings
 
 DVC_PATH_TAG = "dvc.path"
 DVC_HASH_TAG = "dvc.hash"
+
+_GOVERNED_EVALUATION_EXPERIMENT_DEFAULT = "janasunani-governed-evaluation"
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_FINGERPRINT_RE = re.compile(
+    r"^[a-z0-9][a-z0-9._+-]*:[0-9a-f]{32,128}(?:\.dir)?$"
+)
+_GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
+_SHA256_RE = re.compile(r"^(?:sha256:)?[0-9a-f]{64}$")
 
 
 @dataclass(frozen=True)
@@ -174,6 +184,156 @@ def _create_model_version(
     for key, value in tags.items():
         client.set_model_version_tag(name, model_version.version, key, value)
     return model_version.version
+
+
+def _require_identifier(value: str, *, field: str) -> str:
+    if not isinstance(value, str) or _IDENTIFIER_RE.fullmatch(value) is None:
+        raise ValueError(
+            f"{field} must be a non-empty identifier containing only letters, "
+            "numbers, dot, underscore, or hyphen"
+        )
+    return value
+
+
+def _require_fingerprint(value: str, *, field: str) -> str:
+    if not isinstance(value, str) or _FINGERPRINT_RE.fullmatch(value) is None:
+        raise ValueError(
+            f"{field} must be an algorithm-prefixed hexadecimal fingerprint"
+        )
+    return value
+
+
+def _parameter_value(value: object, *, key: str) -> str:
+    """Serialize one governed hyperparameter without losing its value.
+
+    Evaluation parameters are deliberately scalar.  Nested structures are
+    report artifacts, not MLflow parameters: accepting them here risks MLflow
+    truncating a JSON blob while the run still appears fully specified.
+    """
+
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        return value
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float) and math.isfinite(value):
+        return repr(value)
+    raise ValueError(
+        f"parameter {key!r} must be a scalar string, number, boolean, or None"
+    )
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def log_evaluation_run(
+    *,
+    task: str,
+    dataset_fingerprint: str,
+    split_fingerprint: str,
+    code_sha: str,
+    dependency_lock_sha: str,
+    report_schema: str,
+    report_version: str,
+    parameters: Mapping[str, object],
+    metrics: Mapping[str, float],
+    report_path: Path | str,
+    experiment_name: str = _GOVERNED_EVALUATION_EXPERIMENT_DEFAULT,
+    tracking_uri: str | None = None,
+    artifact_uri: str | None = None,
+) -> str:
+    """Log one reproducible, governed evaluation run.
+
+    Unlike :func:`log_benchmark_run`, this helper refuses incomplete
+    provenance.  Every value needed to distinguish the data, split, code,
+    dependency environment, report contract, and model parameterization is an
+    immutable MLflow parameter.  The non-empty report is logged alongside its
+    SHA-256 digest so a later promotion can prove which report it reviewed.
+
+    Validation completes before MLflow is configured or an experiment/run is
+    created.  Callers therefore cannot leave a plausible-looking partial run
+    merely by omitting a fingerprint or passing an invalid metric.
+    """
+
+    task = _require_identifier(task, field="task")
+    dataset_fingerprint = _require_fingerprint(
+        dataset_fingerprint, field="dataset_fingerprint"
+    )
+    split_fingerprint = _require_fingerprint(
+        split_fingerprint, field="split_fingerprint"
+    )
+    if not isinstance(code_sha, str) or _GIT_SHA_RE.fullmatch(code_sha) is None:
+        raise ValueError("code_sha must be a full 40- or 64-character Git SHA")
+    if (
+        not isinstance(dependency_lock_sha, str)
+        or _SHA256_RE.fullmatch(dependency_lock_sha) is None
+    ):
+        raise ValueError("dependency_lock_sha must be a SHA-256 digest")
+    report_schema = _require_identifier(report_schema, field="report_schema")
+    report_version = _require_identifier(report_version, field="report_version")
+    experiment_name = _require_identifier(experiment_name, field="experiment_name")
+
+    if not isinstance(parameters, Mapping) or not parameters:
+        raise ValueError("parameters must contain the full evaluation parameterization")
+    parameter_values: dict[str, str] = {}
+    for key, value in parameters.items():
+        clean_key = _require_identifier(key, field="parameter name")
+        parameter_values[f"parameter.{clean_key}"] = _parameter_value(
+            value, key=clean_key
+        )
+
+    if not isinstance(metrics, Mapping) or not metrics:
+        raise ValueError("metrics must contain at least one evaluation metric")
+    metric_values: dict[str, float] = {}
+    for key, value in metrics.items():
+        clean_key = _require_identifier(key, field="metric name")
+        try:
+            metric_value = float(value)
+        except (TypeError, ValueError, OverflowError):
+            metric_value = math.nan
+        if isinstance(value, bool) or not math.isfinite(metric_value):
+            raise ValueError(f"metric {clean_key!r} must be a finite number")
+        metric_values[clean_key] = metric_value
+
+    try:
+        report = Path(report_path)
+    except TypeError as exc:
+        raise ValueError("report_path must name an existing file") from exc
+    if not report.is_file():
+        raise ValueError("report_path must name an existing file")
+    try:
+        if report.stat().st_size <= 0:
+            raise ValueError("report_path must not be empty")
+        report_sha256 = _sha256(report)
+    except OSError as exc:
+        raise ValueError("report_path could not be read") from exc
+
+    provenance = {
+        "evaluation.task": task,
+        "dataset.fingerprint": dataset_fingerprint,
+        "split.fingerprint": split_fingerprint,
+        "code.sha": code_sha,
+        "dependency_lock.sha256": dependency_lock_sha.removeprefix("sha256:"),
+        "report.schema": report_schema,
+        "report.version": report_version,
+        "report.sha256": report_sha256,
+    }
+    experiment_id = ensure_experiment(
+        experiment_name, tracking_uri=tracking_uri, artifact_uri=artifact_uri
+    )
+    with mlflow.start_run(experiment_id=experiment_id) as run:
+        mlflow.log_params({**provenance, **parameter_values})
+        mlflow.log_metrics(metric_values)
+        mlflow.log_artifact(report.as_posix(), artifact_path="report")
+        return run.info.run_id
 
 
 # ---------------------------------------------------------------------------
