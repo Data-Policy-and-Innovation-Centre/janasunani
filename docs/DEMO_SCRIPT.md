@@ -208,15 +208,19 @@ Put one slide or terminal output on screen. The canonical artifact is `outputs/b
 
 | Stage | DSI reference (different sample, English-only, not a target) | Our measurement (what we actually ran) |
 |---|---|---|
-| **Personal information removal** | 80.56% any-overlap / 50.00% exact, on 106 sentences | **49.6% exact-span** on 89 hand-corrected pages (529 labels); per-entity recall in the appendix; corpus scan over **55,544** redacted complaints found **no** mobile/Aadhaar/PAN/non-gov email in clear text |
+| **Personal information removal** | 80.56% any-overlap / 50.00% exact, on 106 sentences | **77.9% any-overlap / 55.0% exact-span** on 89 hand-corrected pages (480 scored spans), re-measured 10 Aug; per-entity recall in the appendix; corpus scan over **55,544** redacted complaints found **no** mobile/Aadhaar/PAN/non-gov email in clear text |
 | **Text extraction from scans** | 77.89% of 96,469 English pages passed three plausibility checks (not transcription accuracy) | **No accuracy figure** — no transcription sample was commissioned. Reported as **divergence from Sarvam Vision**, handwritten and printed separately, with no verdict on which is right |
-| **Duplicate detection** | Not attempted | Recall against 34,000 officer-identified duplicates; prevalence **10,963 groups** over the Sambalpur/2024 slice |
+| **Duplicate detection** | Not attempted | Recall against **37,299** officer-identified duplicate action rows; prevalence **10,963 groups** over the Sambalpur/2024 slice |
 | **Page type** | 67% on 1,500-page sample | Historical context only — no August labelled set |
 | **Category assignment** | 71% on typed subjects (MuRIL) | Historical context only — report per-category spread (police ~0.85, social welfare ~0.51) |
 | **Summarisation** | 1.9 / 3 usefulness, one reviewer, 500 pages | Historical context only — re-scoring needs blinded review |
-| **Efficiency** | Format 4.53 s / OCR 18.86 s / PII 4.67 s / page-type 2.49 s / summarizer 1.84 s / categorizer 2.82 s per 500 tokens on A100 | Our latency **mean ± SE** per stage from `scripts/benchmark_pipeline.py` (cluster SE by ticket) — see [PERFORMANCE.md](PERFORMANCE.md) |
+| **Efficiency** | Format 4.53 s / OCR 18.86 s / PII 4.67 s / page-type 2.49 s / summarizer 1.84 s / categorizer 2.82 s per 500 tokens on A100 | **End-to-end only, no per-stage split yet.** Warm typed grievance median 4.44 s (n=8, laptop CPU); `GET /history` median 0.13 s over 1.37M rows; cold start 19.4 s. `scripts/benchmark_pipeline.py` no longer fabricates timings, but no real run has been published — `outputs/benchmark/latency.json` does not exist, so there are no per-stage means or SEs to quote |
 
-**How to talk about PII honestly (the DELIVERY note):** 49.6% vs the historical 80.6% is not a regression — different denominators, different strictness. The gap is names: phone 0.83, Aadhaar 0.86, email 0.75, **names 0.44** — and names are 404 of 529 labels, so they set the headline. `en_core_web_sm` was not built for Odia personal names. The 50-document sample is small; bank-account and scheme numbers have no gold labels and are covered by the corpus scan, not the figure.
+**How to talk about PII honestly (the DELIVERY note):** 77.9% any-overlap against the historical 80.6% is close, but the denominators and the strictness differ, so it is not a like-for-like comparison in either direction. Per entity: phone 0.83, Aadhaar 0.86, email 0.75, **names 0.78** — and names are 404 of the 480 scored spans, so they set the headline. Names were 0.44 until the surname gazetteer and ALL-CAPS recogniser landed on 7 August; `en_core_web_sm` alone was not built for Odia personal names.
+
+Three things to say before anyone else says them. **Exact-span is 55.0%**, so a name is usually touched and often not fully covered — quote the any-overlap number only alongside the exact one. **The recogniser now over-fires**: 824 predicted spans against 480 in the gold (730 name spans against 404). The gold cannot separate a name the labeller missed from an over-redaction, so we report no precision figure; over-redaction costs the officer the context they need. **The gate does not pass** — coverage 78.3% sits under the 80.56% legacy constant it is compared against, and that constant is the DSI reference number that everything else in this repo calls not-a-target.
+
+The 50-document sample is small; bank-account and scheme numbers have no gold labels (0 labelled, 20 and 2 predicted) and are covered by the corpus scan, not the figure. The gold carries no language field, so there is **no by-language breakdown** — every record scores as one `unknown` bucket.
 
 ### Sarvam — what the benchmark actually compares
 

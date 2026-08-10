@@ -44,9 +44,9 @@ The portion of the backlog is fixed via #64 (07 Aug 2026, pre-committed highest-
 
 | Stage | Earlier figure, and what it was measured on | 14 August |
 |---|---|---|
-| Personal information removal | 80.6% of items found, on a 106-sentence English validation split | **49.6% measured**, on our corrected 89-page set, by data type. English only: no Odia labelled set exists. Separately, a scan of all 55,544 redacted complaints in the demo slice found **no** mobile number, Aadhaar, PAN or non-government email left in clear text |
+| Personal information removal | 80.6% of items found, on a 106-sentence English validation split | **77.9% of items found** (any-overlap), **55.0% on exact characters**, re-measured 10 August on our corrected 89-page set, by data type. By data type only: the gold carries no language field, so the by-language half of this row cannot be produced. Separately, a scan of all 55,544 redacted complaints in the demo slice found **no** mobile number, Aadhaar, PAN or non-government email left in clear text |
 | Text extraction from scans | 77.9% of pages passed three plausibility checks, on 96,469 English pages. Not transcription accuracy: there was no ground truth | **No accuracy figure.** No transcription sample was commissioned, so there is still no ground truth. Reported as divergence from Sarvam Vision, handwritten and printed separately, with no verdict on which is right |
-| Duplicate detection | Not attempted | Recall against the 34,000 duplicates officers have already identified |
+| Duplicate detection | Not attempted | Recall against the 37,299 duplicate action rows officers have already identified |
 | Page type | 67% accurate, on the earlier team's own 1,500-page sample | Historical context only. No labelled set exists for August |
 | Category assignment | 71% accurate, on the earlier team's train/test split | Historical context only, unless a held-out labelled set is identified in week 1 |
 | Summarisation | 1.9 of 3 for usefulness, scored by one reviewer over 500 pages | Historical context only. Re-scoring needs a blinded human review we have not scheduled |
@@ -55,9 +55,13 @@ The first three rows are measurements we will produce. The last three are the ea
 
 The earlier figures come from different samples, different splits and almost entirely English text. They are historical reference, not a target, and several are not like-for-like with anything we will measure. Where we come in lower we will say so and say why.
 
-**We come in lower on personal information, and this is the honest account of it.** 49.6% against a historical 80.6% is not a regression: the two numbers are not measuring the same thing. The old figure counted an untyped model finding *something* in 106 sentences. Ours counts typed spans against 529 hand-corrected labels over 89 real scanned pages, and a span only counts as found if it lands on the right characters.
+**We come in slightly lower on personal information, and this is the honest account of it.** 77.9% against a historical 80.6% is close, but the two numbers are not measuring the same thing. The old figure counted an untyped model finding *something* in 106 sentences. Ours counts typed spans against hand-corrected labels over 89 real scanned pages: 77.9% where the redaction lands anywhere on the item, 55.0% where it must land on the exact characters.
 
-The gap is almost entirely names. Phone numbers score 0.83, Aadhaar 0.86, email 0.75. Names score 0.44, and names are 404 of the 529 labels, so they set the headline. spaCy's English model was not built for Odia personal names and it shows.
+The gap was almost entirely names, and most of it has been closed. Phone numbers score 0.83, Aadhaar 0.86, email 0.75, and names now score 0.78 on any-overlap against 0.44 before the surname gazetteer and ALL-CAPS recogniser landed on 7 August. Names are 404 of the 480 scored spans, so they still set the headline.
+
+Two honest qualifications on that number. First, recall rose partly because the name recogniser now fires far more freely: 824 spans predicted against 480 in the gold, and 730 name spans against 404. The gold gives us no way to separate a genuine name the labeller missed from an over-redaction, so we report no precision figure and we do not claim one. Over-redaction has a real cost — it removes what the officer needs to act on. Second, names score 0.78 on any-overlap but only 0.51 on exact characters, so a name is usually touched and often not fully covered.
+
+**The gold-metric gate does not currently pass**, and that is deliberate rather than hidden: `janasunani-evaluate-pii` exits non-zero because coverage of 78.3% sits below the legacy 80.56% figure it is wired to compare against. That threshold is the DSI number, which every other document in this repository labels reference-only and explicitly not a target. Gate and reference should not be the same constant. Fixing that is a code change, not a documentation change, and it is filed rather than quietly relaxed before a demo.
 
 Two things about that number a reader should have.
 
@@ -93,7 +97,7 @@ Establishing what share of no-action closures were genuinely premature needs a f
 
 The 61% itself needs no machine learning. We hand it over as a query the department can run for itself.
 
-The same field yields 34,000 duplicates officers have already identified. We use those to measure ourselves. The number that matters is how many more we find, not how many we find in total.
+The same field yields 37,299 duplicate action rows officers have already identified. We use those to measure ourselves. The number that matters is how many more we find, not how many we find in total.
 
 None of this waits on document scanning.
 
