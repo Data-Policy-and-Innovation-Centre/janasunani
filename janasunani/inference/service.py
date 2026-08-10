@@ -435,6 +435,26 @@ def _resolve_models_root(models_dir: str | Path | None) -> Path:
     return Path(configured_dir).expanduser() if configured_dir else MODELS_DIR
 
 
+def _resolved_model_dirs(root: Path) -> tuple[Path, Path, Path]:
+    """Resolve operator override -> pinned release -> DVC for live models."""
+
+    from janasunani.tracking.artifacts import resolve_artifact
+
+    unresolved = root / ".unresolved"
+    categorizer = resolve_artifact("categorizer", models_dir=root) or (
+        unresolved / "categorizer"
+    )
+    page_type = resolve_artifact("page_type_classifier", models_dir=root) or (
+        unresolved / "page_type_classifier"
+    )
+    if not (page_type / "config.json").is_file():
+        page_type = page_type / "vit_type_classifier"
+    summarizer = resolve_artifact("summarizer", models_dir=root) or (
+        unresolved / "summarizer"
+    )
+    return categorizer, page_type, summarizer
+
+
 def _required_model_files(root: Path) -> list[tuple[tuple[Path, ...], str]]:
     """The mandatory local model artifacts, as (candidate-paths, component).
 
@@ -456,8 +476,7 @@ def _required_model_files(root: Path) -> list[tuple[tuple[Path, ...], str]]:
     holds tokenizer *settings*, so a mirror with just the config still crashes
     in `AutoTokenizer.from_pretrained`.
     """
-    categorizer_dir = root / "categorizer"
-    page_type_dir = root / "page_type_classifier" / "vit_type_classifier"
+    categorizer_dir, page_type_dir, summarizer_dir = _resolved_model_dirs(root)
     return [
         ((categorizer_dir / "config.json",), "categorizer config"),
         (
@@ -490,6 +509,22 @@ def _required_model_files(root: Path) -> list[tuple[tuple[Path, ...], str]]:
             (page_type_dir / "preprocessor_config.json",),
             "page-type image processor",
         ),
+        ((summarizer_dir / "config.json",), "summarizer config"),
+        (
+            (
+                summarizer_dir / "model.safetensors",
+                summarizer_dir / "pytorch_model.bin",
+            ),
+            "summarizer weights",
+        ),
+        (
+            (
+                summarizer_dir / "tokenizer.json",
+                summarizer_dir / "vocab.json",
+            ),
+            "summarizer tokenizer",
+        ),
+        ((summarizer_dir / "merges.txt",), "summarizer merges"),
     ]
 
 
@@ -872,8 +907,7 @@ def build_processor(
     ``create_app`` already uses for its providers.
     """
     root = _resolve_models_root(models_dir)
-    categorizer_dir = root / "categorizer"
-    page_type_dir = root / "page_type_classifier" / "vit_type_classifier"
+    categorizer_dir, page_type_dir, summarizer_dir = _resolved_model_dirs(root)
 
     for candidates, component in _required_model_files(root):
         _require_model_artifact(candidates, component)
@@ -887,7 +921,7 @@ def build_processor(
 
     from janasunani.pipeline.stages.summarizer import Summarizer
 
-    summarizer = Summarizer()
+    summarizer = Summarizer(summarizer_dir)
 
     from janasunani.pipeline.stages.categorizer.model import GrievanceCategorizer
 

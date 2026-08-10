@@ -1,8 +1,13 @@
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 from janasunani.pipeline.config import PipelineConfig
 from janasunani.pipeline.db import connect
+from janasunani.tracking.artifacts import (
+    ALLOW_REMOTE_MODELS_ENV_VAR,
+    remote_models_allowed,
+)
 from loguru import logger
 
 
@@ -31,11 +36,11 @@ def run_summarizer(config: PipelineConfig) -> None:
         logger.info("summarizer: nothing to do")
         return
 
-    tokenizer, model, torch, device = _load_model()
+    tokenizer, model, torch, device = _load_model(models_dir=config.models_dir)
     total_completed = 0
     logger.info(
         "summarizer: "
-        f"model={MODEL_NAME} device={device} "
+        f"model=local-release-or-dvc device={device} "
         f"target_page_type_class={TARGET_PAGE_TYPE_CLASS} "
         f"batch_size={DEFAULT_BATCH_SIZE}"
     )
@@ -131,14 +136,49 @@ def _fetch_documents_to_summarize(
     return output
 
 
-def _load_model():
+def _remote_models_allowed() -> bool:
+    return remote_models_allowed()
+
+
+def _resolve_model_source(*, models_dir=None) -> tuple[str, bool]:
+    """Return a local artifact by default; remote HF is explicit dev mode."""
+
+    from janasunani.tracking.artifacts import resolve_artifact
+
+    artifact = resolve_artifact(
+        "summarizer", models_dir=Path(models_dir) if models_dir is not None else None
+    )
+    if artifact is not None:
+        return str(artifact), True
+    if _remote_models_allowed():
+        return MODEL_NAME, False
+    raise RuntimeError(
+        "no local summarizer artifact resolved; materialize the approved release "
+        f"or set {ALLOW_REMOTE_MODELS_ENV_VAR}=1 for development only"
+    )
+
+
+def _load_model(model_name_or_path=None, *, models_dir=None):
     import torch
     from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    hf_token = os.getenv("HF_TOKEN")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, token=hf_token)
-    model = AutoModelForSeq2SeqLM.from_pretrained(MODEL_NAME, token=hf_token).to(device)
+    if model_name_or_path is None:
+        source, local_only = _resolve_model_source(models_dir=models_dir)
+    else:
+        source = str(model_name_or_path)
+        local_only = Path(source).exists()
+        if not local_only and not _remote_models_allowed():
+            raise RuntimeError(
+                "remote summarizer model IDs require explicit development opt-in"
+            )
+    hf_token = None if local_only else os.getenv("HF_TOKEN")
+    tokenizer = AutoTokenizer.from_pretrained(
+        source, token=hf_token, local_files_only=local_only
+    )
+    model = AutoModelForSeq2SeqLM.from_pretrained(
+        source, token=hf_token, local_files_only=local_only
+    ).to(device)
     model.eval()
     return tokenizer, model, torch, device
 
@@ -170,8 +210,12 @@ class Summarizer:
     inference processor) that summarize one document at a time.
     """
 
-    def __init__(self) -> None:
-        self._tokenizer, self._model, self._torch, self._device = _load_model()
+    def __init__(self, model_name_or_path=None) -> None:
+        if model_name_or_path is None:
+            loaded = _load_model()
+        else:
+            loaded = _load_model(model_name_or_path)
+        self._tokenizer, self._model, self._torch, self._device = loaded
 
     def summarize(self, text: str) -> str:
         """Summarize a single piece of text using the warm model handles."""

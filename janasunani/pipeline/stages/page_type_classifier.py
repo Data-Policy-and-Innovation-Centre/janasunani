@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 from janasunani.pipeline.config import PipelineConfig
 from janasunani.pipeline.db import connect
+from janasunani.tracking.artifacts import remote_models_allowed, resolve_artifact
 from loguru import logger
 
 
@@ -45,14 +46,31 @@ PAGE_TYPE_CLASS_BY_LABEL = {
 
 
 def _resolve_model_id(config: PipelineConfig) -> str:
-    """Model provenance rule: the DVC-mirrored copy under models/ wins;
-    the orphaned-org HF repo is only a fallback. Explicit config overrides."""
+    """Resolve a pinned local artifact; public IDs are development-only."""
     if config.page_type_model_id:
-        return config.page_type_model_id
-    local = config.models_dir / "page_type_classifier" / "vit_type_classifier"
-    if (local / "config.json").exists():
-        return str(local)
-    return "DPIC-Pipeline/vit_type_classifier"
+        explicit = Path(config.page_type_model_id)
+        if explicit.exists() or remote_models_allowed():
+            return config.page_type_model_id
+        raise RuntimeError(
+            "remote page-type model IDs require JANASUNANI_ALLOW_REMOTE_MODELS=1"
+        )
+    artifact = resolve_artifact(
+        "page_type_classifier", models_dir=config.models_dir
+    )
+    if artifact is not None:
+        local = (
+            artifact
+            if (artifact / "config.json").is_file()
+            else artifact / "vit_type_classifier"
+        )
+        if (local / "config.json").is_file():
+            return str(local)
+    if remote_models_allowed():
+        return "DPIC-Pipeline/vit_type_classifier"
+    raise RuntimeError(
+        "no local page-type artifact resolved; materialize the approved release "
+        "or set JANASUNANI_ALLOW_REMOTE_MODELS=1 for development only"
+    )
 
 
 def run_page_type_classifier(config: PipelineConfig) -> None:

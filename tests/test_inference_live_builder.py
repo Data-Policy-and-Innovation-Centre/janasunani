@@ -65,6 +65,14 @@ def _write_dummy_model_artifacts(root: Path) -> None:
     (page_type_dir / "config.json").write_text("{}")
     (page_type_dir / "model.safetensors").write_bytes(b"")
     (page_type_dir / "preprocessor_config.json").write_text("{}")
+    summarizer_dir = root / "summarizer"
+    summarizer_dir.mkdir(parents=True)
+    (summarizer_dir / "config.json").write_text("{}")
+    (summarizer_dir / "model.safetensors").write_bytes(b"")
+    (summarizer_dir / "tokenizer.json").write_text("{}")
+    (summarizer_dir / "merges.txt").write_text("#version: 0.2")
+
+
 def test_preflight_reports_immutable_release_versions_without_hosted_endpoint(
     tmp_path, monkeypatch
 ):

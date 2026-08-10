@@ -55,14 +55,18 @@ def test_doc_id_unique_across_nested_dirs_and_stable_for_flat_files():
     assert doc_id_from_relpath("CMO2021_complaint_y.jpeg") == "CMO2021_complaint_y"
 
 
-def test_page_type_model_resolves_to_dvc_mirror(tmp_path):
-    # Provenance rule: the mirrored local copy wins; HF repo only as fallback;
-    # explicit config overrides everything.
+def test_page_type_model_resolves_to_dvc_mirror(tmp_path, monkeypatch):
+    # Provenance rule: local copy wins; remote IDs require explicit dev opt-in.
     from janasunani.pipeline.stages.page_type_classifier import _resolve_model_id
 
     local = tmp_path / "page_type_classifier" / "vit_type_classifier"
     cfg = PipelineConfig(input_dir=tmp_path, db_path=tmp_path / "p.db", models_dir=tmp_path)
-    assert _resolve_model_id(cfg) == "DPIC-Pipeline/vit_type_classifier"  # no mirror
+    monkeypatch.delenv("JANASUNANI_ALLOW_REMOTE_MODELS", raising=False)
+    with pytest.raises(RuntimeError, match="no local page-type artifact"):
+        _resolve_model_id(cfg)
+    monkeypatch.setenv("JANASUNANI_ALLOW_REMOTE_MODELS", "1")
+    assert _resolve_model_id(cfg) == "DPIC-Pipeline/vit_type_classifier"
+    monkeypatch.delenv("JANASUNANI_ALLOW_REMOTE_MODELS")
     local.mkdir(parents=True)
     (local / "config.json").write_text("{}")
     assert _resolve_model_id(cfg) == str(local)  # mirror present
@@ -70,7 +74,31 @@ def test_page_type_model_resolves_to_dvc_mirror(tmp_path):
         input_dir=tmp_path, db_path=tmp_path / "p.db", models_dir=tmp_path,
         page_type_model_id="explicit/override",
     )
+    monkeypatch.setenv("JANASUNANI_ALLOW_REMOTE_MODELS", "1")
     assert _resolve_model_id(cfg2) == "explicit/override"
+
+
+def test_format_classifier_requires_an_unambiguous_pinned_artifact(
+    tmp_path, monkeypatch
+):
+    from janasunani.pipeline.stages.format_classifier.stage import _resolve_model_path
+
+    model_dir = tmp_path / "format_classifier"
+    model_dir.mkdir()
+    cfg = PipelineConfig(input_dir=tmp_path, db_path=tmp_path / "p.db", models_dir=tmp_path)
+    with pytest.raises(FileNotFoundError, match="no format-classifier artifact"):
+        _resolve_model_path(cfg)
+
+    first = model_dir / "first.pkl"
+    first.write_bytes(b"first")
+    assert _resolve_model_path(cfg) == first
+
+    (model_dir / "second.pkl").write_bytes(b"second")
+    with pytest.raises(RuntimeError, match="contains 2 .pkl"):
+        _resolve_model_path(cfg)
+
+    monkeypatch.setenv("JANASUNANI_FORMAT_CLASSIFIER_ARTIFACT", str(first))
+    assert _resolve_model_path(cfg) == first
 
 
 def test_partial_json_reingest_preserves_existing_grievances(tmp_path):

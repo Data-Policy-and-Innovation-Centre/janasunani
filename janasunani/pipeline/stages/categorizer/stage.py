@@ -27,6 +27,7 @@ from ...config import PipelineConfig
 from ...db import connect
 from .ingest_grievances import ingest_grievances
 from .model import GrievanceCategorizer
+from janasunani.tracking.artifacts import remote_models_allowed, resolve_artifact
 from loguru import logger
 
 DB_BATCH_SIZE = 50
@@ -55,10 +56,18 @@ def run_categorizer(config: PipelineConfig) -> None:
 
     logger.info(f"categorizer: {len(work)} document(s) to categorize")
 
-    # Model provenance rule: prefer the DVC-mirrored copy under models/ —
-    # runtime must not depend on the (orphaned) student HF account.
-    local_dir = config.models_dir / "categorizer"
-    model_dir = str(local_dir) if (local_dir / "config.json").exists() else "jeseniapar/categorizer"
+    # Serving and batch both resolve operator override -> pinned release ->
+    # DVC mirror. The orphaned public account is development-only opt-in.
+    artifact = resolve_artifact("categorizer", models_dir=config.models_dir)
+    if artifact is not None:
+        model_dir = str(artifact)
+    elif remote_models_allowed():
+        model_dir = "jeseniapar/categorizer"
+    else:
+        raise RuntimeError(
+            "no local categorizer artifact resolved; materialize the approved "
+            "release or set JANASUNANI_ALLOW_REMOTE_MODELS=1 for development only"
+        )
 
     _run(
         db_path=config.db_path,
