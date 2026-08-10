@@ -1,0 +1,5 @@
+outs:
+- md5: 2ababd072c3ad739467385b85d984c71
+  size: 625
+  hash: md5
+  path: historical_gold_180.manifest.json
