@@ -161,6 +161,31 @@ def test_render_markdown_with_latency_table():
     assert "p50" in md.lower()
 
 
+def test_live_latency_names_flow_into_historical_report_labels():
+    latency = {
+        "stages": {
+            "redact": {"n": 4, "mean_seconds": 0.02, "se_seconds": 0.005, "n_clusters": 2, "p50": 0.019, "p90": 0.025, "p95": 0.03, "throughput_per_second": 50.0},
+            "categorize": {"n": 4, "mean_seconds": 0.4, "se_seconds": 0.05, "n_clusters": 2, "p50": 0.39, "p90": 0.48, "p95": 0.5, "throughput_per_second": 2.5},
+            "summarize": {"n": 4, "mean_seconds": 1.2, "se_seconds": 0.1, "n_clusters": 2, "p50": 1.1, "p90": 1.4, "p95": 1.5, "throughput_per_second": 0.83},
+            "e2e": {"n": 4, "mean_seconds": 1.8, "se_seconds": 0.2, "n_clusters": 2, "p50": 1.7, "p90": 2.1, "p95": 2.2, "throughput_per_second": 0.56},
+        }
+    }
+    report = benchmark_report.build_report(latency_result=latency)
+    rows = {row["stage"]: row for row in report["rows"]}
+    pii_overlap = next(
+        row
+        for row in report["rows"]
+        if row["stage"] == "PII redaction" and row["metric"] == "any-overlap recall"
+    )
+    assert pii_overlap["latency"] == latency["stages"]["redact"]
+    assert rows["Categorizer"]["latency"] == latency["stages"]["categorize"]
+    assert rows["Summarizer"]["latency"] == latency["stages"]["summarize"]
+    rendered = benchmark_report.render_markdown(report)
+    assert "| Stage | n |" in rendered
+    assert "p90 (s)" in rendered
+    assert "throughput/s" in rendered
+
+
 def test_write_outputs(tmp_path: Path):
     report = benchmark_report.build_report()
     paths = benchmark_report.write_outputs(report, tmp_path)
