@@ -1,7 +1,9 @@
 # Performance record
 
-Every number here was measured, not quoted. Measured 2026-08-07 against
+Every number here was measured, not quoted. Baseline pass 2026-08-07 against
 `main` at `ca58f31`, after the Sprint 3 merges and the fixes they surfaced.
+The PII scorecard (§2) and the duplicate baseline (§5) were re-measured
+**2026-08-10** and supersede the 7 August values; each says so in place.
 
 Where a number is a legacy reference rather than a fresh measurement it says
 so. Where a capability cannot yet be measured, that is stated instead of
@@ -107,9 +109,46 @@ empty predictions only if the analyzer cannot be imported, e.g. an
 environment without the `pii` extra (#67, closed). Its slicing, language
 split and thin-slice guard run against real predictions.
 
-The measured result is in DELIVERY.md: **49.6% overlap recall** on the
-corrected 89-page, 529-label gold set (PHONE 0.83, AADHAAR 0.86, EMAIL 0.75,
-NAME 0.44). English only — no Odia labelled set exists.
+Re-measured **2026-08-10** on `main`, after the two name recognisers landed
+on 7 August. The previous 49.6% figure was taken at 04:37 on 7 August, six
+hours before the ALL-CAPS recogniser (`a62d3a3`) and sixteen before the
+surname gazetteer (`968880a`), so it never saw either fix. It is superseded.
+
+| | Overlap recall | Exact recall | Gold spans | Predicted |
+|---|---|---|---|---|
+| PHONE | 0.8276 | 0.8276 | 29 | 28 |
+| AADHAAR | 0.8571 | 0.8571 | 7 | 14 |
+| EMAIL | 0.7500 | 0.7250 | 40 | 30 |
+| NAME | 0.7772 | 0.5074 | 404 | 730 |
+| BANK_ACCOUNT | n/a | n/a | 0 | 20 |
+| SCHEME_ID | n/a | n/a | 0 | 2 |
+| **OVERALL** | **0.7792** | **0.5500** | **480** | **824** |
+| COVERAGE | 0.7833 | 0.5521 | 480 | 824 |
+
+`excluded_by_policy=49` (government email addresses, #56).
+
+Three qualifications that belong beside the headline:
+
+- **Precision is unmeasured and the recogniser over-fires.** 824 predicted
+  spans against 480 gold, and 730 NAME spans against 404. The gold cannot
+  distinguish a name the labeller missed from an over-redaction, so no
+  precision number is reported. Over-redaction is not free — it removes the
+  context the officer acts on.
+- **Overlap and exact diverge sharply on names** (0.78 vs 0.51). A name is
+  usually touched and often not fully covered. Quoting the overlap figure
+  alone overstates coverage.
+- **There is no by-language breakdown.** Every gold record scores into a
+  single `unknown` bucket because the gold carries no language field. The
+  "English only" statement is a claim about how the set was assembled, not
+  something this scorecard verifies. DELIVERY.md Table 1 commits to a table
+  "by data type and by language"; only the first half is deliverable.
+
+**The gate fails.** `janasunani-evaluate-pii` exits 1: coverage 0.7833 is
+below `LEGACY_OVERLAP_BASELINE = 0.8056` (`janasunani/pipeline/pii_eval.py:31`).
+That constant is the DSI reference figure, which `dsi_baselines.py` marks
+`reference_only=True` and every document here calls explicitly not a target —
+yet the gate uses it as a hard threshold. Gate and reference should not be the
+same constant. Filed rather than relaxed on the eve of a demo.
 
 ## 3. Models
 
@@ -183,11 +222,18 @@ complaints carrying a closing remark.
 Descriptive, not a failure rate. A correct closure and a premature one are
 identical in this record.
 
-**Duplicates (#72)** — 39,937 officer-confirmed (21,513 `taken up` + 18,424
-`duplicate copy`), **3.3%** of resolved-with-remark. Corrected this sprint
-from a published 18,432: the mart matched templates by equality against
-strings that are stored with suffixes, and matched 8 rows where ~21,500
-exist.
+**Duplicates (#72)** — **37,299** officer-confirmed action rows (21,117
+`taken up` + 16,182 `duplicate copy`), against a ROADMAP reference of 34,671
+(delta +2,628). Source: `outputs/findings/confirmed_duplicates.csv` and
+`discard_reason_families.csv`, both re-run 8 August 14:11.
+
+Corrected twice, so the lineage is worth stating. The mart originally matched
+templates by equality against strings stored with suffixes and returned 8
+`taken up` rows where ~21,000 exist, giving a published total of 18,432 —
+still sitting in `outputs/findings/duplicate_baseline_summary.csv`, which is
+stale and should not be read. An intermediate 39,937 (21,513 + 18,424) was
+recorded here on 7 August and is also superseded by the 8 August re-run.
+Quote 37,299.
 
 **Discard families (#107)**
 
