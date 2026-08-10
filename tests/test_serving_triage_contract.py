@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from janasunani.serving.schemas import (
+    ActionabilityReview,
     ClassificationResult,
     DuplicateReview,
     DuplicateSignal,
@@ -130,6 +131,44 @@ def test_low_signal_abstention_is_visible_and_has_a_deterministic_reason_code():
         evidence=(OcrQualityEvidence(kind="repetition_collapse", observed=True),),
     )
     assert reserved_review.decision == "review"
+
+
+@pytest.mark.parametrize("bad_probability", [float("nan"), float("inf"), True])
+def test_actionability_probabilities_must_be_finite_numeric_values(bad_probability):
+    probabilities = {
+        "actionable": 0.2,
+        "underspecified": 0.2,
+        "irrelevant": 0.2,
+        "out_of_scope": 0.2,
+        "policy_blocked": 0.2,
+    }
+    probabilities["irrelevant"] = bad_probability
+
+    with pytest.raises(ValidationError, match="finite"):
+        ActionabilityReview(
+            decision="review",
+            predicted_label="irrelevant",
+            confidence=0.2,
+            probabilities=probabilities,
+            method="local-test",
+        )
+
+
+def test_actionability_confidence_rejects_boolean_values():
+    with pytest.raises(ValidationError, match="confidence"):
+        ActionabilityReview(
+            decision="abstained",
+            predicted_label="actionable",
+            confidence=True,
+            probabilities={
+                "actionable": 1.0,
+                "underspecified": 0.0,
+                "irrelevant": 0.0,
+                "out_of_scope": 0.0,
+                "policy_blocked": 0.0,
+            },
+            method="local-test",
+        )
 
 
 def test_low_signal_advisory_records_ocr_quality_evidence_but_still_abstains():

@@ -22,6 +22,7 @@ Changing a field here is an API break — coordinate with the frontend.
 from __future__ import annotations
 
 from datetime import datetime
+import math
 from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -286,6 +287,71 @@ class SpamReview(BaseModel):
         return self
 
 
+class ActionabilityReview(BaseModel):
+    """Additive, advisory five-class assessment over redacted text.
+
+    It is deliberately separate from ``SpamReview``: an underspecified case,
+    an irrelevant message, an out-of-scope grievance, and a policy-blocked
+    grievance need different officer actions.  No value in this object changes
+    whether the citizen's submission is accepted.
+    """
+
+    decision: Literal["review", "abstained"]
+    predicted_label: Literal[
+        "actionable", "underspecified", "irrelevant", "out_of_scope", "policy_blocked"
+    ]
+    confidence: float = Field(ge=0.0, le=1.0)
+    probabilities: dict[
+        Literal[
+            "actionable",
+            "underspecified",
+            "irrelevant",
+            "out_of_scope",
+            "policy_blocked",
+        ],
+        float,
+    ]
+    method: str = Field(min_length=1)
+    taxonomy_version: Literal["actionability-v1"] = "actionability-v1"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_boolean_probabilities(cls, value):
+        if isinstance(value, dict):
+            if isinstance(value.get("confidence"), bool):
+                raise ValueError("actionability confidence must be a finite numeric value")
+            probabilities = value.get("probabilities")
+            if isinstance(probabilities, dict) and any(
+                isinstance(probability, bool) for probability in probabilities.values()
+            ):
+                raise ValueError("actionability probabilities must be finite numeric values")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_advisory_contract(self) -> "ActionabilityReview":
+        expected = {
+            "actionable", "underspecified", "irrelevant", "out_of_scope",
+            "policy_blocked",
+        }
+        if set(self.probabilities) != expected:
+            raise ValueError("probabilities must cover the actionability taxonomy")
+        if any(
+            isinstance(value, bool)
+            or not math.isfinite(value)
+            or value < 0.0
+            or value > 1.0
+            for value in self.probabilities.values()
+        ):
+            raise ValueError("actionability probabilities must be finite and in [0,1]")
+        if abs(sum(self.probabilities.values()) - 1.0) > 1e-6:
+            raise ValueError("actionability probabilities must sum to one")
+        if abs(self.probabilities[self.predicted_label] - self.confidence) > 1e-9:
+            raise ValueError("confidence must match predicted_label probability")
+        if self.decision == "review" and self.predicted_label == "actionable":
+            raise ValueError("actionable predictions cannot request non-actionability review")
+        return self
+
+
 class TriageResult(BaseModel):
     """Advisory signals only; none changes whether a grievance is accepted."""
 
@@ -305,6 +371,7 @@ class TriageResult(BaseModel):
             reason_code="live_review_disabled_pending_redacted_adjudication",
         )
     )
+    actionability: Optional[ActionabilityReview] = None
 
     @model_validator(mode="before")
     @classmethod
