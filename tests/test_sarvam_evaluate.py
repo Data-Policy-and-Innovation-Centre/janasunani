@@ -71,6 +71,10 @@ def test_extract_rejects_a_bare_field_map_before_any_egress():
         ({"type": "object"}, "non-empty 'properties'"),
         ({"type": "object", "properties": {}}, "non-empty 'properties'"),
         ({"type": "object", "properties": {"a": {"description": "x"}}}, "needs a 'type'"),
+        (
+            {"type": "object", "properties": {"a": {"type": "nonsense", "description": "x"}}},
+            "unsupported type",
+        ),
         ({"type": "object", "properties": {"a": {"type": "string"}}}, "non-empty 'description'"),
         (
             {"type": "object", "properties": {"a": {"type": "string", "description": "  "}}},
@@ -662,3 +666,63 @@ def test_codex_232_repro_root_three_arrays_terminal_object_is_rejected():
 
     with pytest.raises(ValueError, match="nests deeper than"):
         _validate_extract_schema(_array_chain_object(3))
+
+
+# --- Field type allowlist ----------------------------------------------------
+#
+# Codex finding on #232: the field-level check only asked whether ``type`` was
+# present (``if not field_type``), not whether it was one of the types Sarvam
+# actually supports. A truthy-but-invalid value like ``"nonsense"`` therefore
+# passed local validation and would have reached the provider as the exact
+# HTTP 400 this guard exists to prevent. This had already been patched three
+# times over for depth-accounting bugs in this same function, each patch
+# adding one more special case on top of the last, so the fix here is an
+# allowlist (``SUPPORTED_EXTRACT_FIELD_TYPES``) rather than a fourth patch: a
+# denylist of known-bad values can always miss a new one, an allowlist cannot.
+
+
+def test_extract_schema_guard_rejects_an_unsupported_field_type():
+    """Reproduces the finding's exact example against the pre-fix code.
+
+    Direct reproduction against the unpatched guard: ``_validate_extract_schema``
+    on ``{"type": "object", "properties": {"field": {"type": "nonsense",
+    "description": "x"}}}`` printed "unknown root field type ACCEPTED" --
+    confirming a caller-supplied schema with an invalid type sailed through
+    the guard meant to catch exactly this before any bytes leave the box.
+    """
+    from janasunani.egress.sarvam import _validate_extract_schema
+
+    schema = {
+        "type": "object",
+        "properties": {"field": {"type": "nonsense", "description": "x"}},
+    }
+    with pytest.raises(ValueError, match="unsupported type"):
+        _validate_extract_schema(schema)
+
+
+def test_every_supported_extract_field_type_is_accepted():
+    """The allowlist's positive half: every type Sarvam's docs list must still pass.
+
+    Types confirmed against https://docs.sarvam.ai/api/api-guides-tutorials/
+    document-intelligence/overview: string, number, integer, boolean, object,
+    array. An allowlist that silently drifted narrower than what the provider
+    actually accepts would be its own outage, so this is asserted rather than
+    left implicit in the constant alone.
+    """
+    from janasunani.egress.sarvam import SUPPORTED_EXTRACT_FIELD_TYPES, _validate_extract_schema
+
+    assert SUPPORTED_EXTRACT_FIELD_TYPES == {
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "object",
+        "array",
+    }
+    for field_type in sorted(SUPPORTED_EXTRACT_FIELD_TYPES):
+        field: dict = {"type": field_type, "description": f"a {field_type} field"}
+        if field_type == "object":
+            # An object field must itself carry a non-empty properties map --
+            # a separate, already-covered rule, not part of this guard.
+            field["properties"] = {"child": {"type": "string", "description": "child field"}}
+        _validate_extract_schema({"type": "object", "properties": {"field": field}})

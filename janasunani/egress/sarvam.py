@@ -228,6 +228,18 @@ class SarvamGovernanceError(SarvamError):
 #: Sarvam Extract caps schema nesting at this depth.
 MAX_EXTRACT_SCHEMA_DEPTH = 4
 
+#: The field types Sarvam Extract's inline schema actually accepts. Anything
+#: outside this set is answered with HTTP 400 invalid_request_error.
+#: https://docs.sarvam.ai/api/api-guides-tutorials/document-intelligence/overview
+#:
+#: This is an allowlist on purpose, not a check for known-bad values. A
+#: denylist has to be updated every time the provider's rejection surface is
+#: discovered by a 400 in production; an allowlist can only ever be too
+#: strict, never silently permissive of a type nobody has tested.
+SUPPORTED_EXTRACT_FIELD_TYPES = frozenset(
+    {"string", "number", "integer", "boolean", "object", "array"}
+)
+
 
 def _validate_extract_schema(schema: dict[str, Any]) -> None:
     """Reject a schema Sarvam would answer with HTTP 400.
@@ -308,6 +320,11 @@ def _validate_object(node: dict[str, Any], *, path: str, level: int) -> None:
         field_type = field.get("type")
         if not field_type:
             raise ValueError(f"Extract schema field {where!r} needs a 'type'.")
+        if field_type not in SUPPORTED_EXTRACT_FIELD_TYPES:
+            raise ValueError(
+                f"Extract schema field {where!r} has unsupported type {field_type!r}; "
+                f"Sarvam only accepts {sorted(SUPPORTED_EXTRACT_FIELD_TYPES)}."
+            )
         if not str(field.get("description") or "").strip():
             raise ValueError(
                 f"Extract schema field {where!r} needs a non-empty 'description'. "
