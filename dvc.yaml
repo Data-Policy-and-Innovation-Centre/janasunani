@@ -202,3 +202,26 @@ stages:
       - uv.lock
     outs:
       - outputs/evaluation/actionability_candidates_muril_high_catch.json
+  actionability-weak-label-audit:
+    desc: >-
+      Reproduce the aggregate administrative weak-label audit used to decide
+      whether discard-family labels are safe enough for training. The stage
+      reads only the two declared lake tables and publishes no grievance text
+      or item-level rows.
+    cmd: >-
+      uv run --frozen janasunani-audit-actionability-labels
+      --complaints data/interim/complaints.parquet
+      --action-history data/interim/action_history.parquet
+      --min-office-support 100
+      --output outputs/evaluation/actionability_weak_label_audit.json
+    deps:
+      - data/interim/complaints.parquet
+      - data/interim/action_history.parquet
+      - janasunani/analytics/findings/discards.py
+      - janasunani/evaluation/actionability.py
+      - janasunani/evaluation/classification.py
+      - janasunani/evaluation/weak_labels.py
+      - pyproject.toml
+      - uv.lock
+    outs:
+      - outputs/evaluation/actionability_weak_label_audit.json
