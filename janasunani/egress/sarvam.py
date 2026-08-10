@@ -225,6 +225,143 @@ class SarvamGovernanceError(SarvamError):
     """The external route lacks verified provider-held-data controls."""
 
 
+#: Sarvam Extract caps schema nesting at this depth.
+MAX_EXTRACT_SCHEMA_DEPTH = 4
+
+#: The field types Sarvam Extract's inline schema actually accepts. Anything
+#: outside this set is answered with HTTP 400 invalid_request_error.
+#: https://docs.sarvam.ai/api/api-guides-tutorials/document-intelligence/overview
+#:
+#: This is an allowlist on purpose, not a check for known-bad values. A
+#: denylist has to be updated every time the provider's rejection surface is
+#: discovered by a 400 in production; an allowlist can only ever be too
+#: strict, never silently permissive of a type nobody has tested.
+SUPPORTED_EXTRACT_FIELD_TYPES = frozenset(
+    {"string", "number", "integer", "boolean", "object", "array"}
+)
+
+
+def _validate_extract_schema(schema: dict[str, Any]) -> None:
+    """Reject a schema Sarvam would answer with HTTP 400.
+
+    The provider requires a whole JSON Schema document, not the bare field
+    map. Handing it the field map fails at submission on every page, and the
+    audit row records only ``SarvamError``, so the cause is invisible in the
+    log. Every test injects a fake transport and cannot see a 400 either.
+    This guard is what turns that silent, uniform failure into an error that
+    names the problem before any bytes leave the box.
+
+    Raises ``ValueError`` (a caller bug, not a remote failure), so it is not
+    swallowed by the fallback-to-pytesseract path.
+    """
+    if schema.get("type") != "object":
+        raise ValueError(
+            "Sarvam Extract schema root must be {'type': 'object', ...}; got "
+            f"type={schema.get('type')!r}. A bare field map is rejected with "
+            "HTTP 400 — wrap it as {'type': 'object', 'properties': {...}}."
+        )
+    _validate_object(schema, path="", level=1)
+
+
+# --- Depth accounting -------------------------------------------------------
+#
+# "Level" means: the number of schema nodes the provider walks through to
+# reach this node, counting the root object itself as level 1. Every one of
+# the following is one more node, and so one more level, with no exceptions:
+#   - the root schema object                                   -> level 1
+#   - a `properties` entry whose type is `object`               -> parent + 1
+#   - an array field's `items` (the array itself is the field)  -> parent + 1
+#   - a further `items` inside an array-of-array                -> parent + 1
+#   - the object an array (or chain of arrays) finally contains -> parent + 1
+# A field whose type is a primitive (string, number, ...) is a leaf: it does
+# not itself occupy a level, because the provider does not descend past it.
+#
+# `_check_depth` is the single place that enforces the cap. `_validate_object`
+# and `_validate_array` are the only two places that assign a level to a
+# node, and each does it exactly once, at the point where it received that
+# node from its caller — so no node is ever validated at two different levels
+# and no descent (object property, array items, array-of-array, or the
+# object an array chain bottoms out in) can slip past uncounted.
+def _check_depth(level: int, path: str) -> None:
+    if level > MAX_EXTRACT_SCHEMA_DEPTH:
+        where = path or "root"
+        raise ValueError(
+            f"Extract schema nests deeper than {MAX_EXTRACT_SCHEMA_DEPTH} levels "
+            f"at {where}; Sarvam rejects it."
+        )
+
+
+def _validate_object(node: dict[str, Any], *, path: str, level: int) -> None:
+    """Validate one object node's ``properties`` map, recursing into nested containers.
+
+    Recursion is the point. The provider's field rules apply at every depth,
+    so validating only the top level lets a nested field with no description
+    through this guard and straight into an HTTP 400 — the exact failure this
+    guard exists to convert into a legible error.
+
+    Depth is checked on the way down rather than by a separate walk, so a
+    schema that is both too deep and malformed reports the malformation it
+    hits first instead of a depth error that hides it.
+    """
+    _check_depth(level, path)
+
+    properties = node.get("properties")
+    if not isinstance(properties, dict) or not properties:
+        where = f" at {path}" if path else ""
+        raise ValueError(
+            f"Sarvam Extract schema needs a non-empty 'properties' map{where}; "
+            f"got {properties!r}."
+        )
+
+    for name, field in properties.items():
+        where = f"{path}.{name}" if path else str(name)
+        if not isinstance(field, dict):
+            raise ValueError(f"Extract schema field {where!r} must be an object.")
+        field_type = field.get("type")
+        if not field_type:
+            raise ValueError(f"Extract schema field {where!r} needs a 'type'.")
+        if field_type not in SUPPORTED_EXTRACT_FIELD_TYPES:
+            raise ValueError(
+                f"Extract schema field {where!r} has unsupported type {field_type!r}; "
+                f"Sarvam only accepts {sorted(SUPPORTED_EXTRACT_FIELD_TYPES)}."
+            )
+        if not str(field.get("description") or "").strip():
+            raise ValueError(
+                f"Extract schema field {where!r} needs a non-empty 'description'. "
+                "The description is what steers the model, so an empty one "
+                "silently degrades extraction quality."
+            )
+        if field_type == "object":
+            _validate_object(field, path=where, level=level + 1)
+        elif field_type == "array":
+            _validate_array(field, path=where, level=level + 1)
+
+
+def _validate_array(field: dict[str, Any], *, path: str, level: int) -> None:
+    """Validate one array node, recursing through array-of-array to whatever it finally contains.
+
+    ``level`` is this array's own level, already assigned by the caller (the
+    array field itself is one level deeper than the object it is a property
+    of). Every further descent through ``items`` — into another array or into
+    the terminal object — is one more level and gets one more depth check,
+    via the same recursive calls that assign it: an array-of-array recurses
+    into ``_validate_array`` at ``level + 1``, and an array whose items are an
+    object recurses into ``_validate_object`` at ``level + 1``. There is no
+    separate walk and no third place that re-derives the level, which is what
+    let three different off-by-ones through before.
+    """
+    _check_depth(level, path)
+
+    items = field.get("items")
+    where = f"{path}[]"
+    if isinstance(items, dict) and items.get("type") == "array":
+        _validate_array(items, path=where, level=level + 1)
+    elif isinstance(items, dict) and items.get("type") == "object":
+        _validate_object(items, path=where, level=level + 1)
+    # A primitive (or absent/malformed) `items` is a leaf: nothing further to
+    # descend into, so nothing further to validate.
+
+
 @dataclass(frozen=True)
 class SarvamAuditContext:
     """Identity required to make a document egress call auditable."""
@@ -515,6 +652,7 @@ class SarvamVisionAdapter:
             raise ValueError("provide exactly one of schema or config_id for Sarvam Extract")
         form: dict[str, Any] = {"language": language, "output_format": "json"}
         if schema is not None:
+            _validate_extract_schema(schema)
             form["schema"] = json.dumps(
                 schema,
                 sort_keys=True,
