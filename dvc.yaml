@@ -116,3 +116,89 @@ stages:
       - outputs/findings/confirmed_duplicates.md
       - outputs/findings/misrouting_baseline.csv
       - outputs/findings/misrouting_baseline.md
+
+  actionability-adjudication-prepare:
+    desc: >-
+      Reconcile the two directly tracked frontier judgments into confident
+      consensus rows and a resolver queue. Inputs and outputs contain opaque
+      item IDs only; no ticket numbers or unredacted grievance text are stored.
+    cmd: >-
+      uv run --frozen python scripts/reconcile_actionability_adjudication.py prepare
+      --sample data/external/actionability_frontier_v1/sample.jsonl
+      --judge-a data/external/actionability_frontier_v1/judge_a.jsonl
+      --judge-b data/external/actionability_frontier_v1/judge_b.jsonl
+      --consensus data/external/actionability_frontier_v1/consensus.jsonl
+      --resolver-input data/external/actionability_frontier_v1/resolver_input.jsonl
+      --report data/external/actionability_frontier_v1/adjudication_report.json
+      --protocol-version frontier-actionability-adjudication-v1
+      --inference-environment openai-codex-agent-contexts
+      --egress-policy pii-redacted-shape-screened
+    deps:
+      - data/external/actionability_frontier_v1/sample.jsonl
+      - data/external/actionability_frontier_v1/judge_a.jsonl
+      - data/external/actionability_frontier_v1/judge_b.jsonl
+      - janasunani/evaluation/adjudication.py
+      - scripts/reconcile_actionability_adjudication.py
+      - pyproject.toml
+      - uv.lock
+    outs:
+      - data/external/actionability_frontier_v1/consensus.jsonl
+      - data/external/actionability_frontier_v1/resolver_input.jsonl
+      - data/external/actionability_frontier_v1/adjudication_report.json
+
+  actionability-adjudication-finalize:
+    desc: >-
+      Deterministically combine the fixed sample, confident consensus and the
+      directly tracked frontier resolver output into development gold. The
+      result remains advisory evidence and is not a five-class release set.
+    cmd: >-
+      uv run --frozen python scripts/reconcile_actionability_adjudication.py finalize
+      --sample data/external/actionability_frontier_v1/sample.jsonl
+      --consensus data/external/actionability_frontier_v1/consensus.jsonl
+      --resolver data/external/actionability_frontier_v1/resolver.jsonl
+      --gold data/external/actionability_frontier_v1/gold.jsonl
+      --manifest data/external/actionability_frontier_v1/gold.manifest.json
+      --sample-manifest data/external/actionability_frontier_v1/sample.provenance.json
+      --protocol-version frontier-actionability-adjudication-v1
+      --inference-environment openai-codex-agent-contexts
+      --egress-policy pii-redacted-shape-screened
+    deps:
+      - data/external/actionability_frontier_v1/sample.jsonl
+      - data/external/actionability_frontier_v1/sample.provenance.json
+      - data/external/actionability_frontier_v1/consensus.jsonl
+      - data/external/actionability_frontier_v1/resolver.jsonl
+      - janasunani/evaluation/adjudication.py
+      - scripts/reconcile_actionability_adjudication.py
+      - pyproject.toml
+      - uv.lock
+    outs:
+      - data/external/actionability_frontier_v1/gold.jsonl
+      - data/external/actionability_frontier_v1/gold.manifest.json
+
+  actionability-local-candidate-benchmark:
+    desc: >-
+      Reproduce the high-catch local comparison between the TF-IDF review
+      classifier and the frozen DVC-mirrored MuRIL encoder. MiniLM remains only
+      in directly tracked historical evidence because its local HF cache was
+      not a governed input.
+    cmd: >-
+      uv run --frozen --extra categorizer python
+      scripts/benchmark_actionability_candidates.py
+      --gold data/external/actionability_frontier_v1/gold.jsonl
+      --output outputs/evaluation/actionability_candidates_muril_high_catch.json
+      --multilingual-encoder muril_local=models/categorizer
+      --min-review-precision 0.6
+      --max-actionable-review-rate 0.1
+      --overwrite
+    deps:
+      - data/external/actionability_frontier_v1/gold.jsonl
+      - models/categorizer
+      - janasunani/evaluation/actionability.py
+      - janasunani/evaluation/classification.py
+      - janasunani/evaluation/embedding_actionability.py
+      - janasunani/evaluation/stats.py
+      - scripts/benchmark_actionability_candidates.py
+      - pyproject.toml
+      - uv.lock
+    outs:
+      - outputs/evaluation/actionability_candidates_muril_high_catch.json

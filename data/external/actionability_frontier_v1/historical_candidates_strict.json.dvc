@@ -1,0 +1,5 @@
+outs:
+- md5: cb2da9f3dd523d0401b3ab8c96134456
+  size: 14608
+  hash: md5
+  path: historical_candidates_strict.json

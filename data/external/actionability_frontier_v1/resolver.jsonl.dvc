@@ -1,0 +1,5 @@
+outs:
+- md5: 4b5d2d04a9cf37c7a6f500692830a59a
+  size: 4955
+  hash: md5
+  path: resolver.jsonl
