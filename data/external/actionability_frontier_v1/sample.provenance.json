@@ -1,0 +1,45 @@
+{
+  "counts": {
+    "test/s1": 5,
+    "test/s2": 5,
+    "test/s3": 5,
+    "test/s4": 5,
+    "test/s5": 40,
+    "train/s1": 5,
+    "train/s2": 5,
+    "train/s3": 5,
+    "train/s4": 5,
+    "train/s5": 40,
+    "validation/s1": 5,
+    "validation/s2": 5,
+    "validation/s3": 5,
+    "validation/s4": 5,
+    "validation/s5": 40
+  },
+  "dataset_fingerprint": "sha256:95d0d3b7757ba5bd616dcffe4aefcf846cdc9f1ab2d0f7eaeba16a1077ecd096",
+  "forbidden_fields": [
+    "ticket_no",
+    "raw grievance",
+    "officer remark",
+    "petitioner identifiers",
+    "office"
+  ],
+  "parameters": {
+    "adjudicator_blinding": "sampling strata are opaque s1-s5",
+    "per_weak_stratum_split": 5,
+    "seed": "actionability-gold-v1",
+    "shaped_pii_excluded": 47,
+    "split_policy": "single_snapshot_hash_60_20_20_development_only",
+    "ticket_identifier": "salted_sha256_not_reversible",
+    "unlabeled_per_split": 40
+  },
+  "records": 180,
+  "schema_version": "actionability-adjudication-sample-v1",
+  "selected_fields": [
+    "salted item/group id",
+    "grievance_redacted",
+    "created_year",
+    "split",
+    "opaque sampling stratum"
+  ]
+}

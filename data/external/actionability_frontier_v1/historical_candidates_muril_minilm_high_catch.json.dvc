@@ -1,0 +1,5 @@
+outs:
+- md5: c314e97d002d75ad3915f8fe35615175
+  size: 23657
+  hash: md5
+  path: historical_candidates_muril_minilm_high_catch.json
