@@ -54,9 +54,23 @@ permissions:
 # actually evaluated, so a late run cannot mislabel a newer commit) but it is
 # not free: it makes a passing gate look like a failing one. Runs are short,
 # and the cron sweep keys on run_id so it never queues behind anything.
+#
+# cancel-in-progress: false only protects the RUNNING job. GitHub's own
+# default still cancels a PENDING one: "only one job or workflow run can be
+# pending in a concurrency group at a time" -- a third event arriving while a
+# second is queued behind the first replaces (cancels) that second run, even
+# though nothing is in progress on it yet. A push followed quickly by
+# `@codex review` followed by a review submission reaches this: the review's
+# run supersedes the still-queued comment's run. `queue: max` is the
+# documented way to stop that -- up to 100 runs wait in the group instead of
+# the newest replacing the previous pending one -- and it is the only queue
+# mode allowed alongside cancel-in-progress: false (queue: max plus
+# cancel-in-progress: true is a validation error, since they describe
+# conflicting handling of in-progress runs).
 concurrency:
   group: codex-review-gate-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr || github.run_id }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   evaluate:
