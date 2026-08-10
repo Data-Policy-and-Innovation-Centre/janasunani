@@ -299,3 +299,79 @@ def test_required_pages_mcnemar_smoke():
     assert 140 <= required_pages_mcnemar(0.10, 0.20) <= 180
     with pytest.raises(ValueError):
         required_pages_mcnemar(0.10, 0.05)  # gap must be < discordance
+
+
+# --- the weighted variance path, which the unweighted tests could not see ---
+
+
+def test_stratified_variance_does_not_double_count_the_weight():
+    """Codex finding on #237, reproduced exactly before fixing.
+
+    The within-stratum sample variance was computed with the weights inside
+    it and still divided by (n_h - 1), while the stratum share below already
+    carried the population size. The weight was counted twice, inflating the
+    interval by the weight itself.
+
+    This bit ONLY the weighted path, which is why every unweighted test
+    passed -- and the weighted path is the one an inverse-probability sample
+    uses, so it was wrong exactly where it matters.
+    """
+    estimate = stratified_mean(
+        [0, 2, 10, 12],
+        ["A", "A", "B", "B"],
+        [50, 50, 100, 100],
+        estimand="Codex #237 reproduction",
+    )
+    # Hand-derived: W_A=1/3, W_B=2/3; s2_h=2 in both; fpc 98/99 and 198/199.
+    assert estimate.se == pytest.approx(0.743, abs=0.005)
+    # The defect reported 7.05 here, a 9.5x overwide interval.
+    assert estimate.se < 1.0
+
+
+def test_stratified_variance_matches_an_analytic_population():
+    """Draw with unequal probabilities from a population whose stratified
+    variance is known in closed form, and check the estimator recovers it.
+
+    A test that only checks the point estimate cannot catch a variance bug,
+    which is how the double-counted weight survived the first round.
+    """
+    # Two strata, N_A=100 N_B=400, sampled n_h=5 each -> weights 20 and 80.
+    values_a = [10.0, 12.0, 14.0, 16.0, 18.0]  # s2 = 10
+    values_b = [20.0, 24.0, 28.0, 32.0, 36.0]  # s2 = 40
+    values = values_a + values_b
+    strata = ["A"] * 5 + ["B"] * 5
+    weights = [20.0] * 5 + [80.0] * 5
+
+    estimate = stratified_mean(values, strata, weights, estimand="analytic check")
+
+    total = 100.0 + 400.0
+    expected_var = 0.0
+    for s2, n_h, n_pop in ((10.0, 5, 100.0), (40.0, 5, 400.0)):
+        share = n_pop / total
+        fpc = (n_pop - n_h) / (n_pop - 1)
+        expected_var += share**2 * fpc * s2 / n_h
+    assert estimate.se == pytest.approx(expected_var**0.5, rel=1e-9)
+
+
+def test_degrees_of_freedom_come_from_sampled_units_not_strata():
+    """Codex finding on #237: two strata gave df=1 and t=12.706 regardless
+    of how many units were drawn, so a large sample got an interval more
+    than six times too wide."""
+    values = [float(i) for i in range(300)]
+    strata = ["A"] * 150 + ["B"] * 150
+    estimate = stratified_mean(values, strata, estimand="300 units, 2 strata")
+
+    # df = sum(n_h - 1) = 298, so the critical value is essentially normal.
+    assert estimate.ci_high - estimate.ci_low == pytest.approx(
+        2 * critical_value(0.05, df=298) * estimate.se, rel=1e-9
+    )
+    # The defect used df = n_strata - 1 = 1 -> t = 12.706.
+    naive_width = 2 * critical_value(0.05, df=1) * estimate.se
+    assert (estimate.ci_high - estimate.ci_low) < naive_width / 5
+
+
+def test_a_single_stratum_still_has_usable_degrees_of_freedom():
+    values = [1.0, 2.0, 3.0, 4.0, 5.0]
+    estimate = stratified_mean(values, ["A"] * 5, estimand="one stratum")
+    assert estimate.se > 0
+    assert estimate.ci_low < estimate.point < estimate.ci_high

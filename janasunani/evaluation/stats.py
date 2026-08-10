@@ -392,22 +392,52 @@ def stratified_mean(
     point = sum(v * wt for v, wt in zip(values, w)) / total_weight
 
     var = 0.0
+    df_units = 0
     for members in by_stratum.values():
         n_h = len(members)
         w_h = sum(wt for _, wt in members)
         if n_h < 2 or w_h <= 0:
             continue
         mean_h = sum(v * wt for v, wt in members) / w_h
-        s2_h = sum(wt * (v - mean_h) ** 2 for v, wt in members) / (n_h - 1)
+        # The within-stratum sample variance is UNWEIGHTED.
+        #
+        # Weighting the squared deviations and still dividing by (n_h - 1)
+        # inflates s2_h by the weight itself, and the stratum share below
+        # already carries the population size, so the weight was being counted
+        # twice. On values [0,2,10,12] with weights [50,50,100,100] that
+        # reported SE 7.05 against a true 0.743, a 9.5x overwide interval.
+        #
+        # It bit only the weighted path, which is why the unweighted tests
+        # never saw it -- and the weighted path is the one an inverse-
+        # probability sample uses, so it was wrong exactly where it matters.
+        #
+        # This assumes inclusion probability is constant WITHIN a stratum,
+        # which is what stratified sampling means and what the sample frame
+        # guarantees by construction. Unequal probabilities within one stratum
+        # would need a different estimator, and would mean the strata are
+        # mis-specified.
+        s2_h = sum((v - mean_h) ** 2 for v, _wt in members) / (n_h - 1)
         fpc = 1.0
         if w_h > n_h:
             fpc = (w_h - n_h) / (w_h - 1)
         stratum_weight_share = w_h / total_weight
         var += (stratum_weight_share**2) * fpc * s2_h / n_h
+        df_units += n_h - 1
 
     se = math.sqrt(var) if var > 0 else 0.0
     n_strata = len(by_stratum)
-    z = critical_value(alpha, df=_df_for_clusters(n_strata))
+    # Degrees of freedom come from the SAMPLED UNITS, sum_h (n_h - 1), not
+    # from the stratum count.
+    #
+    # Strata are not the independent clusters the clustered-SE correction
+    # counts: the variance estimate rests on the within-stratum variances, so
+    # it is those that supply the degrees of freedom. Using n_strata - 1 gave
+    # a two-stratum design df=1 and a critical value of 12.706 no matter how
+    # many units were drawn, so a 300-unit sample got an interval more than
+    # six times too wide. Two- and three-stratum designs are the common case,
+    # which is where it did the most damage.
+    df = df_units if df_units >= 1 else 1
+    z = critical_value(alpha, df=df)
     return Estimate(
         point=point,
         se=se,
