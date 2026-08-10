@@ -225,3 +225,74 @@ stages:
       - uv.lock
     outs:
       - outputs/evaluation/actionability_weak_label_audit.json
+
+  pii-development-scorecard:
+    desc: >-
+      Reproduce the current per-entity PII recall scorecard. The source has no
+      reliable supported-language split or complete precision adjudication, so
+      this remains development evidence rather than a release gate.
+    cmd: >-
+      uv run --frozen --extra pii python -m janasunani.evaluation.pii_scorecard
+      --gold data/external/pii_gold_draft_n50.jsonl
+      --out outputs/evaluation/pii_release.md
+      --json-out outputs/evaluation/pii_release.json
+    deps:
+      - data/external/pii_gold_draft_n50.jsonl
+      - janasunani/evaluation/pii_scorecard.py
+      - janasunani/pipeline/pii_eval.py
+      - janasunani/pipeline/stages/pii_tagger.py
+      - pyproject.toml
+      - uv.lock
+    outs:
+      - outputs/evaluation/pii_release.json
+      - outputs/evaluation/pii_release.md
+
+  routing-historical-benchmark:
+    desc: >-
+      Reproduce chronological historical-destination agreement for all eligible
+      structured grievances and the informative-category subset. This does not
+      measure correct legal authority or outcome benefit.
+    cmd: >-
+      uv run --frozen janasunani-evaluate-routing
+      --complaints data/interim/complaints.parquet
+      --output outputs/evaluation/routing_historical_all.json
+      && uv run --frozen janasunani-evaluate-routing
+      --complaints data/interim/complaints.parquet
+      --informative-categories-only
+      --output outputs/evaluation/routing_historical_informative.json
+    deps:
+      - data/interim/complaints.parquet
+      - janasunani/evaluation/classification.py
+      - janasunani/evaluation/historical.py
+      - janasunani/evaluation/routing.py
+      - janasunani/evaluation/stats.py
+      - pyproject.toml
+      - uv.lock
+    outs:
+      - outputs/evaluation/routing_historical_all.json
+      - outputs/evaluation/routing_historical_informative.json
+
+  full-benchmark-bundle:
+    desc: >-
+      Assemble available aggregate scorecards into one deterministic evidence
+      bundle. Missing speed, accuracy, or impact evidence remains an explicit
+      publication blocker; this stage never substitutes a descriptive proxy.
+    cmd: >-
+      uv run --frozen janasunani-build-benchmark-bundle
+      --config config/benchmark_bundle.json
+      --output outputs/benchmark/full_benchmark.json
+      --markdown outputs/benchmark/full_benchmark.md
+    deps:
+      - config/benchmark_bundle.json
+      - docs/evidence/sarvam_cached_benchmark.json
+      - outputs/evaluation/actionability_candidates_muril_high_catch.json
+      - outputs/evaluation/actionability_weak_label_audit.json
+      - outputs/evaluation/pii_release.json
+      - outputs/evaluation/routing_historical_all.json
+      - outputs/evaluation/routing_historical_informative.json
+      - janasunani/evaluation/benchmark_bundle.py
+      - pyproject.toml
+      - uv.lock
+    outs:
+      - outputs/benchmark/full_benchmark.json
+      - outputs/benchmark/full_benchmark.md

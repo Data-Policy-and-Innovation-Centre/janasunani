@@ -1,0 +1,141 @@
+{
+  "benchmark_release": "pipeline-quality-development-v1",
+  "artifacts": [
+    {
+      "id": "pipeline_latency_development",
+      "section": "speed",
+      "path": "outputs/benchmark/latency.json",
+      "producer": "scripts/benchmark_pipeline.py",
+      "claim": "current per-stage and end-to-end development timing",
+      "required_for_publication": false
+    },
+    {
+      "id": "pipeline_latency_release",
+      "section": "speed",
+      "path": "outputs/benchmark/latency_release.json",
+      "producer": "release timing runner built on scripts/benchmark_pipeline.py",
+      "claim": "cold and warm per-stage and end-to-end latency on an identified release and host, with attempts, failures, throughput and p50/p90/p95",
+      "required_for_publication": true,
+      "required_values": {"publication_ready": true},
+      "missing_reason": "run the real release timing harness; deterministic fake timings are not publishable"
+    },
+    {
+      "id": "actionability_candidates",
+      "section": "accuracy",
+      "path": "outputs/evaluation/actionability_candidates_muril_high_catch.json",
+      "producer": "dvc stage actionability-local-candidate-benchmark",
+      "claim": "binary developmental actionability benchmark",
+      "required_for_publication": false
+    },
+    {
+      "id": "actionability_officer_release",
+      "section": "accuracy",
+      "path": "outputs/evaluation/actionability_officer_release.json",
+      "producer": "future officer-adjudicated release scorecard",
+      "claim": "five-class officer-confirmed actionability quality",
+      "required_for_publication": true,
+      "required_values": {"publication_ready": true},
+      "missing_reason": "needs a frozen officer-confirmed five-class release set"
+    },
+    {
+      "id": "actionability_weak_label_audit",
+      "section": "accuracy",
+      "path": "outputs/evaluation/actionability_weak_label_audit.json",
+      "producer": "dvc stage actionability-weak-label-audit",
+      "claim": "administrative weak-label support and confounding audit",
+      "required_for_publication": false
+    },
+    {
+      "id": "categorization_release",
+      "section": "accuracy",
+      "path": "outputs/evaluation/categorization_release.json",
+      "producer": "future categorization scorecard run",
+      "claim": "frozen release-set categorization quality and abstention",
+      "required_for_publication": true,
+      "required_values": {"publication_ready": true},
+      "missing_reason": "needs a governed production-domain categorization release set"
+    },
+    {
+      "id": "summary_release",
+      "section": "accuracy",
+      "path": "outputs/evaluation/summary_release.json",
+      "producer": "future summary scorecard run",
+      "claim": "critical-fact recall, unsupported facts, contradictions, PII leaks, and usefulness",
+      "required_for_publication": true,
+      "required_values": {"publication_ready": true},
+      "missing_reason": "needs paired human summary judgments"
+    },
+    {
+      "id": "pii_development_scorecard",
+      "section": "accuracy",
+      "path": "outputs/evaluation/pii_release.json",
+      "producer": "dvc stage pii-development-scorecard",
+      "claim": "current per-entity redaction recall with its observed language limitations",
+      "required_for_publication": false
+    },
+    {
+      "id": "pii_officer_release",
+      "section": "accuracy",
+      "path": "outputs/evaluation/pii_officer_release.json",
+      "producer": "future expanded PII release scorecard",
+      "claim": "precision, recall, and supported-language redaction quality",
+      "required_for_publication": true,
+      "required_values": {"publication_ready": true},
+      "missing_reason": "current PII evidence lacks a complete precision and supported-language release scorecard"
+    },
+    {
+      "id": "routing_historical_all",
+      "section": "accuracy",
+      "path": "outputs/evaluation/routing_historical_all.json",
+      "producer": "dvc stage routing-historical-benchmark",
+      "claim": "historical-destination agreement over all eligible structured cases",
+      "required_for_publication": false
+    },
+    {
+      "id": "routing_historical_informative",
+      "section": "accuracy",
+      "path": "outputs/evaluation/routing_historical_informative.json",
+      "producer": "dvc stage routing-historical-benchmark",
+      "claim": "historical-destination agreement where category is informative",
+      "required_for_publication": false
+    },
+    {
+      "id": "routing_correct_authority_release",
+      "section": "accuracy",
+      "path": "outputs/evaluation/routing_correct_authority_release.json",
+      "producer": "future officer-adjudicated routing scorecard",
+      "claim": "correct-authority top-k routing quality",
+      "required_for_publication": true,
+      "required_values": {"publication_ready": true},
+      "missing_reason": "historical destination agreement is not correct-authority adjudication"
+    },
+    {
+      "id": "sarvam_cached_evidence",
+      "section": "accuracy",
+      "path": "docs/evidence/sarvam_cached_benchmark.json",
+      "producer": "cached Sarvam evidence reconciliation",
+      "claim": "provider coverage and divergence, not OCR accuracy",
+      "required_for_publication": false
+    },
+    {
+      "id": "pilot_operational_effects",
+      "section": "impact",
+      "path": "outputs/impact/pilot_operational_effects.json",
+      "producer": "future locked-pilot impact estimator",
+      "claim": "officer decisions, transfers, first action, and 30/90-day resolution effects",
+      "required_for_publication": true,
+      "required_values": {"publication_ready": true},
+      "missing_reason": "needs pre-recorded assignment/exposure events and mature follow-up"
+    },
+    {
+      "id": "pilot_citizen_outcomes",
+      "section": "impact",
+      "path": "outputs/impact/pilot_citizen_outcomes.json",
+      "producer": "future privacy-safe satisfaction estimator",
+      "claim": "citizen satisfaction with invitations, responses, missingness, and uncertainty",
+      "required_for_publication": true,
+      "required_values": {"publication_ready": true},
+      "missing_reason": "needs an approved fixed-horizon satisfaction workflow and response data"
+    }
+  ]
+}
