@@ -285,6 +285,7 @@ stages:
     deps:
       - config/benchmark_bundle.json
       - docs/evidence/sarvam_cached_benchmark.json
+      - outputs/benchmark/latency.json
       - outputs/evaluation/actionability_candidates_muril_high_catch.json
       - outputs/evaluation/actionability_weak_label_audit.json
       - outputs/evaluation/pii_release.json
@@ -296,3 +297,27 @@ stages:
     outs:
       - outputs/benchmark/full_benchmark.json
       - outputs/benchmark/full_benchmark.md
+
+  benchmark-table:
+    desc: >-
+      Render the current DSI-reference comparison table from the same tracked
+      latency and accuracy artifacts used by the full benchmark bundle.
+      Missing measures remain explicitly not_measured.
+    cmd: >-
+      uv run --frozen janasunani-evaluate-benchmark
+      --out outputs/benchmark
+      --latency outputs/benchmark/latency.json
+      --pii outputs/evaluation/pii_release.json
+      --sarvam docs/evidence/sarvam_cached_benchmark.json
+    deps:
+      - outputs/benchmark/latency.json
+      - outputs/evaluation/pii_release.json
+      - docs/evidence/sarvam_cached_benchmark.json
+      - janasunani/evaluation/benchmark_report.py
+      - janasunani/evaluation/dsi_baselines.py
+      - janasunani/evaluation/pricing.py
+      - pyproject.toml
+      - uv.lock
+    outs:
+      - outputs/benchmark/table2.json
+      - outputs/benchmark/table2.md

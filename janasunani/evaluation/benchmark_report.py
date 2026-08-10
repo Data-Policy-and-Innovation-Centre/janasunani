@@ -217,6 +217,18 @@ def build_report(
         stages = latency_result.get("stages") if isinstance(latency_result, dict) else None
         if isinstance(stages, dict) and stage_key in stages:
             return stages[stage_key]
+        # The live serving timer uses verbs for the actual operations. Keep
+        # the report's historical noun labels without silently dropping the
+        # new measurements. Components nested inside OCR/triage remain
+        # not_measured because the live timer does not split them further.
+        live_aliases = {
+            "categorizer": "categorize",
+            "summarizer": "summarize",
+            "pii": "redact",
+        }
+        alias = live_aliases.get(stage_key)
+        if isinstance(stages, dict) and alias in stages:
+            return stages[alias]
         if stage_key == "e2e" and isinstance(latency_result, dict) and "e2e" in latency_result:
             return latency_result["e2e"]
         return NOT_MEASURED
@@ -422,7 +434,7 @@ def build_report(
         latency_appendix = {
             "status": "measured",
             "result": latency_result,
-            "notes": "Wall-clock per stage, ticket-clustered SE, p50/p95, n_clusters.",
+            "notes": "Wall-clock per stage and input path, ticket-clustered SE, p50/p90/p95, throughput, attempts and failures.",
         }
     report: dict[str, Any] = {
         "generated_at": _dt.datetime.now(tz=_dt.timezone.utc).isoformat(),
@@ -564,11 +576,11 @@ def render_markdown(report: dict[str, Any]) -> str:
         stages = res.get("stages") if isinstance(res, dict) else None
         if isinstance(stages, dict):
             lines.append("")
-            lines.append("| Stage | mean (s) | SE (s) | n_clusters | p50 (s) | p95 (s) |")
-            lines.append("|---|---:|---:|---:|---:|---:|")
+            lines.append("| Stage | n | mean (s) | SE (s) | n_clusters | p50 (s) | p90 (s) | p95 (s) | throughput/s |")
+            lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|")
             for k, v in sorted(stages.items()):
                 if isinstance(v, dict):
-                    lines.append(f"| {k} | {v.get('mean_seconds', '—')} | {v.get('se_seconds', '—')} | {v.get('n_clusters', '—')} | {v.get('p50', '—')} | {v.get('p95', '—')} |")
+                    lines.append(f"| {k} | {v.get('n', '—')} | {v.get('mean_seconds', '—')} | {v.get('se_seconds', '—')} | {v.get('n_clusters', '—')} | {v.get('p50', '—')} | {v.get('p90', '—')} | {v.get('p95', '—')} | {v.get('throughput_per_second', '—')} |")
         e2e = res.get("e2e") if isinstance(res, dict) else None
         if isinstance(e2e, dict):
             lines.append("")
