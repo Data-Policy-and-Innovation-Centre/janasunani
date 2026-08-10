@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json
 import random
+import shutil
 from collections import defaultdict
 from itertools import zip_longest
 from pathlib import Path
@@ -339,6 +340,38 @@ def choose_documents(
     return chosen
 
 
+def prepare_out_dir(out_dir: Path, *, clean: bool = False) -> None:
+    """Make *out_dir* ready to stage into: empty, and created if missing.
+
+    A pre-existing non-empty directory is not harmless leftover. The cleanup
+    at the end of ``build_sample`` only removes files it fetched itself, so
+    documents a prior draw left behind survive untouched; `sarvam_evaluate`
+    then enumerates every supported document under the directory without
+    consulting the manifest, so a rerun with a different seed or cap submits
+    stale pages that are absent from the new manifest -- corrupting both the
+    paired sample and its reported cost. Reject a dirty directory by default;
+    only clear it when the caller explicitly asks to.
+    """
+    if not out_dir.exists():
+        out_dir.mkdir(parents=True, exist_ok=True)
+        return
+    leftover = list(out_dir.iterdir())
+    if not leftover:
+        return
+    if not clean:
+        raise FileExistsError(
+            f"{out_dir} already has {len(leftover)} entr{'y' if len(leftover) == 1 else 'ies'} "
+            "in it. A prior draw's documents would be re-submitted alongside this one "
+            "without appearing in its manifest. Pass clean=True (CLI: --clean) to clear "
+            "it first, or point --out at an empty directory."
+        )
+    for entry in leftover:
+        if entry.is_dir():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
+
+
 def build_sample(
     rows: Iterable[tuple[str, str]],
     source: DocumentSource,
@@ -353,13 +386,17 @@ def build_sample(
     max_pages_per_document: int,
     page_counter: Callable[[Path], int] | None = None,
     restore_expiry: str | None = None,
+    clean_out_dir: bool = False,
 ) -> dict[str, Any]:
     """Draw, stage and record one reproducible sample. The whole path.
 
     Returns the manifest. Writes the staged documents and the manifest under
     *out_dir*, which must not be inside the repository: the manifest carries
-    real ticket numbers and S3 keys.
+    real ticket numbers and S3 keys. *out_dir* must be empty (or absent); pass
+    ``clean_out_dir=True`` to clear a leftover directory from a prior draw
+    rather than mixing its files into this one's manifest.
     """
+    prepare_out_dir(out_dir, clean=clean_out_dir)
     count_pages = page_counter or page_count
     by_category, counts = draw_tickets(rows, seed=seed)
     chosen = choose_documents(
@@ -445,6 +482,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--bucket", default=DEFAULT_BUCKET)
     parser.add_argument("--restore-days", type=int, default=21, help="Must outlast whatever the sample is for.")
     parser.add_argument("--restore-tier", default="Expedited", choices=["Expedited", "Standard", "Bulk"])
+    parser.add_argument(
+        "--restore-timeout-seconds",
+        type=int,
+        default=None,
+        help="Overrides the tier-appropriate default (Expedited minutes, Standard/Bulk hours).",
+    )
+    parser.add_argument(
+        "--profile",
+        default=None,
+        help="Named AWS profile. Leave unset to use the instance-role credential chain.",
+    )
+    parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="Clear a non-empty --out directory left by a prior draw instead of rejecting it.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Plan only; fetch nothing.")
     args = parser.parse_args(argv)
 
@@ -477,6 +530,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         bucket=args.bucket,
         restore_days=args.restore_days,
         restore_tier=args.restore_tier,
+        restore_timeout_seconds=args.restore_timeout_seconds,
+        profile=args.profile,
     )
     build_sample(
         rows,
@@ -489,6 +544,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         max_documents=args.max_documents,
         max_pages_per_category=args.max_pages_per_category,
         max_pages_per_document=args.max_pages_per_document,
+        clean_out_dir=args.clean,
     )
     return 0
 

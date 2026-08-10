@@ -19,6 +19,7 @@ from janasunani.evaluation.sarvam_sample_builder import (
     draw_tickets,
     interleave,
     is_ambiguous_key,
+    prepare_out_dir,
     select_within_caps,
     write_manifest,
 )
@@ -369,6 +370,72 @@ def test_build_sample_leaves_no_unaccounted_files_on_disk(tmp_path):
     on_disk = {p.name for p in (tmp_path / "stage").iterdir() if p.suffix != ".json"}
     assert on_disk == {d["file"] for d in manifest["documents"]}
     assert len(on_disk) <= 3
+
+
+def test_build_sample_rejects_a_non_empty_out_dir_by_default(tmp_path):
+    """Codex finding on #233: a reused --out silently mixed a prior draw's
+    files into this one's manifest.
+
+    `sarvam_evaluate.discover_pages` enumerates every supported document
+    under the staging directory without consulting `sample_manifest.json`,
+    so a leftover file from an earlier run with a different seed or cap
+    would be submitted and billed even though the new manifest never
+    mentions it.
+    """
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    (stage / "leftover_complaint.pdf").write_bytes(b"stale")
+
+    rows = _rows({"Housing": 4})
+    with pytest.raises(FileExistsError):
+        build_sample(
+            rows,
+            _source_for(rows),
+            out_dir=stage,
+            slice_label="Sambalpur/2024",
+            seed=1,
+            target_pages=10,
+            floor=1,
+            max_documents=4,
+            max_pages_per_category=10,
+            max_pages_per_document=8,
+            page_counter=lambda p: 1,
+        )
+    # The rejected run must not have touched what was already there.
+    assert (stage / "leftover_complaint.pdf").is_file()
+
+
+def test_build_sample_can_clear_a_non_empty_out_dir_on_request(tmp_path):
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    (stage / "leftover_complaint.pdf").write_bytes(b"stale")
+
+    rows = _rows({"Housing": 4})
+    manifest = build_sample(
+        rows,
+        _source_for(rows),
+        out_dir=stage,
+        slice_label="Sambalpur/2024",
+        seed=1,
+        target_pages=10,
+        floor=1,
+        max_documents=4,
+        max_pages_per_category=10,
+        max_pages_per_document=8,
+        page_counter=lambda p: 1,
+        clean_out_dir=True,
+    )
+    assert not (stage / "leftover_complaint.pdf").exists()
+    on_disk = {p.name for p in stage.iterdir() if p.suffix != ".json"}
+    assert on_disk == {d["file"] for d in manifest["documents"]}
+
+
+def test_prepare_out_dir_accepts_a_missing_or_already_empty_directory(tmp_path):
+    fresh = tmp_path / "fresh"
+    prepare_out_dir(fresh)
+    assert fresh.is_dir()
+    # Calling again on the now-empty, now-existing directory must not raise.
+    prepare_out_dir(fresh)
 
 
 def test_the_same_seed_reproduces_the_same_sample(tmp_path):

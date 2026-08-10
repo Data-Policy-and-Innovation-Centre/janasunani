@@ -25,7 +25,15 @@ from loguru import logger
 
 DEFAULT_BUCKET = "janasunani-documents-main"
 DEFAULT_REGION = "ap-south-1"
-DEFAULT_PROFILE = "Janasunani"
+
+#: No named profile by default: the documented EC2 hosts authenticate to S3
+#: via a shared IAM instance role and have no local AWS profile installed
+#: (docs/DEPLOY.md: "S3 access is via the instance role -- no static keys on
+#: the boxes"). Passing a profile name here forces boto3 past that chain and
+#: onto a local profile lookup, which raises ``ProfileNotFound`` on those
+#: boxes. Leave it unset so ``boto3.Session`` falls through to the instance
+#: role; a local user who wants a named profile can still pass one.
+DEFAULT_PROFILE = None
 
 #: Expedited Glacier retrieval is minutes; Standard is hours. On a deadline,
 #: the difference is a coffee break against a lost day.
@@ -33,6 +41,18 @@ DEFAULT_RESTORE_TIER = "Expedited"
 
 #: Long enough that a sample outlives the thing it was drawn for.
 DEFAULT_RESTORE_DAYS = 21
+
+#: AWS's documented Glacier retrieval windows, padded for headroom, keyed by
+#: restore tier: Expedited is minutes, Standard is 3-5 hours, Bulk is 5-12
+#: hours. A single fixed timeout (the old default was 1,200s) is only long
+#: enough for Expedited; under Standard or Bulk it always expires first and
+#: every archived object -- roughly 90% of this corpus -- is silently
+#: excluded from the manifest.
+DEFAULT_RESTORE_TIMEOUT_SECONDS: dict[str, int] = {
+    "Expedited": 15 * 60,
+    "Standard": 6 * 3600,
+    "Bulk": 13 * 3600,
+}
 
 
 class S3DocumentSource:
@@ -50,7 +70,7 @@ class S3DocumentSource:
         restore_days: int = DEFAULT_RESTORE_DAYS,
         restore_tier: str = DEFAULT_RESTORE_TIER,
         poll_seconds: int = 30,
-        restore_timeout_seconds: int = 1200,
+        restore_timeout_seconds: int | None = None,
         client: Any | None = None,
         sleep: Any | None = None,
     ) -> None:
@@ -58,7 +78,15 @@ class S3DocumentSource:
         self.restore_days = restore_days
         self.restore_tier = restore_tier
         self.poll_seconds = poll_seconds
-        self.restore_timeout_seconds = restore_timeout_seconds
+        # No explicit override: wait as long as the selected tier needs, not
+        # a one-size-fits-all figure that only suits Expedited.
+        self.restore_timeout_seconds = (
+            restore_timeout_seconds
+            if restore_timeout_seconds is not None
+            else DEFAULT_RESTORE_TIMEOUT_SECONDS.get(
+                restore_tier, DEFAULT_RESTORE_TIMEOUT_SECONDS["Bulk"]
+            )
+        )
         self._sleep = sleep or time.sleep
         self._client = client
         self._region = region
