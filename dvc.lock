@@ -29,9 +29,9 @@ stages:
       md5: 4ad7a17893cb22a396f572b899e68c25
       size: 3925
   pipeline-sample:
-    cmd: uv run --extra pipeline-core janasunani-pipeline run --input 
-      data/raw/documents-sample --db data/processed/pipeline-sample.sqlite 
-      --models models --ocr-engine pytesseract --stages format_classifier 
+    cmd: uv run --extra pipeline-core janasunani-pipeline run --input
+      data/raw/documents-sample --db data/processed/pipeline-sample.sqlite
+      --models models --ocr-engine pytesseract --stages format_classifier
       ocr_extraction --workers 1 && uv run --extra pii janasunani-pipeline run
       --input data/raw/documents-sample --db
       data/processed/pipeline-sample.sqlite --models models --stages pii_tagger
@@ -189,3 +189,46 @@ stages:
       hash: md5
       md5: 903dc729212929dc0b8891df6487bd40
       size: 868
+  actionability-weak-label-audit:
+    cmd: uv run --frozen janasunani-audit-actionability-labels --complaints
+      data/interim/complaints.parquet --action-history
+      data/interim/action_history.parquet --min-office-support 100 --output
+      outputs/evaluation/actionability_weak_label_audit.json
+    deps:
+    - path: data/interim/action_history.parquet
+      hash: md5
+      md5: a69b4a902baa6bab082f3ee21dfcaeb5
+      size: 497002355
+    - path: data/interim/complaints.parquet
+      hash: md5
+      md5: f0eeb1379c88a70ecf2fac5bad07868f
+      size: 410159639
+    - path: janasunani/analytics/findings/discards.py
+      hash: md5
+      md5: 13e1b915153d273c589021b99813036a
+      size: 12020
+    - path: janasunani/evaluation/actionability.py
+      hash: md5
+      md5: 08570b2471796f49214c2f801d8791db
+      size: 33241
+    - path: janasunani/evaluation/classification.py
+      hash: md5
+      md5: 5be5a49505010f6b20ec6a183f30fd0f
+      size: 12995
+    - path: janasunani/evaluation/weak_labels.py
+      hash: md5
+      md5: 9d1731d003d9f8da8fda59a42b53cb45
+      size: 9383
+    - path: pyproject.toml
+      hash: md5
+      md5: 312152a943454973f9fdd51e68d82609
+      size: 9968
+    - path: uv.lock
+      hash: md5
+      md5: f895934178f603f5315683d02abc6449
+      size: 1038485
+    outs:
+    - path: outputs/evaluation/actionability_weak_label_audit.json
+      hash: md5
+      md5: f8a1a3d705c68959429278db77bf0ac0
+      size: 5538
