@@ -85,6 +85,77 @@ def test_actionability_sample_sidecar_is_metadata_only():
     assert check.check_payload(payload) == []
 
 
+def _frontier_payload():
+    return {
+        "schema_version": "janasunani.actionability-frontier-artifacts/v1",
+        "claim_status": "development evidence only",
+        "privacy": {
+            "source": "PII-redacted sample",
+            "contains_redacted_narratives": True,
+            "residual_pii_risk": True,
+            "git_contains_row_level_bytes": False,
+            "storage": "private DVC remote",
+        },
+        "sample": {
+            "records": 3,
+            "split_counts": {"train": 1, "validation": 1, "test": 1},
+            "sampling": "fixed sample",
+            "split_policy": "fixed hash split",
+            "sha256": "a" * 64,
+            "tracking_mode": "direct DVC input",
+            "tracking_reason": "private salt is not versioned",
+        },
+        "direct_inputs": {
+            name: {"role": "model output", "sha256": "b" * 64}
+            for name in ["judge_a.jsonl", "judge_b.jsonl", "resolver.jsonl", "resolver_backup.jsonl"]
+        },
+        "deterministic_stages": {
+            "actionability-adjudication-prepare": ["consensus.jsonl"],
+            "actionability-adjudication-finalize": ["gold.jsonl"],
+            "actionability-local-candidate-benchmark": ["scorecard.json"],
+        },
+        "canonical_reproducible_gold": {
+            "records": 3,
+            "sha256": "c" * 64,
+            "label_counts": {
+                "actionable": 2,
+                "underspecified": 1,
+                "irrelevant": 0,
+                "policy_blocked": 0,
+                "out_of_scope": 0,
+            },
+            "policy": "exclude uncertain rows",
+            "excluded_uncertain_resolver_rows": 1,
+        },
+        "preserved_historical_gold": {
+            "artifact": "historical.jsonl",
+            "manifest": "historical.manifest.json",
+            "records": 4,
+            "sha256": "d" * 64,
+            "status": "audit only",
+        },
+        "preserved_nonreproducible_reports": {
+            "historical_candidates_strict.json": "e" * 64,
+            "historical_candidates_sensitivity.json": "f" * 64,
+            "historical_candidates_high_catch.json": "1" * 64,
+            "historical_candidates_muril_minilm_high_catch.json": "2" * 64,
+        },
+        "limitations": ["No officer-confirmed labels."],
+    }
+
+
+def test_actionability_frontier_sidecar_is_metadata_only():
+    assert check.check_payload(_frontier_payload()) == []
+
+
+def test_actionability_frontier_rejects_unexpected_nested_fields_without_echoing():
+    payload = _frontier_payload()
+    payload["privacy"][CITIZEN_TEXT] = CITIZEN_TEXT
+    problems = check.check_payload(payload)
+    assert problems
+    assert all(CITIZEN_TEXT not in problem for problem in problems)
+
+
 def test_sarvam_source_snapshot_sidecar_is_metadata_only():
     payload = {
         "schema_version": "janasunani.sarvam-source-snapshots/v1",
