@@ -370,6 +370,10 @@ def stratified_mean(
     The critical value uses ``df = n_strata - 1`` via :func:`critical_value`
     — the same small-sample t-correction as every other estimator here.
 
+    Every stratum must supply at least 2 sampled units and a constant weight
+    across its members, or this raises ``ValueError`` — see the comments in
+    the loop below for why both are hard requirements, not warnings.
+
     ``estimand`` is required, keyword-only, no default — see
     :class:`Estimate`.
     """
@@ -381,6 +385,14 @@ def stratified_mean(
     if n == 0:
         raise ValueError("stratified_mean needs at least one observation")
     w = list(weights) if weights is not None else [1.0] * n
+    if weights is not None:
+        # A Horvitz-Thompson weight is an inverse inclusion probability; it
+        # cannot be zero or negative. Rejecting this here means w_h (the
+        # per-stratum weight sum) can never be <= 0 below, so that no longer
+        # needs its own silent-skip branch.
+        for wt in w:
+            if wt <= 0:
+                raise ValueError("weights must be positive")
 
     by_stratum: dict[str, list[tuple[float, float]]] = defaultdict(list)
     for v, s, wt in zip(values, strata, w):
@@ -393,14 +405,57 @@ def stratified_mean(
 
     var = 0.0
     df_units = 0
-    for members in by_stratum.values():
+    for stratum, members in by_stratum.items():
         n_h = len(members)
-        w_h = sum(wt for _, wt in members)
-        if n_h < 2 or w_h <= 0:
-            continue
-        mean_h = sum(v * wt for v, wt in members) / w_h
-        # The within-stratum sample variance is UNWEIGHTED.
+        # A singleton stratum's within-stratum variance is not estimable --
+        # there is no deviation to measure it from. The previous code
+        # `continue`d past it, which drops its ENTIRE variance contribution
+        # while its weight stays in the point estimate above: values [0, 10]
+        # in strata ['A', 'B'] returned se=0 and the zero-width interval
+        # [5, 5], a silently downward-biased interval, not a conservative
+        # one. That is the dangerous direction, so this raises instead of
+        # guessing.
         #
+        # A real survey design sometimes has a deliberate certainty
+        # stratum (a self-representing unit sampled with probability 1,
+        # contributing zero variance by design) -- but that is a design
+        # decision the caller must make explicitly, not something this
+        # function can infer from n_h == 1 alone. If that is the intent,
+        # exclude the stratum's variance contribution explicitly at the call
+        # site with a comment saying so; otherwise collapse the singleton
+        # into a neighboring stratum, or draw n_h >= 2, before calling this.
+        if n_h < 2:
+            raise ValueError(
+                f"stratum {stratum!r} has only {n_h} sampled unit(s); its "
+                "variance is not estimable. Collapse it into a neighboring "
+                "stratum, or draw n_h >= 2, before calling stratified_mean. "
+                "(If it is a deliberate certainty stratum, exclude its "
+                "variance contribution explicitly at the call site instead "
+                "of relying on this function to guess that.)"
+            )
+        stratum_weights = [wt for _, wt in members]
+        # The within-stratum sample variance below is UNWEIGHTED, which is
+        # only a valid estimator when every unit in the stratum shares the
+        # same inclusion probability (the constant-weight assumption
+        # stratified sampling relies on). The public API accepts arbitrary
+        # per-observation weights, so nothing stopped a caller from passing
+        # a PPS / unequal-probability design here and getting a plausible
+        # but invalid SE back with no warning. Enforce the assumption the
+        # estimator actually relies on instead of leaving it as a comment
+        # nobody reading only the call site would see.
+        first_wt = stratum_weights[0]
+        if any(not math.isclose(wt, first_wt, rel_tol=1e-9, abs_tol=1e-12) for wt in stratum_weights[1:]):
+            raise ValueError(
+                f"stratum {stratum!r} has varying weights within it "
+                f"({sorted(set(stratum_weights))}); stratified_mean's "
+                "variance estimator assumes a constant weight (constant "
+                "inclusion probability) within each stratum. Split the "
+                "stratum so weights are constant within each part, or use a "
+                "different estimator for unequal-probability (PPS) sampling "
+                "-- this function does not implement one."
+            )
+        w_h = sum(stratum_weights)
+        mean_h = sum(v * wt for v, wt in members) / w_h
         # Weighting the squared deviations and still dividing by (n_h - 1)
         # inflates s2_h by the weight itself, and the stratum share below
         # already carries the population size, so the weight was being counted
@@ -410,12 +465,6 @@ def stratified_mean(
         # It bit only the weighted path, which is why the unweighted tests
         # never saw it -- and the weighted path is the one an inverse-
         # probability sample uses, so it was wrong exactly where it matters.
-        #
-        # This assumes inclusion probability is constant WITHIN a stratum,
-        # which is what stratified sampling means and what the sample frame
-        # guarantees by construction. Unequal probabilities within one stratum
-        # would need a different estimator, and would mean the strata are
-        # mis-specified.
         s2_h = sum((v - mean_h) ** 2 for v, _wt in members) / (n_h - 1)
         fpc = 1.0
         if w_h > n_h:

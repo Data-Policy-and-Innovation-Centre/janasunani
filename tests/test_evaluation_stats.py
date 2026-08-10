@@ -375,3 +375,75 @@ def test_a_single_stratum_still_has_usable_degrees_of_freedom():
     estimate = stratified_mean(values, ["A"] * 5, estimand="one stratum")
     assert estimate.se > 0
     assert estimate.ci_low < estimate.point < estimate.ci_high
+
+
+def test_singleton_stratum_is_rejected_not_silently_zero_variance():
+    """Codex finding on #237: a stratum with a single sampled unit has no
+    estimable within-stratum variance. The old code ``continue``d past it,
+    dropping its ENTIRE variance contribution while its weight stayed in the
+    point estimate -- values [0, 10] in strata ['A', 'B'] returned se=0 and
+    the zero-width interval [5, 5]. That is a silently downward-biased
+    interval (dangerous), not a conservative one, so this must raise instead
+    of guessing.
+    """
+    with pytest.raises(ValueError, match="only 1 sampled unit"):
+        stratified_mean([0.0, 10.0], ["A", "B"], estimand="singleton strata")
+
+
+def test_singleton_stratum_rejected_even_when_mixed_with_a_real_stratum():
+    # Stratum A has 5 real observations; stratum B is a lone extreme value.
+    # Before the fix this silently dropped B's uncertainty and reported a
+    # tighter interval than was justified.
+    values = [0.0, 2.0, 4.0, 6.0, 8.0, 100.0]
+    strata = ["A", "A", "A", "A", "A", "B"]
+    with pytest.raises(ValueError, match="only 1 sampled unit"):
+        stratified_mean(values, strata, estimand="mixed singleton")
+
+
+def test_two_units_per_stratum_is_the_minimum_that_works():
+    # n_h=2 in every stratum is exactly the boundary the singleton rejection
+    # sits above -- must not raise, and must report a nonzero SE derivable
+    # from an actual within-stratum spread.
+    values = [0.0, 4.0, 10.0, 14.0]
+    strata = ["A", "A", "B", "B"]
+    estimate = stratified_mean(values, strata, estimand="boundary n_h=2")
+    assert estimate.se > 0
+
+
+def test_varying_weight_within_a_stratum_is_rejected():
+    """Codex finding on #237: the within-stratum sample variance is only a
+    valid estimator when every unit in a stratum shares the same inclusion
+    probability. The public API accepted arbitrary per-observation weights
+    with no check, so a PPS / unequal-probability design silently got back a
+    plausible-looking but statistically invalid SE. Demonstrate the defect
+    directly: holding stratum B's weights constant and stratum A's total
+    weight fixed, swapping an even weight split for a wildly skewed one
+    changes nothing about how the "variance" is computed (it is derived only
+    from raw values and the weighted mean, never from the weights'
+    dispersion) even though the two designs have very different reliability.
+    Enforcing the assumption is safer than reporting that invalid number.
+    """
+    values = [0.0, 10.0, 20.0, 22.0]
+    strata = ["A", "A", "B", "B"]
+    with pytest.raises(ValueError, match="varying weights"):
+        stratified_mean(values, strata, [1.0, 99.0, 50.0, 50.0], estimand="varying weight")
+
+
+def test_constant_weight_within_stratum_is_accepted():
+    # The common, valid design -- weights differ ACROSS strata but are
+    # constant WITHIN each -- must not raise.
+    values = [0.0, 2.0, 10.0, 12.0]
+    strata = ["A", "A", "B", "B"]
+    estimate = stratified_mean(values, strata, [50.0, 50.0, 100.0, 100.0], estimand="valid design")
+    assert estimate.se > 0
+
+
+def test_stratified_mean_rejects_nonpositive_weights():
+    # A Horvitz-Thompson weight is an inverse inclusion probability; it
+    # cannot be zero or negative. Rejecting this upfront is what makes the
+    # per-stratum weight sum provably positive, removing the need for a
+    # separate silent-skip branch for a degenerate weight sum.
+    with pytest.raises(ValueError, match="positive"):
+        stratified_mean([1.0, 2.0], ["A", "A"], [0.0, 5.0], estimand="zero weight")
+    with pytest.raises(ValueError, match="positive"):
+        stratified_mean([1.0, 2.0], ["A", "A"], [-1.0, 5.0], estimand="negative weight")
