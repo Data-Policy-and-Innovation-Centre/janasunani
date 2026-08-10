@@ -156,6 +156,44 @@ def test_clustered_se_short_input_returns_zero():
     assert clustered_se([], []) == 0.0
 
 
+def test_clustered_se_rejects_mismatched_cluster_length():
+    """Too few labels must raise, not silently drop the unmatched values.
+
+    `zip` truncates to the shorter sequence, so the dropped observations
+    would leave the cluster sums while still counting toward `n` and the
+    mean. The result is a smaller, entirely plausible SE for a design that
+    was never estimated — the same silent-wrong-number shape as the two
+    defects this module was extracted to fix.
+    """
+    with pytest.raises(ValueError, match="one cluster label per value"):
+        clustered_se([1.0, 2.0, 3.0], ["T1", "T2"])
+
+    with pytest.raises(ValueError, match="one cluster label per value"):
+        clustered_se([1.0, 2.0], ["T1", "T2", "T3"])
+
+
+def test_clustered_se_mismatch_would_have_understated_the_se():
+    """Pin the magnitude, so the guard is not mistaken for pedantry.
+
+    Truncation is not a rounding error: dropping one observation from the
+    cluster sums while the mean still counts it changes the reported SE
+    substantially, and always in the direction that makes a result look
+    more certain than the data supports.
+    """
+    values = [0.0, 10.0, 20.0]
+    honest = clustered_se(values, ["T1", "T2", "T3"])
+
+    # What the old code silently computed: third value dropped from the
+    # cluster sums, but n=3 and the 3-value mean retained.
+    mean = sum(values) / 3
+    sums = [values[0] - mean, values[1] - mean]
+    truncated = math.sqrt(sum(s * s for s in sums) / 9 * (2 / 1))
+
+    assert truncated < honest
+    assert truncated == pytest.approx(4.714, abs=1e-3)
+    assert honest == pytest.approx(5.7735, abs=1e-3)
+
+
 # ---------------------------------------------------------------------------
 # Proportion CIs — Wilson and Agresti-Coull
 # ---------------------------------------------------------------------------

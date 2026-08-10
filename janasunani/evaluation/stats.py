@@ -96,6 +96,18 @@ def clustered_se(values: Sequence[float], clusters: Sequence[str]) -> float:
     critical value itself.
     """
     n = len(values)
+    if n != len(clusters):
+        # `zip` would truncate to the shorter sequence, so the unmatched
+        # observations would drop out of the cluster sums while `n` and the
+        # mean still counted them. That does not fail: it returns a smaller,
+        # plausible-looking SE for a design that was never estimated. Same
+        # failure shape as the two defects this module was extracted to fix,
+        # so it is rejected rather than tolerated. `paired_difference` already
+        # validates lengths this way.
+        raise ValueError(
+            f"clustered_se needs one cluster label per value: got {n} values "
+            f"and {len(clusters)} cluster labels"
+        )
     if n < 2:
         return 0.0
     mean = sum(values) / n
