@@ -114,10 +114,14 @@ def router_status() -> tuple[str, bool, str]:
     right table to gate on: ``Crosswalk.lookup`` always reaches it (it is the
     only rung with no precondition on the caller supplying a subcategory or
     district), so a populated ``by_category`` is necessary and sufficient for
-    the first live submission to have something to match against. The other
-    three tables cannot substitute: ``by_category_district`` is legitimately
-    empty in the currently shipped artifact (see the module docstring in
-    ``crosswalk.py``), so requiring it non-empty would fail a healthy artifact.
+    the first live submission to have something to match against.
+
+    The narrower tables are deliberately not gated on. They are populated in
+    the shipped artifact (34 / 257 / 971 / 5,084 entries across the four
+    rungs), but the live classifier predicts no subcategory, so ``by_full``
+    and ``by_subcategory`` are never consulted in production at all. Requiring
+    a rung the deployed path does not read would fail an artifact that routes
+    perfectly well.
 
     The cost is loading one JSON artifact, which preflight can afford: it
     already opens a real OLTP connection when one is configured.
