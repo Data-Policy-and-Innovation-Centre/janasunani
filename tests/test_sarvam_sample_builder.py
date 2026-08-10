@@ -15,6 +15,7 @@ import pytest
 from janasunani.evaluation.sarvam_sample_builder import (
     allocate,
     build_manifest,
+    build_sample,
     draw_tickets,
     interleave,
     is_ambiguous_key,
@@ -209,3 +210,217 @@ def test_documents_with_impossible_or_oversized_page_counts_are_skipped(pages):
         max_pages_per_document=8,
     )
     assert taken == []
+
+
+# --- the executable path ----------------------------------------------------
+
+
+class FakeDocumentSource:
+    """A DocumentSource with no S3, so the whole path is testable.
+
+    ~90% of the real corpus is in GLACIER, so a test that needed a restore
+    would never run. This models the parts that matter: some tickets have no
+    document, some keys are ambiguous, and some objects stay archived.
+    """
+
+    def __init__(self, *, keys, archived=(), never_ready=(), pages=None):
+        self.keys = dict(keys)
+        self.archived = set(archived)
+        self.never_ready = set(never_ready)
+        self.pages = pages or {}
+        self.fetched: list[str] = []
+        self.restored: list[str] = []
+
+    def find(self, ticket):
+        key = self.keys.get(ticket)
+        if key is None:
+            return None
+        return key, "GLACIER" if key in self.archived else "STANDARD"
+
+    def ensure_readable(self, keys):
+        for key in keys:
+            if key in self.archived:
+                self.restored.append(key)
+        return {k for k in keys if k in self.never_ready}
+
+    def fetch(self, key, destination):
+        self.fetched.append(key)
+        destination.write_bytes(b"%PDF-1.4 fake")
+
+
+def _rows(per_category):
+    return [
+        (f"T{category[:2]}{index:03d}", category)
+        for category, n in per_category.items()
+        for index in range(n)
+    ]
+
+
+def _source_for(rows, *, pages=1, **kwargs):
+    keys = {ticket: f"{ticket}_complaint.pdf" for ticket, _ in rows}
+    return FakeDocumentSource(
+        keys=keys,
+        pages={f"{ticket}_complaint.pdf": pages for ticket, _ in rows},
+        **kwargs,
+    )
+
+
+def test_build_sample_runs_the_whole_path_and_writes_a_manifest(tmp_path):
+    """Codex finding on #233: the module composed none of its own helpers.
+
+    The operational draw lived in an uncommitted scratchpad, so the checked-in
+    code could not reproduce the sample it described.
+    """
+    rows = _rows({"Housing": 10, "Social Welfare": 10, "Tourism": 2})
+    source = _source_for(rows)
+
+    manifest = build_sample(
+        rows,
+        source,
+        out_dir=tmp_path / "stage",
+        slice_label="Sambalpur/2024",
+        seed=20260809,
+        target_pages=12,
+        floor=2,
+        max_documents=20,
+        max_pages_per_category=5,
+        max_pages_per_document=8,
+        page_counter=lambda p: 1,
+    )
+
+    assert (tmp_path / "stage" / "sample_manifest.json").is_file()
+    assert manifest["pages_staged"] > 0
+    assert manifest["categories"] >= 2
+    assert manifest["slice"] == "Sambalpur/2024"
+    # Every staged file is accounted for by the manifest, and vice versa.
+    staged = {p.name for p in (tmp_path / "stage").iterdir() if p.suffix != ".json"}
+    assert staged == {d["file"] for d in manifest["documents"]}
+
+
+def test_build_sample_enforces_ambiguous_keys_on_a_real_key(tmp_path):
+    """`is_ambiguous_key` was only ever exercised by its own unit test."""
+    rows = [("T1", "Housing"), ("T2", "Housing")]
+    source = FakeDocumentSource(
+        keys={"T1": "AN063/E/2021/00001_complaint.pdf", "T2": "T2_complaint.pdf"}
+    )
+
+    manifest = build_sample(
+        rows,
+        source,
+        out_dir=tmp_path / "stage",
+        slice_label="Sambalpur/2024",
+        seed=1,
+        target_pages=10,
+        floor=2,
+        max_documents=10,
+        max_pages_per_category=10,
+        max_pages_per_document=8,
+        page_counter=lambda p: 1,
+    )
+    tickets = {d["ticket"] for d in manifest["documents"]}
+    assert "T1" not in tickets, "a key that joins to the wrong ticket was staged"
+    assert "T2" in tickets
+
+
+def test_build_sample_skips_objects_that_never_restore(tmp_path):
+    rows = [("T1", "Housing"), ("T2", "Housing")]
+    source = FakeDocumentSource(
+        keys={"T1": "T1_c.pdf", "T2": "T2_c.pdf"},
+        archived=["T1_c.pdf", "T2_c.pdf"],
+        never_ready=["T1_c.pdf"],
+    )
+
+    manifest = build_sample(
+        rows,
+        source,
+        out_dir=tmp_path / "stage",
+        slice_label="Sambalpur/2024",
+        seed=1,
+        target_pages=10,
+        floor=2,
+        max_documents=10,
+        max_pages_per_category=10,
+        max_pages_per_document=8,
+        page_counter=lambda p: 1,
+    )
+    assert {d["ticket"] for d in manifest["documents"]} == {"T2"}
+    assert "T1_c.pdf" not in source.fetched
+
+
+def test_build_sample_leaves_no_unaccounted_files_on_disk(tmp_path):
+    """A fetched-but-unselected file would let a later run read pages the
+    manifest does not account for, and those pages would be billed."""
+    rows = _rows({"Housing": 8})
+    source = _source_for(rows)
+
+    manifest = build_sample(
+        rows,
+        source,
+        out_dir=tmp_path / "stage",
+        slice_label="Sambalpur/2024",
+        seed=1,
+        target_pages=3,
+        floor=1,
+        max_documents=8,
+        max_pages_per_category=10,
+        max_pages_per_document=8,
+        page_counter=lambda p: 1,
+    )
+    on_disk = {p.name for p in (tmp_path / "stage").iterdir() if p.suffix != ".json"}
+    assert on_disk == {d["file"] for d in manifest["documents"]}
+    assert len(on_disk) <= 3
+
+
+def test_the_same_seed_reproduces_the_same_sample(tmp_path):
+    rows = _rows({"Housing": 12, "Social Welfare": 12})
+    first = build_sample(
+        rows, _source_for(rows), out_dir=tmp_path / "a", slice_label="S/2024",
+        seed=99, target_pages=8, floor=2, max_documents=12,
+        max_pages_per_category=10, max_pages_per_document=8, page_counter=lambda p: 1,
+    )
+    second = build_sample(
+        list(reversed(rows)), _source_for(rows), out_dir=tmp_path / "b", slice_label="S/2024",
+        seed=99, target_pages=8, floor=2, max_documents=12,
+        max_pages_per_category=10, max_pages_per_document=8, page_counter=lambda p: 1,
+    )
+    assert [d["ticket"] for d in first["documents"]] == [
+        d["ticket"] for d in second["documents"]
+    ]
+
+
+# --- the two arithmetic guarantees -----------------------------------------
+
+
+@pytest.mark.parametrize(
+    "counts, budget, floor",
+    [
+        (SLICE_COUNTS, 220, 3),
+        ({"A": 100, "B": 100, "C": 100}, 5, 1),
+        ({"A": 10, "B": 10, "C": 10, "D": 10}, 7, 1),
+        (SLICE_COUNTS, 31, 3),
+        ({"A": 1, "B": 1}, 50, 3),
+    ],
+)
+def test_allocation_never_exceeds_the_budget(counts, budget, floor):
+    """Codex finding on #233: independent rounding overshot the budget.
+
+    `allocate(SLICE_COUNTS, budget=220, floor=3)` returned 221, and three
+    equal categories on a budget of 5 returned 6. A function whose purpose is
+    to respect a budget must respect it.
+    """
+    alloc = allocate(counts, budget=budget, floor=floor)
+    total = sum(alloc.values())
+    feasible = min(budget, sum(counts.values()))
+    assert total <= budget, f"allocated {total} against a budget of {budget}"
+    # And it should not leave the budget unspent when capacity exists.
+    assert total == feasible or total >= min(feasible, sum(min(floor, c) for c in counts.values()))
+
+
+def test_the_draw_does_not_depend_on_input_row_order():
+    """The manifest claims reproducibility from the seed; row order broke it."""
+    rows = [("T1", "A"), ("T2", "A"), ("T3", "A"), ("U1", "B"), ("U2", "B")]
+    forward, counts_a = draw_tickets(rows, seed=7)
+    reversed_draw, counts_b = draw_tickets(list(reversed(rows)), seed=7)
+    assert forward == reversed_draw
+    assert counts_a == counts_b
+    assert list(forward) == sorted(forward), "category order must be canonical too"
