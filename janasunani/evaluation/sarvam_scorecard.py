@@ -37,17 +37,21 @@ recorded Sarvam markdown fixtures; no live network call is made.
 from __future__ import annotations
 
 import json
-import math
 import random
 import re
 import unicodedata
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from statistics import NormalDist
 from typing import Any
 
 from janasunani.config import DEMO_SLICE_DISTRICT, DEMO_SLICE_LABEL, DEMO_SLICE_YEAR
+from janasunani.evaluation.stats import (
+    clustered_se as _clustered_se,
+    critical_value,
+    paired_difference as paired_difference,
+    required_pages_mcnemar as required_pages_mcnemar,
+)
 
 NORMALIZER_VERSION = "1.0"
 
@@ -175,92 +179,34 @@ class PageRecord:
 # ---------------------------------------------------------------------------
 # Paired estimator with ticket-clustered SE
 # ---------------------------------------------------------------------------
-
-def _clustered_se(diffs: list[float], clusters: list[str]) -> float:
-    """Cluster-robust SE for the mean of ``diffs`` clustered by ``clusters``.
-
-    Uses the sandwich estimator for a mean:
-      Var = sum_c (sum_{i in c} (d_i - mean))^2 / n^2 * C/(C-1)
-    where n = len(diffs), C = number of clusters. When C == 1 or C == n,
-    reduces to the usual variance of the mean (with finite-sample correction).
-    Returns 0.0 for n < 2.
-    """
-    n = len(diffs)
-    if n < 2:
-        return 0.0
-    mean = sum(diffs) / n
-    # per-cluster sum of deviations
-    cluster_sums: dict[str, float] = defaultdict(float)
-    for d, c in zip(diffs, clusters):
-        cluster_sums[c] += d - mean
-    C = len(cluster_sums)
-    summed_sq = sum(s * s for s in cluster_sums.values())
-    # finite-sample correction for clusters; when C==1 fall back to simple
-    if C <= 1:
-        # simple SE: sqrt( sum (d - mean)^2 / (n*(n-1)) )
-        s2 = sum((d - mean) ** 2 for d in diffs) / (n - 1) if n > 1 else 0.0
-        return math.sqrt(s2 / n) if n else 0.0
-    correction = C / (C - 1)
-    var = summed_sq / (n * n) * correction
-    # numerical guard
-    if var < 0:
-        var = 0.0
-    return math.sqrt(var)
-
-
-def paired_difference(
-    a_correct: list[int],
-    b_correct: list[int],
-    clusters: list[str],
-    alpha: float = 0.05,
-) -> dict[str, float]:
-    """Paired difference in accuracy with ticket-clustered CI.
-
-    Args:
-      a_correct: 1/0 per page for system A (e.g. Sarvam)
-      b_correct: 1/0 per page for system B (e.g. pytesseract/pipeline)
-      clusters: ticket id per page
-      alpha: two-sided level (0.05 -> 95% CI, z=1.96)
-
-    Returns dict with diff, se, z, ci_low, ci_high, n, n_clusters.
-    The difference is mean(a) - mean(b). Positive favours A.
-    """
-    if not (len(a_correct) == len(b_correct) == len(clusters)):
-        raise ValueError("a_correct, b_correct, clusters must have equal length")
-    n = len(a_correct)
-    if n == 0:
-        return {"diff": 0.0, "se": 0.0, "z": 1.96, "ci_low": 0.0, "ci_high": 0.0, "n": 0, "n_clusters": 0}
-    diffs = [float(a - b) for a, b in zip(a_correct, b_correct)]
-    diff = sum(diffs) / n
-    se = _clustered_se(diffs, clusters)
-    # Normal critical value; for large n the t correction is negligible.
-    # Use 1.96 for 95%, else approximate via normal quantile.
-    if alpha == 0.05:
-        z = 1.96
-    else:
-        # approximate via inverse normal (simple); for non-95% use 1.96 as fallback
-        # Keep dependency-light: use 1.96 for 95% else 2.576 for 99% else 1.645 for 90%
-        if abs(alpha - 0.01) < 1e-9:
-            z = 2.576
-        elif abs(alpha - 0.10) < 1e-9:
-            z = 1.645
-        else:
-            z = 1.96
-    ci_low = diff - z * se
-    ci_high = diff + z * se
-    n_clusters = len(set(clusters))
-    return {"diff": diff, "se": se, "z": z, "ci_low": ci_low, "ci_high": ci_high, "n": n, "n_clusters": n_clusters}
+#
+# ``_clustered_se``, ``paired_difference`` and ``required_pages_mcnemar`` now
+# live in ``janasunani.evaluation.stats`` (see that module's docstring for the
+# two defects fixed on the move: a hardcoded z-lookup that silently returned
+# 1.96 for any alpha outside {0.05, 0.01, 0.10}, and no small-cluster t
+# correction). ``_clustered_se`` is re-exported here under its original
+# private name — via the ``import ... as`` above — so this module's own call
+# sites and ``paired_difference``/``required_pages_mcnemar`` are re-exported
+# by their public names so ``tests/test_sarvam_scorecard.py`` does not churn.
 
 
 def divergence_rate(
     pytesseract_texts: list[str],
     sarvam_markdowns: list[str],
     clusters: list[str],
+    alpha: float = 0.05,
 ) -> dict[str, float]:
     """Divergence rate: share of pages where normalised texts differ.
 
     Used when no transcription referee exists (issue #84 fallback). Reports
     a descriptive disagreement rate with ticket-clustered CI, not a verdict.
+
+    Critical value comes from ``stats.critical_value`` at
+    ``df = n_clusters - 1`` (falling back to the normal quantile for 0 or 1
+    clusters) instead of the previously hardcoded ``z=1.96`` — the same
+    small-cluster t correction applied everywhere else a clustered SE backs
+    a CI in this module; see ``stats.py``. This widens the reported interval
+    versus previously published numbers, which is intended.
     """
     if not (len(pytesseract_texts) == len(sarvam_markdowns) == len(clusters)):
         raise ValueError("inputs must have equal length")
@@ -274,72 +220,18 @@ def divergence_rate(
     # SE for a proportion with clustering: treat disagreements as 1/0 and
     # apply clustered SE for the mean.
     se = _clustered_se([float(x) for x in disagreements], clusters)
-    z = 1.96
-    return {"rate": rate, "se": se, "ci_low": rate - z * se, "ci_high": rate + z * se, "n": n, "n_clusters": len(set(clusters))}
+    n_clusters = len(set(clusters))
+    z = critical_value(alpha, df=(n_clusters - 1 if n_clusters > 1 else None))
+    return {"rate": rate, "se": se, "ci_low": rate - z * se, "ci_high": rate + z * se, "n": n, "n_clusters": n_clusters}
 
 
-def summary_divergence(
-    sarvam_summaries: list[str | None],
-    pipeline_summaries: list[str | None],
-    clusters: list[str],
-) -> dict[str, float]:
-    """Divergence rate for summaries — exploratory, no gold referee.
-
-    Compares Sarvam Extract ``summary`` vs pipeline BART ``summary`` after the
-    same ``normalize_text`` applied to OCR. Cluster-robust SE by ticket, like
-    ``divergence_rate``. ``None`` is treated as empty string so a missing
-    summary on one side counts as divergence; callers that want to omit
-    missing pairs should filter before calling.
-    """
-    if not (len(sarvam_summaries) == len(pipeline_summaries) == len(clusters)):
-        raise ValueError("inputs must have equal length")
-    n = len(sarvam_summaries)
-    if n == 0:
-        return {"rate": 0.0, "se": 0.0, "ci_low": 0.0, "ci_high": 0.0, "n": 0, "n_clusters": 0}
-    disagreements: list[int] = []
-    for a, b in zip(sarvam_summaries, pipeline_summaries):
-        a_norm = normalize_text(a or "")
-        b_norm = normalize_text(b or "")
-        disagreements.append(0 if a_norm == b_norm else 1)
-    rate = sum(disagreements) / n
-    se = _clustered_se([float(x) for x in disagreements], clusters)
-    z = 1.96
-    return {"rate": rate, "se": se, "ci_low": rate - z * se, "ci_high": rate + z * se, "n": n, "n_clusters": len(set(clusters))}
-
-
-# ---------------------------------------------------------------------------
-# Power helpers (McNemar, paired)
-# ---------------------------------------------------------------------------
-
-def required_pages_mcnemar(gap: float, discordance: float, alpha: float = 0.05, power: float = 0.8) -> int:
-    """Approximate required pages for a paired (McNemar) comparison.
-
-    ``gap`` is the accuracy difference to detect (e.g. 0.10 for 10 points),
-    ``discordance`` is the expected share where the two systems disagree.
-    Uses the normal approximation for McNemar's test. Returns ceiling.
-
-    The table in #127 was computed with the same approximation; values are
-    indicative — the recommmended 200-250 stratified sample is powered for
-    ~10 points at 20-30% discordance.
-    """
-    if not (0 < gap < 1 and 0 < gap < discordance <= 1):
-        raise ValueError("need 0 < gap < discordance <= 1")
-    if not 0 < alpha < 1:
-        raise ValueError("alpha must be in (0, 1)")
-    if not 0 < power < 1:
-        raise ValueError("power must be in (0, 1)")
-    # Actual quantiles, not the 0.05/0.80 constants. Both ternaries here
-    # returned the same value on either branch, so asking for 90% power or a
-    # 1% level silently returned the 80%/5% sample size — a deliberately
-    # under-powered study reporting itself as powered, which is the failure
-    # #127 exists to prevent, and every page submitted costs money.
-    z_alpha = NormalDist().inv_cdf(1 - alpha / 2)
-    z_beta = NormalDist().inv_cdf(power)
-    # McNemar: n = (z_alpha*sqrt(p_d) + z_beta*sqrt(p_d - gap^2))^2 / gap^2
-    p_d = discordance
-    numerator = (z_alpha * math.sqrt(p_d) + z_beta * math.sqrt(max(p_d - gap * gap, 1e-9))) ** 2
-    n = numerator / (gap * gap)
-    return int(math.ceil(n))
+# ``summary_divergence`` was byte-identical logic to ``divergence_rate`` with
+# a different docstring (comparing Sarvam Extract ``summary`` vs pipeline
+# BART ``summary`` instead of OCR text) — folded into one implementation.
+# ``None`` still becomes "" via ``normalize_text``'s own None handling, so a
+# missing summary on one side still counts as divergence, matching the old
+# behaviour exactly.
+summary_divergence = divergence_rate
 
 
 # ---------------------------------------------------------------------------
