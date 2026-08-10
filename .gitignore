@@ -231,10 +231,13 @@ outputs/*
 !outputs/tables/
 !outputs/reports/
 !outputs/findings/
+!outputs/benchmark/
 outputs/figures/*
 outputs/tables/*
 outputs/reports/*
 outputs/findings/*
+outputs/benchmark/*
+!outputs/benchmark/*.dvc
 !data/raw/.gitkeep
 !data/clean/.gitkeep
 !data/interim/.gitkeep

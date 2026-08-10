@@ -219,8 +219,8 @@ stages:
       size: 17058
     - path: pyproject.toml
       hash: md5
-      md5: 312152a943454973f9fdd51e68d82609
-      size: 9968
+      md5: a75720710945819f44a16c502fb9c665
+      size: 10265
     - path: scripts/reconcile_actionability_adjudication.py
       hash: md5
       md5: 15eca871fd564362a3c7c958ac9e17ce
@@ -277,8 +277,8 @@ stages:
       size: 17058
     - path: pyproject.toml
       hash: md5
-      md5: 312152a943454973f9fdd51e68d82609
-      size: 9968
+      md5: a75720710945819f44a16c502fb9c665
+      size: 10265
     - path: scripts/reconcile_actionability_adjudication.py
       hash: md5
       md5: 15eca871fd564362a3c7c958ac9e17ce
@@ -331,8 +331,8 @@ stages:
       nfiles: 8
     - path: pyproject.toml
       hash: md5
-      md5: 312152a943454973f9fdd51e68d82609
-      size: 9968
+      md5: a75720710945819f44a16c502fb9c665
+      size: 10265
     - path: scripts/benchmark_actionability_candidates.py
       hash: md5
       md5: c162da6c0555d445562fc673b2cd8a5c
@@ -378,8 +378,8 @@ stages:
       size: 9383
     - path: pyproject.toml
       hash: md5
-      md5: 312152a943454973f9fdd51e68d82609
-      size: 9968
+      md5: a75720710945819f44a16c502fb9c665
+      size: 10265
     - path: uv.lock
       hash: md5
       md5: f895934178f603f5315683d02abc6449
@@ -407,6 +407,10 @@ stages:
       hash: md5
       md5: 25f480fb1d1f54268a1dc9bc143802f5
       size: 9806
+    - path: outputs/benchmark/latency.json
+      hash: md5
+      md5: 110395e545d5b7a176aaad03d15402de
+      size: 31784
     - path: outputs/evaluation/actionability_candidates_muril_high_catch.json
       hash: md5
       md5: ace52320363ec7d33390ad50fe9080f5
@@ -438,12 +442,12 @@ stages:
     outs:
     - path: outputs/benchmark/full_benchmark.json
       hash: md5
-      md5: 6470542a250cef7adf9fd341eee729d9
-      size: 485678
+      md5: 75216f56bb93eb1add313d002b9a26d5
+      size: 506809
     - path: outputs/benchmark/full_benchmark.md
       hash: md5
-      md5: 22a4860152d9ee46e8c831e773331318
-      size: 2635
+      md5: 5e15130ccf4eb9a28002846cc0b247cd
+      size: 2698
   pii-development-scorecard:
     cmd: uv run --frozen --extra pii python -m
       janasunani.evaluation.pii_scorecard --gold
@@ -529,3 +533,50 @@ stages:
       hash: md5
       md5: 91145c5adb596264ab36e57c4cef16f2
       size: 315567
+  benchmark-table:
+    cmd: uv run --frozen janasunani-evaluate-benchmark --out outputs/benchmark
+      --latency outputs/benchmark/latency.json --pii
+      outputs/evaluation/pii_release.json --sarvam
+      docs/evidence/sarvam_cached_benchmark.json
+    deps:
+    - path: docs/evidence/sarvam_cached_benchmark.json
+      hash: md5
+      md5: b19e45a4bfd16cfdb6f2f3a831617cf2
+      size: 3730
+    - path: janasunani/evaluation/benchmark_report.py
+      hash: md5
+      md5: f23a45eb57f18d39e537a66adf221219
+      size: 44836
+    - path: janasunani/evaluation/dsi_baselines.py
+      hash: md5
+      md5: 48267bd7229786ee9da9933b930bce4e
+      size: 10357
+    - path: janasunani/evaluation/pricing.py
+      hash: md5
+      md5: 801ebe8d3ad723849bd65e52f38bfe59
+      size: 8342
+    - path: outputs/benchmark/latency.json
+      hash: md5
+      md5: 110395e545d5b7a176aaad03d15402de
+      size: 31784
+    - path: outputs/evaluation/pii_release.json
+      hash: md5
+      md5: a7a7cbebe68f24bf469b1e7f890990a4
+      size: 1771
+    - path: pyproject.toml
+      hash: md5
+      md5: a75720710945819f44a16c502fb9c665
+      size: 10265
+    - path: uv.lock
+      hash: md5
+      md5: f895934178f603f5315683d02abc6449
+      size: 1038485
+    outs:
+    - path: outputs/benchmark/table2.json
+      hash: md5
+      md5: 31b37b30e06417bb7c6063ffa6ce58d0
+      size: 47360
+    - path: outputs/benchmark/table2.md
+      hash: md5
+      md5: 9dc61482d0ca75b60db7e999dde43b09
+      size: 9564
