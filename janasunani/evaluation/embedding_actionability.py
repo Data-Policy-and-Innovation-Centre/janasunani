@@ -168,7 +168,9 @@ class TransformersMeanPoolEncoder:
         self._provenance: dict[str, object] = {
             "name": spec.name,
             "role": spec.role,
-            "local_path": str(model_path),
+            # Preserve the configured reference rather than the resolved
+            # checkout path so aggregate benchmark evidence is portable.
+            "local_path": spec.model_path.as_posix(),
             "revision": revision,
             "artifact_fingerprint": fingerprint,
             "artifact_file_count": file_count,
