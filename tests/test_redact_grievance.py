@@ -141,11 +141,130 @@ class TestResumability:
         assert total == 3
 
 
+class TestTransactionScoping:
+    """The bug this module was written to fix: 500 sequential Presidio calls
+    ran inside `async with engine.begin()`, holding a write transaction open
+    on a box that also hosts production Postgres for the whole batch. These
+    assert on ordering, not on timing."""
+
+    async def test_redaction_runs_outside_any_open_transaction(self, oltp):
+        """Wraps the real engine's `.begin()` to track how many transactions
+        are currently open, and fails the redactor if it is ever called while
+        one is. Exercises `_redact_slice` directly against the real async
+        engine, not the stubbed `redact_grievances` entry point, so this
+        would have failed against the pre-fix code (redact() called from
+        inside the batch's `engine.begin()` block)."""
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        from janasunani.pipeline.redact_grievance import _redact_slice
+
+        async_url, _ = oltp
+        real_engine = create_async_engine(async_url)
+        depth = {"n": 0}
+        violations: list[int] = []
+
+        class _TrackingBegin:
+            def __init__(self, cm):
+                self._cm = cm
+
+            async def __aenter__(self):
+                depth["n"] += 1
+                return await self._cm.__aenter__()
+
+            async def __aexit__(self, *exc):
+                depth["n"] -= 1
+                return await self._cm.__aexit__(*exc)
+
+        class _TrackingEngine:
+            def begin(self):
+                return _TrackingBegin(real_engine.begin())
+
+            def __getattr__(self, name):
+                return getattr(real_engine, name)
+
+        def watched_redact(text_in: str) -> str:
+            if depth["n"] != 0:
+                violations.append(depth["n"])
+            return stub(text_in)
+
+        try:
+            await _redact_slice(_TrackingEngine(), "Khordha", 2024, watched_redact)
+        finally:
+            await real_engine.dispose()
+
+        assert violations == [], "redact() ran while an engine.begin() block was open"
+
+    async def test_resume_survives_a_crash_between_redaction_and_the_write(self, oltp):
+        """The fix moved Presidio calls out of the write transaction, into the
+        gap between loading the batch and upserting it. If the process dies
+        in that gap, no row for the batch has been written yet, so the NOT
+        EXISTS predicate in `_load_pending_batch` still treats the whole
+        batch as pending on the next run -- the same outcome as the old code
+        rolling back a transaction that a mid-batch crash interrupted."""
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        from janasunani.pipeline.redact_grievance import _redact_slice
+
+        async_url, sync_url = oltp
+        engine = create_async_engine(async_url)
+
+        class Boom(Exception):
+            pass
+
+        calls = {"n": 0}
+
+        def flaky_redact(text_in: str) -> str:
+            calls["n"] += 1
+            if calls["n"] == 3:
+                raise Boom("crash after redaction, before the write transaction")
+            return stub(text_in)
+
+        try:
+            with pytest.raises(Boom):
+                await _redact_slice(engine, "Khordha", 2024, flaky_redact)
+
+            # The batch's redactions were computed but never upserted.
+            assert redactions(sync_url) == {}
+
+            # A clean rerun (using _redact_slice directly, since
+            # redact_grievances' own asyncio.run() cannot nest inside this
+            # already-running event loop) sees no grievance_redactions row
+            # for any of the three tickets and reprocesses the whole batch --
+            # nothing skipped.
+            second = await _redact_slice(engine, "Khordha", 2024, stub)
+        finally:
+            await engine.dispose()
+
+        assert second == {
+            "total": 3,
+            "already_redacted": 0,
+            "processed": 3,
+            "stale_at_start": 0,
+        }
+        assert set(redactions(sync_url)) == {"T1", "T2", "T3"}
+
+
 class TestWhatIsWritten:
     def test_redacted_text_is_the_redactor_output(self, oltp):
         async_url, sync_url = oltp
         redact_grievances("Khordha", 2024, oltp_url=async_url)
         assert redactions(sync_url)["T1"] == stub("water supply broken since June")
+
+    def test_redacted_output_is_unchanged_by_moving_redaction_off_the_transaction(
+        self, oltp
+    ):
+        """This is a scheduling change, not a redaction change: for every
+        processed row, the persisted output must equal calling the redactor
+        directly on the same original text, byte for byte."""
+        async_url, sync_url = oltp
+        redact_grievances("Khordha", 2024, oltp_url=async_url)
+        written = redactions(sync_url)
+        expected = {
+            ticket: stub(text)
+            for ticket, _district, _year, text in ROWS
+            if ticket in written
+        }
+        assert written == expected
 
     def test_the_original_is_never_overwritten(self, oltp):
         """A redaction is derived from one analyzer version. Losing the input
