@@ -17,19 +17,22 @@ from typing import Any, Callable, Optional, Protocol
 
 from janasunani.config import DEFAULT_OLTP_DB_URL, MODELS_DIR, Settings
 from janasunani.inference.ocr import OcrQualityError, OcrResult
+from janasunani.inference.timing import NullTimer, StageTimer, TimingSink
 from janasunani.pipeline.stages.page_type_classifier import PAGE_TYPE_CLASS_BY_LABEL
+from janasunani.routing.provider import RoutingProvider, router_from_env, router_status
 from janasunani.serving.schemas import (
     ClassificationResult,
     ExtractionResult,
     GrievanceResult,
     PIIEntity,
     RedactionResult,
-    RoutingResult,
 )
 from janasunani.serving.triage import (
     TriageProvider,
     TriageUnavailableError,
     UnwiredTriageProvider,
+    triage_provider_from_env,
+    triage_status,
     unavailable_triage,
 )
 
@@ -61,14 +64,10 @@ class _Summarizer(Protocol):
     def summarize(self, text: str) -> str: ...
 
 
-class _Router(Protocol):
-    def route(
-        self,
-        *,
-        category: str,
-        subcategory: Optional[str] = None,
-        district: Optional[str] = None,
-    ) -> RoutingResult: ...
+#: The routing seam now lives with the routers it describes. Kept as an alias
+#: because this private name is the annotation on the processor constructor and
+#: is imported by tests.
+_Router = RoutingProvider
 
 
 class PipelineGrievanceProcessor:
@@ -89,6 +88,7 @@ class PipelineGrievanceProcessor:
         detect_language: Callable[[str], str],
         triage_provider: TriageProvider | None = None,
         now: Callable[[], datetime] | None = None,
+        timing_sink: TimingSink | None = None,
     ) -> None:
         self._ocr = ocr
         self._redact = redact
@@ -100,6 +100,9 @@ class PipelineGrievanceProcessor:
         self._detect_language = detect_language
         self._triage_provider = triage_provider or UnwiredTriageProvider()
         self._now = now or (lambda: datetime.now(UTC))
+        # Side channel only. Timings must never reach GrievanceResult, which is
+        # the frozen serving contract the frontend and result store depend on.
+        self._timing_sink = timing_sink
 
     def process(
         self,
@@ -117,121 +120,149 @@ class PipelineGrievanceProcessor:
             document_name=document_name,
             document_bytes=document_bytes,
         )
-
-        if text is not None:
-            extracted_text = text
-            extraction = ExtractionResult(source="text", extracted_text=text)
-        else:
-            assert document_name is not None and document_bytes is not None
-            try:
-                ocr_result = self._ocr(document_bytes, document_name)
-            except OcrQualityError as exc:
-                # Quality-rejected input is a legitimate client error -> 422.
-                raise InferenceInputError(
-                    f"document OCR failed the quality check: {exc}"
-                ) from exc
-            except Exception as exc:
-                # Only genuine render/parse failures (corrupt or unsupported
-                # file) map to a 422 here. `_is_document_input_failure` is
-                # deliberately narrow: the injected page-type predictor also
-                # runs inside `self._ocr` and is wrapped (see
-                # `_guard_page_type_predict`) so its own bugs raise
-                # `_PageTypeModelError` instead of a bare `ValueError`/
-                # `IndexError` that could otherwise be misread as a corrupt
-                # document — those propagate unchanged and become a 5xx.
-                if not _is_document_input_failure(exc):
-                    raise
-                raise InferenceInputError(
-                    f"document is corrupt or unsupported: {exc}"
-                ) from exc
-
-            if ocr_result.truncated:
-                raise InferenceInputError(
-                    "document exceeds the live page limit; no partial result was used"
-                )
-            if not ocr_result.full_text.strip():
-                raise InferenceInputError("document OCR produced no text")
-
-            relevant_pages = [
-                page_text
-                for page_text, page_type in ocr_result.per_page
-                if page_type in RELEVANT_PAGE_TYPES and page_text.strip()
-            ]
-            if not relevant_pages:
-                raise InferenceInputError(
-                    "document contains no grievance-bearing pages"
-                )
-
-            extracted_text = ocr_result.full_text
-            # Redact each selected page before joining so no irrelevant page
-            # (identification, bill, miscellaneous) reaches either model.
-            model_text_source = "\n\n".join(
-                self._redact(page_text) for page_text in relevant_pages
-            )
-            extraction = ExtractionResult(
-                source="document",
-                extracted_text=extracted_text,
-                ocr_model="pytesseract",
-                pages=ocr_result.pages,
-            )
-
-        redacted_text = self._redact(extracted_text)
-        pii_entities = [
-            PIIEntity(entity=span.entity, start=span.start, end=span.end)
-            for span in self._detect_pii(extracted_text)
-        ]
-        redaction = RedactionResult(
-            redacted_text=redacted_text,
-            entities=pii_entities,
-        )
-        submitted_on = self._now()
+        timer = StageTimer() if self._timing_sink is not None else NullTimer()
+        # Tracks whether `process` reached its normal return, so the emitted
+        # timings are distinguishable from a submission that stopped partway
+        # through a raised stage -- otherwise a latency report would silently
+        # mix completed and partial measurements under the same label.
+        completed = False
         try:
-            # The provider is intentionally called after redaction, never on
-            # raw OCR or typed citizen text.  Its result is advisory only.
-            triage = self._triage_provider.assess(
-                redacted_text=redaction.redacted_text,
-                district=district,
-                submitted_on=submitted_on,
+            if text is not None:
+                extracted_text = text
+                extraction = ExtractionResult(source="text", extracted_text=text)
+            else:
+                assert document_name is not None and document_bytes is not None
+                try:
+                    with timer.stage("ocr"):
+                        ocr_result = self._ocr(document_bytes, document_name)
+                except OcrQualityError as exc:
+                    # Quality-rejected input is a legitimate client error -> 422.
+                    raise InferenceInputError(
+                        f"document OCR failed the quality check: {exc}"
+                    ) from exc
+                except Exception as exc:
+                    # Only genuine render/parse failures (corrupt or unsupported
+                    # file) map to a 422 here. `_is_document_input_failure` is
+                    # deliberately narrow: the injected page-type predictor also
+                    # runs inside `self._ocr` and is wrapped (see
+                    # `_guard_page_type_predict`) so its own bugs raise
+                    # `_PageTypeModelError` instead of a bare `ValueError`/
+                    # `IndexError` that could otherwise be misread as a corrupt
+                    # document — those propagate unchanged and become a 5xx.
+                    if not _is_document_input_failure(exc):
+                        raise
+                    raise InferenceInputError(
+                        f"document is corrupt or unsupported: {exc}"
+                    ) from exc
+
+                if ocr_result.truncated:
+                    raise InferenceInputError(
+                        "document exceeds the live page limit; no partial result was used"
+                    )
+                if not ocr_result.full_text.strip():
+                    raise InferenceInputError("document OCR produced no text")
+
+                relevant_pages = [
+                    page_text
+                    for page_text, page_type in ocr_result.per_page
+                    if page_type in RELEVANT_PAGE_TYPES and page_text.strip()
+                ]
+                if not relevant_pages:
+                    raise InferenceInputError(
+                        "document contains no grievance-bearing pages"
+                    )
+
+                extracted_text = ocr_result.full_text
+                # Redact each selected page before joining so no irrelevant page
+                # (identification, bill, miscellaneous) reaches either model.
+                with timer.stage("redact"):
+                    model_text_source = "\n\n".join(
+                        self._redact(page_text) for page_text in relevant_pages
+                    )
+                extraction = ExtractionResult(
+                    source="document",
+                    extracted_text=extracted_text,
+                    ocr_model="pytesseract",
+                    pages=ocr_result.pages,
+                )
+
+            with timer.stage("redact"):
+                redacted_text = self._redact(extracted_text)
+            with timer.stage("detect_pii"):
+                pii_entities = [
+                    PIIEntity(entity=span.entity, start=span.start, end=span.end)
+                    for span in self._detect_pii(extracted_text)
+                ]
+            redaction = RedactionResult(
+                redacted_text=redacted_text,
+                entities=pii_entities,
             )
-        except TriageUnavailableError:
-            # A triage outage cannot reject or delay a grievance.  Do not
-            # surface the provider exception: it may contain infrastructure
-            # details and is not an officer-facing explanation.
-            logger.warning("advisory triage unavailable; accepting grievance without it")
-            triage = unavailable_triage()
+            submitted_on = self._now()
+            with timer.stage("triage"):
+                try:
+                    # The provider is intentionally called after redaction, never on
+                    # raw OCR or typed citizen text.  Its result is advisory only.
+                    triage = self._triage_provider.assess(
+                        redacted_text=redaction.redacted_text,
+                        district=district,
+                        submitted_on=submitted_on,
+                    )
+                except TriageUnavailableError:
+                    # A triage outage cannot reject or delay a grievance.  Do not
+                    # surface the provider exception: it may contain infrastructure
+                    # details and is not an officer-facing explanation.
+                    logger.warning(
+                        "advisory triage unavailable; accepting grievance without it"
+                    )
+                    triage = unavailable_triage()
 
-        classifier_text = (
-            redacted_text if extraction.source == "text" else model_text_source
-        )
-        language = self._detect_language(classifier_text)
-        is_english = self._is_english_compatible(classifier_text)
-        if is_english:
-            category = self._categorizer.predict(classifier_text)
-            summary = self._summarizer.summarize(classifier_text)
-        else:
-            # Same gate as the categorizer: BART is only warmed for the
-            # English demo target, and would otherwise hallucinate a summary
-            # over text it was never validated on (both the typed-text and
-            # document paths share this single check).
-            category = "Uncategorized"
-            summary = UNSUPPORTED_LANGUAGE_SUMMARY
-        routing = self._router.route(category=category, district=district)
+            classifier_text = (
+                redacted_text if extraction.source == "text" else model_text_source
+            )
+            with timer.stage("detect_language"):
+                language = self._detect_language(classifier_text)
+                is_english = self._is_english_compatible(classifier_text)
+            if is_english:
+                with timer.stage("categorize"):
+                    category = self._categorizer.predict(classifier_text)
+                with timer.stage("summarize"):
+                    summary = self._summarizer.summarize(classifier_text)
+            else:
+                # Same gate as the categorizer: BART is only warmed for the
+                # English demo target, and would otherwise hallucinate a summary
+                # over text it was never validated on (both the typed-text and
+                # document paths share this single check).
+                category = "Uncategorized"
+                summary = UNSUPPORTED_LANGUAGE_SUMMARY
+            with timer.stage("route"):
+                routing = self._router.route(category=category, district=district)
 
-        return GrievanceResult(
-            id=grievance_id,
-            ticket_no=ticket_no,
-            status="Submitted",
-            submitted_on=submitted_on,
-            extraction=extraction,
-            redaction=redaction,
-            classification=ClassificationResult(
-                category=category,
-                language=language,
-            ),
-            summary=summary,
-            routing=routing,
-            triage=triage,
-        )
+            result = GrievanceResult(
+                id=grievance_id,
+                ticket_no=ticket_no,
+                status="Submitted",
+                submitted_on=submitted_on,
+                extraction=extraction,
+                redaction=redaction,
+                classification=ClassificationResult(
+                    category=category,
+                    language=language,
+                ),
+                summary=summary,
+                routing=routing,
+                triage=triage,
+            )
+            completed = True
+            return result
+        finally:
+            # An outer `finally`, not a call at the end of the happy path: a
+            # stage's own `finally` (StageTimer.stage) already records elapsed
+            # time when that stage raises, but the previous code only reached
+            # `emit` after a normal return, so a raised stage discarded
+            # exactly the measurement that design was for. The original
+            # exception, if any, propagates unchanged -- this only ever adds a
+            # side-effecting emit, never swallows or replaces it.
+            timer.emit(self._timing_sink, ok=completed)
 
 
 def _validate_input(
@@ -552,6 +583,38 @@ def _routing_mappings_check() -> DependencyCheck:
     return DependencyCheck("routing mappings", True, detail, required=False)
 
 
+def _router_check() -> DependencyCheck:
+    """Which routing rung will actually answer the first live submission.
+
+    ``_routing_mappings_check`` above covers the CSV masters, which are the
+    *second* rung. This one covers the selection itself, because those are
+    different failures: the masters can be present and healthy while the
+    crosswalk artifact is missing, and the demo then serves ``method:"rules"``
+    or ``"fallback"`` while everyone believes routing is learned.
+    PERFORMANCE.md recorded exactly that state on 7 August.
+    """
+    try:
+        name, ok, detail = router_status()
+    except Exception as exc:  # pragma: no cover - defensive; never raise
+        return DependencyCheck("router", False, f"unavailable: {exc}", required=False)
+    return DependencyCheck(f"router ({name})", ok, detail, required=False)
+
+
+def _triage_check() -> DependencyCheck:
+    """Which spam scorer is live, and whether it is learned or heuristic.
+
+    Reported so the distinction cannot be lost between the code and the
+    narrative: what ships today is ``spam-v1-bounded``, a deterministic
+    cascade, and a demo that calls it a trained model is claiming #74 without
+    having built it.
+    """
+    try:
+        name, ok, detail = triage_status()
+    except Exception as exc:  # pragma: no cover - defensive; never raise
+        return DependencyCheck("triage", False, f"unavailable: {exc}", required=False)
+    return DependencyCheck(f"triage ({name})", ok, detail, required=False)
+
+
 # The exact columns janasunani/serving/history.py's LakeHistory.search()
 # selects. Duplicated here (not imported) rather than sharing a constant with
 # janasunani.serving.history: preflight lives in this module specifically so
@@ -737,17 +800,31 @@ def preflight(models_dir: str | Path | None = None) -> list[DependencyCheck]:
     # OLTP_DB_URL is explicitly set: it opens a real, timeout-bounded
     # connection (_OLTP_PROBE_TIMEOUT_S) rather than just checking presence.
     checks.append(_routing_mappings_check())
+    checks.append(_router_check())
+    checks.append(_triage_check())
     checks.append(_lake_check())
     checks.append(_oltp_check())
     return checks
 
 
-def build_processor(models_dir: str | Path | None = None) -> PipelineGrievanceProcessor:
+def build_processor(
+    models_dir: str | Path | None = None,
+    *,
+    router: "RoutingProvider | None" = None,
+    triage_provider: TriageProvider | None = None,
+    timing_sink: TimingSink | None = None,
+) -> PipelineGrievanceProcessor:
     """Strictly construct and warm the production processor.
 
     Local page-type and categorizer artifacts are mandatory.  Any missing
     dependency, artifact, public BART load, or Presidio initialization error
     propagates and aborts startup; this function never substitutes the mock.
+
+    ``router`` and ``triage_provider`` are the swap points. Both default to
+    the environment factories rather than to a hard-coded singleton, which is
+    what lets a trained model replace either one without a call-site change.
+    Explicit injection still wins over the environment, matching the idiom
+    ``create_app`` already uses for its providers.
     """
     root = _resolve_models_root(models_dir)
     categorizer_dir = root / "categorizer"
@@ -785,8 +862,6 @@ def build_processor(models_dir: str | Path | None = None) -> PipelineGrievancePr
     from janasunani.pipeline.stages.ocr_extraction.pytesseract_backend import (
         extract_text,
     )
-    from janasunani.routing.rules import DEFAULT_ROUTER
-
     def run_ocr(document_bytes: bytes, document_name: str) -> OcrResult:
         from janasunani.inference.ocr import ocr_document
 
@@ -806,7 +881,11 @@ def build_processor(models_dir: str | Path | None = None) -> PipelineGrievancePr
         detect_pii=detect_pii_spans,
         categorizer=categorizer,
         summarizer=summarizer,
-        router=DEFAULT_ROUTER,
+        router=router if router is not None else router_from_env(),
         is_english_compatible=_is_english,
         detect_language=_detect_language,
+        triage_provider=(
+            triage_provider if triage_provider is not None else triage_provider_from_env()
+        ),
+        timing_sink=timing_sink,
     )

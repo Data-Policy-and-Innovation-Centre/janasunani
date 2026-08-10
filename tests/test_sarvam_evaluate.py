@@ -14,6 +14,7 @@ import pytest
 
 def test_grievance_schema_is_pinned_and_versioned():
     from janasunani.evaluation.sarvam_grievance_schema import (
+        GRIEVANCE_EXTRACT_FIELDS_V1,
         GRIEVANCE_EXTRACT_SCHEMA_V1,
         SCHEMA_VERSION,
         SUPPORTED_SCHEMA_VERSIONS,
@@ -25,15 +26,152 @@ def test_grievance_schema_is_pinned_and_versioned():
     assert SUPPORTED_SCHEMA_VERSIONS["v1"] is GRIEVANCE_EXTRACT_SCHEMA_V1
     schema = get_schema("v1")
     assert schema is GRIEVANCE_EXTRACT_SCHEMA_V1
-    # illustrative fields from plan
+    # illustrative fields from plan, now under the JSON Schema root
     for field in ("grievance_category", "summary", "district", "grievance_text"):
-        assert field in schema
-        assert schema[field]["type"] == "string"
-        assert "description" in schema[field]
+        assert field in GRIEVANCE_EXTRACT_FIELDS_V1
+        assert GRIEVANCE_EXTRACT_FIELDS_V1[field]["type"] == "string"
+        assert GRIEVANCE_EXTRACT_FIELDS_V1[field]["description"].strip()
     with pytest.raises(ValueError, match="unknown schema"):
         get_schema("v9")
     with pytest.raises(ValueError, match="unknown schema"):
         get_schema("")
+
+
+def test_pinned_schema_satisfies_the_provider_contract():
+    """The pinned schema must be a whole JSON Schema document.
+
+    Sarvam answers a bare field map with HTTP 400. Verified live on
+    2026-08-09: bare map -> 400 on every page, wrapped -> job completed.
+    The old assertions checked ``schema["summary"]["type"]``, which only
+    passes for the shape the provider rejects, so the test agreed with the
+    bug. This asserts the shape that actually submits.
+    """
+    from janasunani.egress.sarvam import _validate_extract_schema
+    from janasunani.evaluation.sarvam_grievance_schema import get_schema
+
+    schema = get_schema("v1")
+    assert schema["type"] == "object"
+    assert schema["properties"]
+    _validate_extract_schema(schema)  # must not raise
+
+
+def test_extract_rejects_a_bare_field_map_before_any_egress():
+    """The exact payload that failed 5 of 5 pages must now fail loudly."""
+    from janasunani.egress.sarvam import _validate_extract_schema
+    from janasunani.evaluation.sarvam_grievance_schema import GRIEVANCE_EXTRACT_FIELDS_V1
+
+    with pytest.raises(ValueError, match="must be"):
+        _validate_extract_schema(GRIEVANCE_EXTRACT_FIELDS_V1)
+
+
+@pytest.mark.parametrize(
+    "schema, expected",
+    [
+        ({"type": "array", "properties": {"a": {"type": "string", "description": "x"}}}, "must be"),
+        ({"type": "object"}, "non-empty 'properties'"),
+        ({"type": "object", "properties": {}}, "non-empty 'properties'"),
+        ({"type": "object", "properties": {"a": {"description": "x"}}}, "needs a 'type'"),
+        (
+            {"type": "object", "properties": {"a": {"type": "nonsense", "description": "x"}}},
+            "unsupported type",
+        ),
+        ({"type": "object", "properties": {"a": {"type": "string"}}}, "non-empty 'description'"),
+        (
+            {"type": "object", "properties": {"a": {"type": "string", "description": "  "}}},
+            "non-empty 'description'",
+        ),
+    ],
+)
+def test_extract_schema_guard_rejects_malformed_schemas(schema, expected):
+    from janasunani.egress.sarvam import _validate_extract_schema
+
+    with pytest.raises(ValueError, match=expected):
+        _validate_extract_schema(schema)
+
+
+def _nested_schema(object_levels: int) -> dict:
+    """A schema whose root is an object nested *object_levels* deep."""
+    node: dict = {"type": "string", "description": "leaf"}
+    for _ in range(object_levels):
+        node = {"type": "object", "description": "nested", "properties": {"child": node}}
+    return node
+
+
+def test_a_schema_exactly_at_the_depth_cap_is_accepted():
+    """Pin the boundary rather than leave the off-by-one implicit."""
+    from janasunani.egress.sarvam import MAX_EXTRACT_SCHEMA_DEPTH, _validate_extract_schema
+
+    _validate_extract_schema(_nested_schema(MAX_EXTRACT_SCHEMA_DEPTH))
+
+
+def test_extract_schema_guard_enforces_the_provider_depth_cap():
+    from janasunani.egress.sarvam import MAX_EXTRACT_SCHEMA_DEPTH, _validate_extract_schema
+
+    with pytest.raises(ValueError, match="nests deeper than"):
+        _validate_extract_schema(_nested_schema(MAX_EXTRACT_SCHEMA_DEPTH + 1))
+
+
+def test_a_malformed_nested_field_is_caught_not_just_the_top_level():
+    """Codex finding on #232: the provider's field rules apply at every depth.
+
+    Validating only the root lets a nested field with no description through
+    the guard and into the HTTP 400 the guard exists to prevent.
+    """
+    from janasunani.egress.sarvam import _validate_extract_schema
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "petitioner": {
+                "type": "object",
+                "description": "who filed it",
+                "properties": {
+                    "name": {"type": "string"},  # no description
+                },
+            }
+        },
+    }
+    with pytest.raises(ValueError, match="petitioner.name"):
+        _validate_extract_schema(schema)
+
+
+def test_nested_objects_inside_arrays_are_validated_too():
+    from janasunani.egress.sarvam import _validate_extract_schema
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "attachments": {
+                "type": "array",
+                "description": "documents attached to the grievance",
+                "items": {
+                    "type": "object",
+                    "properties": {"kind": {"type": "string"}},  # no description
+                },
+            }
+        },
+    }
+    with pytest.raises(ValueError, match=r"attachments\[\].kind"):
+        _validate_extract_schema(schema)
+
+
+def test_a_well_formed_nested_schema_is_accepted():
+    from janasunani.egress.sarvam import _validate_extract_schema
+
+    _validate_extract_schema(
+        {
+            "type": "object",
+            "properties": {
+                "petitioner": {
+                    "type": "object",
+                    "description": "who filed it",
+                    "properties": {
+                        "district": {"type": "string", "description": "district name"},
+                    },
+                }
+            },
+        }
+    )
 
 
 def _make_dummy_input(tmp_path: Path, n: int = 2) -> Path:
@@ -195,7 +333,13 @@ def test_evaluate_extract_arm_with_mocked_adapter(tmp_path: Path, monkeypatch: p
 
         def extract(self, doc_bytes, filename, language, context, schema=None, config_id=None):
             assert schema is not None
-            assert "grievance_category" in schema
+            # Assert the shape the provider actually accepts. The fake stands
+            # in for the transport, so it must hold the same contract the real
+            # endpoint does or the mock re-hides the HTTP 400.
+            from janasunani.egress.sarvam import _validate_extract_schema
+
+            _validate_extract_schema(schema)
+            assert "grievance_category" in schema["properties"]
             return {"grievance_category": "Police", "summary": "Sarvam summary text", "district": "Sambalpur"}
 
     # Patch the class used by evaluate
@@ -265,3 +409,320 @@ def test_wrapper_script_delegates(tmp_path: Path):
     # Should exit 0 and produce outputs (wrapper injects --arm digitise)
     assert result.returncode == 0, f"wrapper failed: {result.stderr}\n{result.stdout}"
     assert (out / "sarvam_scorecard.json").is_file()
+
+
+def test_objects_inside_nested_arrays_are_validated():
+    """Codex follow-up on #232: an array of arrays stopped the traversal.
+
+    The first `items` had type "array", not "object", so the walk gave up and
+    everything below it bypassed both field validation and the depth cap.
+    """
+    from janasunani.egress.sarvam import _validate_extract_schema
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "pages": {
+                "type": "array",
+                "description": "pages, each holding a list of line items",
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {"line": {"type": "string"}},  # no description
+                    },
+                },
+            }
+        },
+    }
+    with pytest.raises(ValueError, match=r"pages\[\]\[\].line"):
+        _validate_extract_schema(schema)
+
+
+def test_arrays_count_toward_the_depth_cap():
+    """Each array level is one the provider descends too."""
+    from janasunani.egress.sarvam import _validate_extract_schema
+
+    items: dict = {"type": "object", "properties": {"leaf": {"type": "string", "description": "x"}}}
+    for _ in range(6):
+        items = {"type": "array", "items": items}
+
+    schema = {
+        "type": "object",
+        "properties": {"deep": {"type": "array", "description": "d", "items": items}},
+    }
+    with pytest.raises(ValueError, match="nests deeper than"):
+        _validate_extract_schema(schema)
+
+
+def test_a_well_formed_array_of_objects_is_accepted():
+    from janasunani.egress.sarvam import _validate_extract_schema
+
+    _validate_extract_schema(
+        {
+            "type": "object",
+            "properties": {
+                "attachments": {
+                    "type": "array",
+                    "description": "documents attached",
+                    "items": {
+                        "type": "object",
+                        "properties": {"kind": {"type": "string", "description": "kind"}},
+                    },
+                }
+            },
+        }
+    )
+
+
+def _array_chain_schema(array_levels: int) -> dict:
+    """A schema whose root field is *array_levels* deep in arrays, ending in a primitive.
+
+    Unlike ``_nested_schema``, the chain never bottoms out in an object, so
+    only the depth check reachable from a primitive terminal can catch an
+    over-depth schema built this way.
+    """
+    node: dict = {"type": "string", "description": "leaf"}
+    for _ in range(array_levels):
+        node = {"type": "array", "description": "list", "items": node}
+    return {"type": "object", "properties": {"root": node}}
+
+
+def test_an_array_chain_exactly_at_the_depth_cap_ending_in_a_primitive_is_accepted():
+    """Pin the boundary for the array-only path, same as the object path."""
+    from janasunani.egress.sarvam import MAX_EXTRACT_SCHEMA_DEPTH, _validate_extract_schema
+
+    _validate_extract_schema(_array_chain_schema(MAX_EXTRACT_SCHEMA_DEPTH - 1))
+
+
+def test_extract_schema_guard_catches_an_over_depth_array_chain_ending_in_a_primitive():
+    """Codex finding on #232: the loop checks depth before each descent, never after.
+
+    A chain of arrays that bottoms out in a primitive (not an object) never
+    takes the ``isinstance(items, dict) and items.get("type") == "object"``
+    branch, so before this fix nothing checked the level reached by the
+    final descent and an over-depth schema like this one reached the
+    provider as an HTTP 400.
+    """
+    from janasunani.egress.sarvam import MAX_EXTRACT_SCHEMA_DEPTH, _validate_extract_schema
+
+    with pytest.raises(ValueError, match="nests deeper than"):
+        _validate_extract_schema(_array_chain_schema(MAX_EXTRACT_SCHEMA_DEPTH))
+
+
+# --- Table-driven depth accounting ------------------------------------------
+#
+# Three off-by-ones in the depth accounting have now reached review in a row,
+# each "fixed" by adding another check on top of the last. The accounting was
+# rewritten instead (see the module comment above `_validate_object` in
+# `janasunani/egress/sarvam.py`), and this table is what pins it down: every
+# shape below states the level its deepest node reaches, so the boundary is
+# asserted, not inferred from a single accept/reject pair.
+#
+# Level, per that module comment: the root schema object is level 1; every
+# object property, every array `items` step (including array-of-array), and
+# the object a chain of arrays finally bottoms out in each add one level. A
+# primitive field is a leaf and does not itself occupy a level.
+
+
+def _object_chain(levels: int) -> dict:
+    """root + nested objects, deepest level == *levels*."""
+    return _nested_schema(levels)
+
+
+def _array_chain_primitive(levels: int) -> dict:
+    """root + nested arrays ending in a primitive, deepest level == *levels*."""
+    return _array_chain_schema(levels - 1)
+
+
+def _array_chain_object(array_levels: int) -> dict:
+    """root -> *array_levels* nested arrays -> a terminal well-formed object.
+
+    Deepest level == *array_levels* + 2: one for the root, one per array, and
+    one more for the terminal object the innermost array's ``items``
+    descends into -- the exact descent Codex's finding on #232 showed was
+    not being counted (the walk reached this object with the innermost
+    array's level, unchanged).
+    """
+    node: dict = {
+        "type": "object",
+        "properties": {"leaf": {"type": "string", "description": "x"}},
+    }
+    for _ in range(array_levels):
+        node = {"type": "array", "description": "list", "items": node}
+    return {"type": "object", "properties": {"root": node}}
+
+
+def _mixed_chain_object_array_object() -> dict:
+    """root -> object -> array -> terminal object. Deepest level 4."""
+    return {
+        "type": "object",
+        "properties": {
+            "petitioner": {
+                "type": "object",
+                "description": "who filed it",
+                "properties": {
+                    "attachments": {
+                        "type": "array",
+                        "description": "documents",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "kind": {"type": "string", "description": "kind"},
+                            },
+                        },
+                    }
+                },
+            }
+        },
+    }
+
+
+def _mixed_chain_array_object_array_array_primitive() -> dict:
+    """root -> array -> object -> array -> array -> primitive. Deepest level 5."""
+    return {
+        "type": "object",
+        "properties": {
+            "pages": {
+                "type": "array",
+                "description": "pages, each an object with a grid of line segments",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "lines": {
+                            "type": "array",
+                            "description": "rows of line segments on the page",
+                            "items": {
+                                "type": "array",
+                                "description": "line segments in a row",
+                                "items": {"type": "string", "description": "segment text"},
+                            },
+                        }
+                    },
+                },
+            }
+        },
+    }
+
+
+DEPTH_ACCOUNTING_CASES = [
+    # (label, schema, deepest_level, accepted)
+    ("root + 4 nested objects", _object_chain(4), 4, True),
+    ("root + 5 nested objects", _object_chain(5), 5, False),
+    ("root + 3 nested arrays -> primitive", _array_chain_primitive(4), 4, True),
+    ("root + 4 nested arrays -> primitive", _array_chain_primitive(5), 5, False),
+    ("root + 2 nested arrays -> terminal object", _array_chain_object(2), 4, True),
+    (
+        "root + 3 nested arrays -> terminal object (Codex #232 repro)",
+        _array_chain_object(3),
+        5,
+        False,
+    ),
+    ("mixed: root -> object -> array -> object", _mixed_chain_object_array_object(), 4, True),
+    (
+        "mixed: root -> array -> object -> array -> array -> primitive",
+        _mixed_chain_array_object_array_array_primitive(),
+        5,
+        False,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "label, schema, deepest_level, accepted",
+    DEPTH_ACCOUNTING_CASES,
+    ids=[case[0] for case in DEPTH_ACCOUNTING_CASES],
+)
+def test_depth_accounting_table(label, schema, deepest_level, accepted):
+    """Pin the level each schema shape reaches, not just accept/reject.
+
+    ``deepest_level`` is asserted against ``MAX_EXTRACT_SCHEMA_DEPTH`` here so
+    that a future change to the cap makes the boundary this table encodes
+    explicit, rather than the table quietly agreeing with whatever the code
+    now does -- which is how the previous three off-by-ones went unnoticed.
+    """
+    from janasunani.egress.sarvam import MAX_EXTRACT_SCHEMA_DEPTH, _validate_extract_schema
+
+    assert (deepest_level <= MAX_EXTRACT_SCHEMA_DEPTH) == accepted, label
+    if accepted:
+        _validate_extract_schema(schema)
+    else:
+        with pytest.raises(ValueError, match="nests deeper than"):
+            _validate_extract_schema(schema)
+
+
+def test_codex_232_repro_root_three_arrays_terminal_object_is_rejected():
+    """Exact reproduction from the review finding: must be REJECTED at cap 4.
+
+    Before this fix, the array walk reached the terminal object passing
+    ``level`` unchanged from the innermost array's level (4), so this
+    schema -- whose terminal object is actually the fifth schema level --
+    was wrongly accepted; a direct reproduction printed
+    ``ACCEPTED root + 3 arrays + terminal object``. Fixed by having
+    ``_validate_array`` recurse into ``_validate_object`` at ``level + 1``,
+    the same rule it already used for array-of-array.
+    """
+    from janasunani.egress.sarvam import _validate_extract_schema
+
+    with pytest.raises(ValueError, match="nests deeper than"):
+        _validate_extract_schema(_array_chain_object(3))
+
+
+# --- Field type allowlist ----------------------------------------------------
+#
+# Codex finding on #232: the field-level check only asked whether ``type`` was
+# present (``if not field_type``), not whether it was one of the types Sarvam
+# actually supports. A truthy-but-invalid value like ``"nonsense"`` therefore
+# passed local validation and would have reached the provider as the exact
+# HTTP 400 this guard exists to prevent. This had already been patched three
+# times over for depth-accounting bugs in this same function, each patch
+# adding one more special case on top of the last, so the fix here is an
+# allowlist (``SUPPORTED_EXTRACT_FIELD_TYPES``) rather than a fourth patch: a
+# denylist of known-bad values can always miss a new one, an allowlist cannot.
+
+
+def test_extract_schema_guard_rejects_an_unsupported_field_type():
+    """Reproduces the finding's exact example against the pre-fix code.
+
+    Direct reproduction against the unpatched guard: ``_validate_extract_schema``
+    on ``{"type": "object", "properties": {"field": {"type": "nonsense",
+    "description": "x"}}}`` printed "unknown root field type ACCEPTED" --
+    confirming a caller-supplied schema with an invalid type sailed through
+    the guard meant to catch exactly this before any bytes leave the box.
+    """
+    from janasunani.egress.sarvam import _validate_extract_schema
+
+    schema = {
+        "type": "object",
+        "properties": {"field": {"type": "nonsense", "description": "x"}},
+    }
+    with pytest.raises(ValueError, match="unsupported type"):
+        _validate_extract_schema(schema)
+
+
+def test_every_supported_extract_field_type_is_accepted():
+    """The allowlist's positive half: every type Sarvam's docs list must still pass.
+
+    Types confirmed against https://docs.sarvam.ai/api/api-guides-tutorials/
+    document-intelligence/overview: string, number, integer, boolean, object,
+    array. An allowlist that silently drifted narrower than what the provider
+    actually accepts would be its own outage, so this is asserted rather than
+    left implicit in the constant alone.
+    """
+    from janasunani.egress.sarvam import SUPPORTED_EXTRACT_FIELD_TYPES, _validate_extract_schema
+
+    assert SUPPORTED_EXTRACT_FIELD_TYPES == {
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "object",
+        "array",
+    }
+    for field_type in sorted(SUPPORTED_EXTRACT_FIELD_TYPES):
+        field: dict = {"type": field_type, "description": f"a {field_type} field"}
+        if field_type == "object":
+            # An object field must itself carry a non-empty properties map --
+            # a separate, already-covered rule, not part of this guard.
+            field["properties"] = {"child": {"type": "string", "description": "child field"}}
+        _validate_extract_schema({"type": "object", "properties": {"field": field}})
