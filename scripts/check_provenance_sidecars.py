@@ -1,6 +1,7 @@
 """Check that committed provenance sidecars hold metadata and nothing else.
 
-`data/external/*.provenance.json` is the one exception to the rule that nothing
+Provenance sidecars at any depth below `data/external/` are the one exception
+to the rule that nothing
 under `data/` enters git: a sidecar records analyzer versions, checksums and
 span counts so a gold artifact can be reviewed without pulling citizen text.
 The exception is granted by filename, so something has to verify that the
@@ -22,7 +23,7 @@ publishing the thing you are refusing to publish defeats the gate.
 
 Stdlib only: it runs on a bare runner before any dependency is installed.
 
-    python3 scripts/check_provenance_sidecars.py data/external/*.provenance.json
+    python3 scripts/check_provenance_sidecars.py data/external/**/*.provenance.json
 
 Exits 0 when every file passes, 1 otherwise.
 """
@@ -70,6 +71,9 @@ MAX_STRING = 200
 MAX_NOTE = 1000
 
 _MD5_RE = re.compile(r"^[0-9a-f]{32}$")
+_SHA256_RE = re.compile(r"^(sha256:)?[0-9a-f]{64}$")
+_ACTIONABILITY_SCHEMA = "actionability-adjudication-sample-v1"
+_SARVAM_SCHEMA = "janasunani.sarvam-source-snapshots/v1"
 
 
 def _check_scalar(path: str, value: Any, limit: int) -> list[str]:
@@ -100,10 +104,135 @@ def _check_counter(key: str, value: Any) -> list[str]:
     return problems
 
 
+def _check_string_list(key: str, value: Any, *, limit: int = MAX_STRING) -> list[str]:
+    if not isinstance(value, list):
+        return [f"'{key}' must be a list"]
+    problems: list[str] = []
+    for position, item in enumerate(value):
+        problems += _check_scalar(f"{key}[{position}]", item, limit)
+    return problems
+
+
+def _check_actionability_sample(payload: dict[str, Any]) -> list[str]:
+    allowed = {
+        "counts",
+        "dataset_fingerprint",
+        "forbidden_fields",
+        "parameters",
+        "records",
+        "schema_version",
+        "selected_fields",
+    }
+    problems: list[str] = []
+    if set(payload) - allowed:
+        problems.append("actionability sidecar has unknown top-level metadata keys")
+    fingerprint = payload.get("dataset_fingerprint")
+    if not isinstance(fingerprint, str) or not _SHA256_RE.fullmatch(fingerprint):
+        problems.append("actionability dataset_fingerprint is not a SHA-256 digest")
+    counts = payload.get("counts")
+    if not isinstance(counts, dict):
+        problems.append("actionability counts must be an object")
+    else:
+        key_pattern = re.compile(r"^(train|validation|test)/s[1-5]$")
+        for position, (key, value) in enumerate(counts.items()):
+            if not isinstance(key, str) or not key_pattern.fullmatch(key):
+                problems.append(f"actionability counts key {position} is not an allowed split/stratum")
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                problems.append(f"actionability counts value {position} must be a nonnegative integer")
+    parameters = payload.get("parameters")
+    allowed_parameters = {
+        "adjudicator_blinding",
+        "per_weak_stratum_split",
+        "seed",
+        "shaped_pii_excluded",
+        "split_policy",
+        "ticket_identifier",
+        "unlabeled_per_split",
+    }
+    if not isinstance(parameters, dict):
+        problems.append("actionability parameters must be an object")
+    else:
+        for position, (key, value) in enumerate(parameters.items()):
+            if key not in allowed_parameters:
+                problems.append(f"actionability parameter {position} is not allowlisted")
+                continue
+            problems += _check_scalar(f"parameters[{position}]", value, MAX_STRING)
+    records = payload.get("records")
+    if isinstance(records, bool) or not isinstance(records, int) or records < 0:
+        problems.append("actionability records must be a nonnegative integer")
+    problems += _check_string_list("forbidden_fields", payload.get("forbidden_fields"))
+    problems += _check_string_list("selected_fields", payload.get("selected_fields"))
+    return problems
+
+
+def _check_sarvam_snapshots(payload: dict[str, Any]) -> list[str]:
+    allowed = {"artifacts", "claim_status", "limitations", "privacy", "schema_version"}
+    problems: list[str] = []
+    if set(payload) - allowed:
+        problems.append("Sarvam sidecar has unknown top-level metadata keys")
+    problems += _check_scalar("claim_status", payload.get("claim_status"), MAX_STRING)
+    privacy = payload.get("privacy")
+    allowed_privacy = {
+        "contains_operational_ticket_and_document_identifiers",
+        "contains_provider_response_metadata",
+        "git_contains_row_level_bytes",
+        "storage",
+    }
+    if not isinstance(privacy, dict):
+        problems.append("Sarvam privacy must be an object")
+    else:
+        if set(privacy) - allowed_privacy:
+            problems.append("Sarvam privacy has unknown metadata keys")
+        for position, value in enumerate(privacy.values()):
+            problems += _check_scalar(f"privacy[{position}]", value, MAX_STRING)
+    artifacts = payload.get("artifacts")
+    allowed_artifacts = {
+        "interrupted_300_page_audit.sqlite",
+        "validation_5_page_audit.sqlite",
+        "validation_5_page_scorecard.json",
+        "validation_5_page_scorecard.md",
+    }
+    allowed_artifact_fields = {
+        "audit_events",
+        "distinct_documents",
+        "distinct_tickets",
+        "role",
+        "sha256",
+    }
+    if not isinstance(artifacts, dict):
+        problems.append("Sarvam artifacts must be an object")
+    else:
+        if set(artifacts) - allowed_artifacts:
+            problems.append("Sarvam artifacts includes an unknown filename")
+        for artifact_position, details in enumerate(artifacts.values()):
+            if not isinstance(details, dict):
+                problems.append(f"Sarvam artifact {artifact_position} must be an object")
+                continue
+            if set(details) - allowed_artifact_fields:
+                problems.append(f"Sarvam artifact {artifact_position} has unknown metadata keys")
+            digest = details.get("sha256")
+            if not isinstance(digest, str) or not _SHA256_RE.fullmatch(digest):
+                problems.append(f"Sarvam artifact {artifact_position} has no valid SHA-256")
+            for field_position, (key, value) in enumerate(details.items()):
+                if key == "sha256":
+                    continue
+                problems += _check_scalar(
+                    f"artifacts[{artifact_position}][{field_position}]", value, MAX_STRING
+                )
+    problems += _check_string_list("limitations", payload.get("limitations"))
+    return problems
+
+
 def check_payload(payload: Any) -> list[str]:
     """Every way this document fails the metadata contract. Empty means it passes."""
     if not isinstance(payload, dict):
         return [f"top level is {type(payload).__name__}, expected an object"]
+
+    schema = payload.get("schema_version")
+    if schema == _ACTIONABILITY_SCHEMA:
+        return _check_actionability_sample(payload)
+    if schema == _SARVAM_SCHEMA:
+        return _check_sarvam_snapshots(payload)
 
     problems: list[str] = []
     for key, value in payload.items():
