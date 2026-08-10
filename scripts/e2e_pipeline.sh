@@ -14,6 +14,12 @@
 # Usage:
 #   bash scripts/e2e_pipeline.sh [fixture] [pipeline_db]
 #   FIXTURE=tests/fixtures/demo_letter.png PIPELINE_DB=data/output/pipeline-e2e.sqlite bash scripts/e2e_pipeline.sh
+#
+# PIPELINE_DB is reset fresh on every run so the rehearsal stays isolated
+# (see the DB-reset guard below): the default scratch path is deleted and
+# reinitialized automatically; a non-default PIPELINE_DB needs
+# E2E_ALLOW_DB_RESET=1 to confirm it is disposable, or E2E_ALLOW_REUSE_DB=1
+# to keep it as-is.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -59,6 +65,31 @@ fi
 # 3. Run the pipeline (Tier 3, real weights when available).
 #    Use --workers 1 for determinism in rehearsal.
 mkdir -p "$(dirname "$PIPELINE_DB")"
+
+# Guard: refuse to silently reuse a stale artifact DB. A leftover PIPELINE_DB
+# from a prior run makes every stage skip already-processed rows and the
+# exporter re-upsert old ones into OLTP -- the run silently stops being
+# isolated (#215). But `rm -f` on an arbitrary PIPELINE_DB is its own
+# data-loss footgun if this script is ever pointed at a real artifact DB --
+# e.g. the pipeline CLI's own default, data/output/pipeline.sqlite, which a
+# real ingestion run may have populated. Only this script's own throwaway
+# scratch path is ever deleted automatically; anything else needs an
+# explicit opt-in, so the destructive branch can never fire against a DB
+# this script did not itself choose as disposable.
+DEFAULT_PIPELINE_DB="data/output/pipeline-e2e.sqlite"
+if [ -e "$PIPELINE_DB" ]; then
+  if [ "${E2E_ALLOW_REUSE_DB:-0}" = "1" ]; then
+    info "reusing existing pipeline DB (E2E_ALLOW_REUSE_DB=1): $PIPELINE_DB"
+  elif [ "$PIPELINE_DB" = "$DEFAULT_PIPELINE_DB" ] || [ "${E2E_ALLOW_DB_RESET:-0}" = "1" ]; then
+    info "removing stale pipeline DB for a fresh run: $PIPELINE_DB"
+    rm -f "$PIPELINE_DB"
+  else
+    fail "refusing to remove existing pipeline DB at a non-default path ($PIPELINE_DB) without confirmation -- this script only auto-resets its own default scratch DB ($DEFAULT_PIPELINE_DB); set E2E_ALLOW_DB_RESET=1 to confirm $PIPELINE_DB is a throwaway e2e artifact DB, E2E_ALLOW_REUSE_DB=1 to reuse it as-is, or remove it manually"
+  fi
+fi
+uv run --extra pipeline-core janasunani-pipeline init-db --db "$PIPELINE_DB"
+ok "pipeline DB ready: $PIPELINE_DB"
+
 info "janasunani-pipeline run --input $FIXTURE_DIR --db $PIPELINE_DB --models $MODELS_DIR"
 # If fixture is a single file, pass --file-list via a temp list so the
 # pipeline's directory walk does not ingest sibling fixtures unintentionally.

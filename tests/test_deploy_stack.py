@@ -1304,6 +1304,136 @@ def test_e2e_pipeline_script_covers_required_steps():
     assert "set -e" in text or "set -euo pipefail" in text
 
 
+def test_e2e_pipeline_script_resets_the_default_scratch_db_before_running():
+    """#215: a stale PIPELINE_DB from a prior run must not silently make the
+    rehearsal non-isolated (every stage skips already-processed rows, the
+    exporter re-upserts old ones into OLTP). Static check that the reset
+    guard and the `init-db` call are both present; the guard's actual
+    refuse/reset behavior is exercised for real below."""
+    text = E2E_PIPELINE_SH_PATH.read_text()
+    assert "init-db" in text
+    assert 'DEFAULT_PIPELINE_DB="data/output/pipeline-e2e.sqlite"' in text
+    assert "E2E_ALLOW_DB_RESET" in text
+    assert 'rm -f "$PIPELINE_DB"' in text
+
+
+def test_e2e_pipeline_script_refuses_to_delete_a_non_default_pipeline_db(tmp_path):
+    """#215 regression test: the destructive `rm -f "$PIPELINE_DB"` path must
+    never fire against a database this script did not itself pick as
+    disposable -- e.g. the pipeline CLI's OWN default artifact DB
+    (data/output/pipeline.sqlite), which a real ingestion run may have
+    populated. Runs the real script (copied verbatim, like the deploy.sh
+    stub tests above) against a stale non-default PIPELINE_DB and confirms
+    it refuses and exits non-zero *before* touching the file -- not a grep
+    over the script text."""
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    script_copy = scripts_dir / "e2e_pipeline.sh"
+    shutil.copy(E2E_PIPELINE_SH_PATH, script_copy)
+    script_copy.chmod(0o755)
+
+    stale_db = tmp_path / "pipeline.sqlite"  # NOT the script's own default name
+    marker = b"stale artifact db -- must not be touched by the guard"
+    stale_db.write_bytes(marker)
+
+    fixture = ROOT_DIR / "tests" / "fixtures" / "demo_letter.png"
+    assert fixture.exists(), "test fixture missing"
+
+    env = dict(os.environ)
+    env["FIXTURE"] = str(fixture)
+    env["PIPELINE_DB"] = str(stale_db)
+    env.pop("E2E_ALLOW_DB_RESET", None)
+    env.pop("E2E_ALLOW_REUSE_DB", None)
+
+    result = subprocess.run(
+        ["bash", str(script_copy)],
+        cwd=scripts_dir,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    combined = result.stdout + result.stderr
+
+    assert result.returncode != 0, combined
+    assert "refusing to remove" in combined, combined
+    assert "E2E_ALLOW_DB_RESET" in combined
+    # The guard must fire before anything destructive happens -- the stale
+    # file must survive completely untouched.
+    assert stale_db.read_bytes() == marker
+
+
+def test_e2e_pipeline_script_allows_reuse_with_explicit_opt_in(tmp_path):
+    """The companion positive case: E2E_ALLOW_REUSE_DB=1 must let a
+    non-default, pre-existing PIPELINE_DB through without deleting it."""
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    script_copy = scripts_dir / "e2e_pipeline.sh"
+    shutil.copy(E2E_PIPELINE_SH_PATH, script_copy)
+    script_copy.chmod(0o755)
+
+    stale_db = tmp_path / "pipeline.sqlite"
+    marker = b"stale artifact db -- reuse must not touch this"
+    stale_db.write_bytes(marker)
+
+    fixture = ROOT_DIR / "tests" / "fixtures" / "demo_letter.png"
+
+    env = dict(os.environ)
+    env["FIXTURE"] = str(fixture)
+    env["PIPELINE_DB"] = str(stale_db)
+    env["E2E_ALLOW_REUSE_DB"] = "1"
+    # Point MODELS_DIR at a location with no models -- the script only warns
+    # on a missing models dir, and we don't need the run to actually
+    # succeed; we only need to observe the DB guard's own decision before
+    # the (heavy, model-dependent) pipeline run step runs.
+    env["MODELS_DIR"] = str(tmp_path / "no-models")
+
+    result = subprocess.run(
+        ["bash", str(script_copy)],
+        cwd=scripts_dir,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    combined = result.stdout + result.stderr
+
+    # The guard itself must not refuse or delete -- whatever happens
+    # downstream (the real pipeline run needs models this environment may
+    # not have) is out of scope for this test.
+    assert "refusing to remove" not in combined, combined
+    assert "reusing existing pipeline DB" in combined, combined
+    assert stale_db.read_bytes() == marker
+
+
+def test_demo_rehearsal_script_checks_specific_closure_artifact_names():
+    """#216: the closure gate must check for the exact filenames
+    janasunani/serving/intelligence.py's closure reader accepts
+    (_CLOSURE_ARTIFACT_NAMES), not "any file present in outputs/findings/".
+    A PII/discard finding sitting in that directory must not make the gate
+    report closure artifacts as available."""
+    text = REHEARSAL_SH_PATH.read_text()
+    assert "closure_finding_summary.csv" in text
+    assert "closure_recording_no_action.csv" in text
+    # The old bug: gating success on "any file in outputs/findings/ exists"
+    # rather than one of the two specific names above.
+    assert 'find outputs/findings -type f | wc -l' not in text
+
+
+def test_demo_rehearsal_script_honors_the_aggregates_dir_env_var():
+    """#218: JANASUNANI_SUPERVISOR_AGGREGATES_DIR (workload/spike) must not
+    be silently overwritten with JANASUNANI_SUPERVISOR_FINDINGS_DIR
+    (closure) -- the two are configured separately in
+    janasunani/serving/intelligence.py's supervisor_provider_from_env /
+    ArtifactSupervisorProvider, and the rehearsal's AGG_DIR must mirror that
+    same fallback (aggregates dir first, findings dir only as a fallback)."""
+    text = REHEARSAL_SH_PATH.read_text()
+    assert (
+        'AGG_DIR="${JANASUNANI_SUPERVISOR_AGGREGATES_DIR:-${JANASUNANI_SUPERVISOR_FINDINGS_DIR:-}}"'
+        in text
+    )
+
+
 def test_makefile_has_rehearsal_target():
     """`make rehearsal` must exist and delegate to scripts/demo_rehearsal.sh."""
     text = MAKEFILE_PATH.read_text()
@@ -1316,3 +1446,225 @@ def test_makefile_has_rehearsal_target():
     # Must be .PHONY so make treats it as a command even if a file named
     # rehearsal exists
     assert re.search(r"\.PHONY:.*rehearsal", text), "rehearsal must be .PHONY"
+
+
+# --- Phase C behaviour, run against real directories -----------------------
+#
+# Codex findings on #231. Both were cases where the rehearsal's verdict and
+# ArtifactSupervisorProvider's behaviour disagreed, which is the one thing a
+# rehearsal gate must not do: it either passes a demo that will not work, or
+# fails a demo that would have.
+
+
+def _run_phase_c(tmp_path, *, env_extra=None, findings=()):
+    """Execute the real phase_c_artifacts body against a scratch tree."""
+    workdir = tmp_path / "repo"
+    (workdir / "outputs" / "findings").mkdir(parents=True)
+    for name in findings:
+        (workdir / "outputs" / "findings" / name).write_text("a,b\n1,2\n")
+    # Item 1 (routing crosswalk) always fails when the file is absent,
+    # regardless of strict mode. Stub it present so these tests measure only
+    # the closure/aggregates behaviour under test, not an unrelated failure.
+    crosswalk = workdir / "janasunani" / "routing" / "reference" / "routing_crosswalk.json"
+    crosswalk.parent.mkdir(parents=True)
+    crosswalk.write_text("{}\n")
+
+    script = REHEARSAL_SH_PATH.read_text()
+    # Take the helpers, check_artifact, and the phase C function verbatim, so
+    # the test runs the shipped logic rather than a paraphrase of it. In
+    # particular, check_artifact must be the real existence-based helper, not
+    # a mock -- one of the bugs under test here is exactly that helper
+    # reporting OK for a path that exists but should not count as success.
+    helpers = "\n".join(
+        line for line in script.splitlines()
+        if line.startswith(("info()", "ok()", "warn()", "log()", "fail()"))
+    )
+    ca_start = script.index("check_artifact() {")
+    ca_end = script.index("\n}\n", ca_start) + 3
+    check_artifact_fn = script[ca_start:ca_end]
+
+    start = script.index("phase_c_artifacts() {")
+    end = script.index("\n}\n", start) + 3
+    body = script[start:end]
+
+    harness = f"""
+set -u
+WARNINGS=0
+FAILURES=0
+REHEARSAL_SKIP_ARTIFACTS="${{REHEARSAL_SKIP_ARTIFACTS:-0}}"
+REHEARSAL_ALLOW_DATA="${{REHEARSAL_ALLOW_DATA:-0}}"
+REHEARSAL_STRICT="${{REHEARSAL_STRICT:-0}}"
+{helpers}
+{check_artifact_fn}
+{body}
+phase_c_artifacts || true
+echo "WARNINGS=$WARNINGS FAILURES=$FAILURES"
+"""
+    env = dict(os.environ)
+    env.pop("JANASUNANI_SUPERVISOR_AGGREGATES_DIR", None)
+    env.pop("JANASUNANI_SUPERVISOR_FINDINGS_DIR", None)
+    env.update(env_extra or {})
+    return subprocess.run(
+        ["bash", "-c", harness],
+        cwd=workdir,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_phase_c_accepts_exactly_one_closure_artifact(tmp_path):
+    result = _run_phase_c(tmp_path, findings=["closure_finding_summary.csv"])
+    assert "closure: outputs/findings/closure_finding_summary.csv" in result.stdout
+    assert "FAILURES=0" in result.stdout
+
+
+def test_phase_c_rejects_two_closure_artifacts(tmp_path):
+    """The provider reports unavailable unless exactly one candidate exists.
+
+    Stopping at the first match let a strict rehearsal pass while the live
+    closure panel was unavailable, which is the transition state between the
+    two filenames. A duplicate is a deterministic break (the provider will
+    unconditionally refuse to serve it), not a "not published yet" state, so
+    this must fail the run outright rather than only when --strict is set --
+    the failure count must actually move, not just the logged message.
+    """
+    result = _run_phase_c(
+        tmp_path,
+        findings=["closure_finding_summary.csv", "closure_recording_no_action.csv"],
+    )
+    assert "2 candidates present" in result.stdout
+    assert "FAILURES=1" in result.stdout
+
+
+def test_phase_c_falls_back_to_findings_when_aggregates_is_empty(tmp_path):
+    """ArtifactSupervisorProvider searches both dirs, so the gate must too.
+
+    An aggregates dir that is set but empty does not make the panels
+    unavailable when the findings dir still holds both named artifacts.
+    """
+    empty = tmp_path / "aggregates-empty"
+    empty.mkdir()
+    findings = tmp_path / "findings"
+    findings.mkdir()
+    (findings / "workload.csv").write_text("a\n1\n")
+    (findings / "spike.csv").write_text("a\n1\n")
+
+    result = _run_phase_c(
+        tmp_path,
+        env_extra={
+            "JANASUNANI_SUPERVISOR_AGGREGATES_DIR": str(empty),
+            "JANASUNANI_SUPERVISOR_FINDINGS_DIR": str(findings),
+        },
+        findings=["closure_finding_summary.csv"],
+    )
+    assert f"aggregates: {findings} (workload.csv, spike.csv)" in result.stdout
+    assert "FAILURES=0" in result.stdout
+
+
+def test_phase_c_workload_in_aggregates_spike_in_findings_passes(tmp_path):
+    """Each artifact falls back independently, per
+    ArtifactSupervisorProvider._load_workload() / _load_spike(): workload.csv
+    found in the aggregates dir and spike.csv found only in the findings dir
+    must still pass, because the provider would serve both panels.
+    """
+    aggregates = tmp_path / "aggregates"
+    aggregates.mkdir()
+    (aggregates / "workload.csv").write_text("a\n1\n")
+    findings = tmp_path / "findings"
+    findings.mkdir()
+    (findings / "spike.csv").write_text("a\n1\n")
+
+    result = _run_phase_c(
+        tmp_path,
+        env_extra={
+            "JANASUNANI_SUPERVISOR_AGGREGATES_DIR": str(aggregates),
+            "JANASUNANI_SUPERVISOR_FINDINGS_DIR": str(findings),
+        },
+        findings=["closure_finding_summary.csv"],
+    )
+    assert f"aggregates: workload.csv in {aggregates}, spike.csv in {findings}" in result.stdout
+    assert "FAILURES=0" in result.stdout
+
+
+def test_phase_c_fails_when_aggregates_has_only_workload_csv(tmp_path):
+    """ArtifactSupervisorProvider._load_spike() looks for spike.csv by name;
+    a directory holding only workload.csv (with no spike.csv anywhere in the
+    fallback chain) does not make the spike panel available. Counting "any
+    csv present" let this pass; the gate must check workload.csv and
+    spike.csv individually.
+
+    JANASUNANI_SUPERVISOR_FINDINGS_DIR is set (empty) so this test exercises
+    the per-file naming check under test, not the separate
+    findings-dir-must-be-set gate covered below.
+    """
+    aggregates = tmp_path / "aggregates"
+    aggregates.mkdir()
+    (aggregates / "workload.csv").write_text("a\n1\n")
+    findings = tmp_path / "findings-empty"
+    findings.mkdir()
+
+    result = _run_phase_c(
+        tmp_path,
+        env_extra={
+            "JANASUNANI_SUPERVISOR_AGGREGATES_DIR": str(aggregates),
+            "JANASUNANI_SUPERVISOR_FINDINGS_DIR": str(findings),
+        },
+        findings=["closure_finding_summary.csv"],
+    )
+    assert "missing: spike.csv" in result.stdout
+    assert "FAILURES=1" in result.stdout
+
+
+def test_phase_c_fails_on_unrelated_csv_in_aggregates_dir(tmp_path):
+    """A directory holding some unrelated csv is not the same as holding
+    workload.csv and spike.csv; the provider looks for those two names
+    specifically, so an unrelated file must not report available.
+
+    JANASUNANI_SUPERVISOR_FINDINGS_DIR is set (empty) so this test exercises
+    the per-file naming check under test, not the separate
+    findings-dir-must-be-set gate covered below.
+    """
+    aggregates = tmp_path / "aggregates"
+    aggregates.mkdir()
+    (aggregates / "unrelated.csv").write_text("a\n1\n")
+    findings = tmp_path / "findings-empty"
+    findings.mkdir()
+
+    result = _run_phase_c(
+        tmp_path,
+        env_extra={
+            "JANASUNANI_SUPERVISOR_AGGREGATES_DIR": str(aggregates),
+            "JANASUNANI_SUPERVISOR_FINDINGS_DIR": str(findings),
+        },
+        findings=["closure_finding_summary.csv"],
+    )
+    assert "missing: workload.csv, spike.csv" in result.stdout
+    assert "FAILURES=1" in result.stdout
+
+
+def test_phase_c_fails_when_findings_dir_unset_even_with_complete_aggregates(tmp_path):
+    """Codex finding on #231: supervisor_provider_from_env() gates the whole
+    aggregate seam on JANASUNANI_SUPERVISOR_FINDINGS_DIR alone -- unset it
+    and the function returns UnavailableSupervisorProvider before
+    ArtifactSupervisorProvider (and therefore workload.csv/spike.csv in
+    JANASUNANI_SUPERVISOR_AGGREGATES_DIR) is ever consulted. Previously the
+    rehearsal reported "ok" here because it searched the aggregates dir
+    directly instead of mirroring that on/off switch -- a vacuous pass: the
+    gate said available while the live provider would never come up. An
+    aggregates-only configuration, even a complete one, must fail.
+    """
+    aggregates = tmp_path / "aggregates"
+    aggregates.mkdir()
+    (aggregates / "workload.csv").write_text("a\n1\n")
+    (aggregates / "spike.csv").write_text("a\n1\n")
+
+    result = _run_phase_c(
+        tmp_path,
+        env_extra={"JANASUNANI_SUPERVISOR_AGGREGATES_DIR": str(aggregates)},
+        findings=["closure_finding_summary.csv"],
+    )
+    assert "JANASUNANI_SUPERVISOR_FINDINGS_DIR" in result.stdout
+    assert "FAILURES=1" in result.stdout
+    # The old vacuous-pass line must not appear.
+    assert "aggregates: " + str(aggregates) not in result.stdout

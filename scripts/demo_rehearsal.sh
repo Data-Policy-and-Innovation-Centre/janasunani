@@ -403,39 +403,107 @@ phase_c_artifacts() {
     info "  hint: run 'uv run janasunani-build-crosswalk' and commit the artifact to restore method:learned"
   fi
 
-  # 2. Closure summary in outputs/findings/ (Unit 4a)
+  # 2. Closure summary in outputs/findings/ (Unit 4a) — must be one of the
+  #    two filenames janasunani/serving/intelligence.py's closure reader
+  #    (_CLOSURE_ARTIFACT_NAMES) actually accepts. Any other file present in
+  #    the directory (a PII/discard finding, say) does not make the
+  #    supervisor closure panel available, so the gate must not report
+  #    success on that alone.
   if [ -d "outputs/findings" ]; then
-    FINDINGS_COUNT="$(find outputs/findings -type f | wc -l | tr -d ' ')"
-    if [ "$FINDINGS_COUNT" -gt 0 ]; then
-      ok "findings: outputs/findings/ ($FINDINGS_COUNT file(s))"
-      ls -1 outputs/findings | head -20 | sed 's/^/    /'
-    else
-      check_artifact "outputs/findings/closure_finding_summary.csv" "closure findings (outputs/findings/ empty)" 0
+    ls -1 outputs/findings | head -20 | sed 's/^/    /'
+  fi
+  # ArtifactSupervisorProvider._load_closure() reports unavailable unless
+  # EXACTLY ONE candidate exists (len(candidates) != 1), so stopping at the
+  # first match let a strict rehearsal pass while the live closure panel was
+  # unavailable -- precisely the transition state between the two filenames.
+  # Count them instead of short-circuiting.
+  closure_found=""
+  closure_count=0
+  for name in closure_finding_summary.csv closure_recording_no_action.csv; do
+    if [ -f "outputs/findings/$name" ]; then
+      closure_count=$((closure_count + 1))
+      closure_found="$name"
     fi
+  done
+  if [ "$closure_count" -eq 1 ]; then
+    ok "closure: outputs/findings/$closure_found"
+  elif [ "$closure_count" -eq 0 ]; then
+    check_artifact "outputs/findings/closure_finding_summary.csv" "closure findings (neither closure_finding_summary.csv nor closure_recording_no_action.csv present)" 0
   else
-    check_artifact "outputs/findings" "closure findings" 0
+    # Both candidate names exist on disk, so routing this through
+    # check_artifact (existence-based) would always report OK -- exactly the
+    # unavailable-but-passing state the provider hits (len(candidates) != 1).
+    # Emit the failure directly instead of through a helper that cannot see
+    # the count.
+    fail "closure findings ($closure_count candidates present; the provider requires exactly one and reports unavailable otherwise)"
   fi
 
-  # 3. Aggregates — explicit JANASUNANI_SUPERVISOR_FINDINGS_DIR only; data/ probe requires opt-in per AGENTS.md
-  AGG_DIR="${JANASUNANI_SUPERVISOR_FINDINGS_DIR:-}"
-  if [ -n "$AGG_DIR" ] && [ -d "$AGG_DIR" ]; then
-    AGG_COUNT="$(find "$AGG_DIR" -type f -name "*.csv" | wc -l | tr -d ' ')"
-    if [ "$AGG_COUNT" -gt 0 ]; then
-      ok "aggregates: $AGG_DIR ($AGG_COUNT csv(s))"
-    else
-      check_artifact "$AGG_DIR/*.csv" "aggregates in JANASUNANI_SUPERVISOR_FINDINGS_DIR" 0
+  # 3. Aggregates — workload.csv and spike.csv are each searched
+  #    independently, in (JANASUNANI_SUPERVISOR_AGGREGATES_DIR,
+  #    JANASUNANI_SUPERVISOR_FINDINGS_DIR) order. This mirrors
+  #    ArtifactSupervisorProvider._load_workload() / _load_spike() exactly:
+  #    each walks that same two-directory fallback looking for its own named
+  #    file, not "any csv in the directory". Counting any *.csv let a
+  #    directory holding only workload.csv, or an unrelated csv, report
+  #    available while the provider's spike panel (or both panels) stayed
+  #    unavailable. A directory that is configured but incomplete is a known,
+  #    deterministic break -- not a "not published yet" state -- so it fails
+  #    outright rather than following the warn-unless-strict pattern used
+  #    below for "nothing configured at all".
+  # supervisor_provider_from_env() (janasunani/serving/intelligence.py) gates
+  # the whole aggregate seam on JANASUNANI_SUPERVISOR_FINDINGS_DIR alone: if
+  # that variable is unset it returns UnavailableSupervisorProvider
+  # immediately, before ArtifactSupervisorProvider is ever constructed --
+  # JANASUNANI_SUPERVISOR_AGGREGATES_DIR is not consulted at all in that
+  # path, so workload.csv/spike.csv sitting there are never read live. Mirror
+  # that on/off gate before doing any per-file lookup below, so an
+  # aggregates-only configuration cannot report success for a provider that
+  # will never come up.
+  if [ -z "${JANASUNANI_SUPERVISOR_FINDINGS_DIR:-}" ] && [ -n "${JANASUNANI_SUPERVISOR_AGGREGATES_DIR:-}" ]; then
+    fail "JANASUNANI_SUPERVISOR_AGGREGATES_DIR is set but JANASUNANI_SUPERVISOR_FINDINGS_DIR is not; supervisor_provider_from_env() requires FINDINGS_DIR to enable the aggregate seam at all, so these aggregates would never be served"
+  else
+  WORKLOAD_DIR=""
+  for candidate in "${JANASUNANI_SUPERVISOR_AGGREGATES_DIR:-}" "${JANASUNANI_SUPERVISOR_FINDINGS_DIR:-}"; do
+    [ -n "$candidate" ] || continue
+    if [ -f "$candidate/workload.csv" ]; then
+      WORKLOAD_DIR="$candidate"
+      break
     fi
+  done
+  SPIKE_DIR=""
+  for candidate in "${JANASUNANI_SUPERVISOR_AGGREGATES_DIR:-}" "${JANASUNANI_SUPERVISOR_FINDINGS_DIR:-}"; do
+    [ -n "$candidate" ] || continue
+    if [ -f "$candidate/spike.csv" ]; then
+      SPIKE_DIR="$candidate"
+      break
+    fi
+  done
+  AGG_DIR="${JANASUNANI_SUPERVISOR_AGGREGATES_DIR:-${JANASUNANI_SUPERVISOR_FINDINGS_DIR:-}}"
+  if [ -n "$WORKLOAD_DIR" ] && [ -n "$SPIKE_DIR" ]; then
+    if [ "$WORKLOAD_DIR" = "$SPIKE_DIR" ]; then
+      ok "aggregates: $WORKLOAD_DIR (workload.csv, spike.csv)"
+    else
+      ok "aggregates: workload.csv in $WORKLOAD_DIR, spike.csv in $SPIKE_DIR"
+    fi
+  elif [ -n "$AGG_DIR" ]; then
+    missing="workload.csv"
+    [ -n "$WORKLOAD_DIR" ] && missing=""
+    if [ -z "$SPIKE_DIR" ]; then
+      if [ -n "$missing" ]; then missing="$missing, spike.csv"; else missing="spike.csv"; fi
+    fi
+    fail "aggregates in JANASUNANI_SUPERVISOR_AGGREGATES_DIR/JANASUNANI_SUPERVISOR_FINDINGS_DIR missing: $missing (checked both directories individually per artifact; the provider requires each by name)"
   else
     if [ "${REHEARSAL_ALLOW_DATA:-0}" = "1" ]; then
       if [ -d "data/aggregates" ] && [ "$(find data/aggregates -type f -name "*.csv" 2>/dev/null | wc -l | tr -d ' ')" -gt 0 ]; then
         ok "aggregates: data/aggregates/"
       else
-        check_artifact "data/aggregates/*.csv" "workload/spike aggregates (data/aggregates/ or JANASUNANI_SUPERVISOR_FINDINGS_DIR)" 0
+        check_artifact "data/aggregates/*.csv" "workload/spike aggregates (data/aggregates/ or JANASUNANI_SUPERVISOR_AGGREGATES_DIR/JANASUNANI_SUPERVISOR_FINDINGS_DIR)" 0
         info "  hint: run 'uv run janasunani-publish-workload' / 'janasunani-publish-intelligence --publish-aggregates' to publish"
       fi
     else
-      warn "aggregates: no JANASUNANI_SUPERVISOR_FINDINGS_DIR configured — skipping data/ probe per AGENTS.md (set REHEARSAL_ALLOW_DATA=1 to inspect data/ or configure JANASUNANI_SUPERVISOR_FINDINGS_DIR outside data/)"
+      warn "aggregates: no JANASUNANI_SUPERVISOR_AGGREGATES_DIR/JANASUNANI_SUPERVISOR_FINDINGS_DIR configured — skipping data/ probe per AGENTS.md (set REHEARSAL_ALLOW_DATA=1 to inspect data/ or configure one of them outside data/)"
     fi
+  fi
   fi
 
   # 4. Sarvam scorecard (if Unit 5 landed) — warn only
