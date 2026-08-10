@@ -6,8 +6,10 @@ generated fixture image and skips where the tesseract binary or the DVC-pulled
 format-classifier pickle is missing (e.g. CI).
 """
 
+import importlib
 import shutil
 import sqlite3
+import sys
 
 import pytest
 
@@ -18,6 +20,15 @@ from janasunani.pipeline.db import connect, initialize_database
 from janasunani.pipeline.pipeline import STAGE_ORDER, run_pipeline
 
 FORMAT_MODEL = directories.MODELS / "format_classifier" / "page_split_v3.0_doc_split.pkl"
+
+
+def test_format_classifier_resolution_import_does_not_require_opencv(monkeypatch):
+    monkeypatch.setitem(sys.modules, "cv2", None)
+    sys.modules.pop("janasunani.pipeline.stages.format_classifier.resolution", None)
+    module = importlib.import_module(
+        "janasunani.pipeline.stages.format_classifier.resolution"
+    )
+    assert callable(module.resolve_model_path)
 
 
 def test_init_db_creates_schema_and_is_idempotent(tmp_path):
@@ -81,24 +92,24 @@ def test_page_type_model_resolves_to_dvc_mirror(tmp_path, monkeypatch):
 def test_format_classifier_requires_an_unambiguous_pinned_artifact(
     tmp_path, monkeypatch
 ):
-    from janasunani.pipeline.stages.format_classifier.stage import _resolve_model_path
+    from janasunani.pipeline.stages.format_classifier.resolution import resolve_model_path
 
     model_dir = tmp_path / "format_classifier"
     model_dir.mkdir()
     cfg = PipelineConfig(input_dir=tmp_path, db_path=tmp_path / "p.db", models_dir=tmp_path)
     with pytest.raises(FileNotFoundError, match="no format-classifier artifact"):
-        _resolve_model_path(cfg)
+        resolve_model_path(cfg)
 
     first = model_dir / "first.pkl"
     first.write_bytes(b"first")
-    assert _resolve_model_path(cfg) == first
+    assert resolve_model_path(cfg) == first
 
     (model_dir / "second.pkl").write_bytes(b"second")
     with pytest.raises(RuntimeError, match="contains 2 .pkl"):
-        _resolve_model_path(cfg)
+        resolve_model_path(cfg)
 
     monkeypatch.setenv("JANASUNANI_FORMAT_CLASSIFIER_ARTIFACT", str(first))
-    assert _resolve_model_path(cfg) == first
+    assert resolve_model_path(cfg) == first
 
 
 def test_partial_json_reingest_preserves_existing_grievances(tmp_path):

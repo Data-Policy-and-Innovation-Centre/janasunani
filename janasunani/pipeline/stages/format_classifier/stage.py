@@ -28,7 +28,6 @@ from PIL import Image
 from ...config import PipelineConfig
 from ...db import connect
 from ...ticket import doc_id_from_relpath, ticket_from_relpath
-from janasunani.tracking.artifacts import resolve_artifact
 from .executors import Executor, auto_executor
 from .features import (
     configure_tesseract,
@@ -36,6 +35,7 @@ from .features import (
     suppress_stderr,
 )
 from .model import FormatClassifier
+from .resolution import resolve_model_path
 from loguru import logger
 
 # Avoid pdf2image's pixel-bomb DoS protection blocking large but legitimate
@@ -82,24 +82,8 @@ MODEL_NAME = "format_classifier_v3"
 
 
 def _resolve_model_path(config: PipelineConfig) -> Path:
-    artifact = resolve_artifact("format_classifier", models_dir=config.models_dir)
-    if artifact is None:
-        raise FileNotFoundError(
-            "no format-classifier artifact resolved from operator override, "
-            "active release, or DVC mirror"
-        )
-    if artifact.is_file():
-        if artifact.suffix.lower() != ".pkl":
-            raise ValueError("format-classifier artifact file must have .pkl suffix")
-        return artifact
-    candidates = sorted(artifact.glob("*.pkl"))
-    if len(candidates) != 1:
-        raise RuntimeError(
-            f"format-classifier directory {artifact} contains {len(candidates)} .pkl "
-            "files; pin one exact file with JANASUNANI_FORMAT_CLASSIFIER_ARTIFACT "
-            "or the active release manifest"
-        )
-    return candidates[0]
+    """Backward-compatible private seam; use resolution.resolve_model_path."""
+    return resolve_model_path(config)
 
 
 # ---------------------------------------------------------------------------

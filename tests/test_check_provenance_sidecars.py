@@ -64,6 +64,64 @@ def test_the_real_shape_passes():
     assert check.check_payload(VALID) == []
 
 
+def test_actionability_sample_sidecar_is_metadata_only():
+    payload = {
+        "schema_version": "actionability-adjudication-sample-v1",
+        "dataset_fingerprint": "sha256:" + "a" * 64,
+        "counts": {"train/s1": 5, "validation/s5": 40, "test/s3": 5},
+        "forbidden_fields": ["ticket_no", "raw grievance"],
+        "parameters": {
+            "adjudicator_blinding": "opaque strata",
+            "per_weak_stratum_split": 5,
+            "seed": "fixed-seed",
+            "shaped_pii_excluded": 47,
+            "split_policy": "fixed hash split",
+            "ticket_identifier": "salted sha256",
+            "unlabeled_per_split": 40,
+        },
+        "records": 180,
+        "selected_fields": ["salted item id", "grievance_redacted"],
+    }
+    assert check.check_payload(payload) == []
+
+
+def test_sarvam_source_snapshot_sidecar_is_metadata_only():
+    payload = {
+        "schema_version": "janasunani.sarvam-source-snapshots/v1",
+        "claim_status": "cached provider evidence; not OCR accuracy",
+        "privacy": {
+            "contains_operational_ticket_and_document_identifiers": True,
+            "contains_provider_response_metadata": True,
+            "git_contains_row_level_bytes": False,
+            "storage": "private DVC remote",
+        },
+        "artifacts": {
+            "validation_5_page_scorecard.json": {
+                "sha256": "a" * 64,
+                "role": "machine-readable aggregate scorecard",
+            }
+        },
+        "limitations": ["No hand transcription exists."],
+    }
+    assert check.check_payload(payload) == []
+
+
+def test_nested_sidecar_schema_rejects_unexpected_fields():
+    payload = {
+        "schema_version": "actionability-adjudication-sample-v1",
+        "dataset_fingerprint": "sha256:" + "a" * 64,
+        "counts": {"train/s1": 5},
+        "forbidden_fields": [],
+        "parameters": {},
+        "records": 5,
+        "selected_fields": [],
+        "raw_text": CITIZEN_TEXT,
+    }
+    problems = check.check_payload(payload)
+    assert problems
+    assert all(CITIZEN_TEXT not in problem for problem in problems)
+
+
 class TestCounterKeysAreConstrained:
     """#95. The counter's keys were exempt from every rule because they are
     entity labels rather than a fixed key set, so a label-to-count map from a
