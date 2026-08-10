@@ -393,11 +393,12 @@ def _measure_with_processor(
             is_warm = discard_warm and r == 0
             # Timing path: real processor vs fake
             if processor is not None:
-                # Real processor path — measure wall clock for the single
-                # process() call. Per-stage breakdown is not available from
-                # the monolithic PipelineGrievanceProcessor, so we record
-                # only e2e and leave per-stage as not_measured (fabricating
-                # from fake proportions would publish invented latency).
+                # Real processor path. Per-stage now comes from the processor's
+                # timing sink (janasunani/inference/timing.py) rather than being
+                # left not_measured: the sink reports what each stage actually
+                # took, so nothing here is synthesized from proportions.
+                captured: dict[str, float] = {}
+                processor._timing_sink = captured.update  # noqa: SLF001 - benchmark seam
                 start = time.perf_counter()
                 try:
                     processor.process(
@@ -415,12 +416,21 @@ def _measure_with_processor(
                 elapsed = time.perf_counter() - start
                 if is_warm:
                     continue
-                # Record only e2e; per-stage wall-clock not available
-                per_stage_times[E2E_KEY].append(elapsed)
-                per_stage_tickets[E2E_KEY].append(ticket)
-                # Do not synthesize per-stage durations — they would be
-                # fabricated and could sum to >e2e. Downstream report will
-                # show stages as not_measured.
+                # Prefer the sink's own e2e; fall back to the outer wall clock
+                # if the sink produced nothing (a processor built without one).
+                # Record whatever the live path actually ran, creating keys on
+                # demand. STAGES above is the *batch* pipeline's vocabulary
+                # (format / pii / spam / page_type); the live processor's stages
+                # are different (redact / detect_pii / triage / detect_language).
+                # Coercing one into the other would mislabel real measurements,
+                # so a real run reports its own stage names and the fake path
+                # keeps the old ones.
+                for stage_name, seconds in captured.items():
+                    per_stage_times.setdefault(stage_name, []).append(seconds)
+                    per_stage_tickets.setdefault(stage_name, []).append(ticket)
+                if E2E_KEY not in captured:
+                    per_stage_times[E2E_KEY].append(elapsed)
+                    per_stage_tickets[E2E_KEY].append(ticket)
             else:
                 # Fake timing path — deterministic, fast, no sleep unless
                 # BENCHMARK_FAKE_SLEEP is set (for manual wall-clock checks).
@@ -697,11 +707,25 @@ def main(argv: list[str] | None = None) -> int:
     is_fake = args.fake
     processor_factory: Any = None
     if not is_fake:
-        # Real processor wiring not yet implemented for benchmark harness;
-        # keep --fake explicit for CI publishable runs, fall back to fake
-        # for existing tests that omit it.
-        is_fake = True
-        processor_factory = None
+        # Real wiring. This used to force is_fake=True unconditionally, which
+        # meant every number this harness ever printed came from the constant
+        # table in _FAKE_STAGE_MEANS, with or without --fake. A run that cannot
+        # build a processor now FAILS rather than silently fabricating: a
+        # fabricated latency that looks real is worse than no latency at all.
+        try:
+            from janasunani.inference.service import build_processor
+        except Exception as exc:  # pragma: no cover - env-dependent
+            parser.error(
+                f"--fake was not passed but the real processor cannot be imported: {exc}. "
+                "Pass --fake explicitly to get synthetic timings."
+            )
+
+        warmed: dict[str, Any] = {}
+
+        def processor_factory(variant: str) -> Any:  # noqa: ARG001 - one warm processor serves every variant
+            if "processor" not in warmed:
+                warmed["processor"] = build_processor(timing_sink=lambda _timings: None)
+            return warmed["processor"]
 
     results: dict[str, dict[str, Any]] = {}
     for variant in variants:
