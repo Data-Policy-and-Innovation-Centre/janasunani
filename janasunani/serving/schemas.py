@@ -185,7 +185,7 @@ class OcrQualityEvidence(BaseModel):
 class SpamReview(BaseModel):
     """Officer-review state for the bounded low-signal scorer.
 
-    The bounded scorer (pipeline/spam.py, spam-v1-bounded) emits
+    The bounded scorer (pipeline/spam.py, spam-v1.1-bounded) emits
     ``spam_score`` in [0,1] + ``spam_reason`` in the 5-value set with
     evidence, advisory only (never blocks submission).  The provider
     remains unavailable outside a scored path: ``advisory_provider_unavailable``
@@ -232,6 +232,8 @@ class SpamReview(BaseModel):
 
         if not isinstance(value, dict):
             return value
+        if isinstance(value.get("spam_score"), bool):
+            raise ValueError("spam_score must be a numeric value")
         legacy_decision = value.get("decision")
         if legacy_decision not in {"flagged", "not_scored", "abstained"}:
             return value
@@ -270,8 +272,7 @@ class SpamReview(BaseModel):
                     raise ValueError("review requires auditable low-signal evidence")
                 # spam_score/reason coherence when present
                 if self.spam_reason is not None and self.spam_reason != self.reason_code:
-                    # allow reason_code to mirror spam_reason for bounded path
-                    pass
+                    raise ValueError("bounded spam reason_code must match spam_reason")
                 if self.spam_score is not None and not (0.0 <= self.spam_score <= 1.0):
                     raise ValueError("spam_score must be in [0,1]")
                 return self

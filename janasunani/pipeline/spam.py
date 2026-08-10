@@ -49,7 +49,7 @@ from typing import Literal, Optional, Protocol
 
 from janasunani.pipeline.ocr_quality import is_repetition_collapsed
 
-SPAM_VERSION = "spam-v1-bounded"
+SPAM_VERSION = "spam-v1.1-bounded"
 
 
 def _check_collapsed(text: str) -> bool:
@@ -92,6 +92,30 @@ _NO_GRIEVANCE_RE = re.compile(
     r"blank|empty|nothing|na|n/a|nil|none)\W*$",
     re.IGNORECASE,
 )
+
+# A deliberately narrow set of direct abuse/self-description patterns.  These
+# are not a general toxicity model; they close the observed failure where a
+# content-free insult was presented merely as "too short".  The learned
+# actionability model owns broader irrelevant-language coverage.
+_IRRELEVANT_ABUSE_RE = re.compile(
+    r"^\W*(?:i\s+am|you\s+are|(?:he|she|they)\s+(?:is|are))\s+"
+    r"(?:an?\s+)?(?:idiot|fool|stupid|useless)\W*$",
+    re.IGNORECASE,
+)
+
+
+def is_content_free_abuse(text: str) -> bool:
+    """Return whether redacted text matches the narrow content-free guard.
+
+    This is intentionally not a general toxicity detector. It exposes the
+    exact deterministic predicate used by the bounded scorer so serving does
+    not duplicate or narrow the rule when deciding to abstain from routing.
+    """
+
+    return (
+        isinstance(text, str)
+        and _IRRELEVANT_ABUSE_RE.fullmatch(text.strip()) is not None
+    )
 
 # After placeholder stripping, a text that is only placeholders/brackets
 # and whitespace carries no grievance.
@@ -246,7 +270,19 @@ def score_spam(
             evidence=tuple(evidence),
         )
 
-    # 2. Too short to be actionable (very short filings)
+    # 2. The narrow irrelevant-abuse guard takes precedence over length so the
+    # officer sees the useful reason instead of the screenshot failure's
+    # generic "too short" explanation. Other short generic tokens retain the
+    # established length reason.
+    if is_content_free_abuse(stripped):
+        evidence.append(SpamEvidence(kind="pattern", observed="irrelevant_abuse"))
+        return SpamScore(
+            spam_score=0.78,
+            spam_reason="low_signal_no_grievance",
+            evidence=tuple(evidence),
+        )
+
+    # 3. Too short to be actionable (very short filings)
     if char_len < MIN_CHARS_FOR_CONTENT:
         return SpamScore(
             spam_score=0.85,
@@ -254,7 +290,7 @@ def score_spam(
             evidence=tuple(evidence),
         )
 
-    # 3. Generic / test-like -> "no specific grievance"
+    # 4. Generic / test-like -> "no specific grievance"
     if _is_no_grievance_like(stripped):
         evidence.append(SpamEvidence(kind="pattern", observed="no_grievance"))
         return SpamScore(
@@ -263,7 +299,7 @@ def score_spam(
             evidence=tuple(evidence),
         )
 
-    # 4. Short/vague -> "details inadequate"
+    # 5. Short/vague -> "details inadequate"
     if word_count < DETAILS_INADEQUATE_WORDS or char_len < DETAILS_INADEQUATE_CHARS:
         return SpamScore(
             spam_score=0.68,
@@ -271,7 +307,7 @@ def score_spam(
             evidence=tuple(evidence),
         )
 
-    # 5. Clean — no low-signal flag
+    # 6. Clean — no low-signal flag
     return SpamScore(
         spam_score=0.07,
         spam_reason="clean",

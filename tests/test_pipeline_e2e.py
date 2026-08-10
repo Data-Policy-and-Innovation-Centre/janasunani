@@ -406,7 +406,7 @@ def _try_run_spam_sidecar(config: PipelineConfig, sidecar_path: Path) -> None:
     batch spam scores the lake slice instead (``janasunani.pipeline.spam:main``,
     ``janasunani-spam-score``), and live submissions score through exactly
     the path exercised here: ``janasunani.serving.triage.UnwiredTriageProvider``,
-    which wraps the bounded ``spam-v1-bounded`` scorer via
+    which wraps the bounded ``spam-v1.1-bounded`` scorer via
     ``score_spam_review``. Going through the provider — rather than calling
     ``score_spam`` directly, as this helper used to — means a break anywhere
     in that live wiring (the provider, ``score_spam_review``, or the scorer

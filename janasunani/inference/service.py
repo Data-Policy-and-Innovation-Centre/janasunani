@@ -18,6 +18,7 @@ from typing import Any, Callable, Optional, Protocol
 from janasunani.config import DEFAULT_OLTP_DB_URL, MODELS_DIR, Settings
 from janasunani.inference.ocr import OcrQualityError, OcrResult
 from janasunani.inference.timing import NullTimer, StageTimer, TimingSink
+from janasunani.pipeline.spam import is_content_free_abuse
 from janasunani.pipeline.stages.page_type_classifier import PAGE_TYPE_CLASS_BY_LABEL
 from janasunani.routing.provider import RoutingProvider, router_from_env, router_status
 from janasunani.serving.schemas import (
@@ -26,6 +27,7 @@ from janasunani.serving.schemas import (
     GrievanceResult,
     PIIEntity,
     RedactionResult,
+    RoutingResult,
 )
 from janasunani.serving.triage import (
     TriageProvider,
@@ -50,6 +52,31 @@ SUPPORTED_DOCUMENT_SUFFIXES = frozenset(
 # see PHASE-8C.md): the first real-model demo targets English, so a non-English
 # summary would otherwise be a hallucinated BART guess over unsupported input.
 UNSUPPORTED_LANGUAGE_SUMMARY = "Summary unavailable for non-English submission."
+LOW_SIGNAL_SUMMARY = (
+    "Summary not generated for a low-signal submission; officer review requested."
+)
+
+
+def _low_signal_manual_route(district: Optional[str]) -> RoutingResult:
+    """Abstain from automated routing while keeping the submission reviewable.
+
+    A bounded spam heuristic is not validated to select a department.  When it
+    identifies the exact content-free regression case, send the submission to
+    the generic grievance-cell intake with zero confidence instead of feeding a
+    fabricated ``Uncategorized`` label into whichever automated router is live.
+    """
+
+    from janasunani.routing.rules import FALLBACK_DEPT, FALLBACK_DESIGNATION
+
+    district_name = " ".join((district or "").split()) or "State"
+    return RoutingResult(
+        dept=FALLBACK_DEPT,
+        office=f"Public Grievance Cell, {district_name}",
+        designation=FALLBACK_DESIGNATION,
+        escalation_authority=f"Collectorate, {district_name}",
+        confidence=0.0,
+        method="fallback",
+    )
 
 
 class InferenceInputError(ValueError):
@@ -222,11 +249,32 @@ class PipelineGrievanceProcessor:
             with timer.stage("detect_language"):
                 language = self._detect_language(classifier_text)
                 is_english = self._is_english_compatible(classifier_text)
-            if is_english:
+            bounded_no_grievance_review = (
+                triage.spam.decision == "review"
+                and triage.spam.reason_code == "low_signal_no_grievance"
+            )
+            observed_content_free_regression = (
+                bounded_no_grievance_review
+                and is_content_free_abuse(classifier_text)
+            )
+            if observed_content_free_regression:
+                # Triage runs on redacted text before downstream models.  A
+                # named, content-free regression does not need model calls, and
+                # a language-detector guess must not become the explanation for
+                # why no summary was produced. Broader bounded-spam reviews stay
+                # advisory and continue through the normal category/routing
+                # path; only this exact regression takes manual intake.
+                category = "Uncategorized"
+                summary = LOW_SIGNAL_SUMMARY
+                with timer.stage("route"):
+                    routing = _low_signal_manual_route(district)
+            elif is_english:
                 with timer.stage("categorize"):
                     category = self._categorizer.predict(classifier_text)
                 with timer.stage("summarize"):
                     summary = self._summarizer.summarize(classifier_text)
+                with timer.stage("route"):
+                    routing = self._router.route(category=category, district=district)
             else:
                 # Same gate as the categorizer: BART is only warmed for the
                 # English demo target, and would otherwise hallucinate a summary
@@ -234,8 +282,8 @@ class PipelineGrievanceProcessor:
                 # document paths share this single check).
                 category = "Uncategorized"
                 summary = UNSUPPORTED_LANGUAGE_SUMMARY
-            with timer.stage("route"):
-                routing = self._router.route(category=category, district=district)
+                with timer.stage("route"):
+                    routing = self._router.route(category=category, district=district)
 
             result = GrievanceResult(
                 id=grievance_id,
@@ -327,6 +375,12 @@ def _guard_page_type_predict(
 
 
 def _detect_language(text: str) -> str:
+    # langdetect is unstable on very short strings (the observed regression
+    # labelled "i am an idiot" as Welsh).  Abstain until there is enough text
+    # for a language label to be meaningful; actionability/low-signal triage
+    # still runs before this on the redacted input.
+    if not isinstance(text, str) or len(text.strip()) < 30:
+        return "unknown"
     try:
         from langdetect import DetectorFactory, detect
 
@@ -639,9 +693,9 @@ def _triage_check() -> DependencyCheck:
     """Which spam scorer is live, and whether it is learned or heuristic.
 
     Reported so the distinction cannot be lost between the code and the
-    narrative: what ships today is ``spam-v1-bounded``, a deterministic
-    cascade, and a demo that calls it a trained model is claiming #74 without
-    having built it.
+    narrative: the bounded ``spam-v1.1-bounded`` cascade remains the safe
+    fallback, while an optional checksummed actionability model is a separate
+    advisory output. Neither may block a submission.
     """
     try:
         name, ok, detail = triage_status()

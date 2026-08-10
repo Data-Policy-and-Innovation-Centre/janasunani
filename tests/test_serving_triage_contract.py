@@ -191,6 +191,21 @@ def test_low_signal_advisory_records_ocr_quality_evidence_but_still_abstains():
     assert 0.0 <= collapsed.spam_score <= 1.0
 
 
+def test_bounded_spam_review_rejects_boolean_score_and_conflicting_reason():
+    base = {
+        "decision": "review",
+        "reason_code": "low_signal_no_grievance",
+        "spam_score": 0.78,
+        "spam_reason": "low_signal_no_grievance",
+        "evidence": ({"kind": "repetition_collapse", "observed": False},),
+        "method": "test",
+    }
+    with pytest.raises(ValidationError, match="numeric"):
+        SpamReview(**{**base, "spam_score": True})
+    with pytest.raises(ValidationError, match="must match"):
+        SpamReview(**{**base, "spam_reason": "length_too_short"})
+
+
 def test_unwired_live_triage_is_explicitly_abstained_pending_validation():
     triage = TriageResult()
     dumped = triage.model_dump(mode="json")

@@ -7,7 +7,9 @@ import pytest
 
 from janasunani.inference.ocr import OcrQualityError, OcrResult
 from janasunani.inference.service import (
+    LOW_SIGNAL_SUMMARY,
     UNSUPPORTED_LANGUAGE_SUMMARY,
+    _detect_language,
     InferenceInputError,
     PipelineGrievanceProcessor,
     _guard_page_type_predict,
@@ -354,6 +356,100 @@ def test_non_english_is_uncategorized_and_uses_routing_fallback():
     assert result.classification.language == "or"
     assert result.summary == UNSUPPORTED_LANGUAGE_SUMMARY
     assert result.routing.method == "fallback"
+
+
+def test_screenshot_irrelevant_text_skips_models_for_the_right_reason():
+    class ExplodingRouter:
+        def route(self, **_kwargs):
+            raise AssertionError("bounded spam must not steer an automated router")
+
+    categorizer = RecordingCategorizer()
+    summarizer = RecordingSummarizer()
+    processor = PipelineGrievanceProcessor(
+        ocr=lambda _document_bytes, _document_name: OcrResult("unused", 1, []),
+        redact=_redact,
+        detect_pii=_detect,
+        categorizer=categorizer,
+        summarizer=summarizer,
+        router=ExplodingRouter(),
+        is_english_compatible=lambda _text: False,
+        detect_language=lambda _text: "cy",
+        now=lambda: datetime(2026, 7, 10, 8, 0, tzinfo=UTC),
+    )
+
+    result = _process(processor, text="i am an idiot")
+
+    assert result.triage.spam.reason_code == "low_signal_no_grievance"
+    assert result.triage.spam.decision == "review"
+    assert result.classification.category == "Uncategorized"
+    assert result.summary == LOW_SIGNAL_SUMMARY
+    assert result.routing.method == "fallback"
+    assert result.routing.confidence == 0.0
+    assert result.routing.office == "Public Grievance Cell, Cuttack"
+    assert categorizer.inputs == []
+    assert summarizer.inputs == []
+
+
+def test_content_free_variant_uses_state_manual_intake_for_blank_district():
+    processor = PipelineGrievanceProcessor(
+        ocr=lambda _document_bytes, _document_name: OcrResult("unused", 1, []),
+        redact=_redact,
+        detect_pii=_detect,
+        categorizer=RecordingCategorizer(),
+        summarizer=RecordingSummarizer(),
+        router=RuleRouter(),
+        is_english_compatible=lambda _text: True,
+        detect_language=lambda _text: "en",
+        now=lambda: datetime(2026, 7, 10, 8, 0, tzinfo=UTC),
+    )
+
+    result = _process(processor, text="You are useless!", district="   ")
+
+    assert result.triage.spam.reason_code == "low_signal_no_grievance"
+    assert result.summary == LOW_SIGNAL_SUMMARY
+    assert result.routing.office == "Public Grievance Cell, State"
+    assert result.routing.confidence == 0.0
+
+
+def test_short_text_language_detection_abstains_instead_of_inventing_welsh():
+    assert _detect_language("i am an idiot") == "unknown"
+
+
+def test_bounded_spam_false_positive_does_not_change_category_or_routing():
+    class ForcedReviewProvider:
+        def assess(self, **_kwargs):
+            return TriageResult(
+                spam=SpamReview(
+                    decision="review",
+                    reason_code="low_signal_no_grievance",
+                    spam_score=0.78,
+                    spam_reason="low_signal_no_grievance",
+                    evidence=(
+                        {
+                            "kind": "repetition_collapse",
+                            "observed": False,
+                        },
+                    ),
+                    method="forced-test-review",
+                )
+            )
+
+    categorizer = RecordingCategorizer("Water Supply")
+    summarizer = RecordingSummarizer()
+    processor = _processor(
+        categorizer=categorizer,
+        summarizer=summarizer,
+        triage_provider=ForcedReviewProvider(),
+    )
+
+    result = _process(processor)
+
+    expected = "[NAME] reports that the village pump is broken. Call [PHONE]."
+    assert categorizer.inputs == [expected]
+    assert summarizer.inputs == [expected]
+    assert result.classification.category == "Water Supply"
+    assert result.routing.dept == "Rural Water Supply & Sanitation"
+    assert result.routing.method == "rules"
 
 
 def test_non_english_pdf_skips_bart_summary_on_class_one_pages():

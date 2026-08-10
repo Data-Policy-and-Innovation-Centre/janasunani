@@ -2,7 +2,7 @@
 
 Live submissions are scored over redacted text only (never raw
 ``complaints.grievance``).  The spam signal is bounded
-(pipeline/spam.py, spam-v1-bounded) — repetition collapse, length, and
+(pipeline/spam.py, spam-v1.1-bounded) — repetition collapse, length, and
 low-signal patterns — and is advisory only (never blocks submission).
 Duplicate matching remains slice-scoped and unavailable live.
 
