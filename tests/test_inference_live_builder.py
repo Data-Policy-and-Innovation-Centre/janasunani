@@ -28,6 +28,13 @@ from janasunani.inference.service import (  # noqa: E402
 )
 from janasunani.pipeline.stages.ocr_extraction import page_renderer  # noqa: E402
 from janasunani.serving.api import create_app  # noqa: E402
+from janasunani.tracking.release import (  # noqa: E402
+    RELEASE_MANIFEST_ENV_VAR,
+    ModelRelease,
+    artifact_sha256,
+    new_manifest,
+    write_manifest,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -58,6 +65,78 @@ def _write_dummy_model_artifacts(root: Path) -> None:
     (page_type_dir / "config.json").write_text("{}")
     (page_type_dir / "model.safetensors").write_bytes(b"")
     (page_type_dir / "preprocessor_config.json").write_text("{}")
+def test_preflight_reports_immutable_release_versions_without_hosted_endpoint(
+    tmp_path, monkeypatch
+):
+    release_dir = tmp_path / "release-1"
+    artifact = release_dir / "artifacts" / "actionability"
+    artifact.mkdir(parents=True)
+    (artifact / "model.joblib").write_bytes(b"weights")
+    manifest = new_manifest(
+        release_id="release-1",
+        git_sha="a" * 40,
+        models={
+            "actionability": ModelRelease(
+                name="actionability",
+                provider="local_sklearn",
+                trust_tier="local",
+                version="12",
+                artifact_path="artifacts/actionability",
+                artifact_sha256=artifact_sha256(artifact),
+            ),
+            "sarvam_digitise": ModelRelease(
+                name="sarvam_digitise",
+                provider="sarvam",
+                trust_tier="authorized_hosted",
+                version="observed-2026-08-01",
+                endpoint="https://secret-provider.example/jobs",
+            ),
+        },
+    )
+    manifest_path = release_dir / "release-manifest.json"
+    write_manifest(manifest_path, manifest)
+    monkeypatch.setenv(RELEASE_MANIFEST_ENV_VAR, str(manifest_path))
+
+    release_check = next(check for check in preflight(tmp_path) if check.name == "model release")
+
+    assert release_check.ok is True
+    assert "release_id=release-1" in release_check.detail
+    assert "actionability@12" in release_check.detail
+    assert "sarvam_digitise@observed-2026-08-01" in release_check.detail
+    assert "secret-provider" not in release_check.detail
+
+
+def test_preflight_reports_checksum_drift_in_active_release(tmp_path, monkeypatch):
+    release_dir = tmp_path / "release-1"
+    artifact = release_dir / "artifacts" / "actionability"
+    artifact.mkdir(parents=True)
+    model_file = artifact / "model.joblib"
+    model_file.write_bytes(b"weights")
+    manifest_path = release_dir / "release-manifest.json"
+    write_manifest(
+        manifest_path,
+        new_manifest(
+            release_id="release-1",
+            git_sha="a" * 40,
+            models={
+                "actionability": ModelRelease(
+                    name="actionability",
+                    provider="local_sklearn",
+                    trust_tier="local",
+                    version="12",
+                    artifact_path="artifacts/actionability",
+                    artifact_sha256=artifact_sha256(artifact),
+                )
+            },
+        ),
+    )
+    model_file.write_bytes(b"drifted")
+    monkeypatch.setenv(RELEASE_MANIFEST_ENV_VAR, str(manifest_path))
+
+    release_check = next(check for check in preflight(tmp_path) if check.name == "model release")
+
+    assert release_check.ok is False
+    assert "checksum mismatch" in release_check.detail
 
 
 def test_build_processor_fails_closed_when_local_models_are_missing(tmp_path):

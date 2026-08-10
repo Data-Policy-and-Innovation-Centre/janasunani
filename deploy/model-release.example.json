@@ -1,0 +1,141 @@
+{
+  "release_id": "replace-with-reviewed-release-id",
+  "git_sha": "replace-with-full-git-sha",
+  "models": {
+    "format_classifier": {
+      "registry_name": "janasunani-format-classifier",
+      "alias": "production",
+      "provider": "local_xgboost",
+      "trust_tier": "local",
+      "artifact_sha256": "replace-with-approved-sha256",
+      "parameters": {
+        "feature_contract": "format-classifier-v3"
+      },
+      "input_schema_version": "page-image/v1",
+      "output_schema_version": "page-format/v1",
+      "benchmark_run_id": "replace-with-governed-run-id",
+      "dataset_id": "replace-with-dataset-fingerprint",
+      "gold_id": "replace-with-gold-set-id"
+    },
+    "page_type_classifier": {
+      "registry_name": "janasunani-page-type-classifier",
+      "alias": "production",
+      "provider": "local_transformers",
+      "trust_tier": "local",
+      "artifact_sha256": "replace-with-approved-sha256",
+      "parameters": {
+        "target_grievance_class": 1,
+        "local_files_only": true
+      },
+      "input_schema_version": "page-image/v1",
+      "output_schema_version": "page-type/v1",
+      "benchmark_run_id": "replace-with-governed-run-id",
+      "dataset_id": "replace-with-dataset-fingerprint",
+      "gold_id": "replace-with-gold-set-id"
+    },
+    "actionability": {
+      "registry_name": "janasunani-actionability",
+      "alias": "production",
+      "provider": "local_sklearn",
+      "trust_tier": "local",
+      "artifact_sha256": "replace-with-approved-sha256",
+      "parameters": {
+        "taxonomy_version": "actionability-v1",
+        "review_threshold": 0.7
+      },
+      "input_schema_version": "redacted-text/v1",
+      "output_schema_version": "actionability-v1",
+      "benchmark_run_id": "replace-with-governed-run-id",
+      "dataset_id": "replace-with-dataset-fingerprint",
+      "gold_id": "replace-with-gold-set-id"
+    },
+    "routing_incidence": {
+      "registry_name": "janasunani-routing-incidence",
+      "alias": "production",
+      "provider": "local_empirical_bayes",
+      "trust_tier": "local",
+      "artifact_sha256": "replace-with-approved-sha256",
+      "parameters": {
+        "alpha": 100.0,
+        "history_years": 1,
+        "use_subcategory": false,
+        "outcome_optimized": false
+      },
+      "input_schema_version": "category-district/v1",
+      "output_schema_version": "routing-result/v1",
+      "benchmark_run_id": "replace-with-governed-run-id",
+      "dataset_id": "replace-with-dataset-fingerprint"
+    },
+    "categorizer": {
+      "registry_name": "janasunani-categorizer",
+      "alias": "production",
+      "provider": "local_transformers",
+      "trust_tier": "local",
+      "artifact_sha256": "replace-with-approved-sha256",
+      "parameters": {
+        "language_gate": "english-compatible",
+        "local_files_only": true
+      },
+      "input_schema_version": "redacted-text/v1",
+      "output_schema_version": "category/v1",
+      "benchmark_run_id": "replace-with-governed-run-id",
+      "dataset_id": "replace-with-dataset-fingerprint",
+      "gold_id": "replace-with-gold-set-id"
+    },
+    "summarizer": {
+      "registry_name": "janasunani-summarizer",
+      "alias": "production",
+      "provider": "local_transformers",
+      "trust_tier": "local",
+      "artifact_sha256": "replace-with-approved-sha256",
+      "parameters": {
+        "max_input_tokens": 1024,
+        "min_output_tokens": 20,
+        "max_output_tokens": 100,
+        "num_beams": 4,
+        "local_files_only": true
+      },
+      "input_schema_version": "redacted-text/v1",
+      "output_schema_version": "summary/v1",
+      "benchmark_run_id": "replace-with-governed-run-id",
+      "dataset_id": "replace-with-dataset-fingerprint",
+      "gold_id": "replace-with-gold-set-id"
+    },
+    "deepseek_ocr": {
+      "registry_name": "janasunani-deepseek-ocr",
+      "alias": "candidate",
+      "provider": "local_transformers",
+      "trust_tier": "experimental",
+      "artifact_sha256": "replace-with-approved-sha256",
+      "parameters": {
+        "attn_implementation": "eager",
+        "base_size": 1024,
+        "image_size": 640,
+        "crop_mode": true,
+        "repetition_penalty": 1.2,
+        "no_repeat_ngram_size": 3,
+        "temperature": 0.7,
+        "local_files_only": true
+      },
+      "input_schema_version": "page-image/v1",
+      "output_schema_version": "ocr-text/v1",
+      "benchmark_run_id": "replace-with-governed-run-id",
+      "dataset_id": "replace-with-dataset-fingerprint",
+      "gold_id": "replace-with-transcription-gold-id"
+    },
+    "sarvam_digitise": {
+      "provider": "sarvam",
+      "trust_tier": "authorized_hosted",
+      "version": "replace-with-observed-provider-model-id",
+      "endpoint": "sarvam-digitise",
+      "parameters": {
+        "submission_rate_per_minute": 10,
+        "poll_seconds": 5,
+        "attempts": 3
+      },
+      "input_schema_version": "provider-request/v1",
+      "output_schema_version": "sarvam-digitise/v1",
+      "benchmark_run_id": "replace-with-cached-evidence-run-id"
+    }
+  }
+}

@@ -615,6 +615,50 @@ def _triage_check() -> DependencyCheck:
     return DependencyCheck(f"triage ({name})", ok, detail, required=False)
 
 
+def _model_release_check() -> DependencyCheck:
+    """Expose the active immutable model release without revealing endpoints.
+
+    Serving never resolves MLflow aliases here. This check only reads the
+    local active pointer/manifest, validates every pinned local artifact, and
+    reports immutable versions plus short checksums for operator visibility.
+    """
+    try:
+        from janasunani.tracking.release import (
+            active_manifest_path,
+            load_manifest,
+            resolve_manifest_artifact,
+        )
+
+        path = active_manifest_path()
+        if path is None:
+            return DependencyCheck(
+                "model release",
+                False,
+                "no active immutable release manifest; using operator/DVC resolution",
+                required=False,
+            )
+        manifest = load_manifest(path)
+        versions = []
+        for name in sorted(manifest.models):
+            model = manifest.models[name]
+            if model.artifact_path is not None:
+                resolve_manifest_artifact(name, manifest_path=path)
+                identity = f"sha256:{model.artifact_sha256[:12]}"
+            else:
+                identity = "authorized-hosted"
+            versions.append(f"{name}@{model.version} ({identity})")
+    except Exception as exc:  # pragma: no cover - defensive; never raise
+        return DependencyCheck(
+            "model release", False, f"invalid active release: {exc}", required=False
+        )
+    return DependencyCheck(
+        "model release",
+        True,
+        f"release_id={manifest.release_id}; " + ", ".join(versions),
+        required=False,
+    )
+
+
 # The exact columns janasunani/serving/history.py's LakeHistory.search()
 # selects. Duplicated here (not imported) rather than sharing a constant with
 # janasunani.serving.history: preflight lives in this module specifically so
@@ -800,6 +844,7 @@ def preflight(models_dir: str | Path | None = None) -> list[DependencyCheck]:
     # OLTP_DB_URL is explicitly set: it opens a real, timeout-bounded
     # connection (_OLTP_PROBE_TIMEOUT_S) rather than just checking presence.
     checks.append(_routing_mappings_check())
+    checks.append(_model_release_check())
     checks.append(_router_check())
     checks.append(_triage_check())
     checks.append(_lake_check())
