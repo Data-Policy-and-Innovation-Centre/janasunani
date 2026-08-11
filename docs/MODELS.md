@@ -17,12 +17,12 @@ serving fallback; the materializer does not itself pull or verify bytes from DVC
 | OCR, GPU candidate | `deepseek-ai/DeepSeek-OCR` | Must be locally mirrored and revision-pinned for production | BF16, eager attention, prompt `Free OCR. Oriya or English.`, base 1024, image 640, crop on, repetition 1.2, no-repeat 3, temperature 0.7 | Candidate; no governed scorecard |
 | OCR/extract hosted | Sarvam Vision 1.5 | Authorized hosted endpoint | Then-published list price: Digitise ₹0.50/page, Extract ₹1/page; actual billing unavailable; schema `v1`; 10 submissions/min; 5 s polling; 3 attempts | Cached divergence/coverage only; no latency or accuracy claim |
 | PII | Presidio + project recognizers | Local code/model dependencies | Entity-specific recognizers; redacted text is authoritative downstream | Recall measured; precision and language splits incomplete |
-| Summary | `facebook/bart-large-cnn` family | Pinned local release/DVC artifact; remote ID requires explicit development opt-in | Input 1024 tokens, output 20–100, 4 beams | Incumbent; current quality unmeasured |
-| Category incumbent | MuRIL classifier | DVC `models/categorizer` | English-only gate; grievance + redacted page text | Benchmark pending governed gold |
-| Category CPU candidate | word+character hashing + probabilistic SGD | Checksummed local artifact (to be promoted only after gold evaluation) | Validation-selected alpha and abstention; group-disjoint split | Harness implemented; no release claim |
-| Actionability review candidate | word+character TF-IDF logistic regression | Aggregate evaluation evidence only; binary candidate is intentionally not exported into the five-class serving slot | Binary actionable-vs-review objective; validation-selected `C=1`, threshold `0.4226656541`; validation: 91.67% accuracy, 100% review recall, 66.67% precision, 10.00% actionable-review rate (n=60); five-class reasons retained only for evaluation breakdowns; weak labels train-only | Frontier-adjudicated development test: 91.67% accuracy, 100% review recall, 73.68% precision (n=60); no `out_of_scope` support; not release-eligible or serving-compatible |
-| Actionability encoder probe | frozen local MuRIL + balanced logistic probe | Existing local categorizer bytes, fingerprint `sha256:8a94d0e…` | Masked-mean pooling, L2 normalization, 256 tokens, frozen encoder, validation-selected `C=10`, threshold `0.5500819087`; validation: 90.00% accuracy, 80.00% review recall, 66.67% precision, 8.00% actionable-review rate (n=60) | Development diagnostic: 81.67% accuracy / 64.29% review recall; did not beat TF-IDF |
-| Actionability English diagnostic | frozen `all-MiniLM-L6-v2` revision `c9745ed…` + balanced logistic probe | Cached local snapshot only | Masked-mean pooling, L2 normalization, 256 tokens, frozen encoder, validation-selected `C=10`, threshold `0.3047001064`; validation: 90.00% accuracy, 80.00% review recall, 66.67% precision, 8.00% actionable-review rate (n=60) | Development diagnostic: 83.33% accuracy / 71.43% review recall; English-oriented and did not beat TF-IDF |
+| Summary | `facebook/bart-large-cnn` revision `37f520fa…` | Pinned local release/DVC artifact; remote ID requires explicit development opt-in | Input 1024 tokens, output 20–100, 4 beams | Single-frontier-judge enriched development set (n=30): 65.48% critical-fact recall, 0/26 unsupported/contradictory cases, 8/26 usable without edit, 4/26 residual-PII cases; not release-eligible |
+| Category incumbent | MuRIL classifier | DVC `models/categorizer` | English-only gate; grievance + redacted page text | Historical 71.04% typed-subject reference only; not compared on the new governed set |
+| Category CPU candidate | word+character hashing + probabilistic SGD | Development evaluator; no promoted serving artifact | Validation-selected `alpha=1e-5` and abstention over exact-text-group-disjoint 2024 cohorts | Viewed developmental test (n=3,160): 46.55% top-1, 90.89% top-3, 36.49% macro-F1; historical-label agreement only, not policy correctness or a release result |
+| Actionability review candidate | word+character TF-IDF logistic regression | Checksummed DVC development artifact in `models/actionability`; binary serving objective | `artifact_format=2`; `actionable_vs_officer_review`; validation-selected `C=1`, threshold `0.4350314715`; validation: 93.22% accuracy, 100% review recall, 71.43% precision, 8.16% actionable-review rate (n=59); weak labels train-only | Serving-compatible advisory review candidate; canonical frontier-adjudicated development test: 94.74% accuracy, 100% review recall, 81.25% precision (n=57); cannot supply five-class reasons, has no `out_of_scope` support, and is not release-eligible |
+| Actionability encoder probe | frozen local MuRIL + balanced logistic probe | Existing local categorizer bytes, fingerprint `sha256:8a94d0e…` | Masked-mean pooling, L2 normalization, 256 tokens, frozen encoder, validation-selected `C=10`, threshold `0.5355985173`; validation: 91.53% accuracy, 80.00% review recall, 72.73% precision, 6.12% actionable-review rate (n=59) | Canonical development diagnostic: 85.96% accuracy / 69.23% review recall (n=57); did not beat TF-IDF |
+| Actionability English diagnostic | frozen `all-MiniLM-L6-v2` revision `c9745ed…` + balanced logistic probe | Cached local snapshot only | Historical 180-row run: masked-mean pooling, L2 normalization, 256 tokens, frozen encoder, validation-selected `C=10`, threshold `0.3047001064` | Historical diagnostic only: the run admitted six uncertain resolver labels; English-oriented and did not beat TF-IDF |
 | Spam guardrail | `spam-v1.1-bounded` rules | Local code | Bounded advisory score; no auto-reject | Exact regression evidence only |
 | Routing candidate | empirical-Bayes destination incidence | Checksummed local artifact to be added | Category+district live; validation-selected smoothing/history; hierarchical backoff | Developmental chronological holdout |
 
@@ -56,12 +56,16 @@ metadata against the release entry are a planned control, not yet implemented.
 
 The release/materialization code and local resolution order are implemented;
 no reviewed production manifest has yet been activated. An operator override
-remains first for recovery, but health/preflight must make that override visible
-before the registry platform is considered complete.
+remains first for recovery. Health/preflight marks the release check unhealthy
+and names the shadowed model whenever an override replaces manifest-pinned
+bytes; it does not disclose the override path.
 
-The actionability serving seam requires probabilities for all five taxonomy
-labels. The current frontier benchmark trained a binary review classifier
-because the development sample had no defensible `out_of_scope` example.
-Consequently it is evidence about candidate discrimination, not an artifact
-that can be promoted. A serving artifact requires officer-confirmed support for
-all five classes and a newly frozen release test.
+The actionability serving seam accepts either the original five-class reason
+objective or the binary `actionable_vs_officer_review` objective. The current
+checksummed binary artifact can therefore be loaded for advisory review: it can
+ask an officer to inspect a case, but it never rejects a filing or invents one
+of the four non-actionable reasons. That runtime compatibility is not release
+approval. The development test has been viewed, its frontier adjudications are
+not officer-confirmed, and it has no defensible `out_of_scope` support. The
+example release entry consequently uses the `candidate` alias and still needs
+an officer-reviewed, newly frozen release test before promotion.

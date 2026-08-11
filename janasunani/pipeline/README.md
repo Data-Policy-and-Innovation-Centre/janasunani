@@ -66,10 +66,14 @@ stage. The live serving path runs `spam-v1.1-bounded` only after redaction and
 emits a numeric, auditable review/abstention signal. Its narrow content-free
 guard skips automated category, summary and route selection in favor of manual
 grievance-cell intake; broader low-signal findings remain advisory and continue
-through the normal path. An optional checksummed five-class actionability
-artifact can add a separate advisory result, but the current binary development
-benchmark is not compatible with that serving contract and produced no
-deployable artifact. Neither signal changes submission status or auto-rejects.
+through the normal path. An optional checksummed actionability artifact can add
+a separate advisory result. The serving seam accepts either the original
+five-class reason objective or `artifact_format=2`'s binary
+`actionable_vs_officer_review` objective. The current binary development
+artifact can request review without inventing a reason label, but it is a
+viewed, frontier-adjudicated candidate with no `out_of_scope` support and has
+not been promoted in a reviewed release. Neither signal changes submission
+status or auto-rejects.
 
 ## The dependency split (why `--stages` and lazy imports exist)
 

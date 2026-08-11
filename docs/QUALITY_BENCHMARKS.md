@@ -1,6 +1,6 @@
 # Pipeline quality benchmark register
 
-**Snapshot:** 10 August 2026. **Purpose:** separate measured quality from
+**Snapshot:** 11 August 2026. **Purpose:** separate measured quality from
 developmental estimates, weak supervision, regression evidence, and proposed
 experiments. A number can enter the value-add report only with its denominator,
 split policy, uncertainty, and limitations on the same page.
@@ -27,7 +27,7 @@ grouping is unavailable, so the split does not claim campaign isolation. The
 
 | Live features | Test n | Top-1 agreement (95% Wilson CI) | Macro-F1 | Top-3 | ECE |
 |---|---:|---:|---:|---:|---:|
-| Category + district, all eligible | 208,267 | 45.15% (44.94–45.36) | 19.79% | 69.05% | 11.37% |
+| Category + district, all eligible | 208,267 | 45.14% (44.94–45.36) | 19.79% | 69.04% | 11.37% |
 | Category + district, informative categories | 142,181 | 54.96% (54.70–55.22) | 25.17% | 79.68% | 13.15% |
 | Subcategory upper bound, all eligible | 208,267 | 55.05% (54.83–55.26) | 30.37% | 74.56% | 5.33% |
 | Subcategory upper bound, informative categories | 142,181 | 69.15% (68.91–69.39) | 36.50% | 86.53% | 3.87% |
@@ -97,8 +97,11 @@ The intervals remain wide. Frozen local MuRIL did not beat TF-IDF, reaching
 The original 180-row TF-IDF/MuRIL/MiniLM comparison is retained separately as
 [`evidence/actionability_frontier_benchmark.json`](evidence/actionability_frontier_benchmark.json),
 but it admitted six uncertain resolver labels and is historical evidence only.
-The binary benchmark is not exportable to the five-class serving interface; no
-actionability artifact was produced or activated from these results. No
+The benchmark now exports a checksummed `artifact_format=2` binary model under
+`models/actionability`. Serving can load that artifact for the
+`actionable_vs_officer_review` objective, so it can emit an advisory review
+request while preserving every filing. It does not predict the four
+non-actionable reasons and has not been activated in a reviewed release. No
 candidate is release-eligible. The next set needs officer review, explicit
 outside-purview sampling, duplicate-group isolation, language/source strata and
 a newly frozen test split.
@@ -111,17 +114,59 @@ bounded short-text advisory.
 
 ## Categorization and summary
 
-The categorization harness now supports group-disjoint splits, word+character
-features, validation-only hyperparameter/abstention selection, top-k,
-calibration, per-class and language slices. No governed redacted-text gold set
-has yet been frozen, so no new categorization number is reportable. The current
-MuRIL artifact remains an incumbent to benchmark, not a validated production
-champion.
+The categorization harness now has a privacy-screened 2024 development
+benchmark over redacted typed grievance text. Exact normalized text groups are
+kept in one split, so repetitions cannot leak across the chronological cohorts:
+January–June training (n=13,030), July–September validation (n=4,309), and
+October–December test (n=3,160). Eighteen historically recorded categories had
+at least five examples in every split. The 2024 test was viewed while improving
+the harness, so this is **developmental held-out** evidence, not a release gate.
 
-There is no current summary-quality benchmark. A release scorecard must measure
-critical-fact recall, unsupported-fact and contradiction rates, PII leakage,
-officer usefulness (0–3), usable-without-edit rate, edit time/distance, and
-correct skip/abstention, paired by language and typed/scan source.
+Validation selected the local word+character hashing SGD candidate with
+`alpha=1e-5`. Its later-period test results were:
+
+| Historical category agreement metric | Viewed development test |
+|---|---:|
+| Top-1 | 46.55% (44.82–48.29) |
+| Top-3 | 90.89% |
+| Top-5 | 95.19% |
+| Macro-F1 | 36.49% |
+| Expected calibration error | 26.41% |
+
+The validation-selected abstention rule did not meet its selective constraints;
+it covered 41.52% of the test with 61.36% accuracy. The full result therefore
+supports a ranked top-three decision aid, not automatic categorization. It
+measures agreement with historical administrative labels, not whether those
+labels were correct policy classifications. There is no promoted serving
+artifact, the test is already viewed, and language remains unadjudicated. A
+future officer-confirmed, newly frozen and source/language-stratified set is
+required for a release claim. The current MuRIL artifact remains an incumbent
+to compare on that same governed set; its 71.04% typed-subject figure is a
+historical reference, not a like-for-like result.
+
+The first current summary baseline uses local-only BART revision `37f520fa…`
+on a deterministic, enriched 30-case sample from the same redacted typed-text
+test pool. One Codex agent context applied the committed rubric to private
+source/candidate pairs; only opaque structured judgments and aggregate
+provenance are governed. It is single-judge **development evidence**, not an
+officer-confirmed release scorecard or a prevalence estimate.
+
+| Summary metric | Enriched development result |
+|---|---:|
+| Critical-fact recall | 55/84 = 65.48% (54.83–74.76) |
+| Unsupported-claim cases | 0/26 (upper 95% bound 12.87%) |
+| Contradiction cases | 0/26 (upper 95% bound 12.87%) |
+| Usable without edit | 8/26 = 30.77% (16.50–49.99) |
+| Residual-PII cases in generated output | 4/26 = 15.38% (6.15–33.53) |
+| Correct skip behavior | 20/30 = 66.67% (48.78–80.77) |
+
+The failure pattern is operationally important: all six cases the judge said
+should be skipped received a draft, while all four coherent Odia cases were
+skipped by the English-only gate. Estimated frontier-judge edit time is not
+officer time. Before promotion, the pipeline needs a post-summary privacy gate,
+better evidence-based abstention, and a newly frozen paired officer review by
+language and typed/scan source. The required `summary_release` artifact remains
+missing and continues to block publication.
 
 ## Sarvam Vision — cached evidence, no new calls
 

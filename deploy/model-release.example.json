@@ -35,19 +35,23 @@
     },
     "actionability": {
       "registry_name": "janasunani-actionability",
-      "alias": "production",
+      "alias": "candidate",
       "provider": "local_sklearn",
-      "trust_tier": "local",
-      "artifact_sha256": "replace-with-approved-sha256",
+      "trust_tier": "experimental",
+      "artifact_sha256": "replace-with-approved-actionability-artifact-sha256",
       "parameters": {
+        "artifact_format": 2,
+        "objective": "actionable_vs_officer_review",
         "taxonomy_version": "actionability-v1",
-        "review_threshold": 0.7
+        "review_threshold": 0.4350314715184363,
+        "advisory_only": true,
+        "auto_reject": false
       },
       "input_schema_version": "redacted-text/v1",
       "output_schema_version": "actionability-v1",
-      "benchmark_run_id": "replace-with-governed-run-id",
-      "dataset_id": "replace-with-dataset-fingerprint",
-      "gold_id": "replace-with-gold-set-id"
+      "benchmark_run_id": "replace-with-governed-candidate-run-id",
+      "dataset_id": "replace-with-canonical-development-dataset-fingerprint",
+      "gold_id": "replace-with-canonical-development-gold-id"
     },
     "routing_incidence": {
       "registry_name": "janasunani-routing-incidence",

@@ -48,13 +48,13 @@ classifier also warned that its scikit-learn 1.8 artifact was loaded under 1.9.
 
 | Component | Current development result | What is still missing |
 |---|---|---|
-| Actionability | Validation-selected `tfidf_word_char`, n=57: accuracy 94.74%, F1 89.66%; review recall 13/13 (100%), review precision 13/16 (81.25%); 3/44 actionable cases sent to review | Officer-confirmed, frozen, five-class release test; current binary model is not serving-compatible or release-eligible |
+| Actionability | Validation-selected `tfidf_word_char`, n=57: accuracy 94.74%, F1 89.66%; review recall 13/13 (100%), review precision 13/16 (81.25%); 3/44 actionable cases sent to review; checksummed binary artifact is serving-compatible for advisory review | Officer-confirmed, newly frozen release test; the binary objective does not supply five-class reasons and is not release-eligible |
 | Administrative weak labels | 106,683 valid single-label cases; 67 conflicts; max office total-variation distance 0.522 (pooling gate fails) | These are train-only weak labels, not accuracy evidence |
 | PII redaction | 480 scored spans: typed overlap recall 77.92%, exact recall 55.00%; coverage-overlap recall 78.33%; 49 spans excluded by policy | Precision, language slices, and a release-grade officer gold set |
 | Historical routing, all categories | n=208,267: top-1 45.14%, top-3 69.04%, top-5 79.61%; macro F1 19.79%, balanced accuracy 18.76%, log loss 1.970, ECE 0.114 | Correct-authority adjudication and a frozen release test |
 | Historical routing, informative categories | n=142,181: top-1 54.96%, top-3 79.68%; macro F1 25.17%, balanced accuracy 25.42%, log loss 1.595, ECE 0.132 | Same as above; agreement with history is not legal correctness |
-| Categorization | Historical MuRIL reference only: 71.04% on typed subject lines | Production-domain, group-disjoint, officer-confirmed scorecard |
-| Summary | Historical usefulness reference only: 1.9/3 | Paired officer factuality/usefulness review |
+| Categorization | 2024 chronological, exact-text-group-disjoint historical-label agreement; viewed development test n=3,160: top-1 46.55%, top-3 90.89%, macro-F1 36.49% | Officer-confirmed, newly frozen release scorecard; this measures historical labels, not policy correctness |
+| Summary | Local BART on a deterministic enriched redacted-only development set (n=30): 55/84 critical facts retained (65.48%); 0/26 unsupported or contradictory cases; 8/26 usable without edit; 4/26 residual-PII cases; all 6 judge-marked skip cases were summarized and all 4 coherent Odia cases were skipped | Paired officer review on a newly frozen typed/scan, language-stratified release set; post-summary redaction and abstention must improve before promotion |
 | Sarvam OCR | 56 cached paired successes from an interrupted run; every normalized pair differed | Human transcription; divergence is not OCR accuracy |
 
 ### Impact
@@ -85,9 +85,10 @@ app), frontend on `npm run start`.
 | Frontend routes `/`, `/history`, `/supervisor` | HTTP 200 |
 | Frontend production build | exit 0, 4 routes |
 
-First boot on a machine that has never run the demo is much slower: the
-summarizer pulls `facebook/bart-large-cnn` (~1.6 GB) from the Hugging Face
-hub. Pre-warm it before a demo. See [DEMO.md](DEMO.md) §6.
+Production boot never downloads a model. The summarizer requires an approved
+local release artifact or the DVC mirror and fails closed when neither is
+materialized. A mutable Hugging Face model ID is available only behind the
+explicit `JANASUNANI_ALLOW_REMOTE_MODELS=1` development opt-in.
 
 ### What one submission produces
 
@@ -219,6 +220,14 @@ Legacy figures from the DSI technical report. Not re-measured in this sprint.
 Do not compare the MuRIL figure against any scanned-page result. It is
 computed on typed subject lines; against scans it measures the difference
 between typed text and scans as much as between models. See #127.
+
+The current local hashing candidate is reported separately because it uses a
+different, stricter benchmark: redacted typed text from 2024, chronological
+train/validation/test cohorts and exact normalized-text groups confined to one
+split. On the viewed later-period development test (n=3,160), it reached 46.55%
+top-1, 90.89% top-3 and 36.49% macro-F1 agreement with historical
+administrative labels. This is neither a like-for-like comparison with the
+MuRIL reference nor evidence that the historical label was correct.
 
 ## 4. Dedup index, production
 

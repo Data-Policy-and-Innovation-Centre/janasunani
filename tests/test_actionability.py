@@ -96,6 +96,20 @@ def test_binary_review_scorer_requests_review_without_inventing_a_reason():
     }
 
 
+def test_binary_review_scorer_uses_governed_threshold_below_argmax_boundary():
+    scorer = LocalBinaryReviewScorer(
+        BinaryClassifier([0.55, 0.45]),
+        method="tfidf-review-v1",
+        review_threshold=0.4350314715184363,
+    )
+
+    result = scorer.score("borderline review request")
+
+    assert result.decision == "review"
+    assert result.predicted_label == "review_required"
+    assert result.confidence == pytest.approx(0.45)
+
+
 def test_binary_review_scorer_abstains_below_validation_threshold():
     scorer = LocalBinaryReviewScorer(
         BinaryClassifier([0.45, 0.55]),
@@ -106,7 +120,8 @@ def test_binary_review_scorer_abstains_below_validation_threshold():
     result = scorer.score("uncertain request")
 
     assert result.decision == "abstained"
-    assert result.predicted_label == "review_required"
+    assert result.predicted_label == "actionable"
+    assert result.confidence == pytest.approx(0.45)
 
 
 def test_low_confidence_non_actionable_prediction_abstains():

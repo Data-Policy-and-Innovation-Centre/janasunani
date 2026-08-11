@@ -246,11 +246,6 @@ class LocalBinaryReviewScorer:
             raise ValueError("classifier probability width does not match its classes")
         probabilities = dict(zip(self._classes, values, strict=True))
         _validate_probabilities(probabilities, labels=BINARY_REVIEW_LABELS)
-        predicted = min(
-            BINARY_REVIEW_LABELS,
-            key=lambda label: (-probabilities[label], label),
-        )
-        confidence = probabilities[predicted]
         decision: ActionabilityDecision = (
             "review"
             if (
@@ -259,6 +254,14 @@ class LocalBinaryReviewScorer:
             )
             else "abstained"
         )
+        # This objective is thresholded, not argmax-classified.  In particular,
+        # the governed threshold may be below 0.5.  Keep the emitted label and
+        # confidence aligned with the decision so a valid review request cannot
+        # be rejected by ActionabilityAssessment as an actionable prediction.
+        predicted: BinaryReviewLabel = (
+            "review_required" if decision == "review" else "actionable"
+        )
+        confidence = probabilities[predicted]
         return ActionabilityAssessment(
             decision=decision,
             predicted_label=predicted,
