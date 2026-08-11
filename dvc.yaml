@@ -186,6 +186,7 @@ stages:
       scripts/benchmark_actionability_candidates.py
       --gold data/external/actionability_frontier_v1/gold.jsonl
       --output outputs/evaluation/actionability_candidates_muril_high_catch.json
+      --artifact-dir models/actionability
       --multilingual-encoder muril_local=models/categorizer
       --min-review-precision 0.6
       --max-actionable-review-rate 0.1
@@ -202,6 +203,7 @@ stages:
       - uv.lock
     outs:
       - outputs/evaluation/actionability_candidates_muril_high_catch.json
+      - models/actionability
   actionability-weak-label-audit:
     desc: >-
       Reproduce the aggregate administrative weak-label audit used to decide

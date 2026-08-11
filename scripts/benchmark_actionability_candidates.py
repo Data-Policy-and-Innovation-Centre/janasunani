@@ -89,6 +89,7 @@ def build_report(
     c_values: Sequence[float],
     min_review_precision: float,
     max_actionable_review_rate: float,
+    artifact_dir: Path | None = None,
 ) -> dict[str, object]:
     records = load_jsonl(gold_path)
     tfidf = benchmark_binary_review(
@@ -102,7 +103,7 @@ def build_report(
         for split in ("validation", "test")
     }
     tfidf_classes = tuple(str(label) for label in tfidf.classifier.classes_)
-    review_index = tfidf_classes.index("review")
+    review_index = tfidf_classes.index("review_required")
     for split, rows in split_records.items():
         probabilities = [
             float(row[review_index])
@@ -182,6 +183,12 @@ def build_report(
         ],
     }
     _assert_aggregate_only(report)
+    if artifact_dir is not None:
+        if ranked[0] != "tfidf_word_char":
+            raise ValueError(
+                "refusing to export TF-IDF because validation selected another candidate"
+            )
+        tfidf.save(artifact_dir, benchmark_report=report)
     return report
 
 
@@ -211,6 +218,11 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gold", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--artifact-dir",
+        type=Path,
+        help="export the validation-selected TF-IDF scorer as a local artifact",
+    )
     parser.add_argument(
         "--multilingual-encoder",
         action="append",
@@ -287,6 +299,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         c_values=args.c_values,
         min_review_precision=args.min_review_precision,
         max_actionable_review_rate=args.max_actionable_review_rate,
+        artifact_dir=args.artifact_dir,
     )
     _write_json_atomic(args.output, report, overwrite=args.overwrite)
     print(
@@ -298,6 +311,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "validation_selected_candidate"
                 ],
                 "candidate_count": len(report["candidates"]),
+                "artifact_dir": str(args.artifact_dir) if args.artifact_dir else None,
             },
             sort_keys=True,
         )

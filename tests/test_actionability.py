@@ -5,8 +5,11 @@ import pytest
 from janasunani.inference.actionability import (
     ACTIONABILITY_LABELS,
     ACTIONABILITY_TAXONOMY_VERSION,
+    BINARY_REVIEW_LABELS,
+    BINARY_REVIEW_OBJECTIVE,
     ActionabilityAssessment,
     LocalActionabilityScorer,
+    LocalBinaryReviewScorer,
 )
 
 
@@ -20,6 +23,10 @@ class Classifier:
     def predict_proba(self, texts):
         self.seen = texts
         return [self.row]
+
+
+class BinaryClassifier(Classifier):
+    classes_ = BINARY_REVIEW_LABELS
 
 
 def probabilities(**overrides):
@@ -69,6 +76,37 @@ def test_actionable_prediction_abstains_instead_of_approving_or_rejecting():
 
     assert result.predicted_label == "actionable"
     assert result.decision == "abstained"
+
+
+def test_binary_review_scorer_requests_review_without_inventing_a_reason():
+    scorer = LocalBinaryReviewScorer(
+        BinaryClassifier([0.15, 0.85]),
+        method="tfidf-review-v1",
+        review_threshold=0.7,
+    )
+
+    result = scorer.score("please help with this incomplete request")
+
+    assert result.decision == "review"
+    assert result.predicted_label == "review_required"
+    assert result.objective == BINARY_REVIEW_OBJECTIVE
+    assert result.probabilities == {
+        "actionable": 0.15,
+        "review_required": 0.85,
+    }
+
+
+def test_binary_review_scorer_abstains_below_validation_threshold():
+    scorer = LocalBinaryReviewScorer(
+        BinaryClassifier([0.45, 0.55]),
+        method="tfidf-review-v1",
+        review_threshold=0.7,
+    )
+
+    result = scorer.score("uncertain request")
+
+    assert result.decision == "abstained"
+    assert result.predicted_label == "review_required"
 
 
 def test_low_confidence_non_actionable_prediction_abstains():

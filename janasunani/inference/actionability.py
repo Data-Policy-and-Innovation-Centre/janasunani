@@ -23,6 +23,8 @@ from typing import Literal, Mapping, Protocol, Sequence
 
 ACTIONABILITY_TAXONOMY_VERSION = "actionability-v1"
 ACTIONABILITY_ARTIFACT_FORMAT = 1
+BINARY_REVIEW_ARTIFACT_FORMAT = 2
+BINARY_REVIEW_OBJECTIVE = "actionable_vs_officer_review"
 
 ActionabilityLabel = Literal[
     "actionable",
@@ -40,6 +42,15 @@ ACTIONABILITY_LABELS: tuple[ActionabilityLabel, ...] = (
     "policy_blocked",
 )
 
+BinaryReviewLabel = Literal["actionable", "review_required"]
+BINARY_REVIEW_LABELS: tuple[BinaryReviewLabel, ...] = (
+    "actionable",
+    "review_required",
+)
+
+ActionabilityOutputLabel = ActionabilityLabel | BinaryReviewLabel
+ActionabilityObjective = Literal["five_class_reason", "actionable_vs_officer_review"]
+
 ActionabilityDecision = Literal["review", "abstained"]
 
 
@@ -56,17 +67,25 @@ class ActionabilityAssessment:
     """One non-blocking assessment suitable for an additive API field."""
 
     decision: ActionabilityDecision
-    predicted_label: ActionabilityLabel
+    predicted_label: ActionabilityOutputLabel
     confidence: float
-    probabilities: Mapping[ActionabilityLabel, float]
+    probabilities: Mapping[ActionabilityOutputLabel, float]
     method: str
+    objective: ActionabilityObjective = "five_class_reason"
     taxonomy_version: str = ACTIONABILITY_TAXONOMY_VERSION
 
     def __post_init__(self) -> None:
         if self.decision not in {"review", "abstained"}:
             raise ValueError("decision must be review or abstained")
-        if self.predicted_label not in ACTIONABILITY_LABELS:
-            raise ValueError("predicted_label is outside the actionability taxonomy")
+        labels = (
+            ACTIONABILITY_LABELS
+            if self.objective == "five_class_reason"
+            else BINARY_REVIEW_LABELS
+        )
+        if self.objective not in {"five_class_reason", BINARY_REVIEW_OBJECTIVE}:
+            raise ValueError("unsupported actionability objective")
+        if self.predicted_label not in labels:
+            raise ValueError("predicted_label is outside the selected objective")
         if (
             isinstance(self.confidence, bool)
             or not isinstance(self.confidence, (int, float))
@@ -74,12 +93,12 @@ class ActionabilityAssessment:
             or not math.isfinite(self.confidence)
         ):
             raise ValueError("confidence must be finite and in [0, 1]")
-        _validate_probabilities(self.probabilities)
+        _validate_probabilities(self.probabilities, labels=labels)
         expected_confidence = self.probabilities[self.predicted_label]
         if not math.isclose(self.confidence, expected_confidence, abs_tol=1e-9):
             raise ValueError("confidence must equal the predicted label probability")
         if self.decision == "review" and self.predicted_label == "actionable":
-            raise ValueError("actionable predictions do not request non-actionability review")
+            raise ValueError("actionable predictions do not request extra review")
         if not isinstance(self.method, str) or not self.method.strip():
             raise ValueError("method must be non-empty")
         if self.taxonomy_version != ACTIONABILITY_TAXONOMY_VERSION:
@@ -87,11 +106,13 @@ class ActionabilityAssessment:
 
 
 def _validate_probabilities(
-    probabilities: Mapping[ActionabilityLabel, float] | Mapping[str, float],
+    probabilities: Mapping[str, float],
+    *,
+    labels: Sequence[str] = ACTIONABILITY_LABELS,
 ) -> None:
-    if set(probabilities) != set(ACTIONABILITY_LABELS):
-        raise ValueError("probabilities must cover the complete actionability taxonomy")
-    values = tuple(probabilities[label] for label in ACTIONABILITY_LABELS)
+    if set(probabilities) != set(labels):
+        raise ValueError("probabilities must cover the complete selected objective")
+    values = tuple(probabilities[label] for label in labels)
     if any(
         isinstance(value, bool)
         or not isinstance(value, (int, float))
@@ -177,6 +198,77 @@ class LocalActionabilityScorer:
         )
 
 
+class LocalBinaryReviewScorer:
+    """Serve the validated actionable-versus-review objective without reasons.
+
+    The binary scorer asks only whether an officer should inspect the case more
+    closely.  It deliberately emits ``review_required`` rather than fabricating
+    one of the five reason labels when the governed gold does not support that
+    distinction.
+    """
+
+    def __init__(
+        self,
+        classifier: ProbabilityClassifier,
+        *,
+        method: str,
+        review_threshold: float,
+    ) -> None:
+        if not isinstance(method, str) or not method.strip():
+            raise ValueError("method must be non-empty")
+        if (
+            isinstance(review_threshold, bool)
+            or not isinstance(review_threshold, (int, float))
+            or not math.isfinite(review_threshold)
+            or not 0.0 <= review_threshold <= 1.0
+        ):
+            raise ValueError("review_threshold must be in [0, 1]")
+        classes = tuple(str(label) for label in classifier.classes_)
+        if len(classes) != len(set(classes)) or set(classes) != set(
+            BINARY_REVIEW_LABELS
+        ):
+            raise ValueError("classifier classes must exactly match the binary objective")
+        self._classifier = classifier
+        self._classes = classes
+        self.method = method
+        self.review_threshold = review_threshold
+
+    def score(self, redacted_text: str) -> ActionabilityAssessment:
+        if not isinstance(redacted_text, str):
+            raise TypeError("redacted_text must be a string")
+        matrix = self._classifier.predict_proba([redacted_text])
+        try:
+            row = matrix[0]  # type: ignore[index]
+            values = tuple(float(value) for value in row)
+        except (IndexError, TypeError, ValueError) as exc:
+            raise ValueError("classifier returned an invalid probability row") from exc
+        if len(values) != len(self._classes):
+            raise ValueError("classifier probability width does not match its classes")
+        probabilities = dict(zip(self._classes, values, strict=True))
+        _validate_probabilities(probabilities, labels=BINARY_REVIEW_LABELS)
+        predicted = min(
+            BINARY_REVIEW_LABELS,
+            key=lambda label: (-probabilities[label], label),
+        )
+        confidence = probabilities[predicted]
+        decision: ActionabilityDecision = (
+            "review"
+            if (
+                probabilities["review_required"] >= self.review_threshold
+                and self.review_threshold < 1.0
+            )
+            else "abstained"
+        )
+        return ActionabilityAssessment(
+            decision=decision,
+            predicted_label=predicted,
+            confidence=confidence,
+            probabilities=probabilities,
+            method=self.method,
+            objective=BINARY_REVIEW_OBJECTIVE,
+        )
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -185,7 +277,9 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def load_actionability_scorer(path: Path) -> LocalActionabilityScorer:
+def load_actionability_scorer(
+    path: Path,
+) -> LocalActionabilityScorer | LocalBinaryReviewScorer:
     """Load a checksummed local model directory, failing closed on drift."""
 
     artifact_dir = Path(path)
@@ -196,6 +290,7 @@ def load_actionability_scorer(path: Path) -> LocalActionabilityScorer:
         raise ValueError("actionability artifact manifest is unreadable") from exc
     if not isinstance(manifest, dict):
         raise ValueError("actionability artifact manifest must be an object")
+    artifact_format = manifest.get("artifact_format")
     expected_keys = {
         "artifact_format",
         "taxonomy_version",
@@ -205,14 +300,25 @@ def load_actionability_scorer(path: Path) -> LocalActionabilityScorer:
         "model_file",
         "model_sha256",
     }
+    if artifact_format == BINARY_REVIEW_ARTIFACT_FORMAT:
+        expected_keys.add("objective")
     if set(manifest) != expected_keys:
         raise ValueError("actionability artifact manifest has an unexpected shape")
-    if manifest["artifact_format"] != ACTIONABILITY_ARTIFACT_FORMAT:
+    if artifact_format not in {
+        ACTIONABILITY_ARTIFACT_FORMAT,
+        BINARY_REVIEW_ARTIFACT_FORMAT,
+    }:
         raise ValueError("unsupported actionability artifact format")
     if manifest["taxonomy_version"] != ACTIONABILITY_TAXONOMY_VERSION:
         raise ValueError("actionability taxonomy version mismatch")
-    if manifest["labels"] != list(ACTIONABILITY_LABELS):
-        raise ValueError("actionability artifact labels do not match the taxonomy")
+    if artifact_format == ACTIONABILITY_ARTIFACT_FORMAT:
+        if manifest["labels"] != list(ACTIONABILITY_LABELS):
+            raise ValueError("actionability artifact labels do not match the taxonomy")
+    else:
+        if manifest["objective"] != BINARY_REVIEW_OBJECTIVE:
+            raise ValueError("binary actionability objective mismatch")
+        if manifest["labels"] != list(BINARY_REVIEW_LABELS):
+            raise ValueError("binary actionability labels do not match the objective")
     model_file = manifest["model_file"]
     if (
         not isinstance(model_file, str)
@@ -232,7 +338,12 @@ def load_actionability_scorer(path: Path) -> LocalActionabilityScorer:
         classifier = joblib.load(model_path)
     except Exception as exc:
         raise ValueError("actionability model could not be loaded") from exc
-    return LocalActionabilityScorer(
+    scorer_type = (
+        LocalActionabilityScorer
+        if artifact_format == ACTIONABILITY_ARTIFACT_FORMAT
+        else LocalBinaryReviewScorer
+    )
+    return scorer_type(
         classifier,
         method=manifest["method"],
         review_threshold=manifest["review_threshold"],

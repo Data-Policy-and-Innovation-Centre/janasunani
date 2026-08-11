@@ -248,6 +248,13 @@ class FixedActionabilityClassifier:
         return [[0.05, 0.05, 0.8, 0.05, 0.05]]
 
 
+class FixedBinaryActionabilityClassifier:
+    classes_ = ("actionable", "review_required")
+
+    def predict_proba(self, texts):
+        return [[0.1, 0.9] for _ in texts]
+
+
 def _write_actionability_artifact(path):
     import joblib
 
@@ -262,6 +269,29 @@ def _write_actionability_artifact(path):
                 "taxonomy_version": "actionability-v1",
                 "labels": list(FixedActionabilityClassifier.classes_),
                 "method": "fixed-test",
+                "review_threshold": 0.7,
+                "model_file": model.name,
+                "model_sha256": digest,
+            }
+        )
+    )
+
+
+def _write_binary_actionability_artifact(path):
+    import joblib
+
+    path.mkdir()
+    model = path / "classifier.joblib"
+    joblib.dump(FixedBinaryActionabilityClassifier(), model)
+    digest = hashlib.sha256(model.read_bytes()).hexdigest()
+    (path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "artifact_format": 2,
+                "objective": "actionable_vs_officer_review",
+                "taxonomy_version": "actionability-v1",
+                "labels": ["actionable", "review_required"],
+                "method": "fixed-binary-test",
                 "review_threshold": 0.7,
                 "model_file": model.name,
                 "model_sha256": digest,
@@ -289,6 +319,23 @@ def test_triage_model_loads_actionability_without_replacing_bounded_spam(
     assert result.actionability.predicted_label == "irrelevant"
     assert result.actionability.decision == "review"
     assert result.spam.spam_reason is not None
+
+
+def test_triage_model_serves_binary_review_without_fabricating_reason(tmp_path, monkeypatch):
+    artifact = tmp_path / "actionability"
+    _write_binary_actionability_artifact(artifact)
+    monkeypatch.setenv("JANASUNANI_ACTIONABILITY_ARTIFACT", str(artifact))
+
+    result = triage_provider_from_env(TRIAGE_MODEL).assess(
+        redacted_text="please review this request",
+        district=None,
+        submitted_on=datetime.now(UTC),
+    )
+
+    assert result.actionability is not None
+    assert result.actionability.decision == "review"
+    assert result.actionability.predicted_label == "review_required"
+    assert result.actionability.objective == "actionable_vs_officer_review"
 
 
 def test_actionability_failure_preserves_one_bounded_spam_assessment(monkeypatch):

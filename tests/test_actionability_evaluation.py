@@ -14,7 +14,11 @@ from janasunani.evaluation.actionability import (
     weak_label_for_discard_family,
 )
 from janasunani.evaluation.classification import ScoredExample
-from janasunani.inference.actionability import ACTIONABILITY_LABELS
+from janasunani.inference.actionability import (
+    ACTIONABILITY_LABELS,
+    BINARY_REVIEW_LABELS,
+    BINARY_REVIEW_OBJECTIVE,
+)
 from janasunani.inference.actionability import load_actionability_scorer
 
 
@@ -363,6 +367,31 @@ def test_artifact_round_trip_is_checksummed_and_refuses_overwrite(tmp_path):
 
     with pytest.raises(FileExistsError, match="not empty"):
         benchmark.save(artifact_dir)
+
+    paths["model"].write_bytes(paths["model"].read_bytes() + b"tamper")
+    with pytest.raises(ValueError, match="checksum mismatch"):
+        load_actionability_scorer(artifact_dir)
+
+
+def test_binary_review_artifact_round_trip_is_serving_compatible(tmp_path):
+    benchmark = benchmark_binary_review(
+        dataset(),
+        c_values=(1.0,),
+        min_df=1,
+        max_features=2_000,
+        min_review_precision=0.0,
+        max_actionable_review_rate=1.0,
+    )
+    artifact_dir = tmp_path / "binary-actionability"
+
+    paths = benchmark.save(artifact_dir)
+    loaded = load_actionability_scorer(artifact_dir)
+    result = loaded.score("test message no specific grievance")
+
+    assert set(loaded._classes) == set(BINARY_REVIEW_LABELS)
+    assert result.objective == BINARY_REVIEW_OBJECTIVE
+    assert result.predicted_label in BINARY_REVIEW_LABELS
+    assert set(paths) == {"model", "manifest", "benchmark"}
 
     paths["model"].write_bytes(paths["model"].read_bytes() + b"tamper")
     with pytest.raises(ValueError, match="checksum mismatch"):

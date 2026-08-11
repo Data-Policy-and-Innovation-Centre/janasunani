@@ -289,22 +289,30 @@ class SpamReview(BaseModel):
 
 
 class ActionabilityReview(BaseModel):
-    """Additive, advisory five-class assessment over redacted text.
+    """Additive, advisory assessment over redacted text.
 
     It is deliberately separate from ``SpamReview``: an underspecified case,
     an irrelevant message, an out-of-scope grievance, and a policy-blocked
-    grievance need different officer actions.  No value in this object changes
-    whether the citizen's submission is accepted.
+    grievance need different officer actions.  When governed gold cannot
+    support those reasons, the binary objective emits only ``review_required``
+    instead of inventing one. No value in this object changes whether the
+    citizen's submission is accepted.
     """
 
     decision: Literal["review", "abstained"]
     predicted_label: Literal[
-        "actionable", "underspecified", "irrelevant", "out_of_scope", "policy_blocked"
+        "actionable",
+        "review_required",
+        "underspecified",
+        "irrelevant",
+        "out_of_scope",
+        "policy_blocked",
     ]
     confidence: float = Field(ge=0.0, le=1.0)
     probabilities: dict[
         Literal[
             "actionable",
+            "review_required",
             "underspecified",
             "irrelevant",
             "out_of_scope",
@@ -313,6 +321,9 @@ class ActionabilityReview(BaseModel):
         float,
     ]
     method: str = Field(min_length=1)
+    objective: Literal[
+        "five_class_reason", "actionable_vs_officer_review"
+    ] = "five_class_reason"
     taxonomy_version: Literal["actionability-v1"] = "actionability-v1"
 
     @model_validator(mode="before")
@@ -330,12 +341,21 @@ class ActionabilityReview(BaseModel):
 
     @model_validator(mode="after")
     def _validate_advisory_contract(self) -> "ActionabilityReview":
-        expected = {
-            "actionable", "underspecified", "irrelevant", "out_of_scope",
-            "policy_blocked",
-        }
+        expected = (
+            {"actionable", "review_required"}
+            if self.objective == "actionable_vs_officer_review"
+            else {
+                "actionable",
+                "underspecified",
+                "irrelevant",
+                "out_of_scope",
+                "policy_blocked",
+            }
+        )
         if set(self.probabilities) != expected:
-            raise ValueError("probabilities must cover the actionability taxonomy")
+            raise ValueError("probabilities must cover the selected actionability objective")
+        if self.predicted_label not in expected:
+            raise ValueError("predicted_label must belong to the selected objective")
         if any(
             isinstance(value, bool)
             or not math.isfinite(value)
@@ -349,7 +369,7 @@ class ActionabilityReview(BaseModel):
         if abs(self.probabilities[self.predicted_label] - self.confidence) > 1e-9:
             raise ValueError("confidence must match predicted_label probability")
         if self.decision == "review" and self.predicted_label == "actionable":
-            raise ValueError("actionable predictions cannot request non-actionability review")
+            raise ValueError("actionable predictions cannot request extra review")
         return self
 
 

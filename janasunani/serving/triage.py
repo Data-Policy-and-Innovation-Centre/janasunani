@@ -234,7 +234,7 @@ class ScoredTriageProvider:
 
 
 class ActionabilityTriageProvider:
-    """Run bounded spam plus a local five-class actionability artifact."""
+    """Run bounded spam plus a local advisory actionability artifact."""
 
     def __init__(self, scorer) -> None:
         self._scorer = scorer
@@ -259,6 +259,7 @@ class ActionabilityTriageProvider:
                 confidence=assessment.confidence,
                 probabilities=dict(assessment.probabilities),
                 method=assessment.method,
+                objective=assessment.objective,
                 taxonomy_version=assessment.taxonomy_version,
             )
         except Exception:

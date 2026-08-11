@@ -171,6 +171,32 @@ def test_actionability_confidence_rejects_boolean_values():
         )
 
 
+def test_binary_actionability_contract_requests_review_without_a_reason_label():
+    result = ActionabilityReview(
+        decision="review",
+        predicted_label="review_required",
+        confidence=0.8,
+        probabilities={"actionable": 0.2, "review_required": 0.8},
+        method="tfidf-review-v1",
+        objective="actionable_vs_officer_review",
+    )
+
+    assert result.predicted_label == "review_required"
+    assert "underspecified" not in result.probabilities
+
+
+def test_binary_actionability_contract_rejects_fabricated_reason_probabilities():
+    with pytest.raises(ValidationError, match="selected objective"):
+        ActionabilityReview(
+            decision="review",
+            predicted_label="underspecified",
+            confidence=0.8,
+            probabilities={"actionable": 0.2, "review_required": 0.8},
+            method="tfidf-review-v1",
+            objective="actionable_vs_officer_review",
+        )
+
+
 def test_low_signal_advisory_records_ocr_quality_evidence_but_still_abstains():
     collapsed = low_signal_advisory("repeat this phrase " * 30)
     ordinary = low_signal_advisory(

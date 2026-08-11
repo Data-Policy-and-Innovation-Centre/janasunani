@@ -34,6 +34,9 @@ from janasunani.inference.actionability import (
     ACTIONABILITY_ARTIFACT_FORMAT,
     ACTIONABILITY_LABELS,
     ACTIONABILITY_TAXONOMY_VERSION,
+    BINARY_REVIEW_ARTIFACT_FORMAT,
+    BINARY_REVIEW_LABELS,
+    BINARY_REVIEW_OBJECTIVE,
     ActionabilityLabel,
     LocalActionabilityScorer,
     _sha256,
@@ -773,6 +776,62 @@ class BinaryReviewBenchmark:
     review_threshold: float
     report: dict[str, object]
 
+    @property
+    def method(self) -> str:
+        return f"{MODEL_FAMILY}/{BINARY_MODEL_VERSION}"
+
+    def save(
+        self,
+        out_dir: Path,
+        *,
+        benchmark_report: Mapping[str, object] | None = None,
+    ) -> dict[str, Path]:
+        """Export the binary review model as a checksummed local artifact."""
+
+        import joblib
+
+        target = Path(out_dir)
+        if target.exists() and any(target.iterdir()):
+            raise FileExistsError(f"artifact directory is not empty: {target}")
+        target.mkdir(parents=True, exist_ok=True)
+        model_path = target / "classifier.joblib"
+        report_path = target / "benchmark.json"
+        manifest_path = target / "manifest.json"
+
+        handle, temporary_name = tempfile.mkstemp(
+            prefix=".classifier-", suffix=".joblib", dir=target
+        )
+        os.close(handle)
+        temporary_path = Path(temporary_name)
+        try:
+            joblib.dump(self.classifier, temporary_path)
+            temporary_path.replace(model_path)
+        finally:
+            if temporary_path.exists():
+                temporary_path.unlink()
+        report_path.write_text(
+            json.dumps(benchmark_report or self.report, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        manifest = {
+            "artifact_format": BINARY_REVIEW_ARTIFACT_FORMAT,
+            "objective": BINARY_REVIEW_OBJECTIVE,
+            "taxonomy_version": ACTIONABILITY_TAXONOMY_VERSION,
+            "labels": list(BINARY_REVIEW_LABELS),
+            "method": self.method,
+            "review_threshold": self.review_threshold,
+            "model_file": model_path.name,
+            "model_sha256": _sha256(model_path),
+        }
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        return {
+            "model": model_path,
+            "manifest": manifest_path,
+            "benchmark": report_path,
+        }
+
 
 def benchmark_binary_review(
     records: Sequence[ActionabilityRecord],
@@ -816,12 +875,12 @@ def benchmark_binary_review(
         classifier.fit(
             [record.redacted_text for record in splits["train"]],
             [
-                "review" if record.label != "actionable" else "actionable"
+                "review_required" if record.label != "actionable" else "actionable"
                 for record in splits["train"]
             ],
         )
         classes = tuple(str(label) for label in classifier.classes_)
-        review_index = classes.index("review")
+        review_index = classes.index("review_required")
         validation_probabilities = [
             float(row[review_index])
             for row in classifier.predict_proba(
@@ -845,7 +904,7 @@ def benchmark_binary_review(
         ),
     )
     classes = tuple(str(label) for label in classifier.classes_)
-    review_index = classes.index("review")
+    review_index = classes.index("review_required")
     test_probabilities = [
         float(row[review_index])
         for row in classifier.predict_proba(
@@ -886,7 +945,7 @@ def benchmark_binary_review(
             "frontier-adjudicated development gold is not officer-confirmed truth",
             "single-snapshot hash splits are not chronological release evidence",
             "duplicate-group isolation is unavailable in this pilot sample",
-            "binary review does not replace the complete five-class production contract",
+            "binary review does not provide a five-class reason",
         ],
     }
     return BinaryReviewBenchmark(

@@ -4,7 +4,7 @@ from scripts import benchmark_actionability_candidates as benchmark
 
 
 class _Classifier:
-    classes_ = ("actionable", "review")
+    classes_ = ("actionable", "review_required")
 
     def predict_proba(self, texts):
         return [[1.0, 0.0] for _ in texts]

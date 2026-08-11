@@ -301,8 +301,9 @@ stages:
       scripts/benchmark_actionability_candidates.py --gold
       data/external/actionability_frontier_v1/gold.jsonl --output
       outputs/evaluation/actionability_candidates_muril_high_catch.json
-      --multilingual-encoder muril_local=models/categorizer
-      --min-review-precision 0.6 --max-actionable-review-rate 0.1 --overwrite
+      --artifact-dir models/actionability --multilingual-encoder
+      muril_local=models/categorizer --min-review-precision 0.6
+      --max-actionable-review-rate 0.1 --overwrite
     deps:
     - path: data/external/actionability_frontier_v1/gold.jsonl
       hash: md5
@@ -310,8 +311,8 @@ stages:
       size: 212025
     - path: janasunani/evaluation/actionability.py
       hash: md5
-      md5: 08570b2471796f49214c2f801d8791db
-      size: 33241
+      md5: 988d2469936623e2b8b08886bf31100a
+      size: 35312
     - path: janasunani/evaluation/classification.py
       hash: md5
       md5: 5be5a49505010f6b20ec6a183f30fd0f
@@ -335,17 +336,22 @@ stages:
       size: 10265
     - path: scripts/benchmark_actionability_candidates.py
       hash: md5
-      md5: c162da6c0555d445562fc673b2cd8a5c
-      size: 10823
+      md5: 4f08f5707597a3937e4c6b5378908462
+      size: 11422
     - path: uv.lock
       hash: md5
       md5: f895934178f603f5315683d02abc6449
       size: 1038485
     outs:
+    - path: models/actionability
+      hash: md5
+      md5: 6ce39b26b90dece8c73b7252e8ec085f.dir
+      size: 615724
+      nfiles: 3
     - path: outputs/evaluation/actionability_candidates_muril_high_catch.json
       hash: md5
-      md5: ace52320363ec7d33390ad50fe9080f5
-      size: 16334
+      md5: 1ca037f87466f329299f05307752c8b9
+      size: 16310
   actionability-weak-label-audit:
     cmd: uv run --frozen janasunani-audit-actionability-labels --complaints
       data/interim/complaints.parquet --action-history
