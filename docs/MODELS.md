@@ -56,7 +56,7 @@ metadata against the release entry are a planned control, not yet implemented.
 
 The release/materialization code and local resolution order are implemented;
 no reviewed production manifest has yet been activated. An operator override
-remains first for recovery. Health/preflight marks the release check unhealthy
+remains first for recovery. Preflight marks the release check unhealthy
 and names the shadowed model whenever an override replaces manifest-pinned
 bytes; it does not disclose the override path.
 

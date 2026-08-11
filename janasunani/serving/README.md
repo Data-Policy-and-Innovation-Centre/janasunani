@@ -15,9 +15,11 @@ uv run --extra demo janasunani-api-live
 Both serve `http://127.0.0.1:8000` by default, with OpenAPI at `/docs`. The
 live command's warm processor, strict fail-closed startup, and preflight live in
 [`janasunani/inference`](../inference/README.md).
-The live command requires the DVC-mirrored categorizer and page-type artifacts
-under `models/` (override with `JANASUNANI_MODELS_DIR`) and fails startup rather
-than substituting the mock if an artifact, dependency, or model load is missing.
+The live command requires local categorizer, page-type and summarizer artifacts.
+Each resolves from a component-specific operator override, then an active
+checksum-valid release manifest, then its DVC mirror under `models/`. It fails
+startup rather than substituting the mock if a mandatory artifact, dependency,
+or model load is missing; runtime never contacts MLflow or a public model hub.
 It uses `DatabaseResultStore` only when `OLTP_DB_URL` is explicitly set;
 otherwise submitted synthetic results stay in memory. Run the
 `live_grievances` Alembic migration before enabling OLTP persistence.
@@ -81,26 +83,29 @@ this endpoint with the rest of the API.
 
 | Seam | Default `janasunani-api` | Opt-in `janasunani-api-live` |
 |---|---|---|
-| processor | `MockGrievanceProcessor` — deterministic canned values; **toy regex "redaction", NOT Presidio** | `PipelineGrievanceProcessor`: pytesseract, page-type gating, Presidio, MuRIL, BART, `DEFAULT_ROUTER`; models warmed once |
+| processor | `MockGrievanceProcessor` — deterministic canned values; **toy regex "redaction", NOT Presidio** | `PipelineGrievanceProcessor`: pytesseract, page-type gating, Presidio, MuRIL, BART, advisory triage, and the selected routing provider; models warmed once |
 | history | `MockHistory`, unless `JANASUNANI_REAL_HISTORY=1` opts into the Parquet lake via `LakeHistory` | Parquet lake via `LakeHistory`, always |
 | result store | in-process dict | in-process dict unless explicit `OLTP_DB_URL`, then `live_grievances` via `DatabaseResultStore` |
 
 The live processor returns HTTP 422 for invalid combinations and unsafe or
 unusable documents (unsupported/corrupt, blank OCR, quality rejection,
 truncation, or no grievance-bearing pages). Unexpected model/runtime failures
-remain server errors. DeepSeek and MLflow runtime resolution are not part of
-this in-process live command.
+remain server errors. DeepSeek and serving-time MLflow resolution are not part
+of this in-process live command. The pre-deploy materializer may resolve a
+reviewed MLflow alias into an immutable local manifest; preflight reports its
+release ID and any shadowed model overrides without revealing paths.
 
 The mock emits deterministic illustrative resubmission and campaign states,
 but always abstains from low-signal review so a fixture cannot look like live
 evidence.
 The live processor calls its advisory triage seam only after PII redaction.
-Until the Phase 14 matcher is wired, it returns
-`duplicate_review.decision="not_indexed"`. Low-signal review records only the
-existing repetition-collapse observation and returns `spam.decision="abstained"`;
-no numeric score or review flag is enabled before redacted human-adjudicated
-validation. If an eventual provider is unavailable, the submission proceeds
-with explicit unavailable/abstained states.
+Live duplicate review remains `not_indexed`; the materialized slice currently
+supports corpus analytics, not per-request lookup. The default
+`JANASUNANI_TRIAGE=bounded` emits the
+numeric `spam-v1.1-bounded` low-signal advisory. `JANASUNANI_TRIAGE=model` also
+loads the checksummed binary actionability candidate and falls back to bounded
+rules if it is unavailable; `off` explicitly disables the seam. These signals
+never reject, close, reroute or manufacture five-class reasons for a grievance.
 
 Only synthetic demo submissions are allowed until the PII gold evaluation gate
 passes. The mock must never serve real citizen submissions.

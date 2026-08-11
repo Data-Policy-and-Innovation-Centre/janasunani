@@ -13,6 +13,14 @@ as scripts rather than DVC stages. Each is safe to re-run.
 | `rederive_pii_draft.py` | Rebuild a gold file's pre-annotation draft from the gold's own text (below). |
 | `verify_pii_gold.py` | Review a corrected PII gold file by statistics and structure, without printing citizen text. |
 | `benchmark_pipeline.py` | Per-stage latency with ticket-clustered SE, feeding the benchmark report. |
+| `sample_actionability_adjudication.py` | Build a privacy-screened, opaque-ID actionability review sample; protected inputs require explicit authorization. |
+| `reconcile_actionability_adjudication.py` | Reconcile independent structured judgments into narrative-free development gold and provenance. |
+| `benchmark_actionability_candidates.py` | Compare local TF-IDF and frozen-encoder actionability candidates offline. |
+| `sample_categorization_benchmark.py` | Freeze group-disjoint chronological category evidence from an authorized redacted source. |
+| `prepare_summary_development.py` | Prepare local BART candidates and a private review packet, then strip review output to the aggregate-safe schema. |
+| `update_value_add_report.py` | Regenerate the long evidence report from governed aggregate artifacts. |
+| `create_officer_brief.py` | Generate the short nontechnical IAS-officer brief. |
+| `create_public_systems_capability_brief.py` | Generate the prospective cross-government capability brief. |
 | `demo_rehearsal.sh` | The 13 Aug freeze gate on the laptop stack, behind `make rehearsal`. |
 | `e2e_pipeline.sh` | Tier-3 end-to-end pipeline rehearsal over a non-PII fixture (pipeline → export → materialize → smoke). Not CI. |
 | `setup.sh` | Workspace setup backing `make setup` (uv, rclone, AWS CLI, hooks). |
@@ -27,6 +35,29 @@ Two are repository checks rather than data jobs:
 |---|---|
 | `check_codex_review.py` | Turns the Codex review signal into the `codex-review` check. Run by [the gate workflow](../.github/workflows/codex-review-gate.yml), not by hand; see [CONTRIBUTING §Review](../CONTRIBUTING.md#review). Stdlib only, so it runs without installing the project. |
 | `check_provenance_sidecars.py` | Verifies tracked `data/external/**/provenance.json` and `*.provenance.json` sidecars hold allowlisted aggregate metadata only. The `no-raw-data-in-git` CI job invokes it for every tracked sidecar. |
+
+## Governed evaluation and model-release entry points
+
+The scripts above prepare protected inputs; the public CLIs and DVC stages
+produce aggregate scorecards. Do not run a stage whose inputs have not been
+explicitly authorized. The canonical commands, schemas and evidence boundaries
+are in [QUALITY_BENCHMARKS.md](../docs/QUALITY_BENCHMARKS.md); model inventory,
+materialization and rollback are in [MODELS.md](../docs/MODELS.md).
+
+| Entry point | Purpose |
+|---|---|
+| `janasunani-audit-actionability-labels` | Audit administrative weak-label families; never treat them as release gold. |
+| `janasunani-evaluate-categorization` | Score governed chronological historical-label agreement. |
+| `janasunani-evaluate-routing` | Score historical-destination agreement and build checksummed incidence evidence. |
+| `janasunani-evaluate-summary` | Aggregate narrative-free summary judgments. |
+| `janasunani-build-benchmark-bundle` | Join evidence artifacts and keep missing release/impact gates explicit. |
+| `janasunani-evaluate-sarvam` / `janasunani-build-sarvam-sample` | Run the governed provider comparison; dropping dry-run can cause paid authorized egress. |
+| `janasunani-import-sarvam-evidence` | Log already-cached aggregate Sarvam evidence without a provider call. |
+| `janasunani-model-release` | Resolve approved aliases pre-deploy, materialize immutable local artifacts, activate or roll back. |
+
+`scripts/analysis/sarvam_sample.py` is deprecated; use
+`janasunani-evaluate-sarvam --arm digitise`. Neither cached-output import nor
+pairwise divergence establishes OCR accuracy.
 
 ## infra_status.py
 
