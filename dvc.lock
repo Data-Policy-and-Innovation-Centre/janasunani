@@ -403,8 +403,8 @@ stages:
     deps:
     - path: config/benchmark_bundle.json
       hash: md5
-      md5: 77aff7def5c3fdf4118033ea9a55aa4c
-      size: 6232
+      md5: 862138fe010adcadbb38fcc5350a8e3c
+      size: 6967
     - path: docs/evidence/sarvam_cached_benchmark.json
       hash: md5
       md5: b19e45a4bfd16cfdb6f2f3a831617cf2
@@ -419,12 +419,16 @@ stages:
       size: 31784
     - path: outputs/evaluation/actionability_candidates_muril_high_catch.json
       hash: md5
-      md5: ace52320363ec7d33390ad50fe9080f5
-      size: 16334
+      md5: 1ca037f87466f329299f05307752c8b9
+      size: 16310
     - path: outputs/evaluation/actionability_weak_label_audit.json
       hash: md5
       md5: f8a1a3d705c68959429278db77bf0ac0
       size: 5538
+    - path: outputs/evaluation/categorization_historical_v1.json
+      hash: md5
+      md5: 2274c96f003be985a5fbbb670c12433a
+      size: 68115
     - path: outputs/evaluation/pii_release.json
       hash: md5
       md5: a7a7cbebe68f24bf469b1e7f890990a4
@@ -437,10 +441,14 @@ stages:
       hash: md5
       md5: 91145c5adb596264ab36e57c4cef16f2
       size: 315567
+    - path: outputs/evaluation/summary_development_v1.json
+      hash: md5
+      md5: 540cac6452208f686812883a9e3617d7
+      size: 7038
     - path: pyproject.toml
       hash: md5
-      md5: a75720710945819f44a16c502fb9c665
-      size: 10265
+      md5: 7650a32a2ab1519840a182edfcf10a50
+      size: 10346
     - path: uv.lock
       hash: md5
       md5: f895934178f603f5315683d02abc6449
@@ -448,12 +456,12 @@ stages:
     outs:
     - path: outputs/benchmark/full_benchmark.json
       hash: md5
-      md5: 75216f56bb93eb1add313d002b9a26d5
-      size: 506809
+      md5: 827923291c1e41dda6957389e7f43504
+      size: 556406
     - path: outputs/benchmark/full_benchmark.md
       hash: md5
-      md5: 5e15130ccf4eb9a28002846cc0b247cd
-      size: 2698
+      md5: 6a1254348c55bfbf3ecf5a3da64b19b5
+      size: 2960
   pii-development-scorecard:
     cmd: uv run --frozen --extra pii python -m
       janasunani.evaluation.pii_scorecard --gold
@@ -587,7 +595,7 @@ stages:
       md5: 9dc61482d0ca75b60db7e999dde43b09
       size: 9564
   categorization-historical-benchmark:
-    cmd: uv run --frozen --no-sync python -m
+    cmd: uv run --frozen --extra pipeline-core python -m
       janasunani.evaluation.categorization --dataset
       data/external/categorization_historical_v1/benchmark.jsonl --output
       outputs/evaluation/categorization_historical_v1.json
@@ -597,7 +605,7 @@ stages:
       hash: md5
       md5: c9dae018fedfa198371503243b2e01fa
       size: 21609889
-    - path: data/external/categorization_historical_v1/benchmark.manifest.json
+    - path: data/external/categorization_historical_v1/benchmark.provenance.json
       hash: md5
       md5: 4b8430a62387c767828c1e8aacd2c786
       size: 2098
@@ -618,3 +626,42 @@ stages:
       hash: md5
       md5: 2274c96f003be985a5fbbb670c12433a
       size: 68115
+  summary-development-benchmark:
+    cmd: uv run --frozen python -m janasunani.evaluation.summary --judgments
+      data/external/summary_development_v1/judgments.jsonl --dataset-id
+      summary-bart-development-v1 --output
+      outputs/evaluation/summary_development_v1.json
+    deps:
+    - path: data/external/summary_development_v1/judgments.jsonl
+      hash: md5
+      md5: a7a5cc55690de816e55266d9a9c5e2ed
+      size: 12860
+    - path: data/external/summary_development_v1/provenance.json
+      hash: md5
+      md5: fd025626d60a59e16a2cbaef2eb58012
+      size: 2766
+    - path: janasunani/evaluation/stats.py
+      hash: md5
+      md5: b3a53f566b6bb134331b12c9fb78afb6
+      size: 26269
+    - path: janasunani/evaluation/summary.py
+      hash: md5
+      md5: 4cd7e62e74562c07457a04cf9114ddd6
+      size: 9808
+    - path: pyproject.toml
+      hash: md5
+      md5: 7650a32a2ab1519840a182edfcf10a50
+      size: 10346
+    - path: scripts/prepare_summary_development.py
+      hash: md5
+      md5: 9ff580bfa3da0cbad61da3315bae74e1
+      size: 12280
+    - path: uv.lock
+      hash: md5
+      md5: f895934178f603f5315683d02abc6449
+      size: 1038485
+    outs:
+    - path: outputs/evaluation/summary_development_v1.json
+      hash: md5
+      md5: 540cac6452208f686812883a9e3617d7
+      size: 7038

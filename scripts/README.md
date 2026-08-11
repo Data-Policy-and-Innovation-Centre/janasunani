@@ -26,7 +26,7 @@ Two are repository checks rather than data jobs:
 | Script | What it does |
 |---|---|
 | `check_codex_review.py` | Turns the Codex review signal into the `codex-review` check. Run by [the gate workflow](../.github/workflows/codex-review-gate.yml), not by hand; see [CONTRIBUTING §Review](../CONTRIBUTING.md#review). Stdlib only, so it runs without installing the project. |
-| `check_provenance_sidecars.py` | Verifies `data/external/*.provenance.json` holds metadata and nothing else. Nothing invokes it yet — run it by hand when a sidecar changes. |
+| `check_provenance_sidecars.py` | Verifies tracked `data/external/**/provenance.json` and `*.provenance.json` sidecars hold allowlisted aggregate metadata only. The `no-raw-data-in-git` CI job invokes it for every tracked sidecar. |
 
 ## infra_status.py
 

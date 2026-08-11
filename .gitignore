@@ -221,7 +221,12 @@ data/external/sarvam_cached_v1/*
 !data/external/categorization_historical_v1/
 data/external/categorization_historical_v1/*
 !data/external/categorization_historical_v1/*.dvc
-!data/external/categorization_historical_v1/*.manifest.json
+!data/external/categorization_historical_v1/*.provenance.json
+!data/external/summary_development_v1/
+data/external/summary_development_v1/*
+!data/external/summary_development_v1/*.dvc
+!data/external/summary_development_v1/provenance.json
+!data/external/summary_development_v1/*.provenance.json
 data/external/actionability_frontier_v1/*
 !data/external/actionability_frontier_v1/*.dvc
 !data/external/actionability_frontier_v1/*.provenance.json

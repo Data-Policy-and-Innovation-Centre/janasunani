@@ -74,7 +74,46 @@ _MD5_RE = re.compile(r"^[0-9a-f]{32}$")
 _SHA256_RE = re.compile(r"^(sha256:)?[0-9a-f]{64}$")
 _ACTIONABILITY_SCHEMA = "actionability-adjudication-sample-v1"
 _ACTIONABILITY_FRONTIER_SCHEMA = "janasunani.actionability-frontier-artifacts/v1"
+_CATEGORIZATION_SCHEMA = "categorization-benchmark-sample-v1"
 _SARVAM_SCHEMA = "janasunani.sarvam-source-snapshots/v1"
+_SUMMARY_SCHEMA = "summary-development-provenance/v1"
+
+_ADMIN_CATEGORIES = {
+    "Accident",
+    "Agriculture & Farming",
+    "BSKY",
+    "CMRF",
+    "COVID-19",
+    "Culture",
+    "Disaster Management",
+    "Education",
+    "Energy",
+    "Environment",
+    "Excise",
+    "Financial Assistance",
+    "General",
+    "Health Care",
+    "Housing",
+    "ICDS",
+    "Infrastructure",
+    "Irrigation",
+    "Land Matters",
+    "Legal",
+    "Miscellaneous",
+    "Pension/Retirement Benefits",
+    "Police Case",
+    "Public Utility",
+    "School & College",
+    "Service Matters",
+    "Social Welfare",
+    "Sports",
+    "Tourism",
+    "Traffic",
+    "Transport",
+    "Waste Management",
+    "Water Supply",
+    "Women Issues",
+}
 
 
 def _check_scalar(path: str, value: Any, limit: int) -> list[str]:
@@ -184,6 +223,258 @@ def _check_nonnegative_int(path: str, value: Any) -> list[str]:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         return [f"{path} must be a nonnegative integer"]
     return []
+
+
+def _check_bool(path: str, value: Any) -> list[str]:
+    if not isinstance(value, bool):
+        return [f"{path} must be a boolean"]
+    return []
+
+
+def _check_category_list(path: str, value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return [f"{path} must be a list"]
+    problems: list[str] = []
+    for position, label in enumerate(value):
+        if label not in _ADMIN_CATEGORIES:
+            problems.append(
+                f"{path} entry {position} is not an allowlisted administrative category; "
+                "value withheld"
+            )
+    hashable_labels = [label for label in value if isinstance(label, str)]
+    if len(hashable_labels) != len(set(hashable_labels)):
+        problems.append(f"{path} must not contain duplicates")
+    return problems
+
+
+def _check_count_map(
+    path: str,
+    value: Any,
+    *,
+    allowed_keys: set[str],
+) -> list[str]:
+    if not isinstance(value, dict):
+        return [f"{path} must be an object of counts"]
+    problems: list[str] = []
+    for position, (key, count) in enumerate(value.items()):
+        if key not in allowed_keys:
+            problems.append(f"{path} key {position} is not allowlisted; value withheld")
+        problems += _check_nonnegative_int(f"{path}[{position}]", count)
+    return problems
+
+
+def _check_categorization_sample(payload: dict[str, Any]) -> list[str]:
+    top_keys = {
+        "category_counts",
+        "conflicting_label_groups_excluded",
+        "dataset_fingerprint",
+        "eligible_categories",
+        "exact_text_groups",
+        "excluded_categories",
+        "group_policy",
+        "input_rows",
+        "label_interpretation",
+        "min_support_per_split",
+        "privacy",
+        "records",
+        "schema_version",
+        "shaped_pii_rows_excluded",
+        "split_counts",
+        "split_policy",
+        "year",
+    }
+    problems = _check_exact_keys("categorization sidecar", payload, top_keys)
+    if problems:
+        return problems
+
+    problems += _check_sha256("dataset_fingerprint", payload["dataset_fingerprint"])
+    for key in {
+        "conflicting_label_groups_excluded",
+        "exact_text_groups",
+        "input_rows",
+        "min_support_per_split",
+        "records",
+        "shaped_pii_rows_excluded",
+        "year",
+    }:
+        problems += _check_nonnegative_int(key, payload[key])
+    for key in {"group_policy", "label_interpretation", "split_policy"}:
+        problems += _check_scalar(key, payload[key], MAX_STRING)
+
+    eligible = payload["eligible_categories"]
+    excluded = payload["excluded_categories"]
+    problems += _check_category_list("eligible_categories", eligible)
+    problems += _check_category_list("excluded_categories", excluded)
+    if isinstance(eligible, list) and isinstance(excluded, list) and set(eligible) & set(excluded):
+        problems.append("eligible and excluded categories must be disjoint")
+    problems += _check_count_map(
+        "category_counts", payload["category_counts"], allowed_keys=_ADMIN_CATEGORIES
+    )
+    problems += _check_count_map(
+        "split_counts", payload["split_counts"], allowed_keys={"train", "validation", "test"}
+    )
+
+    privacy = payload["privacy"]
+    privacy_keys = {
+        "narrative_output_private_dvc_only",
+        "raw_grievance_read",
+        "source_column",
+        "ticket_identifiers_salted",
+    }
+    problems += _check_exact_keys("categorization privacy", privacy, privacy_keys)
+    if isinstance(privacy, dict):
+        problems += _check_scalar("privacy.source_column", privacy.get("source_column"), MAX_STRING)
+        for key in privacy_keys - {"source_column"}:
+            problems += _check_bool(f"privacy.{key}", privacy.get(key))
+
+    split_counts = payload["split_counts"]
+    if (
+        isinstance(split_counts, dict)
+        and all(isinstance(value, int) and not isinstance(value, bool) for value in split_counts.values())
+        and sum(split_counts.values()) != payload["records"]
+    ):
+        problems.append("split counts must sum to records")
+    category_counts = payload["category_counts"]
+    if (
+        isinstance(category_counts, dict)
+        and all(
+            isinstance(value, int) and not isinstance(value, bool)
+            for value in category_counts.values()
+        )
+        and sum(category_counts.values()) != payload["records"]
+    ):
+        problems.append("category counts must sum to records")
+    return problems
+
+
+def _check_summary_development(payload: dict[str, Any]) -> list[str]:
+    top_keys = {
+        "adjudication",
+        "environment",
+        "evidence_status",
+        "limitations",
+        "model",
+        "publication_ready",
+        "schema_version",
+        "selection",
+        "source",
+    }
+    problems = _check_exact_keys("summary sidecar", payload, top_keys)
+    if problems:
+        return problems
+    problems += _check_scalar("evidence_status", payload["evidence_status"], MAX_STRING)
+    problems += _check_bool("publication_ready", payload["publication_ready"])
+    if payload["publication_ready"] is not False:
+        problems.append("summary development evidence cannot be publication-ready")
+    problems += _check_string_list("limitations", payload["limitations"], limit=MAX_NOTE)
+
+    adjudication = payload["adjudication"]
+    adjudication_keys = {
+        "edit_seconds_source",
+        "exact_served_model_revision",
+        "independent_judges",
+        "judge_type",
+        "narrative_review_storage",
+        "officer_validated",
+        "one_time_redacted_egress_authorized",
+        "prompt_and_sampling_metadata",
+        "provider",
+        "rubric",
+        "rubric_sha256",
+        "structured_judgments_only_in_governed_artifacts",
+    }
+    problems += _check_exact_keys("summary adjudication", adjudication, adjudication_keys)
+    if isinstance(adjudication, dict):
+        for key in {
+            "independent_judges",
+            "officer_validated",
+            "one_time_redacted_egress_authorized",
+            "structured_judgments_only_in_governed_artifacts",
+        }:
+            problems += _check_bool(f"adjudication.{key}", adjudication.get(key))
+        problems += _check_sha256("adjudication.rubric_sha256", adjudication.get("rubric_sha256"))
+        for key in adjudication_keys - {
+            "independent_judges",
+            "officer_validated",
+            "one_time_redacted_egress_authorized",
+            "rubric_sha256",
+            "structured_judgments_only_in_governed_artifacts",
+        }:
+            problems += _check_scalar(f"adjudication.{key}", adjudication.get(key), MAX_STRING)
+
+    environment = payload["environment"]
+    environment_keys = {"device", "python", "torch", "transformers"}
+    problems += _check_exact_keys("summary environment", environment, environment_keys)
+    if isinstance(environment, dict):
+        for key in environment_keys:
+            problems += _check_scalar(f"environment.{key}", environment.get(key), MAX_STRING)
+
+    model = payload["model"]
+    model_keys = {
+        "family",
+        "local_files_only",
+        "max_input_tokens",
+        "max_output_tokens",
+        "min_output_tokens",
+        "num_beams",
+        "revision",
+        "weights_sha256",
+    }
+    problems += _check_exact_keys("summary model", model, model_keys)
+    if isinstance(model, dict):
+        problems += _check_bool("model.local_files_only", model.get("local_files_only"))
+        problems += _check_sha256("model.weights_sha256", model.get("weights_sha256"))
+        for key in {"max_input_tokens", "max_output_tokens", "min_output_tokens", "num_beams"}:
+            problems += _check_nonnegative_int(f"model.{key}", model.get(key))
+        for key in {"family", "revision"}:
+            problems += _check_scalar(f"model.{key}", model.get(key), MAX_STRING)
+
+    selection = payload["selection"]
+    selection_keys = {
+        "cohort_counts",
+        "generated",
+        "not_prevalence_representative",
+        "policy",
+        "private_review_sha256",
+        "sample_size",
+        "skipped",
+    }
+    problems += _check_exact_keys("summary selection", selection, selection_keys)
+    if isinstance(selection, dict):
+        problems += _check_bool(
+            "selection.not_prevalence_representative",
+            selection.get("not_prevalence_representative"),
+        )
+        problems += _check_scalar("selection.policy", selection.get("policy"), MAX_STRING)
+        problems += _check_sha256(
+            "selection.private_review_sha256", selection.get("private_review_sha256")
+        )
+        for key in {"generated", "sample_size", "skipped"}:
+            problems += _check_nonnegative_int(f"selection.{key}", selection.get(key))
+        cohort_keys = {
+            "deterministic-fill",
+            "language-abstention",
+            "long-input",
+            "short-input",
+        } | {f"category:{label}" for label in _ADMIN_CATEGORIES}
+        problems += _check_count_map(
+            "selection.cohort_counts",
+            selection.get("cohort_counts"),
+            allowed_keys=cohort_keys,
+        )
+        if all(isinstance(selection.get(key), int) for key in {"generated", "sample_size", "skipped"}):
+            if selection["generated"] + selection["skipped"] != selection["sample_size"]:
+                problems.append("generated and skipped must sum to sample_size")
+
+    source = payload["source"]
+    source_keys = {"path", "redacted_only", "sha256", "split"}
+    problems += _check_exact_keys("summary source", source, source_keys)
+    if isinstance(source, dict):
+        problems += _check_bool("source.redacted_only", source.get("redacted_only"))
+        problems += _check_sha256("source.sha256", source.get("sha256"))
+        for key in {"path", "split"}:
+            problems += _check_scalar(f"source.{key}", source.get(key), MAX_STRING)
+    return problems
 
 
 def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
@@ -372,8 +663,12 @@ def check_payload(payload: Any) -> list[str]:
         return _check_actionability_sample(payload)
     if schema == _ACTIONABILITY_FRONTIER_SCHEMA:
         return _check_actionability_frontier(payload)
+    if schema == _CATEGORIZATION_SCHEMA:
+        return _check_categorization_sample(payload)
     if schema == _SARVAM_SCHEMA:
         return _check_sarvam_snapshots(payload)
+    if schema == _SUMMARY_SCHEMA:
+        return _check_summary_development(payload)
 
     problems: list[str] = []
     for key, value in payload.items():

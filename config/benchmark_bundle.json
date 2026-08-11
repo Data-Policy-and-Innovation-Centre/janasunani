@@ -46,6 +46,14 @@
       "required_for_publication": false
     },
     {
+      "id": "categorization_historical_chronological",
+      "section": "accuracy",
+      "path": "outputs/evaluation/categorization_historical_v1.json",
+      "producer": "dvc stage categorization-historical-benchmark",
+      "claim": "chronological historical-category agreement for development decision support",
+      "required_for_publication": false
+    },
+    {
       "id": "categorization_release",
       "section": "accuracy",
       "path": "outputs/evaluation/categorization_release.json",
@@ -54,6 +62,14 @@
       "required_for_publication": true,
       "required_values": {"publication_ready": true},
       "missing_reason": "needs a governed production-domain categorization release set"
+    },
+    {
+      "id": "summary_development",
+      "section": "accuracy",
+      "path": "outputs/evaluation/summary_development_v1.json",
+      "producer": "dvc stage summary-development-benchmark",
+      "claim": "single-frontier-judge local BART factuality, usefulness, abstention and residual-PII development evidence",
+      "required_for_publication": false
     },
     {
       "id": "summary_release",

@@ -85,6 +85,113 @@ def test_actionability_sample_sidecar_is_metadata_only():
     assert check.check_payload(payload) == []
 
 
+def _categorization_payload():
+    return {
+        "schema_version": "categorization-benchmark-sample-v1",
+        "dataset_fingerprint": "sha256:" + "a" * 64,
+        "records": 1,
+        "year": 2024,
+        "split_policy": "chronological fixed split",
+        "group_policy": "one row per exact-text group",
+        "min_support_per_split": 1,
+        "label_interpretation": "historical agreement only",
+        "privacy": {
+            "source_column": "grievance_redactions.grievance_redacted",
+            "raw_grievance_read": False,
+            "ticket_identifiers_salted": True,
+            "narrative_output_private_dvc_only": True,
+        },
+        "input_rows": 1,
+        "exact_text_groups": 1,
+        "conflicting_label_groups_excluded": 0,
+        "shaped_pii_rows_excluded": 0,
+        "eligible_categories": ["Housing"],
+        "excluded_categories": ["Tourism"],
+        "split_counts": {"test": 1},
+        "category_counts": {"Housing": 1},
+    }
+
+
+def test_categorization_sample_sidecar_is_metadata_only():
+    assert check.check_payload(_categorization_payload()) == []
+
+
+def test_categorization_sidecar_rejects_malformed_counts_without_crashing():
+    payload = _categorization_payload()
+    payload["category_counts"]["General"] = "not-a-count"
+
+    problems = check.check_payload(payload)
+
+    assert problems
+    assert all("not-a-count" not in problem for problem in problems)
+
+
+def test_summary_development_sidecar_is_metadata_only():
+    payload = {
+        "schema_version": "summary-development-provenance/v1",
+        "evidence_status": "single-frontier-judge-development-only",
+        "publication_ready": False,
+        "limitations": ["No officer validation."],
+        "adjudication": {
+            "independent_judges": False,
+            "judge_type": "single-frontier-agent-context",
+            "narrative_review_storage": "private-temporary-only",
+            "officer_validated": False,
+            "one_time_redacted_egress_authorized": True,
+            "provider": "OpenAI Codex",
+            "exact_served_model_revision": "unavailable",
+            "prompt_and_sampling_metadata": "unavailable-beyond-committed-rubric",
+            "edit_seconds_source": "judge estimate",
+            "rubric": "summary-scorecard-v1",
+            "rubric_sha256": "b" * 64,
+            "structured_judgments_only_in_governed_artifacts": True,
+        },
+        "environment": {
+            "device": "cpu",
+            "python": "3.13",
+            "torch": "2.12",
+            "transformers": "4.57",
+        },
+        "model": {
+            "family": "local-test-model",
+            "local_files_only": True,
+            "revision": "c" * 40,
+            "max_input_tokens": 1024,
+            "max_output_tokens": 100,
+            "min_output_tokens": 20,
+            "num_beams": 4,
+            "weights_sha256": "d" * 64,
+        },
+        "selection": {
+            "cohort_counts": {"category:Housing": 1},
+            "generated": 1,
+            "not_prevalence_representative": True,
+            "policy": "deterministic-enriched-test",
+            "private_review_sha256": "e" * 64,
+            "sample_size": 1,
+            "skipped": 0,
+        },
+        "source": {
+            "path": "data/external/private.jsonl",
+            "redacted_only": True,
+            "sha256": "f" * 64,
+            "split": "test",
+        },
+    }
+    assert check.check_payload(payload) == []
+
+
+@pytest.mark.parametrize(
+    "schema",
+    ["categorization-benchmark-sample-v1", "summary-development-provenance/v1"],
+)
+def test_benchmark_sidecars_reject_unexpected_fields_without_echoing(schema):
+    payload = {"schema_version": schema, CITIZEN_TEXT: CITIZEN_TEXT}
+    problems = check.check_payload(payload)
+    assert problems
+    assert all(CITIZEN_TEXT not in problem for problem in problems)
+
+
 def _frontier_payload():
     return {
         "schema_version": "janasunani.actionability-frontier-artifacts/v1",

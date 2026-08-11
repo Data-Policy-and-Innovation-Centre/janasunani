@@ -234,19 +234,40 @@ stages:
       exact-text-group-disjoint, redacted-only Sambalpur 2024 manifest.
       Labels measure historical administrative agreement, not policy correctness.
     cmd: >-
-      uv run --frozen --no-sync python -m janasunani.evaluation.categorization
+      uv run --frozen --extra pipeline-core python -m janasunani.evaluation.categorization
       --dataset data/external/categorization_historical_v1/benchmark.jsonl
       --output outputs/evaluation/categorization_historical_v1.json
       --min-selective-accuracy 0.8
       --min-coverage 0.5
     deps:
       - data/external/categorization_historical_v1/benchmark.jsonl
-      - data/external/categorization_historical_v1/benchmark.manifest.json
+      - data/external/categorization_historical_v1/benchmark.provenance.json
       - janasunani/evaluation/categorization.py
       - pyproject.toml
       - uv.lock
     outs:
       - outputs/evaluation/categorization_historical_v1.json
+
+  summary-development-benchmark:
+    desc: >-
+      Score local BART on a deterministic, enriched redacted-only development
+      sample using narrative-free single-frontier-agent judgments. This is not
+      an officer-confirmed release gate.
+    cmd: >-
+      uv run --frozen python -m janasunani.evaluation.summary
+      --judgments data/external/summary_development_v1/judgments.jsonl
+      --dataset-id summary-bart-development-v1
+      --output outputs/evaluation/summary_development_v1.json
+    deps:
+      - data/external/summary_development_v1/judgments.jsonl
+      - data/external/summary_development_v1/provenance.json
+      - janasunani/evaluation/stats.py
+      - janasunani/evaluation/summary.py
+      - scripts/prepare_summary_development.py
+      - pyproject.toml
+      - uv.lock
+    outs:
+      - outputs/evaluation/summary_development_v1.json
 
   pii-development-scorecard:
     desc: >-
@@ -310,9 +331,11 @@ stages:
       - outputs/benchmark/latency.json
       - outputs/evaluation/actionability_candidates_muril_high_catch.json
       - outputs/evaluation/actionability_weak_label_audit.json
+      - outputs/evaluation/categorization_historical_v1.json
       - outputs/evaluation/pii_release.json
       - outputs/evaluation/routing_historical_all.json
       - outputs/evaluation/routing_historical_informative.json
+      - outputs/evaluation/summary_development_v1.json
       - janasunani/evaluation/benchmark_bundle.py
       - pyproject.toml
       - uv.lock

@@ -24,10 +24,12 @@ class BenchmarkFacts:
     publication_ready: bool
     latency: dict[str, Any]
     actionability: dict[str, Any]
+    categorization: dict[str, Any]
     weak_labels: dict[str, Any]
     pii: dict[str, Any]
     routing_all: dict[str, Any]
     routing_informative: dict[str, Any]
+    summary: dict[str, Any]
     section_status: dict[str, dict[str, Any]]
 
     @property
@@ -84,6 +86,11 @@ def load_benchmark_facts(path: Path = DEFAULT_BUNDLE) -> BenchmarkFacts:
     }
 
     weak_labels = _artifact_payload(bundle, "actionability_weak_label_audit")
+    categorization = _artifact_payload(
+        bundle, "categorization_historical_chronological"
+    ).get("test")
+    if not isinstance(categorization, dict):
+        raise ValueError("categorization artifact lacks its chronological test result")
     pii_payload = _artifact_payload(bundle, "pii_development_scorecard")
     if len(pii_payload) != 1:
         raise ValueError("PII scorecard must contain exactly one current language bucket")
@@ -97,15 +104,20 @@ def load_benchmark_facts(path: Path = DEFAULT_BUNDLE) -> BenchmarkFacts:
     ).get("test")
     if not isinstance(routing_all, dict) or not isinstance(routing_informative, dict):
         raise ValueError("routing artifacts lack chronological test results")
+    summary = _artifact_payload(bundle, "summary_development").get("overall")
+    if not isinstance(summary, dict):
+        raise ValueError("summary development artifact lacks overall metrics")
 
     return BenchmarkFacts(
         bundle_id=str(bundle["bundle_id"]),
         publication_ready=bool(bundle.get("publication_ready")),
         latency=latency,
         actionability=actionability,
+        categorization=categorization,
         weak_labels=weak_labels,
         pii=pii,
         routing_all=routing_all,
         routing_informative=routing_informative,
+        summary=summary,
         section_status=section_status,
     )

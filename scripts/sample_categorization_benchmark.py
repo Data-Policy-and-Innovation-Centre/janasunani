@@ -4,7 +4,7 @@ The command reads the OLTP redaction side table, never ``complaints.grievance``.
 It keeps one representative per exact normalized-text group, excludes groups
 with conflicting administrative labels, and assigns a group to the period in
 which it first appeared. The JSONL output contains redacted narrative and must
-remain in private DVC storage; the manifest is aggregate-only.
+remain in private DVC storage; the provenance sidecar is aggregate-only.
 """
 
 from __future__ import annotations
@@ -163,7 +163,7 @@ def build_sample(
     *,
     env_file: Path,
     output: Path,
-    manifest: Path,
+    provenance: Path,
     salt_file: Path | None,
     year: int,
     min_support_per_split: int,
@@ -206,15 +206,17 @@ def build_sample(
         },
         **evidence,
     }
-    manifest.parent.mkdir(parents=True, exist_ok=True)
-    manifest.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    provenance.parent.mkdir(parents=True, exist_ok=True)
+    provenance.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--oltp-env-file", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--provenance", type=Path, required=True)
     parser.add_argument(
         "--id-salt-file",
         type=Path,
@@ -226,7 +228,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     build_sample(
         env_file=args.oltp_env_file,
         output=args.output,
-        manifest=args.manifest,
+        provenance=args.provenance,
         salt_file=args.id_salt_file,
         year=args.year,
         min_support_per_split=args.min_support_per_split,

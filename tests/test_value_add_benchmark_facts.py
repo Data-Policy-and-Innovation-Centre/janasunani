@@ -24,9 +24,11 @@ def _bundle() -> dict:
             "candidates": {"local": {"test": {"n": 57}}},
         },
         "actionability_weak_label_audit": {"eligible_ticket_labels": {}},
+        "categorization_historical_chronological": {"test": {"n": 12}},
         "pii_development_scorecard": {"unknown": {"overall": {}}},
         "routing_historical_all": {"test": {"n": 10}},
         "routing_historical_informative": {"test": {"n": 8}},
+        "summary_development": {"overall": {"n": 6}},
     }
     return {
         "schema_version": "janasunani-full-benchmark-v1",
@@ -50,8 +52,10 @@ def test_loads_all_report_claims_from_one_bundle(tmp_path):
     facts = load_benchmark_facts(path)
     assert facts.bundle_id == "abc123"
     assert facts.actionability["selected_candidate"] == "local"
+    assert facts.categorization["n"] == 12
     assert facts.routing_all["n"] == 10
     assert facts.pii["overall"] == {}
+    assert facts.summary["n"] == 6
     assert facts.impact_available_required == 0
     assert facts.impact_required == 2
 
