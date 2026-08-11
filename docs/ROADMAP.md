@@ -79,7 +79,7 @@ The only place phase status is recorded.
 | 3 | I | OLTP → Parquet materialization + lake read helpers | ✅ |
 | 4 | I | Document ingestion → S3 | ✅ |
 | 5 | II | Document pipeline (6 stages, Presidio PII rebuild, GPU shakedown) | ✅ |
-| 6 | II | Model tracking (DVC is the tracker; MLflow helpers merged, unused) | 🔄 |
+| 6 | II | Model tracking (DVC artifacts + governed MLflow evaluation/control plane; no runtime MLflow) | 🔄 |
 | 7 | II | CI (ruff + pytest on a Postgres service container) | ✅ *(docs pending)* |
 | 8 | II | Real-time inference core (warm processor, live CLI) | ✅ |
 | 9 | II | Routing (rules + empirical crosswalk, wired — `method:"learned"`) | ✅ *(crosswalk landed #33, closed 07 Aug; outcome-based scorer deferred, #106)* |
@@ -92,7 +92,7 @@ The only place phase status is recorded.
 | 16 | II | **A/B instrumentation + retrospective impact evidence** *(d)* | ⬜ |
 | 17 | II | **Sarvam benchmark + provider registry + egress control** *(e)* | 🔄 *(cached provider evidence and governed local release wiring built; no hand-transcribed OCR accuracy set and no new paid calls)* |
 | 18 | III | Evaluation harness & operational safety (RBAC, restore, observability) | ⬜ |
-| 19 | III | Model & pipeline platform (one recipe, release manifest, API v1) | ⬜ |
+| 19 | III | Model & pipeline platform (one recipe, release manifest, API v1) | 🔄 *(immutable local release/materialization slice built; no reviewed production manifest, shared recipe or API-v1 policy yet)* |
 | 20 | III | Structured analytics II (adjusted comparisons, NL query) | ⬜ |
 | 21 | III | Odia-first models | ⬜ |
 | 22 | III | Semantic / unstructured intelligence (retrieval, emergent themes) | ⬜ |
@@ -222,9 +222,10 @@ two places it was quietly wrong. `dpic-infra` traffic was never covered by
 
 Two honest notes:
 
-- **This tightens enforcement.** Today no-egress is policy, not network: the boxes
-  allow general outbound and BART downloads from a public hub at startup. Building
-  an allowlist that permits Sarvam and nothing else is the egress enforcement
+- **This tightens enforcement.** The boxes still permit general outbound traffic,
+  so network allowlisting remains operational work. Mandatory live models are now
+  local-only by default; remote model IDs require an explicit development opt-in.
+  An allowlist that permits only approved destinations is the egress enforcement
   Phase 18 wanted, delivered earlier because there is finally a reason to build it.
 - **The authorization is settled, and it is not ours to revisit.** The Government
   of Odisha holds an MoU with Sarvam, and Principal / Additional Chief Secretary
@@ -312,8 +313,9 @@ What each phase is. Status is in §2.
 
 Six stages in a fixed order:
 `format_classifier → ocr_extraction → pii_tagger → page_type_classifier →
-summarizer → categorizer`. Phase 14 inserts a seventh, `spam_duplicate`, after
-`pii_tagger`.
+summarizer → categorizer`. Phase 14 adds a post-redaction live advisory and a
+separate corpus redaction/dedup/scorecard workflow; it is not yet a seventh
+batch-pipeline stage.
 
 Each stage imports its heavy dependencies lazily. The four heavy extras are
 `pipeline-core`, `pii`, `ocr-deepseek`, and `categorizer`: DeepSeek pins
@@ -327,7 +329,8 @@ format/OCR under `pipeline-core`, PII under `pii`, page type/summary under
 
 - PII was rebuilt on **Presidio** after the DSI CRF weights were lost: in-process,
   custom Indian recognizers (mobile / Aadhaar / PAN), spaCy NER for names, typed
-  tokens. It has **never been scored against gold data**. Phase 13 fixes that.
+  tokens. The current development scorecard measures recall but still lacks
+  precision and required language/source coverage; Phase 13 closes those gates.
 - Page-type is the signal/noise gate: the summarizer only consumes target page
   types (letters and forms in, IDs and covers out).
 - OCR uses pytesseract with the `ori` data for Odia. DeepSeek OCR is English-only
@@ -336,13 +339,12 @@ format/OCR under `pipeline-core`, PII under `pii`, page type/summary under
 
 ### Automation & demo (6–12)
 
-- **6 Model tracking.** DVC is the tracker. The slim MLflow helpers
-  (`janasunani/tracking/mlflow_utils.py`, `configure_tracking`,
-  `ensure_experiment`, `log_model_artifact`) **merged to `main` in PR #20 on
-  2026-07-08**, with `tests/test_mlflow_utils.py`. Nothing calls them yet: no stage
-  resolves a model through MLflow. Phase 17 wires them up, which is a better
-  starting position than "deferred on a branch". Eval metrics land in a DVC-tracked
-  `eval_results.jsonl`.
+- **6 Model tracking.** DVC remains the artifact source of truth. Governed MLflow
+  helpers log evaluation provenance, and the pre-deploy materializer can resolve a
+  reviewed alias, verify DVC tags and approved checksums, and write an immutable
+  local release manifest. Serving imports no MLflow client and performs no network
+  lookup: it resolves operator override → active manifest → DVC mirror. No reviewed
+  production manifest or promotion has yet been completed.
 - **7 CI.** GitHub Actions runs ruff + pytest against a Postgres service container,
   plus `dvc status` and the raw-data-in-git guard. It installs no heavy extras, so
   anything a test imports must live in an import-light module.
@@ -410,17 +412,17 @@ format/OCR under `pipeline-core`, PII under `pii`, page type/summary under
 
 ### Model provenance & DSI baselines (hard rule)
 
-Runtime loads models **only** from our DVC mirrors under `models/` or from large
-public repos (`facebook/bart-large-cnn`, `deepseek-ai/DeepSeek-OCR`), never from
-DSI-controlled accounts (the DSI team disbanded 2026-07-03 and their Box is gone).
+Production runtime loads models from an explicit operator override, an active
+checksum-valid local release manifest, or our DVC mirrors under `models/`, never
+from DSI-controlled accounts (the DSI team disbanded 2026-07-03 and their Box is
+gone). Public model IDs are explicit development opt-ins, not startup fallbacks.
 Mirrored: the page-type ViT, the MuRIL categorizer and its label encoder, the
 format-classifier pickle. The PII CRF weights were the one unrecoverable artifact
 and were rebuilt on Presidio; the training loop survives at DSI-repo commit
 `db4885f`.
 
-The DSI clinic technical report
-([`Full Technical Report DPIC.pdf`](Full%20Technical%20Report%20DPIC.pdf)) is the
-only surviving eval record. These are the prior team's numbers on their own splits,
+The DSI clinic technical report is not in the repository; its surviving baseline
+table is transcribed below. These are the prior team's numbers on their own splits,
 not re-measured on our pipeline, and **English-centric**: the OCR benchmark is
 English-only by construction, the PII and summarizer gold are English. Treat them
 as before-numbers, not thresholds.
@@ -646,18 +648,17 @@ page_type_classifier → summarizer → categorizer`.
 
 Backfill order for history:
 `janasunani-redact-grievance → dedup index build (janasunani-dedup-index, #71) → spam_duplicate scoring`.
-The runner exists and is tested on synthetic fixtures; no complete, accepted
-district-year dedup report exists yet, and `spam_duplicate` scoring is still
-unbuilt.
+The governed Sambalpur-2024 slice completed: 55,544 redacted complaints were
+indexed into 10,963 system-generated groups. The spam prevalence and scorecard
+CLIs are built. These are operational artifacts, not adjudicated duplicate or
+five-class actionability accuracy.
 
 **Reduced August low-signal contract.** The live serving seam runs only after
-PII redaction and records whether the existing OCR repetition-collapse guard
-fired. It returns a reason-coded abstention in every case: no score, no
-"clean" result, no auto-rejection, and no gate on summarization or
-categorization. A review flag remains disabled until a redacted,
-human-adjudicated validation release reports sample size, flag and abstention
-rates, false positives, and PPV by language and input mode. This is deliberately
-separate from the future seventh stage above.
+PII redaction. The default `spam-v1.1-bounded` provider emits a reason-coded
+numeric advisory; `JANASUNANI_TRIAGE=model` can load the checksummed binary
+actionability development artifact and falls back safely. Neither rejects,
+closes, reroutes or supplies invented five-class reasons. The development set
+is not officer-confirmed and is not a release gate.
 
 **Three firsts this stage introduces**, worth flagging:
 
@@ -1340,7 +1341,7 @@ since been withdrawn. **105B is beyond that box and would need a larger instance
 so the self-hosted exit ramp is closed at current hardware** unless the box is
 replaced. Measure before assuming otherwise (#125).
 
-**Registry generalization.** Today a model is a local DVC path. It becomes:
+**Registry generalization.** The implemented local release schema is:
 
 ```
 {name, alias, provider: local | sarvam-hosted | sarvam-selfhosted,
@@ -1351,10 +1352,13 @@ replaced. Measure before assuming otherwise (#125).
 Self-hosted Sarvam on the GPU box is `dpic-infra`, not `same-host`: it is a real
 network hop to a second machine, and the route declaration says so.
 
-- The merged MLflow helpers (Phase 6) finally get a caller. Register versions,
-  resolve an **alias** (`@champion` / `@production`, not the deprecated stages) at
-  deploy/startup, cache locally, expose in health/telemetry, keep one-command
-  rollback. Add the `mlflow` service to compose.
+- Evaluation runs can be logged with governed provenance. Before deployment, an
+  operator may resolve an **alias** (`@champion` / `@production`, not deprecated
+  stages), validate its DVC tags and approved artifact checksum, materialize it
+  locally and atomically activate an immutable manifest. Preflight exposes the
+  release identity and shadowing warnings; serving itself never contacts MLflow.
+  A managed MLflow service and reviewed promotion workflow remain operational
+  work, not a runtime dependency.
 - **A hosted endpoint is not reproducible the way a pinned artifact is.** The
   vendor can change the model behind a stable name. Mitigate: record the returned
   model ID and response metadata on every call, put both in the release manifest,
@@ -1596,12 +1600,18 @@ to every other task, and closes the operational gaps.
   (issue #31). The single-instance Postgres is a known prototype limit.
 
   The **GHCR PAT** on the box is the one standing credential; rotate or replace it,
-  and mirror/checksum every runtime model (BART currently downloads from a public
-  hub at startup).
+  and activate a reviewed checksum-valid release for every runtime model (BART
+  is now local-only by default).
 
 ### Phase 19 — Model & pipeline platform
 
 Make model swaps and retrains safe and reproducible without over-building.
+
+**Implemented down-payment:** strict versioned local release manifests,
+checksum-verified materialization, atomic activation/rollback and runtime
+resolution order (operator override → active manifest → DVC mirror). This does
+not close the phase: no reviewed production manifest has been promoted, and the
+shared batch/live recipe, jurisdiction contract and API-v1 policy below remain.
 
 - **One validated processing recipe shared by batch and live.** Converge
   `pipeline/pipeline.py` and `inference/service.py::process` on a single recipe with
@@ -1620,13 +1630,15 @@ Make model swaps and retrains safe and reproducible without over-building.
   additive compatibility, versioned routes, idempotency, structured errors,
   upload/request-size limits, and async job/status semantics for long OCR/GPU
   operations.
-- **The release manifest is the highest-value piece here.** Phase 12 ships immutable
+- **The release manifest is the highest-value piece here and its local model
+  slice is built.** Phase 12 ships immutable
   commit-SHA *images*, but an image SHA does not pin the independently bind-mounted
   artifacts that also determine a result: DVC model hashes, routing mappings, the
   Parquet snapshot, the Alembic revision, public Hugging Face model revisions, and
-  (from Phase 17) the resolved remote model IDs. The manifest joins all of these so
-  an inference release is reproducible and roll-back-able as a unit. More valuable
-  than any generic reorderable-pipeline framework.
+  (from Phase 17) the resolved remote model IDs. The implemented manifest pins and
+  validates model artifacts; expanding it into a reviewed whole-system release
+  that joins every data/schema/image input remains. This is more valuable than any
+  generic reorderable-pipeline framework.
 
 ### Phase 20 — Structured analytics II
 

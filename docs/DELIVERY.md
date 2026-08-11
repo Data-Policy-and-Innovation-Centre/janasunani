@@ -36,7 +36,10 @@ Manual privacy correction produced an 89-page current set. It measures redaction
 by data type, but the gold has no language field, so it cannot support a
 by-language claim.
 
-The document-reading half of that comparison is gated by something else entirely: a hand-transcribed sample of scanned pages, which nobody has been asked to produce yet. Two different bottlenecks, two different people.
+The document-reading half of that comparison is gated by a hand-transcribed
+sample of scanned pages. No owner was assigned by the 7 August cutoff, so the
+demo took the predeclared divergence-only fallback. Commissioning transcription
+is now post-demo work, not an open dependency on the August path.
 
 ## What we deliver on 14 August
 
@@ -48,7 +51,7 @@ The document-reading half of that comparison is gated by something else entirely
 | Actionability and duplicates | Repeat submissions linked and mass campaigns grouped as one issue, across a defined portion of the backlog. The five-way taxonomy and exact-template weak-label audit are separated from a canonical 57-case frontier-adjudicated developmental test; that test is not officer-confirmed, has no outside-purview support and is not a release gate. Its checksummed binary artifact can serve advisory review but cannot assign five-class reasons | **Bounded** | Duplicates plus the tested bounded low-signal regression behavior; if the developmental score is shown, its 57-case denominator and release limitations stay on the same slide |
 | The intelligence layer | Duplicate-adjusted workload. One worked example of a spike separated into filings, distinct problems and distinct citizens. Local issue themes for one category. The closure finding | **Bounded** | Themes drop first. If duplicate detection slips, only the closure finding survives, since it is the one item needing no new processing |
 | A/B testing of the automation | A **draft**, not-yet-locked stepped-wedge design, its measurement contract, and the inputs needed for a power calculation. No workflow or citizen effect is claimed before a governed pilot | **Framework only** | The reviewed draft and impact-metric registry; illustrative power values are not presented as measured MDEs |
-| Sarvam benchmark | Cached Sarvam Vision evidence from completed/interrupted runs: 56 paired successful pages in the larger run, provider failures/completions, divergence, list-price cost estimates and adapter wiring. The cached aggregate contains no reportable latency distribution. No new paid calls and no accuracy claim without transcription/adjudication | **Bounded** | Cached aggregate and dry-run wiring only; source artifacts remain untracked, so this is not an independently reconstructable scorecard |
+| Sarvam benchmark | Cached Sarvam Vision evidence from completed/interrupted runs: 56 paired successful pages in the larger run, provider failures/completions, divergence, list-price cost estimates and adapter wiring. The cached aggregate contains no reportable latency distribution. No new paid calls and no accuracy claim without transcription/adjudication | **Bounded** | Cached aggregate and dry-run wiring only; protected source snapshots are privately DVC-tracked and hashed, but the original sampling manifest/derivation was not recovered, so this is not an independently reconstructable accuracy scorecard |
 
 **Committed** means we will demonstrate it. **Bounded** means we will demonstrate it on a defined slice rather than the full 1.37 million. **Framework only** means a draft design and illustrative calculation, not a locked plan, instrumentation or a running trial.
 
@@ -233,4 +236,7 @@ Running Sarvam's large model on our own hardware. Natural-language querying. Com
 | Whether the demonstration audience may see real citizen data, and under whose login | 7 August |
 | Whether the closed-without-action finding is shown on 14 August or brought to you first. It reflects on the redressal process, not the software. We would report it at state level only, never office by office | 7 August |
 | Whether any department has agreed in principle to an A/B trial later, which would let us present the design with a named partner | 14 August |
-| Who can hand-transcribe roughly fifty scanned pages in Odia and English. Without it the Sarvam comparison has no correct answer to measure against. **The one item on the final week's path with nobody assigned** | Next meeting, and no later than 31 July |
+
+The transcription-owner decision closed on 7 August with no owner assigned;
+the August comparison therefore uses the divergence-only fallback. A future
+owner and governed printed/handwritten sample are post-demo decisions.

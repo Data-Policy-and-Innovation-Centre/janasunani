@@ -13,7 +13,7 @@ being filled with a placeholder.
 
 The current reproducible development ledger is
 `outputs/benchmark/full_benchmark.json`, bundle
-`c713c41ecd97b256c42b63022c75e6ccfc2cc45fa6152c95aa812a1de47dcc47`.
+`9b18d0fa2de7a69c2c7ee8c2ee9fc7c8a0f0f6d4b026230b0633fb1fa21b83a1`.
 It embeds the exact aggregate inputs used by the value-add report and records
 their checksums. Materialize it with
 `dvc pull dvc.yaml:full-benchmark-bundle`; recompute it from already
@@ -324,8 +324,18 @@ issue's own baseline: top-10 strings are 36.7% of rows, top-500 pairs 60.3%.
 
 ## 6. Sarvam
 
-Not called. Not because governance blocks it — because nobody has supplied
-`SARVAM_API_KEY` and run it.
+The current record is **cache-only evidence from 56 paired successful pages**
+produced by an earlier interrupted provider run plus its completed validation
+run. No new paid call was made for this release. Every normalized Sarvam/local
+pair differed, and Sarvam emitted 1.3345× as many characters; neither statistic
+identifies which transcription is correct. There is no hand-transcribed gold,
+usable provider-latency distribution or actual billing record.
+
+`janasunani-import-sarvam-evidence` can log this already-materialized aggregate
+evidence to MLflow without contacting Sarvam. The source snapshot remains
+protected and the import does not turn divergence into OCR accuracy. The
+governed evidence record and limitations are in
+[QUALITY_BENCHMARKS.md](QUALITY_BENCHMARKS.md#sarvam-vision--cached-evidence-no-new-calls).
 
 All three provider-held-data controls (`retention_terms`,
 `encryption_in_transit`, `encryption_at_rest`) are `verified=False`. That does
@@ -347,7 +357,7 @@ stays false. The gate the adapter actually checks before a live call
 `live_use_ready`. With `enabled=True` and a real key, it would call Sarvam,
 not fall back to pytesseract.
 
-Sample size for the paired comparison, at 10 points detectable and 25%
+Sample size for a future adjudicated paired comparison, at 10 points detectable and 25%
 discordance: **194 pages** at 80% power / 5% level, **259** at 90% power,
 **368** at 90% power / 1% level.
 

@@ -101,12 +101,21 @@ pass, or the pull request must state the observed movement, the gold artifact
 version, and why the movement is correct. Never relax a gate to reproduce a
 number.
 
+Actionability, category, routing, summary, PII, Sarvam and bundle commands are
+mapped in [docs/QUALITY_BENCHMARKS.md](docs/QUALITY_BENCHMARKS.md#authorized-reproduction-map).
+Run only stages whose protected inputs are explicitly authorized and present.
+Missing officer-confirmed release sets and impact extracts are publication
+blockers, not CI failures to waive. Model promotion additionally follows the
+immutable release procedure in [docs/MODELS.md](docs/MODELS.md).
+
 ## Reproducibility
 
 A file that affects a generated output has to be committed and listed as a
-`dvc.yaml` dependency of the stage that consumes it. No stage output is
-currently agent-generated, so the synced standards file is not yet a stage
-dependency; add it when one becomes so.
+`dvc.yaml` dependency of the stage that consumes it. Frontier-agent structured
+judgments are permitted only as explicitly labelled development evidence with
+their provenance and uncertainty policy; they are not officer-confirmed gold.
+The synced standards file is not currently a stage dependency; add it when a
+stage actually consumes it.
 
 Stage dependencies are listed file by file rather than by package directory
 (see the note in `dvc.yaml`). Adding a stage to a command means adding its

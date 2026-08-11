@@ -182,6 +182,31 @@ manifest, or evaluation schema. A quality conclusion still requires a
 hand-transcribed set, adjudicated categories/summaries, handwriting and observed
 language strata, and failure-inclusive reporting.
 
+## Authorized reproduction map
+
+Run only stages whose protected inputs have been explicitly authorized and
+materialized. A generic `dvc repro` traverses more than the public aggregate
+bundle and is not a substitute for choosing the intended stage.
+
+```bash
+uv run dvc repro --single-item actionability-adjudication-prepare
+uv run dvc repro --single-item actionability-adjudication-finalize
+uv run dvc repro --single-item actionability-local-candidate-benchmark
+uv run dvc repro --single-item actionability-weak-label-audit
+uv run dvc repro --single-item categorization-historical-benchmark
+uv run dvc repro --single-item summary-development-benchmark
+uv run dvc repro --single-item pii-development-scorecard
+uv run dvc repro --single-item routing-historical-benchmark
+uv run dvc repro --single-item full-benchmark-bundle
+```
+
+`full-benchmark-bundle` joins the governed actionability, category, summary,
+PII, routing and cached-Sarvam reports and records missing required artifacts.
+The separate legacy `benchmark-table` stage consumes only latency, PII and
+cached-Sarvam inputs for its presentation table; it is not the full evidence
+bundle. Neither stage accesses a provider unless one of its already-materialized
+inputs was separately produced by an explicitly authorized egress run.
+
 ## Release gates
 
 Before an alias can be promoted:

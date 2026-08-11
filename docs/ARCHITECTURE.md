@@ -8,8 +8,9 @@
 
 An AI-powered grievance redressal prototype for Odisha. A raw grievance — typed
 text or a scanned document — is **extracted** (OCR), **redacted** (PII),
-**triaged** (spam / duplicate), **classified** (category), **summarized**, and
-**routed** to the responsible office, ending in a Next.js demo UI.
+**triaged** with advisory low-signal and duplicate evidence, **classified**
+(category), **summarized**, and **routed** to a suggested office, ending in a
+Next.js demo UI. Triage does not auto-reject or dispose of a grievance.
 
 The repo consolidates two earlier projects (a grievance backend and the DSI
 document-processing pipeline) into one `janasunani/` package, in three parts:
@@ -20,9 +21,10 @@ document-processing pipeline) into one `janasunani/` package, in three parts:
   not had its first live bring-up yet (issue #30).
 - **Part II — The demo** *(in progress)*: single-grievance inference, routing,
   FastAPI serving, Next.js UI, plus the five components below.
-- **Part III — Post-demo maturity** *(planned)*: evaluation + operational-safety
-  foundation, Odia-first models, governance intelligence, and a jurisdiction pack
-  for portability — see [ROADMAP.md](ROADMAP.md) §6 and the direction summary below.
+- **Part III — Post-demo maturity** *(planned, with evaluation/release
+  down-payments built)*: operational safety, Odia-first models, governance
+  intelligence, and a jurisdiction pack for portability — see
+  [ROADMAP.md](ROADMAP.md) §6 and the direction summary below.
 
 The demo is scoped by five components (set 2026-07-27, full detail in
 [ROADMAP.md](ROADMAP.md) §1.1 and §5):
@@ -30,7 +32,7 @@ The demo is scoped by five components (set 2026-07-27, full detail in
 | # | Component | Architectural impact |
 |---|---|---|
 | a | DSI pipeline replication | None. Exercises the existing six stages end to end |
-| b | Spam & duplicate detection | Seventh pipeline stage; first corpus-level stage dependency (the dedup index) |
+| b | Spam & duplicate detection | Post-redaction live advisory plus the first corpus-level dependency (the dedup index) |
 | c | Intelligence layer | New `serving/intelligence.py` router and a semantic layer over the lake |
 | d | A/B testing of AI automation | New `experiments/` package; shadow-mode execution path |
 | e | Sarvam benchmark | Provider-backed model registry, a single egress module, and a redrawn trust boundary |
@@ -38,9 +40,9 @@ The demo is scoped by five components (set 2026-07-27, full detail in
 *(Status is not recorded here. It lives in [ROADMAP.md](ROADMAP.md) §2, in one
 table, so the two documents cannot drift.)*
 
-Two of them change the architecture rather than extend it: (b) adds a seventh
-pipeline stage and the first corpus-level stage dependency, and (e) **redraws the
-trust boundary** (see Security invariants).
+Two of them change the architecture rather than extend it: (b) adds a
+post-redaction advisory and the first corpus-level dependency, and (e)
+**redraws the trust boundary** (see Security invariants).
 
 ## The data flow, end to end
 
@@ -60,14 +62,16 @@ throwaway MySQL ──▶ janasunani/migration ──▶ ┌──────�
       ▼                                                 │ janasunani/olap
 janasunani/pipeline ──▶ artifact SQLite ──▶ exporter ───┤ (materialize)
  format → OCR → PII →   (pages/documents)   (upsert     ▼
- triage → page-type →                        into OLTP) Parquet lake (data/interim/)
- summarize → categorize                                 = analytics / ML / demo history
+ page-type → summarize                       into OLTP) Parquet lake (data/interim/)
+ → categorize                                            = analytics / ML / demo history
         │                                                        │
         └────────── dedup index ◀─────────────────────────────────┘
 ```
 
-Once Phase 17 lands, model calls resolve to one of two destinations off the
-calling host, through one module:
+The live processor adds bounded post-redaction triage, category, summary and
+routing suggestions. Models resolve locally from an operator override, then an
+active immutable release manifest, then a DVC mirror. The only implemented
+third-party model route is the governed Sarvam egress path:
 
 ```
 pipeline stage ──▶ janasunani/egress (the single outbound module)
@@ -88,7 +92,7 @@ Three storage layers, deliberately distinct
 | **OLTP store** | SQLite / Postgres via `OLTP_DB_URL` (async SQLAlchemy, Alembic) | System of record: 1.37M complaints, 6.56M action-history rows, plus exported pipeline outputs. Live writes land here. |
 | **Parquet lake** | Files in `data/interim/`, DuckDB/Polars readers | Read-optimized downstream copy, produced by `janasunani-materialize`. The demo's history browse and all ML/analytics read this, never OLTP. |
 | **Pipeline artifact DB** | Standalone SQLite per run | The document pipeline's own working state (`pages`/`documents`/`unreadable_pages`), resumable by design. Reaches OLTP only through the exporter. |
-| **Dedup index** *(planned, Phase 14)* | MinHash / LSH signatures built from the lake | Corpus-level state the triage stage queries. Keys derived from `petitioner_mobile` / `petitioner_email` are **salted hashes**, never raw values — though a salted hash of a mobile number is still personal data under DPDP, so it is access-controlled, not treated as anonymous. Breaks the previous rule that a pipeline run needs no state beyond its artifact DB. |
+| **Dedup index** *(built for the governed Sambalpur-2024 slice)* | MinHash / LSH signatures over redacted grievance records | Corpus-level state used by duplicate-adjusted analytics. Keys derived from `petitioner_mobile` / `petitioner_email` are **salted hashes**, never raw values — though a salted hash of a mobile number is still personal data under DPDP, so it is access-controlled, not treated as anonymous. Per-request live matching is not wired. |
 
 Verified full-scale counts (local **and** cloud Postgres, must match after any
 migration change): **1,371,288 complaints / 6,556,171 action-history rows**.
@@ -102,12 +106,12 @@ migration change): **1,371,288 complaints / 6,556,171 action-history rows**.
 | [`janasunani/migration/`](../janasunani/migration/README.md) | Cold-start dump loader + live-MySQL sync, converging on one validated insert routine. |
 | [`janasunani/ingestion/`](../janasunani/ingestion/README.md) | Janasunani API client, S3 service, document downloader, and the Pydantic schemas that are the **single raw→ORM column map**. |
 | [`janasunani/olap/`](../janasunani/olap/README.md) | `materialize` (OLTP → Parquet via DuckDB scanners) and `lake` (read helpers). |
-| [`janasunani/pipeline/`](../janasunani/pipeline/README.md) | The batch document pipeline (DSI refold), its artifact DB, the OLTP exporter, OCR quality guards, and `pii_eval` — the release gate the pipeline itself runs. Six stages today, seven with triage (Phase 14). |
+| [`janasunani/pipeline/`](../janasunani/pipeline/README.md) | The six-stage batch document pipeline (DSI refold), its artifact DB, the OLTP exporter, OCR quality guards, and `pii_eval` — the release gate the pipeline itself runs. |
 | [`janasunani/inference/`](../janasunani/inference/README.md) | Single-item inference for the live warm processor. Same models as `pipeline/`, one item at a time instead of a batch. |
 | [`janasunani/serving/`](../janasunani/serving/README.md) | The demo API: endpoints, response schemas (the frozen frontend contract), triage advisory, supervisor aggregates, history. |
-| [`janasunani/routing/`](../janasunani/routing/__init__.py) | Rules-first grievance routing: mappings, rules, and the empirical category→department crosswalk (#33). The learned router is deliberately deferred. |
+| [`janasunani/routing/`](../janasunani/routing/__init__.py) | Rules-first grievance routing: mappings, the empirical category→department crosswalk, and an opt-in checksummed empirical-Bayes incidence provider (`JANASUNANI_ROUTER=incidence`). Both learn historical destination, not correct authority or outcomes, and fall through safely. |
 | [`janasunani/analytics/`](../janasunani/analytics/README.md) | The analytical layer over the Parquet lake: governed marts, the findings scripts, and the action-type lookup. |
-| [`janasunani/evaluation/`](../janasunani/evaluation/__init__.py) | Harnesses that score a stage against ground truth and report, rather than gating a run: the PII scorecard (#67) and the Sarvam vs pytesseract scorecard (#84/#127). |
+| [`janasunani/evaluation/`](../janasunani/evaluation/__init__.py) | Governed, report-only harnesses for PII, actionability/weak labels, categorization, summary, historical routing and Sarvam, plus the full evidence bundle. They measure evidence; release gates remain explicit. |
 | [`janasunani/pii/`](../janasunani/pii/__init__.py) | PII gold-set construction: the ensemble labelling helpers, agreement report and adjudication queue (#15). |
 | [`janasunani/egress/`](../janasunani/egress/__init__.py) | The **only** package permitted to send citizen data to an `authorized-external` destination. Provider route registry, per-call audit log, rate limiting, kill switch, and the governance gate. |
 | [`janasunani/tracking/`](../janasunani/tracking/__init__.py) | DVC owns artifact bytes; MLflow records runs/versions and resolves reviewed aliases only in the pre-deploy control plane. A checksummed immutable release manifest is activated atomically, and runtime resolution remains local-only. See [`MODELS.md`](MODELS.md). |
@@ -149,8 +153,8 @@ instance roles only (no static keys):
   nightly `pg_dump` → S3. The compose stack also defines the `api` / `frontend` /
   `proxy` (Caddy) services with CI → GHCR → box deploy automation
   (`.github/workflows/deploy.yml`); the stack is not yet brought up live on the
-  box (first live bring-up tracked in #30), and `mlflow` remains planned for
-  Phase 17.
+  box (first live bring-up tracked in #30). MLflow is available to the
+  evaluation and pre-deploy release control plane, never the serving process.
 - **GPU box** (on demand, g6.xlarge/L4, `gpu_box_count = 0/1` toggle, ~$1/hr
   while up): DeepSeek OCR batch runs and demo windows. Built from the Deep
   Learning Base AMI; created and destroyed per use — nothing stateful on it.
@@ -159,8 +163,11 @@ instance roles only (no static keys):
 
 DVC (S3 remote `dpic-dvc-cache/janasunani`) versions **file artifacts** — the raw
 dump, the Parquet lake, mirrored models under `models/`, the document sample —
-and **file-in/file-out transforms** (`dvc.yaml`: `pipeline-sample`,
-`materialize`). Operational jobs whose effects live in external systems
+and **file-in/file-out transforms**. In addition to `pipeline-sample` and
+`materialize`, `dvc.yaml` governs actionability adjudication/candidates,
+weak-label audit, chronological categorization and routing, summary development,
+PII development, the full benchmark bundle and presentation tables. Operational
+jobs whose effects live in external systems
 (migration → OLTP, ingestion → S3, backfills) are **not** DVC stages; they run
 as CLIs/cron and reach the lake via `materialize`. With Postgres OLTP, run
 `janasunani-materialize` directly then `dvc commit` (the `materialize` stage
@@ -168,10 +175,12 @@ deps on the SQLite path).
 
 ## Model provenance (hard rule)
 
-The DSI team disbanded (2026-07-03) and their Box data is gone. Runtime loads
-models **only** from our DVC mirrors under `models/` or from large public repos
-(`facebook/bart-large-cnn`, `deepseek-ai/DeepSeek-OCR`) — never from
-DSI-controlled accounts. The PII model was the one unrecoverable artifact; its
+The DSI team disbanded (2026-07-03) and their Box data is gone. Production
+runtime loads models **only** from an explicit operator override, an active
+checksum-validated local release manifest, or our DVC mirrors under `models/`.
+Remote public IDs are explicit development opt-ins, never an implicit startup
+download and never a serving-time MLflow lookup. The PII model was the one
+unrecoverable artifact; its
 replacement is the Presidio-based stage (see
 [pipeline/README](../janasunani/pipeline/README.md)). The DSI technical report's
 measured baselines (the only surviving eval record) are recorded in
@@ -204,9 +213,9 @@ release gates.
     withdrawn and 105B exceeds the current 24 GB L4, so **that ramp is
     unconfirmed** until the licence and sizing are re-checked (#125). The
     same-host counterparts remain the working fallback;
-  - the network allowlist permits Sarvam and nothing else, which is **stricter
-    than today**, where no-egress is policy only and BART downloads from a public
-    hub at startup.
+  - a production network allowlist should permit only approved destinations.
+    BART and the other mandatory live models are now required locally by
+    default; an explicit development opt-in is required for a remote model ID.
 
   Unchanged: PII detection and redaction run in-process (Presidio + local spaCy)
   by default, and PII `start`/`end` offsets stay defined over the original text.
@@ -264,11 +273,12 @@ enforcement and the model registry (Phase 17), the first analytics increments
   evidence rather than fixed in advance.
 - **Minimal modularity + model registry.** The pipeline keeps a **fixed canonical
   stage order shared by batch and live** (some orderings are policy invariants, not
-  free choices); only **models** become swappable, resolved by name/alias from a
-  DVC path or an **MLflow alias** (`@production`, not the deprecated stages). MLflow
-  is a **control-plane** (resolve at deploy/startup, pin in a release manifest,
-  one-command rollback), not a runtime dependency. This is the Phase 6 trigger, and
-  Phase 17 pulls it into the demo: a model reference becomes
+  free choices); only **models** become swappable. MLflow aliases are resolved
+  before deployment into a checksum-validated immutable local manifest. Serving
+  resolves operator override → active manifest → DVC mirror, without importing
+  MLflow or using the network. This is a **control-plane**, not a runtime
+  dependency, and supports explicit activation and one-command rollback. A model
+  reference becomes
   `{name, alias, provider, artifact_or_endpoint, version, trust_tier}`, so a
   local artifact, the Sarvam hosted API, and self-hosted Sarvam weights are three
   backends behind one entry. Caveat recorded in the roadmap: a hosted endpoint is
