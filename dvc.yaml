@@ -228,6 +228,26 @@ stages:
     outs:
       - outputs/evaluation/actionability_weak_label_audit.json
 
+  categorization-historical-benchmark:
+    desc: >-
+      Train and evaluate the cheap local categorizer on a chronological,
+      exact-text-group-disjoint, redacted-only Sambalpur 2024 manifest.
+      Labels measure historical administrative agreement, not policy correctness.
+    cmd: >-
+      uv run --frozen --no-sync python -m janasunani.evaluation.categorization
+      --dataset data/external/categorization_historical_v1/benchmark.jsonl
+      --output outputs/evaluation/categorization_historical_v1.json
+      --min-selective-accuracy 0.8
+      --min-coverage 0.5
+    deps:
+      - data/external/categorization_historical_v1/benchmark.jsonl
+      - data/external/categorization_historical_v1/benchmark.manifest.json
+      - janasunani/evaluation/categorization.py
+      - pyproject.toml
+      - uv.lock
+    outs:
+      - outputs/evaluation/categorization_historical_v1.json
+
   pii-development-scorecard:
     desc: >-
       Reproduce the current per-entity PII recall scorecard. The source has no

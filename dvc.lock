@@ -586,3 +586,35 @@ stages:
       hash: md5
       md5: 9dc61482d0ca75b60db7e999dde43b09
       size: 9564
+  categorization-historical-benchmark:
+    cmd: uv run --frozen --no-sync python -m
+      janasunani.evaluation.categorization --dataset
+      data/external/categorization_historical_v1/benchmark.jsonl --output
+      outputs/evaluation/categorization_historical_v1.json
+      --min-selective-accuracy 0.8 --min-coverage 0.5
+    deps:
+    - path: data/external/categorization_historical_v1/benchmark.jsonl
+      hash: md5
+      md5: c9dae018fedfa198371503243b2e01fa
+      size: 21609889
+    - path: data/external/categorization_historical_v1/benchmark.manifest.json
+      hash: md5
+      md5: 4b8430a62387c767828c1e8aacd2c786
+      size: 2098
+    - path: janasunani/evaluation/categorization.py
+      hash: md5
+      md5: 46349627c3f5efc76931cd944d3f3a55
+      size: 14022
+    - path: pyproject.toml
+      hash: md5
+      md5: 7650a32a2ab1519840a182edfcf10a50
+      size: 10346
+    - path: uv.lock
+      hash: md5
+      md5: f895934178f603f5315683d02abc6449
+      size: 1038485
+    outs:
+    - path: outputs/evaluation/categorization_historical_v1.json
+      hash: md5
+      md5: 2274c96f003be985a5fbbb670c12433a
+      size: 68115
