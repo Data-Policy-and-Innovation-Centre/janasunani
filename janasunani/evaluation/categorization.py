@@ -10,9 +10,13 @@ administrative labels.
 
 from __future__ import annotations
 
+import argparse
+import hashlib
+import json
 import math
 from collections import Counter
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Sequence
 
 from janasunani.evaluation.classification import (
@@ -25,6 +29,24 @@ from janasunani.evaluation.classification import (
 
 MODEL_FAMILY = "hashing-word-char-sgd"
 MODEL_VERSION = "categorizer-hashing-v1"
+REPORT_VERSION = "janasunani.categorization-scorecard/v1"
+_REQUIRED_FIELDS = {
+    "item_id",
+    "group_id",
+    "redacted_text",
+    "category",
+    "split",
+    "language",
+    "source_kind",
+}
+_FORBIDDEN_FIELDS = {
+    "grievance",
+    "raw_text",
+    "ticket_no",
+    "petitioner_name",
+    "petitioner_mobile",
+    "petitioner_email",
+}
 
 
 @dataclass(frozen=True)
@@ -37,6 +59,34 @@ class CategorizationRecord:
     language: str = "unknown"
     source_kind: str = "typed"
     subcategory: str | None = None
+
+
+def load_jsonl(path: Path) -> list[CategorizationRecord]:
+    """Load the strict redacted-only private benchmark manifest."""
+
+    records: list[CategorizationRecord] = []
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        if not isinstance(payload, dict):
+            raise ValueError(f"line {line_number} must be an object")
+        forbidden = set(payload).intersection(_FORBIDDEN_FIELDS)
+        if forbidden:
+            raise ValueError(
+                f"line {line_number} contains forbidden raw/identity fields: "
+                f"{sorted(forbidden)}"
+            )
+        unknown = set(payload) - (_REQUIRED_FIELDS | {"subcategory"})
+        missing = _REQUIRED_FIELDS - set(payload)
+        if unknown or missing:
+            raise ValueError(
+                f"line {line_number} schema mismatch; missing={sorted(missing)} "
+                f"unknown={sorted(unknown)}"
+            )
+        records.append(CategorizationRecord(**payload))
+    validate_records(records)
+    return records
 
 
 def validate_records(records: Sequence[CategorizationRecord]) -> None:
@@ -175,8 +225,13 @@ def select_abstention_threshold(
         and float(metrics["coverage"]) >= min_coverage
     ]
     if not eligible:
+        coverage_eligible = [
+            metrics
+            for metrics in candidates
+            if float(metrics["coverage"]) >= min_coverage
+        ]
         fallback = max(
-            candidates,
+            coverage_eligible or candidates,
             key=lambda metrics: (
                 float(metrics["selective_accuracy"]),
                 float(metrics["coverage"]),
@@ -273,6 +328,11 @@ def benchmark_hashing_classifier(
         "missing_training_labels": sorted(missing_train),
         "validation": validation_metrics,
         "validation_selective": validation_selective,
+        "selective_constraints_met": (
+            float(validation_selective["selective_accuracy"])
+            >= min_selective_accuracy
+            and float(validation_selective["coverage"]) >= min_coverage
+        ),
         "test": test_metrics,
         "test_by_language": metrics_by_language(
             test_examples,
@@ -300,3 +360,47 @@ def benchmark_hashing_classifier(
         abstain_threshold=threshold,
         report=report,
     )
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dataset", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--alpha-values", type=float, nargs="+", default=[1e-6, 1e-5, 1e-4, 1e-3])
+    parser.add_argument("--n-features", type=int, default=2**18)
+    parser.add_argument("--min-selective-accuracy", type=float, default=0.8)
+    parser.add_argument("--min-coverage", type=float, default=0.5)
+    args = parser.parse_args(argv)
+    benchmark = benchmark_hashing_classifier(
+        load_jsonl(args.dataset),
+        alpha_values=args.alpha_values,
+        n_features=args.n_features,
+        min_selective_accuracy=args.min_selective_accuracy,
+        min_coverage=args.min_coverage,
+    )
+    digest = hashlib.sha256(args.dataset.read_bytes()).hexdigest()
+    report = {
+        "report_version": REPORT_VERSION,
+        "dataset_sha256": f"sha256:{digest}",
+        "label_interpretation": "historical administrative agreement, not policy correctness",
+        "release_eligible": False,
+        **benchmark.report,
+    }
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(
+        json.dumps(
+            {
+                "output": str(args.output),
+                "dataset_sha256": report["dataset_sha256"],
+                "test_top1": report["test"]["top_k_accuracy"]["1"],
+                "test_top3": report["test"]["top_k_accuracy"]["3"],
+            },
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

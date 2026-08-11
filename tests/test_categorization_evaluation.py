@@ -1,8 +1,11 @@
+import json
+
 import pytest
 
 from janasunani.evaluation.categorization import (
     CategorizationRecord,
     benchmark_hashing_classifier,
+    load_jsonl,
     select_abstention_threshold,
     validate_records,
 )
@@ -25,6 +28,31 @@ PHRASES = {
     "Pensions": "old age pension payment beneficiary allowance",
     "Roads": "damaged village road pothole bridge repair",
 }
+
+
+def test_private_jsonl_loader_rejects_raw_and_identity_fields(tmp_path):
+    path = tmp_path / "categorization.jsonl"
+    payload = {
+        "item_id": "item-1",
+        "group_id": "group-1",
+        "redacted_text": "water supply is unavailable",
+        "category": "Water Supply",
+        "split": "train",
+        "language": "unknown",
+        "source_kind": "typed",
+    }
+    rows = []
+    for split in ("train", "validation", "test"):
+        row = dict(payload, item_id=f"item-{split}", group_id=f"group-{split}", split=split)
+        rows.append(json.dumps(row))
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    assert len(load_jsonl(path)) == 3
+
+    bad = dict(payload, ticket_no="CMO1")
+    path.write_text(json.dumps(bad) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="forbidden"):
+        load_jsonl(path)
 
 
 def dataset():
@@ -84,6 +112,23 @@ def test_abstention_threshold_is_selected_on_scored_validation_rows():
     assert threshold == pytest.approx(0.8)
     assert metrics["coverage"] == pytest.approx(2 / 3)
     assert metrics["selective_accuracy"] == 1.0
+
+
+def test_abstention_fallback_preserves_minimum_coverage_when_accuracy_is_unreachable():
+    examples = [
+        ScoredExample("1", "A", {"A": 0.9, "B": 0.1}, "1"),
+        ScoredExample("2", "A", {"A": 0.4, "B": 0.6}, "2"),
+        ScoredExample("3", "B", {"A": 0.45, "B": 0.55}, "3"),
+        ScoredExample("4", "A", {"A": 0.51, "B": 0.49}, "4"),
+    ]
+
+    _, metrics = select_abstention_threshold(
+        examples,
+        min_selective_accuracy=1.0,
+        min_coverage=0.75,
+    )
+
+    assert metrics["coverage"] >= 0.75
 
 
 def test_hashing_baseline_reports_per_class_language_and_calibration():
