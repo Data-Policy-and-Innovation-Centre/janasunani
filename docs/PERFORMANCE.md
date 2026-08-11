@@ -9,6 +9,63 @@ Where a number is a legacy reference rather than a fresh measurement it says
 so. Where a capability cannot yet be measured, that is stated instead of
 being filled with a placeholder.
 
+## 0. Full development benchmark bundle — 11 August 2026
+
+The current reproducible development ledger is
+`outputs/benchmark/full_benchmark.json`, bundle
+`c713c41ecd97b256c42b63022c75e6ccfc2cc45fa6152c95aa812a1de47dcc47`.
+It embeds the exact aggregate inputs used by the value-add report and records
+their checksums. Materialize it with
+`dvc pull dvc.yaml:full-benchmark-bundle`; recompute it from already
+materialized inputs with `dvc repro --single-item full-benchmark-bundle`.
+
+The bundle is deliberately `publication_ready=false`. Development evidence
+exists, but the release gate has **0/1 required speed**, **0/5 required
+accuracy**, and **0/2 required impact** artifacts. Those counts mean “the
+release-grade artifact is missing,” not “the measured effect is zero.”
+
+### Technical speed
+
+The run used 30 deterministic synthetic grievances (20 typed, 10 one-page
+PDF), three passes each, discarding the first observation for every grievance.
+It ran sequentially on Apple arm64, Python 3.13, CPU only, at commit `24ab193`.
+
+| Path | Warm n | Mean (s) | Clustered SE (s) | p50 (s) | p90 (s) | p95 (s) | Throughput/s |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Typed text | 40 | 0.109 | 0.012 | 0.133 | 0.145 | 0.150 | 9.174 |
+| PDF | 20 | 13.244 | 0.425 | 13.661 | 15.079 | 15.261 | 0.076 |
+| **Overall** | **60** | **4.487** | **1.158** | **0.139** | **14.348** | **14.883** | **0.223** |
+
+All **90/90 attempts completed with 0 failures**; model startup took 6.468 s.
+The PDF path includes Poppler and local OCR. OCR itself averaged 5.833 s
+(p50 6.000 s, n=20), but page-type and format work are not separately timed
+inside that OCR container. This is development-host timing, not a service-level
+claim or officer time saved. It used DVC model bytes plus local BART cache
+snapshot `37f520fa…`; no approved release manifest was active. The format
+classifier also warned that its scikit-learn 1.8 artifact was loaded under 1.9.
+
+### Accuracy and safety evidence
+
+| Component | Current development result | What is still missing |
+|---|---|---|
+| Actionability | Validation-selected `tfidf_word_char`, n=57: accuracy 94.74%, F1 89.66%; review recall 13/13 (100%), review precision 13/16 (81.25%); 3/44 actionable cases sent to review | Officer-confirmed, frozen, five-class release test; current binary model is not serving-compatible or release-eligible |
+| Administrative weak labels | 106,683 valid single-label cases; 67 conflicts; max office total-variation distance 0.522 (pooling gate fails) | These are train-only weak labels, not accuracy evidence |
+| PII redaction | 480 scored spans: typed overlap recall 77.92%, exact recall 55.00%; coverage-overlap recall 78.33%; 49 spans excluded by policy | Precision, language slices, and a release-grade officer gold set |
+| Historical routing, all categories | n=208,267: top-1 45.14%, top-3 69.04%, top-5 79.61%; macro F1 19.79%, balanced accuracy 18.76%, log loss 1.970, ECE 0.114 | Correct-authority adjudication and a frozen release test |
+| Historical routing, informative categories | n=142,181: top-1 54.96%, top-3 79.68%; macro F1 25.17%, balanced accuracy 25.42%, log loss 1.595, ECE 0.132 | Same as above; agreement with history is not legal correctness |
+| Categorization | Historical MuRIL reference only: 71.04% on typed subject lines | Production-domain, group-disjoint, officer-confirmed scorecard |
+| Summary | Historical usefulness reference only: 1.9/3 | Paired officer factuality/usefulness review |
+| Sarvam OCR | 56 cached paired successes from an interrupted run; every normalized pair differed | Human transcription; divergence is not OCR accuracy |
+
+### Impact
+
+Impact is **not measured**: neither required artifact exists. There is no
+model-exposure/officer-decision/outcome extract and no fixed-horizon citizen
+satisfaction extract, so this bundle does not estimate minutes saved, fewer
+transfers, faster first action, faster resolution, or higher satisfaction.
+Those numbers require append-only exposure and decision events followed by a
+locked concurrent pilot; descriptive historical trends are not substitutes.
+
 **Bench**: Apple Silicon laptop, CPU only (no CUDA). The CPU box is 2 vCPU /
 7 GB and is slower; dedup timings below are from the box, serving timings
 from the laptop.
