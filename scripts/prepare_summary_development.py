@@ -172,6 +172,19 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _runtime_environment() -> dict[str, str]:
+    """Describe the real generation runtime without making ML deps test deps."""
+    import torch
+    import transformers
+
+    return {
+        "python": platform.python_version(),
+        "torch": torch.__version__,
+        "transformers": transformers.__version__,
+        "device": "cuda" if torch.cuda.is_available() else "cpu",
+    }
+
+
 def prepare_review(
     *,
     dataset: Path,
@@ -182,6 +195,7 @@ def prepare_review(
     sample_size: int,
     summarizer_factory: Callable[[Path], object] = Summarizer,
     is_english: Callable[[str], bool] = _is_english,
+    runtime_environment: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
     rows = _read_candidates(dataset)
     selected = select_candidates(
@@ -233,8 +247,15 @@ def prepare_review(
     weights = model_path / "model.safetensors"
     if not weights.is_file():
         raise FileNotFoundError(weights)
-    import torch
-    import transformers
+    environment = (
+        dict(runtime_environment)
+        if runtime_environment is not None
+        else _runtime_environment()
+    )
+    if set(environment) != {"device", "python", "torch", "transformers"} or not all(
+        isinstance(value, str) and value for value in environment.values()
+    ):
+        raise ValueError("runtime environment must contain four non-empty string fields")
 
     payload: dict[str, object] = {
         "schema_version": PROVENANCE_VERSION,
@@ -265,12 +286,7 @@ def prepare_review(
             "num_beams": 4,
             "local_files_only": True,
         },
-        "environment": {
-            "python": platform.python_version(),
-            "torch": torch.__version__,
-            "transformers": transformers.__version__,
-            "device": "cuda" if torch.cuda.is_available() else "cpu",
-        },
+        "environment": environment,
         "adjudication": {
             "judge_type": "single-frontier-agent-context",
             "rubric": "summary-scorecard-v1",

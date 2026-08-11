@@ -72,6 +72,12 @@ def test_prepare_review_keeps_narratives_private_and_provenance_aggregate(tmp_pa
         sample_size=6,
         summarizer_factory=FakeSummarizer,
         is_english=lambda text: True,
+        runtime_environment={
+            "device": "test-cpu",
+            "python": "test-python",
+            "torch": "test-torch",
+            "transformers": "test-transformers",
+        },
     )
 
     assert "private candidate" in review.read_text()
