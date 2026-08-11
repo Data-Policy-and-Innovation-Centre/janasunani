@@ -32,6 +32,11 @@ from create_officer_brief import (
     _shade,
     _title,
 )
+from janasunani.evaluation.value_add_benchmark_facts import (
+    DEFAULT_BUNDLE,
+    BenchmarkFacts,
+    load_benchmark_facts,
+)
 
 
 DEFAULT_OUTPUT = Path(
@@ -39,7 +44,7 @@ DEFAULT_OUTPUT = Path(
 )
 
 
-def _cards(document: Document) -> None:
+def _cards(document: Document, facts: BenchmarkFacts) -> None:
     table = document.add_table(rows=1, cols=3)
     values = (
         (
@@ -49,7 +54,7 @@ def _cards(document: Document) -> None:
             TEAL,
         ),
         (
-            "69 in 100",
+            f"{facts.routing_all['top_k_accuracy']['3']:.0%}",
             "In Janasunani, the later historical destination appears in the top three suggestions overall.",
             PALE_BLUE,
             NAVY,
@@ -189,7 +194,8 @@ def _engagement_table(document: Document) -> None:
     _set_table_geometry(table, (1500, 2500, 2700, 3335))
 
 
-def create_brief(destination: Path) -> None:
+def create_brief(destination: Path, *, benchmark_bundle: Path = DEFAULT_BUNDLE) -> None:
+    facts = load_benchmark_facts(benchmark_bundle)
     document = Document()
     _configure(document)
     header_run = document.sections[0].header.paragraphs[0].runs[0]
@@ -206,7 +212,7 @@ def create_brief(destination: Path) -> None:
         color=NAVY,
         after=12,
     )
-    _cards(document)
+    _cards(document, facts)
     _body(
         document,
         "Janasunani is the proof environment, not the limit of the approach. The architecture can be adapted wherever a public team must read mixed records, decide whether a request can be acted on, route it, find repetition and show whether service improved.",
@@ -235,13 +241,30 @@ def create_brief(destination: Path) -> None:
     _callout(
         document,
         "Proof point from Janasunani",
-        "A chronological 2025 benchmark places the historical destination in the top three suggestions for 69.05% of 208,267 cases, rising to 79.68% where intake data is informative. In a separate 57-case canonical frontier-adjudicated binary development test, a cheap local review model caught all 13 complaints needing extra review while also flagging 3 of 44 ordinary complaints. A frozen local MuRIL probe did not beat it. The binary model is not serving-compatible; these are proof points, not release or impact claims.",
+        f"A chronological benchmark places the historical destination in the top "
+        f"three suggestions for {facts.routing_all['top_k_accuracy']['3']:.2%} of "
+        f"{facts.routing_all['n']:,} cases, rising to "
+        f"{facts.routing_informative['top_k_accuracy']['3']:.2%} where intake data "
+        f"is informative. In a separate {facts.actionability['n']}-case "
+        f"frontier-adjudicated binary development test, the validation-selected "
+        f"local model caught {facts.actionability['confusion']['true_review']}/"
+        f"{facts.actionability['actual_review']} complaints needing review while "
+        f"also flagging {facts.actionability['confusion']['false_review']}/"
+        f"{facts.actionability['confusion']['true_actionable'] + facts.actionability['confusion']['false_review']} "
+        "ordinary complaints. The binary model is not serving-compatible; these "
+        "are proof points, not release or impact claims.",
         fill=PALE_BLUE,
     )
     _callout(
         document,
         "Why this is different from a generic AI demo",
-        "Every number keeps its denominator and limitation. The release mechanism can pin parameters and support rollback once an approved manifest is activated. Low-confidence cases abstain. External egress is explicit. The evaluation follows the chain from model → officer behavior → workflow → citizen outcome.",
+        f"Every number keeps its denominator and limitation. The current full bundle "
+        f"is not publication-ready and has {facts.impact_available_required}/"
+        f"{facts.impact_required} required impact artifacts available. The release "
+        "mechanism can pin parameters and support rollback once an approved manifest "
+        "is activated. Low-confidence cases abstain. External egress is explicit. "
+        "The evaluation follows the chain from model to officer behavior to workflow "
+        "to citizen outcome.",
         fill=PALE_GOLD,
     )
 
@@ -271,7 +294,10 @@ def create_brief(destination: Path) -> None:
     )
     _body(
         document,
-        "Evidence note: the figures above are developmental Janasunani proof points as of 10 August 2026. A new partner begins with its own baseline, taxonomy, governed sample and release gates.",
+        f"Evidence note: benchmark-backed figures come from development bundle "
+        f"{facts.bundle_id}; publication_ready={str(facts.publication_ready).lower()}. "
+        "A new partner begins with its own baseline, taxonomy, governed sample and "
+        "release gates.",
         size=8.5,
         after=0,
     )
@@ -283,8 +309,9 @@ def create_brief(destination: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--benchmark-bundle", type=Path, default=DEFAULT_BUNDLE)
     args = parser.parse_args()
-    create_brief(args.output)
+    create_brief(args.output, benchmark_bundle=args.benchmark_bundle)
     return 0
 
 

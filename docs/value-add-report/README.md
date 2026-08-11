@@ -4,11 +4,13 @@ This directory contains three versions of the same evidence story. Choose the
 document for the reader; do not use the short briefs as substitutes for the
 definitions and caveats in the long report.
 
-> **Status: working drafts, not a completed performance report.** The final
-> report must be regenerated from one versioned full-benchmark bundle after the
-> quality, timing and impact runs below are complete. The present files may be
-> used to review structure and existing evidence, but not as the final account
-> of system performance or impact.
+> **Status: working drafts populated from development bundle
+> `c713c41ecd97b256c42b63022c75e6ccfc2cc45fa6152c95aa812a1de47dcc47`;
+> publication_ready=false.** The bundle now contains reproducible development
+> timing and available accuracy/safety runs, but 0/1 required release-speed,
+> 0/5 required release-accuracy and 0/2 required impact artifacts. The files
+> report those numbers and blockers; they are not a final release or impact
+> account.
 
 ## Final publication gate
 
@@ -67,6 +69,8 @@ The report's headline figures were re-checked against the code on 10 August
 | Closure ladder 776,922 / 472,782 / 60.85% / 39.10% | ✅ | `outputs/findings/closure_finding_summary.csv` |
 | Dedup 55,544 → 10,963 problems / 8,560 citizens | ✅ | PERFORMANCE.md §4 (production run, CPU box) |
 | Canonical actionability test: 94.74% accuracy; 13/13 review recall; 3/44 actionable sent to review | ✅ | `dvc repro --single-item actionability-local-candidate-benchmark` |
+| CPU development timing: 90/90 attempts, 0 failures; warm text mean 0.109 s (n=40), PDF mean 13.244 s (n=20); overall p50/p90/p95 0.139/14.348/14.883 s | ✅ | `dvc pull outputs/benchmark/latency.json.dvc`; bundle ID above |
+| Full benchmark publication gate | ❌ speed 0/1, accuracy 0/5, impact 0/2 required artifacts | `dvc repro --single-item full-benchmark-bundle` |
 
 The report was **ahead of** `DELIVERY.md`, `DEMO_SCRIPT.md` and `PERFORMANCE.md` on the PII
 figure: those three still carried 49.6%, which was measured six hours before the ALL-CAPS
@@ -87,8 +91,17 @@ to match this report, not the other way round.
   the same history the crosswalk is fitted on — no holdout, no standard error. They are an
   upper bound on out-of-sample agreement, and the report's "learned where history sent it,
   not where it resolved best" caveat is necessary but not sufficient.
-- **No per-stage latency.** `outputs/benchmark/latency.json` has never been produced.
-  End-to-end warm text (4.44 s median, n=8) is the only measured timing.
+- **Development timing is not a release-host benchmark.** The tracked run used
+  30 deterministic synthetic grievances on an Apple arm64 laptop, three passes
+  each with the first discarded. It completed 90/90 attempts with no failures
+  and retained 60 warm observations. Text mean/p50/p90 was
+  0.109/0.133/0.145 s (n=40); PDF mean/p50/p90 was
+  13.244/13.661/15.079 s (n=20). Overall mean was 4.487 s (clustered SE 1.158),
+  p50 0.139, p90 14.348 and p95 14.883 s. This used DVC model bytes plus an
+  identified local BART cache snapshot, not an activated approved release; the
+  format classifier also emitted a scikit-learn 1.8-to-1.9 compatibility
+  warning. OCR includes page/format work internally, so those subcomponents do
+  not have separately instrumented live timings.
 - **Actionability is not yet a production five-class score.** Administrative
   dispositions are weak training labels, not independent truth. Even a
   privacy-screened, frontier-model-adjudicated development set does not replace
@@ -134,6 +147,8 @@ Officer and citizen outcomes are defined separately in
 [`../IMPACT_METRICS.md`](../IMPACT_METRICS.md). The Word report must distinguish
 technical latency, offline model quality, officer behavior, workflow outcomes
 and citizen outcomes; only a locked pilot can support causal value-add.
+The current bundle has no exposure/decision or satisfaction artifact, so impact
+is reported as **not measured**, not as a zero effect.
 
 ## Regenerate and verify
 
@@ -146,10 +161,17 @@ from Python sources so that their text and layout can be reproduced.
 Generate all three tracked documents from the repository root:
 
 ```bash
+dvc pull dvc.yaml:full-benchmark-bundle
 uv run python scripts/update_value_add_report.py
 uv run python scripts/create_officer_brief.py
 uv run python scripts/create_public_systems_capability_brief.py
 ```
+
+All three generators fail closed if the bundle lacks the tracked real timing,
+selected actionability test, weak-label audit, PII scorecard, or both routing
+scorecards. They also refuse fake timing. Accuracy and speed claims therefore
+come from one bundle; impact remains an explicit missing section until its two
+required artifacts exist.
 
 Render each output with the `documents` skill's `render_docx.py`. Set
 `DOCX_RENDERER` to the absolute path of that installed script, then run:

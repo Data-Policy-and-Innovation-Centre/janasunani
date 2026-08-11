@@ -17,6 +17,12 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor, Twips
 
+from janasunani.evaluation.value_add_benchmark_facts import (
+    DEFAULT_BUNDLE,
+    BenchmarkFacts,
+    load_benchmark_facts,
+)
+
 
 NAVY = "112E51"
 TEAL = "138782"
@@ -207,12 +213,25 @@ def _callout(document: Document, heading: str, text: str, *, fill: str = PALE_GO
     _set_table_geometry(table, (CONTENT_WIDTH_DXA,), indent_dxa=180)
 
 
-def _headline_cards(document: Document) -> None:
+def _headline_cards(document: Document, facts: BenchmarkFacts) -> None:
+    text = facts.latency["input_paths"]["text"]["e2e"]
+    pdf = facts.latency["input_paths"]["document"]["e2e"]
+    routing_top3 = facts.routing_all["top_k_accuracy"]["3"]
     table = document.add_table(rows=1, cols=3)
     table.autofit = False
     values = (
-        ("4.4 seconds", "Warm typed grievance prepared by the pipeline", PALE_TEAL, TEAL),
-        ("69 in 100", "Historical destination appears in the top 3 suggestions", PALE_BLUE, NAVY),
+        (
+            f"{text['p50']:.2f} seconds",
+            f"Warm typed grievance p50; PDF p50 {pdf['p50']:.2f} s",
+            PALE_TEAL,
+            TEAL,
+        ),
+        (
+            f"{routing_top3:.0%}",
+            "Historical destination appears in the top 3 suggestions",
+            PALE_BLUE,
+            NAVY,
+        ),
         ("5.07 filings", "Per inferred problem in the Sambalpur 2024 review slice", PALE_GOLD, GOLD),
     )
     for cell, (value, label, fill, color) in zip(table.rows[0].cells, values, strict=True):
@@ -256,7 +275,7 @@ def _three_steps(document: Document) -> None:
     _set_table_geometry(table, (800, 2100, 7135))
 
 
-def _evidence_table(document: Document) -> None:
+def _evidence_table(document: Document, facts: BenchmarkFacts) -> None:
     table = document.add_table(rows=1, cols=3)
     table.autofit = False
     headings = ("What is measured now", "What it means", "What it does not yet prove")
@@ -264,14 +283,21 @@ def _evidence_table(document: Document) -> None:
         _shade(cell, NAVY)
         _set_cell_text(cell, heading, size=9.5, bold=True, color=WHITE)
     _set_repeat_table_header(table.rows[0])
+    route = facts.routing_all
+    route_info = facts.routing_informative
+    weak_count = facts.weak_labels["eligible_ticket_labels"]["valid_single_label"]
     rows = (
         (
-            "Routing: 45.15% top-1 and 69.05% top-3 on 208,267 later cases; 54.96% / 79.68% where the intake category is informative.",
+            f"Routing: {route['accuracy']:.2%} top-1 and "
+            f"{route['top_k_accuracy']['3']:.2%} top-3 on {route['n']:,} later "
+            f"cases; {route_info['accuracy']:.2%} / "
+            f"{route_info['top_k_accuracy']['3']:.2%} where intake category is informative.",
             "Moving from one suggestion to three raises historical-destination coverage; officer usefulness still has to be measured.",
             "Historical agreement is not proof that the destination was legally correct or produced the best outcome.",
         ),
         (
-            "Low-signal taxonomy: 106,683 non-conflicting administrative weak labels across underspecified, irrelevant, outside-purview and policy cases.",
+            f"Low-signal taxonomy: {weak_count:,} non-conflicting administrative "
+            "weak labels across underspecified, irrelevant, outside-purview and policy cases.",
             "Different queue problems can be handled differently instead of calling every difficult filing spam.",
             "These are train-only weak labels. Accuracy, false-positive rate and a production threshold need officer-adjudicated gold.",
         ),
@@ -394,7 +420,8 @@ def _configure(document: Document) -> None:
     run.font.color.rgb = RGBColor.from_string(MID_GREY)
 
 
-def create_brief(destination: Path) -> None:
+def create_brief(destination: Path, *, benchmark_bundle: Path = DEFAULT_BUNDLE) -> None:
+    facts = load_benchmark_facts(benchmark_bundle)
     document = Document()
     _configure(document)
 
@@ -407,7 +434,7 @@ def create_brief(destination: Path) -> None:
         color=NAVY,
         after=12,
     )
-    _headline_cards(document)
+    _headline_cards(document, facts)
     _body(
         document,
         "These numbers measure three different things: technical speed, historical routing agreement, and duplicate-adjusted workload. They should not be added together or described as time saved.",
@@ -454,17 +481,33 @@ def create_brief(destination: Path) -> None:
     document.add_page_break()
     _section_label(document, "The evidence, in plain language")
     _title(document, "What the current numbers support—and what they do not")
-    _evidence_table(document)
+    _evidence_table(document, facts)
     _body(
         document,
-        "Two practical findings stand out. First, the canonical frontier-adjudicated binary development test caught all 13 complaints needing extra review, while also sending 3 of 44 ordinary complaints to review; it is not compatible with the five-class serving slot and produced no deployable artifact. Second, category plus district places the later historical destination in the top three for 69.05% of cases, rising to 79.68% where the intake category is informative. Both need a newly frozen, officer-reviewed release set.",
+        f"Two practical findings stand out. First, the tracked frontier-adjudicated "
+        f"binary development test caught {facts.actionability['confusion']['true_review']}/"
+        f"{facts.actionability['actual_review']} complaints needing extra review, while "
+        f"also sending {facts.actionability['confusion']['false_review']}/"
+        f"{facts.actionability['confusion']['true_actionable'] + facts.actionability['confusion']['false_review']} "
+        f"ordinary complaints to review; it is not compatible with the five-class "
+        f"serving slot. Second, category plus district places the later historical "
+        f"destination in the top three for {facts.routing_all['top_k_accuracy']['3']:.2%} "
+        f"of cases, rising to {facts.routing_informative['top_k_accuracy']['3']:.2%} "
+        "where the intake category is informative. Both need a newly frozen, "
+        "officer-reviewed release set.",
         size=10,
         after=8,
     )
     _callout(
         document,
         "Honest claim",
-        "The pipeline is ready for end-to-end verification and a shadow test of whether it can reduce search and reading burden. We have not yet measured officer minutes saved, correct legal authority, faster resolution, or citizen satisfaction. Those claims require exposure logging, adjudication and a locked rollout.",
+        f"The tracked development run completed "
+        f"{facts.latency['completed_attempts']}/{facts.latency['attempts']} synthetic "
+        f"attempts with {facts.latency['failed_attempts']} failures. Impact remains "
+        f"unmeasured ({facts.impact_available_required}/{facts.impact_required} required "
+        "impact artifacts available): no officer minutes saved, correct legal authority, "
+        "faster resolution, or citizen satisfaction effect is claimed. Those claims "
+        "require exposure logging, adjudication and a locked rollout.",
     )
 
     document.add_page_break()
@@ -493,7 +536,10 @@ def create_brief(destination: Path) -> None:
     )
     _body(
         document,
-        "Source note: figures are drawn from the August 2026 value-add report, the chronological routing benchmark, the actionability weak-label audit and frontier-development aggregate, the Sambalpur/2024 dedup review slice and cached Sarvam evidence. Full definitions and reproduction limits remain in the long report and docs/QUALITY_BENCHMARKS.md.",
+        f"Source note: benchmark-backed figures come from full bundle "
+        f"{facts.bundle_id}. Dedup and descriptive administrative findings retain their "
+        "separate cited sources. Full definitions and reproduction limits remain in the "
+        "long report and docs/QUALITY_BENCHMARKS.md.",
         size=8.5,
         after=0,
     )
@@ -505,8 +551,9 @@ def create_brief(destination: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--benchmark-bundle", type=Path, default=DEFAULT_BUNDLE)
     args = parser.parse_args()
-    create_brief(args.output)
+    create_brief(args.output, benchmark_bundle=args.benchmark_bundle)
     return 0
 
 
