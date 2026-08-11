@@ -261,8 +261,9 @@ uv run janasunani-model-release activate \
   models/releases/<old-release>/release-manifest.json
 ```
 
-The full manifest contract is in [MODELS.md](MODELS.md). **Then verify the box
-before the first deploy**, with `--strict`:
+The full manifest contract is in [MODELS.md](MODELS.md).
+**Verify the box before the first deploy**, with `--strict`, after activating
+the approved release:
 
 ```bash
 cd ~/janasunani
