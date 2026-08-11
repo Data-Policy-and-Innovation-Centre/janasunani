@@ -717,6 +717,7 @@ def _model_release_check() -> DependencyCheck:
             load_manifest,
             resolve_manifest_artifact,
         )
+        from janasunani.tracking.artifacts import artifact_override_env_var
 
         path = active_manifest_path()
         if path is None:
@@ -728,8 +729,11 @@ def _model_release_check() -> DependencyCheck:
             )
         manifest = load_manifest(path)
         versions = []
+        shadowed = []
         for name in sorted(manifest.models):
             model = manifest.models[name]
+            if os.environ.get(artifact_override_env_var(name)):
+                shadowed.append(name)
             if model.artifact_path is not None:
                 resolve_manifest_artifact(name, manifest_path=path)
                 identity = f"sha256:{model.artifact_sha256[:12]}"
@@ -739,6 +743,16 @@ def _model_release_check() -> DependencyCheck:
     except Exception as exc:  # pragma: no cover - defensive; never raise
         return DependencyCheck(
             "model release", False, f"invalid active release: {exc}", required=False
+        )
+    if shadowed:
+        return DependencyCheck(
+            "model release",
+            False,
+            f"release_id={manifest.release_id}; operator override shadows "
+            f"manifest model(s): {', '.join(shadowed)}; effective served bytes "
+            "must be verified separately; "
+            + ", ".join(versions),
+            required=False,
         )
     return DependencyCheck(
         "model release",

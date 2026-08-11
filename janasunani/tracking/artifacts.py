@@ -45,7 +45,17 @@ def remote_models_allowed() -> bool:
         "yes",
     }
 
-def _env_var_for(name: str) -> str:
+def artifact_override_env_var(name: str) -> str:
+    """Return the explicit operator-override variable for an artifact name.
+
+    This is public so health/preflight can report when an override shadows an
+    otherwise valid immutable release.  Returning the variable name, rather
+    than its value, keeps operator paths and other deployment details out of
+    health responses.
+    """
+
+    if not isinstance(name, str) or _ARTIFACT_NAME.fullmatch(name) is None:
+        raise ValueError(f"invalid artifact name {name!r}")
     return f"JANASUNANI_{name.upper().replace('-', '_')}_ARTIFACT"
 
 
@@ -85,14 +95,15 @@ def resolve_artifact(name: str, *, models_dir: Path | None = None) -> Path | Non
         if not isinstance(name, str) or _ARTIFACT_NAME.fullmatch(name) is None:
             logger.warning("invalid artifact name {!r}; treating it as absent", name)
             return None
-        override = os.environ.get(_env_var_for(name))
+        override_var = artifact_override_env_var(name)
+        override = os.environ.get(override_var)
         if override:
             candidate = Path(override)
             if _usable(candidate):
                 return candidate
             logger.warning(
                 "{}={} does not resolve to a usable artifact; ignoring it",
-                _env_var_for(name),
+                override_var,
                 override,
             )
 

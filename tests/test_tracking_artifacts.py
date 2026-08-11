@@ -1,4 +1,6 @@
-from janasunani.tracking.artifacts import resolve_artifact
+import pytest
+
+from janasunani.tracking.artifacts import artifact_override_env_var, resolve_artifact
 from janasunani.tracking.release import (
     RELEASE_MANIFEST_ENV_VAR,
     ModelRelease,
@@ -86,3 +88,12 @@ def test_artifact_name_cannot_escape_the_models_directory(tmp_path):
     models.mkdir()
 
     assert resolve_artifact("../outside", models_dir=models) is None
+
+
+def test_override_variable_name_is_public_but_validated():
+    assert (
+        artifact_override_env_var("routing-incidence")
+        == "JANASUNANI_ROUTING_INCIDENCE_ARTIFACT"
+    )
+    with pytest.raises(ValueError, match="invalid artifact name"):
+        artifact_override_env_var("../escape")

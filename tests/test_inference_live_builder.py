@@ -147,6 +147,46 @@ def test_preflight_reports_checksum_drift_in_active_release(tmp_path, monkeypatc
     assert "checksum mismatch" in release_check.detail
 
 
+def test_preflight_marks_manifest_unhealthy_when_operator_override_shadows_it(
+    tmp_path, monkeypatch
+):
+    release_dir = tmp_path / "release-1"
+    artifact = release_dir / "artifacts" / "actionability"
+    artifact.mkdir(parents=True)
+    (artifact / "model.joblib").write_bytes(b"release-weights")
+    manifest_path = release_dir / "release-manifest.json"
+    write_manifest(
+        manifest_path,
+        new_manifest(
+            release_id="release-1",
+            git_sha="a" * 40,
+            models={
+                "actionability": ModelRelease(
+                    name="actionability",
+                    provider="local_sklearn",
+                    trust_tier="local",
+                    version="12",
+                    artifact_path="artifacts/actionability",
+                    artifact_sha256=artifact_sha256(artifact),
+                )
+            },
+        ),
+    )
+    override = tmp_path / "operator-override"
+    override.write_bytes(b"different-weights")
+    monkeypatch.setenv(RELEASE_MANIFEST_ENV_VAR, str(manifest_path))
+    monkeypatch.setenv("JANASUNANI_ACTIONABILITY_ARTIFACT", str(override))
+
+    release_check = next(
+        check for check in preflight(tmp_path) if check.name == "model release"
+    )
+
+    assert release_check.ok is False
+    assert "operator override shadows" in release_check.detail
+    assert "actionability" in release_check.detail
+    assert str(override) not in release_check.detail
+
+
 def test_build_processor_fails_closed_when_local_models_are_missing(tmp_path):
     with pytest.raises(RuntimeError, match="missing local categorizer config artifact"):
         build_processor(tmp_path)
