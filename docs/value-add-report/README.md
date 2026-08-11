@@ -5,7 +5,7 @@ document for the reader; do not use the short briefs as substitutes for the
 definitions and caveats in the long report.
 
 > **Status: working drafts populated from development bundle
-> `c713c41ecd97b256c42b63022c75e6ccfc2cc45fa6152c95aa812a1de47dcc47`;
+> `9b18d0fa2de7a69c2c7ee8c2ee9fc7c8a0f0f6d4b026230b0633fb1fa21b83a1`;
 > publication_ready=false.** The bundle now contains reproducible development
 > timing and available accuracy/safety runs, but 0/1 required release-speed,
 > 0/5 required release-accuracy and 0/2 required impact artifacts. The files
@@ -35,7 +35,8 @@ proxies.
   uncertainty under the locked pilot design.
 
 The speed harness and several offline scorecards exist, but this gate is not
-yet satisfied. Summary and OCR accuracy still need human reference judgments;
+yet satisfied. Summary now has a bounded single-frontier-judge development
+baseline, but release summary quality and OCR accuracy still need human reference judgments;
 correct-authority routing needs officer adjudication; and causal impact needs
 the exposure/event instrumentation and follow-up specified in
 [`../IMPACT_METRICS.md`](../IMPACT_METRICS.md). Until those inputs exist, the
@@ -69,6 +70,8 @@ The report's headline figures were re-checked against the code on 10 August
 | Closure ladder 776,922 / 472,782 / 60.85% / 39.10% | ✅ | `outputs/findings/closure_finding_summary.csv` |
 | Dedup 55,544 → 10,963 problems / 8,560 citizens | ✅ | PERFORMANCE.md §4 (production run, CPU box) |
 | Canonical actionability test: 94.74% accuracy; 13/13 review recall; 3/44 actionable sent to review | ✅ | `dvc repro --single-item actionability-local-candidate-benchmark` |
+| Chronological category agreement, viewed 2024 test n=3,160: top-1 46.55%; top-3 90.89%; macro-F1 36.49% | ✅ developmental only | `dvc repro --single-item categorization-historical-benchmark` |
+| Local BART summary baseline, enriched n=30: 65.48% critical-fact recall; 8/26 usable without edit; 4/26 residual-PII cases | ✅ single-judge development only | `dvc repro --single-item summary-development-benchmark` |
 | CPU development timing: 90/90 attempts, 0 failures; warm text mean 0.109 s (n=40), PDF mean 13.244 s (n=20); overall p50/p90/p95 0.139/14.348/14.883 s | ✅ | `dvc pull outputs/benchmark/latency.json.dvc`; bundle ID above |
 | Full benchmark publication gate | ❌ speed 0/1, accuracy 0/5, impact 0/2 required artifacts | `dvc repro --single-item full-benchmark-bundle` |
 
@@ -110,6 +113,14 @@ to match this report, not the other way round.
   were separate Codex agent contexts, not independent model families. The exact
   serving model/version, hidden prompts, sampling settings and provider-retention
   evidence were unavailable; the tracked aggregate records that limitation.
+  The checksummed binary artifact is now compatible with the advisory serving
+  objective, but it cannot assign five-class reasons and is not release-eligible.
+- **Categorization measures historical labels, not policy correctness.** The
+  2024 redacted-text benchmark keeps exact normalized-text groups in one
+  chronological split and reports top-1 46.55%, top-3 90.89% and macro-F1
+  36.49% on the later n=3,160 test. That test was viewed during development,
+  language is unadjudicated, and no serving artifact was promoted. A newly
+  frozen, officer-confirmed release set is still required.
 - **Sarvam evidence is coverage and divergence, not OCR accuracy.** Cached paid
   runs show completed pages and text differences, but there is no hand
   transcription against which to score either engine. Credit exhaustion and
@@ -118,10 +129,14 @@ to match this report, not the other way round.
   source snapshots are now privately DVC-tracked and hashed. The original sample
   manifest and derivation command were not recovered, so the larger aggregate
   still cannot be independently rebuilt from those snapshots alone.
-- **Summary usefulness is unmeasured.** The screenshot regression is fixed by
-  abstaining on content-free text, but critical-fact recall, unsupported facts,
-  contradictions, PII leakage and officer edit burden still need paired
-  adjudication.
+- **Summary has a small development baseline, not officer validation.** On an
+  enriched 30-case redacted typed-text set, local BART retained 55/84 critical
+  facts, had no unsupported or contradictory cases in 26 generated outputs,
+  produced 8/26 drafts usable without edit, and repeated residual identifying
+  detail in 4/26. It summarized all six cases the single frontier judge marked
+  for skipping and missed all four coherent Odia cases. The test was viewed,
+  edit seconds were judge estimates, and scan/language coverage is incomplete;
+  the required paired officer release scorecard remains missing.
 
 ### New quality evidence on the pipeline-quality trunk
 
@@ -130,7 +145,11 @@ It adds a chronological routing benchmark over structured weighted cells
 (full-corpus campaign-group isolation is unavailable); a five-class
 actionability taxonomy and weak-label confounding audit; the exact
 `error_in_summary_and_spam.png` regression; cached Sarvam coverage/divergence;
-and explicit categorization/summary evidence gaps. A 180-case adjudication
+and a bounded single-judge local-BART summary baseline. The category harness now has a 2024
+chronological, exact-text-group-disjoint historical-label benchmark: its viewed
+development test (n=3,160) reached 46.55% top-1, 90.89% top-3 and 36.49%
+macro-F1. This supports testing a ranked shortlist, not automatic assignment;
+it is neither policy correctness nor a release result. A 180-case adjudication
 sample produced 174 canonical development cases after excluding six resolver
 judgments marked uncertain. In the resulting 57-case test, the
 validation-selected TF-IDF candidate caught all 13 review cases while flagging
@@ -138,10 +157,11 @@ validation-selected TF-IDF candidate caught all 13 review cases while flagging
 original 180-row TF-IDF/MuRIL/MiniLM benchmark is retained as historical
 evidence but is not canonical. The set has no `out_of_scope` support,
 wide intervals and a viewed test, so it is not a five-class score or release
-gate, and its binary classifier is not exportable into the five-class serving
-slot. The 2025 routing cohort was likewise viewed during harness development
-and requires a newly frozen future slice. No administrative weak label is
-reported as adjudicated classifier accuracy.
+gate. Its checksummed binary artifact is serving-compatible only for advisory
+`actionable_vs_officer_review`; it does not produce five-class reasons. The
+2025 routing cohort was likewise viewed during harness development and requires
+a newly frozen future slice. No administrative weak label is reported as
+adjudicated classifier accuracy.
 
 Officer and citizen outcomes are defined separately in
 [`../IMPACT_METRICS.md`](../IMPACT_METRICS.md). The Word report must distinguish

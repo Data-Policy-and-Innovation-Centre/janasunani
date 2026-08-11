@@ -609,19 +609,27 @@ has not run.
 Current evidence is narrower than the original demo promise:
 
 - Routing has a chronological developmental held-out result: category+district
-  top-1 historical-destination agreement 45.15% (95% Wilson CI 44.94–45.36),
-  top-3 69.05%, n=208,267. The 2025 test was viewed during development, so a
+  top-1 historical-destination agreement 45.14% (95% Wilson CI 44.94–45.36),
+  top-3 69.04%, n=208,267. The 2025 test was viewed during development, so a
   future frozen slice is required before promotion.
-- No governed redacted-text categorization gold set is frozen; no new category
-  number is reportable.
-- The actionability/low-signal evidence is a weak-label feasibility audit, not
-  learned spam quality: 106,683 eligible single-label tickets remained after 67
-  conflicts were excluded, and office-label variation failed the 0.25 pooling
-  gate (maximum total variation 0.522). The named screenshot case is a bounded
-  regression only; no PPV, recall or production threshold is reportable.
-- There is no current summary-quality benchmark. Factuality, critical-fact
-  recall, unsupported facts, PII leakage, usefulness, edit burden and correct
-  abstention require paired blinded review before any summary claim.
+- Categorization now has a chronological, exact-text-group-disjoint 2024
+  redacted typed-text development result: top-1 46.55%, top-3 90.89%,
+  macro-F1 36.49%, n=3,160. It measures viewed historical-label agreement,
+  not policy correctness; a newly frozen officer-confirmed set is still needed.
+- The administrative actionability/low-signal evidence remains a weak-label
+  feasibility audit, not learned spam quality: 106,683 eligible single-label
+  tickets remained after 67 conflicts, and office-label variation failed the
+  0.25 pooling gate (maximum total variation 0.522). Separately, the canonical
+  57-case frontier-adjudicated development test caught 13/13 review cases and
+  flagged 3/44 actionable cases. Its binary artifact can serve advisory review,
+  but is not officer-confirmed, has no outside-purview support, cannot assign
+  five-class reasons and is not release-eligible. The named screenshot remains
+  bounded regression evidence only.
+- Summary now has a single-frontier-judge enriched development baseline:
+  55/84 critical facts retained, 0/26 unsupported or contradictory cases,
+  8/26 drafts usable without edit and 4/26 residual-PII cases (n=30). It also
+  failed all six judge-marked skip cases and all four coherent Odia cases. A
+  newly frozen paired officer review is still required before any release claim.
 - Transfer avoidance is not reportable until timestamped authority-transition
   semantics are validated. `transfer_status` and generic action counts are not
   substitutes.
@@ -684,7 +692,7 @@ transfer-free assignment ___ pp; 90-day RMST ___ days
 | Estimator and why TWFE is not used | This plan §4 | — (no fallback — the plan is the artifact) |
 | Power method and required inputs | This plan §5; values remain illustrative until the cluster map and pre-period extract are frozen | State that no measured MDE exists yet |
 | Assignment / exposure / shadow design | This plan §7 | — (design, not build) |
-| Developmental agreement + time-motion contract | Routing held-out evidence plus §11 | Descriptive only; category/summary, transfer avoidance and time saved remain unmeasured |
+| Developmental model evidence + time-motion contract | Held-out routing/category evidence, enriched summary scorecard and §11 | Descriptive only; correct authority, officer-validated summary quality, transfer avoidance and time saved remain unmeasured |
 
 ---
 

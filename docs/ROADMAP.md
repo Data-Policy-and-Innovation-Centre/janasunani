@@ -87,10 +87,10 @@ The only place phase status is recorded.
 | 11 | II | Demo frontend (Next.js, DPIC-branded; first cut) | 🔄 |
 | 12 | II | Demo integration & cloud deployment | 🔄 |
 | 13 | II | **Pipeline completion**: PII gold set, Presidio tuning, end-to-end run *(a)* | 🔄 *(gold set underway, #15)* |
-| 14 | II | **Spam & duplicate detection** *(b)* | 🔄 *(Sambalpur/2024 via #64: 55,544/55,544 indexed, 10,963 groups on 07 Aug 14:14 via #71 — recall + spam scorer + prevalence to do)* |
+| 14 | II | **Spam & duplicate detection** *(b)* | 🔄 *(55,544/55,544 indexed into 10,963 groups; bounded low-signal regression and binary actionability development scorer measured; officer gold and a release gate remain)* |
 | 15 | II | **Structured analytics I**: metrics layer, dashboards, spikes *(c)* — metric-registry slice: governed total-filings definition and protected grouped releases; cluster/citizen metrics remain unavailable pending dedup lake artifacts | 🔄 |
 | 16 | II | **A/B instrumentation + retrospective impact evidence** *(d)* | ⬜ |
-| 17 | II | **Sarvam benchmark + provider registry + egress control** *(e)* | ⬜ |
+| 17 | II | **Sarvam benchmark + provider registry + egress control** *(e)* | 🔄 *(cached provider evidence and governed local release wiring built; no hand-transcribed OCR accuracy set and no new paid calls)* |
 | 18 | III | Evaluation harness & operational safety (RBAC, restore, observability) | ⬜ |
 | 19 | III | Model & pipeline platform (one recipe, release manifest, API v1) | ⬜ |
 | 20 | III | Structured analytics II (adjusted comparisons, NL query) | ⬜ |
@@ -104,11 +104,21 @@ Anchor facts:
 - Verified corpus, local SQLite **and** cloud Postgres, which must match after any
   migration change: **1,371,288 complaints / 6,556,171 action-history rows**.
 - The demo ships with routing on **`method:"learned"`**, backed by the empirical
-  crosswalk built from case history (issue #33, closed 7 Aug). Argmax accuracy:
-  60.9% category only, 67.5% + subcategory, 72.8% + subcategory + district. It
-  learns where cases were historically sent, not where they resolved best. A
-  learned outcome-based scorer (disposal time, citizen benefit, issue #106) is a
-  separate, harder problem and stays Part III.
+  crosswalk built from case history (issue #33, closed 7 Aug). On the
+  chronological 2025 development holdout, live category+district features agree
+  with the historical destination 45.14% at top-1 and 69.04% at top-3
+  (n=208,267); informative-category top-1 is 54.96% (n=142,181). The older
+  60.9/67.5/72.8% values are in-sample resubstitution. None of these establishes
+  correct authority or a better outcome.
+- A privacy-screened, frontier-adjudicated actionability development set supports
+  a local binary advisory candidate at 94.74% accuracy and 100% non-actionable
+  review recall on a viewed 57-case test. It has no defensible `out_of_scope`
+  support, is not officer-confirmed and is not release-eligible.
+- The viewed chronological categorization development test reaches 46.55%
+  top-1 and 90.89% top-3 historical-label agreement (n=3,160). A 30-case,
+  enriched, single-frontier-judge summary baseline retains 65.48% of critical
+  facts, with 8/26 generated drafts usable without edit and 4/26 containing
+  residual PII. Both are development diagnostics, not production claims.
 
 ### Phase renumbering (2026-07-27)
 
@@ -345,13 +355,15 @@ format/OCR under `pipeline-core`, PII under `pii`, page type/summary under
   producing the frozen `RoutingResult`. The master tables carry no
   category→department link (`intCategoryGrp` is NULL on all 62 categories), so the
   crosswalk is learned from history:
-  `(category, subcategory, district) → argmax(dept, office)`, measured at
-  60.9 / 67.5 / 72.8%. The crosswalk is wired and live (issue #33, closed 7 Aug,
+  `(category, subcategory, district) → argmax(dept, office)`. The old
+  60.9/67.5/72.8% measurements are in-sample. A chronological developmental
+  holdout reports 45.14% top-1 and 69.04% top-3 for the live category+district
+  feature set. The crosswalk is wired and live (issue #33, closed 7 Aug,
   PR #198): `DEFAULT_ROUTER` tries it first (`method="learned"`), falling back to
   `MappingRouter` then the generic fallback. This learns where cases were
-  historically sent, not where they resolved best. A learned outcome-based scorer
-  on disposal time and citizen benefit (issue #106) is a separate, harder problem
-  and stays deferred past the demo.
+  historically sent, not where they resolved best. A learned outcome-based
+  scorer on disposal time and citizen benefit (issue #106) is a separate,
+  harder problem and stays deferred past the demo.
 - **10 Serving.** Three endpoints plus `/health` and CORS behind the frozen
   `serving/schemas.py` contract. The default app is mocked (`janasunani-api`);
   `janasunani-api-live` mounts the real processor. Live submissions persist to a

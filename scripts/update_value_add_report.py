@@ -17,6 +17,8 @@ import tempfile
 import zipfile
 
 from docx import Document
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from docx.shared import Pt
 
 from janasunani.evaluation.value_add_benchmark_facts import (
@@ -29,6 +31,15 @@ from janasunani.evaluation.value_add_benchmark_facts import (
 DEFAULT_REPORT = Path(
     "docs/value-add-report/Janasunani_2.0_Value_Add_Report_August_2026.docx"
 )
+
+
+def _set_repeat_table_header(row) -> None:
+    properties = row._tr.get_or_add_trPr()
+    if properties.find(qn("w:tblHeader")) is not None:
+        return
+    repeat = OxmlElement("w:tblHeader")
+    repeat.set(qn("w:val"), "true")
+    properties.append(repeat)
 
 
 PARAGRAPH_REPLACEMENTS = {
@@ -48,7 +59,7 @@ PARAGRAPH_REPLACEMENTS = {
     "Figure 1 — The seven functional steps. Steps 1–6 are per-grievance (live in seconds/minutes); step 7 is corpus-level (nightly aggregates over the lake). Triage is advisory — it never changes submission status.": "Figure 1 — The seven functional steps. Steps 1–6 are implemented per-grievance stages, but the full scanned browser/model path is not yet verified; step 7 is corpus-level and some dedup-backed views still require integration. The triage contract is advisory and must never change submission status.",
     "The DSI Clinic built the first open-source pipeline on a 100,000-complaint sample (2025) — English-only, five stages, on an A100 GPU. We refolded it into a six-stage production pipeline (plus triage) that runs on DPIC infrastructure (CPU box + GPU box + laptop), replaced the unrecoverable PII model with a Presidio rebuild, added quality guards, and wired it to the live API. The comparison below is honest about what is like-for-like and what is not: baselines are historical reference, not thresholds.": "The DSI Clinic built the first open-source pipeline on a 100,000-complaint sample (2025) — English-only, five stages, on an A100 GPU. We implemented six local stages plus triage, replaced the unrecoverable PII model with a Presidio rebuild, and added quality guards and typed API contracts. This is not yet a verified production deployment: one-pass integration, live interface wiring and AWS activation remain outstanding. Baselines below are historical reference, not thresholds.",
     "Figure 2 — Time from filing to an officer-ready packet. Manual median 1.7 days is among forwarded complaints (n≈30k); live text median 4.4 s is n=8 warm submits on a laptop (PERFORMANCE.md). Log scale is required because the improvement is two orders of magnitude. First document after boot is slower (~9–10 s) while models warm; the summariser (~1.6 GB BART) is fetched once on first boot.": "Figure 2 — Two different clocks, shown side by side. The 1.7-day median is the observed administrative interval to first forward among ≈30,000 forwarded complaints; 4.4 seconds is technical pipeline latency from eight warm laptop submissions. This demonstrates processing speed, not days saved. Officer handling time and first-forward impact require exposure logging and a controlled rollout.",
-    "Spam is not a block — it is a banner. A filing flagged as low-signal is still submitted; the officer sees “low-signal: <reason> (spam_score 0.82)” and decides. Prevalence is measured over redacted grievance text only (never raw grievance) and reported by district / category / mode / year — so a high-spam district is visible, not hidden in a state average. PPV / false-positive rate is measured against the two officer-confirmed spam-like families (details inadequate 39,964 + no specific grievance 16,375) on a deterministic 30% holdout by ticket hash; duplicate families are never counted as spam positives.": "Low-signal review is not a block. The evaluation taxonomy separates actionable, underspecified, irrelevant, outside-purview and policy-blocked cases; only advisory review or abstention is permitted and officers decide. Administrative templates provide 106,683 non-conflicting train-only weak labels, not adjudicated truth. A separate binary development benchmark is not compatible with the five-class serving slot and produced no deployable artifact. Office variation fails the pooling gate (maximum total-variation distance 0.522), so no PPV, false-positive rate or production threshold is approved until a stratified officer-adjudicated validation/test set exists.",
+    "Spam is not a block — it is a banner. A filing flagged as low-signal is still submitted; the officer sees “low-signal: <reason> (spam_score 0.82)” and decides. Prevalence is measured over redacted grievance text only (never raw grievance) and reported by district / category / mode / year — so a high-spam district is visible, not hidden in a state average. PPV / false-positive rate is measured against the two officer-confirmed spam-like families (details inadequate 39,964 + no specific grievance 16,375) on a deterministic 30% holdout by ticket hash; duplicate families are never counted as spam positives.": "Low-signal review is not a block. The evaluation taxonomy separates actionable, underspecified, irrelevant, outside-purview and policy-blocked cases; only advisory review or abstention is permitted and officers decide. Administrative templates provide 106,683 non-conflicting train-only weak labels, not adjudicated truth. The checksummed binary development artifact can now serve the advisory actionable-versus-review objective, but it does not produce the five-class reasons and is not release-eligible. Office variation fails the pooling gate (maximum total-variation distance 0.522), so no production threshold is approved until a stratified officer-adjudicated validation/test set exists.",
     "Duplicate-adjusted workload — the same three numbers, without a spike. The portal counts filings; the intelligence layer counts problems. For Sambalpur/2024: Filings 55,544 → Distinct problems 10,963 → Distinct citizens 8,560. That is the “true workload” for the slice. Both workload and spike share the same dedup_groups digest; the serving layer refuses a mixed snapshot (#137), so a stale index cannot silently undercount a surge.": "Duplicate-adjusted workload — the same three numbers, without a spike. For Sambalpur/2024: 55,544 filings → 10,963 inferred problems → 8,560 distinct signatories: 5.07 filings per inferred problem, or 80.3% fewer problem-units than filings. This is a reviewable operational view, not ground-truth workload. Workload and spike share the same dedup digest, and serving refuses a mixed snapshot (#137).",
     "Hotspot monitoring — per-1,000, not raw counts": "Geographic monitoring — governed counts first, rates later",
     "Headline complaint counts are not complaint rates — without an eligibility denominator (eligible households for PMAY, ration-card holders for food security, etc.), a district with 200 complaints looks the same whether it has 1,000 or 10,000 eligible households (2% vs 20%). The interim control is complaints per 1,000 general population (2021 projected district population, MoHFW 2020), excluding discards, tracked monthly.": "Headline filing counts are not complaint rates. Until a current, documented population or programme-eligibility denominator is governed, the first release will show privacy-safe filing counts, inferred-problem counts and distinct-signatory counts without ranking districts by incidence. Comparisons over time use each geography’s own historical baseline and always state the period and denominator.",
@@ -58,16 +69,20 @@ PARAGRAPH_REPLACEMENTS = {
     "Timing the officer feels. Cold start to /health: 19.4 s (models on disk) — the slow part is first boot when BART (~1.6 GB) is fetched from the hub (pre-warm the night before). Warm text grievance: median 4.44 s, mean 4.77 s (n=8, laptop). First request after boot ~9.5 s. Typed-text needs no tesseract/poppler at submit time beyond preflight checks; document upload renders via Poppler (pdftoppm/pdfinfo) then Tesseract (Oriya needs ori traineddata) before the same downstream steps. Every response includes extraction source (text vs ocr_model), spans (start/end over original text), and advisory fields — all typed and validated against the frozen frontend contract (janasunani/serving/schemas.py).": "Technical timing. Cold start to /health was 19.4 s with models already on disk. Serving now requires locally materialized, pinned BART bytes and performs no model download at startup. A warm typed grievance took a 4.44 s median and 4.77 s mean (n=8, laptop); the first request after boot was about 9.5 s. Document uploads render via Poppler and then use local OCR before the same downstream stages. These are technical timings, not officer time saved. Responses retain extraction source, original-text spans, and advisory fields under the typed serving contract.",
     "Evaluation discipline: a harness that measures and prints (evaluation/) is separate from a gate that fails a run when the number is bad (pipeline/pii_eval.py). DSI baselines are labelled reference_only=True (dsi_baselines.py) and the report renderer never colours them as targets. The lake is not PII-free — and we do not pretend it is (ROADMAP §3.2).": "Evaluation discipline: a harness that measures and prints (evaluation/) is separate from a gate that fails a run when a frozen number is bad (pipeline/pii_eval.py). The impact ladder is model quality → officer behavior → workflow outcome → citizen outcome. Current data can support selected model and workflow descriptions; officer behavior needs exposure/decision logging, correct authority needs adjudication, and causal citizen benefit needs a locked pilot. The lake is not PII-free — and we do not pretend it is (ROADMAP §3.2).",
     "The intelligence layer is not only a monthly report — it is a banner the officer sees while deciding, and a supervisor panel that refreshes from the same governed marts that produce the monthly findings. Both are built for the reality that a count without a denominator, a spike without a cause, and a queue with duplicates are worse than no information.": "The intelligence layer currently provides governed findings and a reviewable dedup slice. The officer banner and live supervisor panel are intended delivery surfaces, but their real-data integration is not yet verified and some spike/workload marts still await the dedup-index join. A count without a denominator, a spike without a cause and a queue with duplicates remain the design problem.",
-    "Figure 7 — Left: learned crosswalk accuracy rises when district is added (≈12 pp from category-only to full). Right: Route 4’s median 48 days vs Route 2’s 23 days (PMAY, 2024–25); the 9-day Step 3 (BDO → Collector return) is the piloted reform target. Upper bound, not an estimate — Route 4 may be more complex on unobserved dimensions.": "Figure 7 — Left: the 60.9/67.5/72.8% crosswalk bars are historical in-sample resubstitution, retained only as upper-bound context. A chronological developmental holdout gives 45.15% top-1 and 69.05% top-3 for live category+district features (n=208,267), or 54.96%/79.68% on informative categories. Right: Route 4’s 48-day vs Route 2’s 23-day medians are descriptive and may reflect unobserved complexity; a pilot must measure any time effect.",
+    "Figure 7 — Left: learned crosswalk accuracy rises when district is added (≈12 pp from category-only to full). Right: Route 4’s median 48 days vs Route 2’s 23 days (PMAY, 2024–25); the 9-day Step 3 (BDO → Collector return) is the piloted reform target. Upper bound, not an estimate — Route 4 may be more complex on unobserved dimensions.": "Figure 7 — Left: the 60.9/67.5/72.8% crosswalk bars are historical in-sample resubstitution, retained only as upper-bound context. A chronological developmental holdout gives 45.14% top-1 and 69.04% top-3 for live category+district features (n=208,267), or 54.96%/79.68% on informative categories. Right: Route 4’s 48-day vs Route 2’s 23-day medians are descriptive and may reflect unobserved complexity; a pilot must measure any time effect.",
     "Plus the two engineering slices that are built and waiting for an overnight run and a key: dedup-index join into spike/workload marts (#78) and the Sarvam live comparison (needs SARVAM_API_KEY — few-hundred rupees on the paired 300-page sample; governance is recorded, cost is not a blocker). The A/B stepped-wedge design (AB_PLAN.md) is locked before any outcome data is viewed — so the August framework does not become a post-hoc story.": "Next engineering work is evidence-preserving rather than new provider spend: checkpoint each Sarvam page so an interruption cannot lose paid results, import the cached 56-page aggregate into the benchmark registry, and wire the dedup-index join into spike/workload marts (#78). The stepped-wedge A/B plan remains DRAFT; its unit map, estimands, extract hash, MDE and pause rules must be locked before any arm outcome is read.",
 }
 
-# The report was patched once before the five-class serving incompatibility was
-# documented. Keep that intermediate paragraph as an accepted source so the
+# The report was patched once before binary advisory serving was implemented.
+# Keep that intermediate paragraph as an accepted source so the
 # generator remains idempotent across both tracked states.
 PARAGRAPH_ALTERNATES = {
+    "Figure 7 — Left: learned crosswalk accuracy rises when district is added (≈12 pp from category-only to full). Right: Route 4’s median 48 days vs Route 2’s 23 days (PMAY, 2024–25); the 9-day Step 3 (BDO → Collector return) is the piloted reform target. Upper bound, not an estimate — Route 4 may be more complex on unobserved dimensions.": (
+        "Figure 7 — Left: the 60.9/67.5/72.8% crosswalk bars are historical in-sample resubstitution, retained only as upper-bound context. A chronological developmental holdout gives 45.15% top-1 and 69.05% top-3 for live category+district features (n=208,267), or 54.96%/79.68% on informative categories. Right: Route 4’s 48-day vs Route 2’s 23-day medians are descriptive and may reflect unobserved complexity; a pilot must measure any time effect.",
+    ),
     "Spam is not a block — it is a banner. A filing flagged as low-signal is still submitted; the officer sees “low-signal: <reason> (spam_score 0.82)” and decides. Prevalence is measured over redacted grievance text only (never raw grievance) and reported by district / category / mode / year — so a high-spam district is visible, not hidden in a state average. PPV / false-positive rate is measured against the two officer-confirmed spam-like families (details inadequate 39,964 + no specific grievance 16,375) on a deterministic 30% holdout by ticket hash; duplicate families are never counted as spam positives.": (
         "Low-signal review is not a block. The five classes are actionable, underspecified, irrelevant, outside purview, and policy-blocked; only an advisory review flag is permitted and officers decide. Administrative templates provide 106,683 non-conflicting train-only weak labels, not adjudicated truth. Office variation fails the pooling gate (maximum total-variation distance 0.522), so no PPV, false-positive rate, or production threshold is claimed until a stratified officer-adjudicated validation/test set exists.",
+        "Low-signal review is not a block. The evaluation taxonomy separates actionable, underspecified, irrelevant, outside-purview and policy-blocked cases; only advisory review or abstention is permitted and officers decide. Administrative templates provide 106,683 non-conflicting train-only weak labels, not adjudicated truth. A separate binary development benchmark is not compatible with the five-class serving slot and produced no deployable artifact. Office variation fails the pooling gate (maximum total-variation distance 0.522), so no PPV, false-positive rate or production threshold is approved until a stratified officer-adjudicated validation/test set exists.",
     ),
 }
 
@@ -84,31 +99,31 @@ CELL_REPLACEMENTS = {
         0,
         0,
         0,
-    ): "⚠  What we are not claiming. Technical latency is not officer time saved. Sarvam evidence is divergence/coverage, not OCR accuracy. Administrative discard templates are weak labels, not spam gold; live summary quality is unmeasured. Routing’s older 60.9/67.5/72.8% is in-sample, while the new chronological 2025 result is developmental because that test was viewed. Causal officer or citizen impact requires a locked pilot.",
+    ): "⚠  What we are not claiming. Technical latency is not officer time saved. Sarvam evidence is divergence/coverage, not OCR accuracy. Administrative discard templates are weak labels, not spam gold. Summary has only a small single-frontier-judge development baseline, with privacy and skip failures—not officer validation. Routing’s older 60.9/67.5/72.8% is in-sample, while the new chronological 2025 result is developmental because that test was viewed. Causal officer or citizen impact requires a locked pilot.",
     (
         9,
         5,
         2,
         0,
-    ): "BART incumbent (facebook/bart-large-cnn family, ~1.6 GB). It receives grievance text plus redacted letter/text pages. Historical usefulness scores guided page filtering; there is no current factuality/usefulness scorecard. Serving now requires a pinned local release/DVC artifact; the public model ID is available only through an explicit development opt-in.",
+    ): "BART incumbent (facebook/bart-large-cnn revision 37f520fa…, ~1.6 GB). On a deterministic enriched 30-case redacted typed-text development set, a single frontier judge found 55/84 critical facts retained, 8/26 drafts usable without edit, no unsupported or contradictory generated case, and 4/26 residual-PII cases. Serving requires a pinned local release/DVC artifact.",
     (
         9,
         5,
         3,
         0,
-    ): "The page gate avoids known low-value ID/bill summaries. It does not establish that the remaining summary is accurate or officer-useful; critical-fact recall, unsupported facts, PII leakage, edit burden, and correct abstention still need adjudication.",
+    ): "The development baseline summarized all six cases the judge marked for skipping and skipped all four coherent Odia cases; post-summary privacy, better abstention and a newly frozen paired officer review are required before release.",
     (
         9,
         6,
         2,
         0,
-    ): "MuRIL incumbent via DVC mirror. Feature = grievance text + redacted page text; current serving is English-gated. The 71.04% figure is a historical typed-subject benchmark, not a new scanned/redacted production evaluation. The new group-disjoint harness is ready, but governed gold is not yet frozen.",
+    ): "MuRIL remains the serving incumbent. A separate local hashing candidate was evaluated on 2024 redacted typed text with chronological, exact-text-group-disjoint splits. Its viewed development test (n=3,160) reached 46.55% top-1, 90.89% top-3 and 36.49% macro-F1. This is historical-label agreement, not policy correctness or a release result.",
     (
         9,
         6,
         3,
         0,
-    ): "Category suggestions can rescue uninformative intake fields, but no automatic assignment is justified. Report accepted rescue, top-k, per-class, calibration, abstention and language/source slices on the same frozen grievances before promotion.",
+    ): "Category suggestions can offer an officer a short list, but no automatic assignment is justified. The test was viewed, selective constraints were not met and language was unadjudicated. Promotion requires a newly frozen, officer-confirmed set with per-class, calibration, abstention and language/source slices.",
     (
         9,
         7,
@@ -126,7 +141,7 @@ CELL_REPLACEMENTS = {
         4,
         3,
         0,
-    ): "Historical usefulness scores motivated skipping IDs and bills before summary generation. They do not establish attachment prevalence, current summary factuality or that the retained subset is officer-useful; those claims need a governed paired review.",
+    ): "Historical usefulness scores motivated skipping IDs and bills before summary generation. The new 30-case typed-text development baseline measures current BART failure modes but does not establish attachment prevalence, scan quality or officer usefulness; those claims need a newly frozen paired officer review.",
     (
         13,
         2,
@@ -193,7 +208,7 @@ CELL_REPLACEMENTS = {
         1,
         1,
         0,
-    ): "Advisory low-signal reason, never a rejection. The screenshot case now skips category/summary. On the canonical 57-case frontier-adjudicated binary development test, the local review candidate caught all 13 complaints needing extra review and sent 3 of 44 ordinary complaints to review; it is not five-class serving-compatible or release-eligible.",
+    ): "Advisory low-signal reason, never a rejection. The screenshot case now skips category/summary. On the canonical 57-case frontier-adjudicated binary development test, the local review candidate caught all 13 complaints needing extra review and sent 3 of 44 ordinary complaints to review. The checksummed binary artifact is serving-compatible for advisory review; it does not assign five-class reasons and is not release-eligible.",
     (
         21,
         1,
@@ -205,31 +220,31 @@ CELL_REPLACEMENTS = {
         3,
         1,
         0,
-    ): "MuRIL category candidate with confidence. The cited 71.04% and per-class spread are historical typed-subject reference; a governed production-domain scorecard is pending.",
+    ): "MuRIL incumbent with a ranked-category suggestion. A local hashing candidate reached 46.55% top-1 and 90.89% top-3 historical-label agreement on a viewed, exact-text-group-disjoint 2024 development test (n=3,160).",
     (
         21,
         3,
         2,
         0,
-    ): "Does not auto-assign. Promotion requires group-disjoint gold, per-class/top-k/calibration, abstention and language/source slices.",
+    ): "Does not auto-assign. The result is not policy correctness or release evidence; promotion requires a newly frozen, officer-confirmed set with per-class/top-k/calibration, abstention and language/source slices.",
     (
         21,
         4,
         1,
         0,
-    ): "BART draft only for grievance-bearing letter/text pages. Historical page usefulness motivated filtering; current summary factuality and officer usefulness are unmeasured.",
+    ): "Local BART draft for English-compatible grievance text. Single-judge enriched development baseline: 65.48% critical-fact recall; 0/26 unsupported or contradictory cases; 8/26 usable without edit; 4/26 residual-PII cases.",
     (
         21,
         4,
         2,
         0,
-    ): "A low-signal submission is skipped rather than summarized. Critical-fact recall, unsupported facts, PII leakage, edit burden and correct abstention need paired officer adjudication.",
+    ): "The current guard passed all six judge-marked vague/underspecified cases to BART and skipped four coherent Odia cases. This is a repair baseline, not release or officer-validation evidence.",
     (
         21,
         5,
         2,
         0,
-    ): "Learned means historical destination agreement, not correct authority or best outcome. Chronological developmental top-1 is 45.15% overall and 54.96% on informative categories; the older 60.9/67.5/72.8% figures are in-sample.",
+    ): "Learned means historical destination agreement, not correct authority or best outcome. Chronological developmental top-1 is 45.14% overall and 54.96% on informative categories; the older 60.9/67.5/72.8% figures are in-sample.",
     (
         23,
         2,
@@ -283,13 +298,13 @@ CELL_REPLACEMENTS = {
         3,
         1,
         0,
-    ): "Historical MuRIL typed-subject reference: 71.04%. New production-domain categorization quality is not yet reportable. Routing chronological developmental holdout: 45.15% top-1 / 69.05% top-3 overall (n=208,267).",
+    ): "Category historical-label agreement: 46.55% top-1 / 90.89% top-3 / 36.49% macro-F1 on a viewed 2024 chronological, exact-text-group-disjoint development test (n=3,160). Not policy correctness or release evidence. Routing historical-destination agreement: 45.14% top-1 / 69.04% top-3 overall (n=208,267).",
     (
         24,
         5,
         1,
         0,
-    ): "Historical destination agreement only. The live category+district developmental holdout is 45.15% top-1 (95% CI 44.94–45.36) and 69.05% top-3; process-time contrasts remain descriptive.",
+    ): "Historical destination agreement only. The live category+district developmental holdout is 45.14% top-1 (95% CI 44.94–45.36) and 69.04% top-3; process-time contrasts remain descriptive.",
     (
         24,
         5,
@@ -308,7 +323,7 @@ CELL_REPLACEMENTS = {
         10,
         1,
         0,
-    ): "Category+district: 45.15% top-1 (44.94–45.36), 69.05% top-3 / n=208,267; informative: 54.96% / 79.68% / n=142,181",
+    ): "Category+district: 45.14% top-1 (44.94–45.36), 69.04% top-3 / n=208,267; informative: 54.96% / 79.68% / n=142,181",
     (25, 10, 2, 0): "janasunani/evaluation/historical.py; docs/QUALITY_BENCHMARKS.md",
     (
         25,
@@ -316,6 +331,25 @@ CELL_REPLACEMENTS = {
         3,
         0,
     ): "janasunani-evaluate-routing (freeze a future slice before release)",
+    (25, 9, 0, 0): "Categorization — chronological developmental",
+    (
+        25,
+        9,
+        1,
+        0,
+    ): "2024 exact-text-group-disjoint test n=3,160: 46.55% top-1 (44.82–48.29), 90.89% top-3, 95.19% top-5, 36.49% macro-F1; test viewed during development",
+    (
+        25,
+        9,
+        2,
+        0,
+    ): "outputs/evaluation/categorization_historical_v1.json; docs/QUALITY_BENCHMARKS.md",
+    (
+        25,
+        9,
+        3,
+        0,
+    ): "dvc repro --single-item categorization-historical-benchmark; freeze a new officer-confirmed test before release",
     (25, 12, 0, 0): "Actionability — development + weak-label audit",
     (
         25,
@@ -334,7 +368,7 @@ CELL_REPLACEMENTS = {
         12,
         3,
         0,
-    ): "Binary development only; not five-class serving-compatible; no outside-purview support; freeze officer-reviewed future test before promotion",
+    ): "Serving-compatible advisory binary artifact; no five-class reasons or outside-purview support; not release-eligible; freeze officer-reviewed future test before promotion",
     (
         25,
         21,
@@ -742,8 +776,26 @@ def _benchmark_replacements(
         f"{action['confusion']['true_review']}/{action['actual_review']} complaints "
         f"needing review and sent {action['confusion']['false_review']}/"
         f"{action['confusion']['true_actionable'] + action['confusion']['false_review']} "
-        "ordinary complaints to review. It is not five-class serving-compatible "
-        "or release-eligible."
+        "ordinary complaints to review. Its checksummed binary artifact is "
+        "serving-compatible for advisory review, but it does not assign five-class "
+        "reasons and is not release-eligible."
+    )
+
+    summary = facts.summary
+    cells[(21, 4, 1, 0)] = (
+        "Local BART development baseline on an enriched redacted typed-text set: "
+        f"{summary['critical_fact_recall']['successes']}/"
+        f"{summary['critical_fact_recall']['n']} critical facts retained; 0/"
+        f"{summary['generated_n']} unsupported or contradictory cases; "
+        f"{summary['usable_without_edit_rate']['successes']}/"
+        f"{summary['generated_n']} usable without edit; "
+        f"{summary['pii_leak_case_rate']['successes']}/"
+        f"{summary['generated_n']} residual-PII cases."
+    )
+    cells[(21, 4, 2, 0)] = (
+        "Single frontier judge and viewed enriched test only. All six judge-marked "
+        "skip cases received drafts and all four coherent Odia cases were skipped; "
+        "post-summary privacy and paired officer validation are required."
     )
 
     routing_all = facts.routing_all
@@ -774,9 +826,11 @@ def _benchmark_replacements(
         "60.9/67.5/72.8% figures are in-sample."
     )
     cells[(24, 3, 1, 0)] = (
-        "Historical MuRIL typed-subject reference: 71.04%. New production-domain "
-        "categorization quality is not yet reportable. Routing chronological "
-        f"developmental holdout: {routing_all['accuracy']:.2%} top-1 / "
+        "Category historical-label agreement: 46.55% top-1 / 90.89% top-3 / "
+        "36.49% macro-F1 on a viewed 2024 chronological, exact-text-group-disjoint "
+        "development test (n=3,160). Not policy correctness or release evidence. "
+        "Routing historical-destination agreement: "
+        f"{routing_all['accuracy']:.2%} top-1 / "
         f"{routing_all['top_k_accuracy']['3']:.2%} top-3 overall "
         f"(n={routing_all['n']:,})."
     )
@@ -869,8 +923,9 @@ def patch_report(source: Path, destination: Path, *, benchmark_bundle: Path) -> 
         )
     )
     if missing:
+        preview = "\n".join(f"- {text[:180]}" for text in missing)
         raise RuntimeError(
-            f"report paragraphs changed; missing {len(missing)} expected texts"
+            f"report paragraphs changed; missing {len(missing)} expected texts:\n{preview}"
         )
     for old, new in paragraph_replacements.items():
         if old in current:
@@ -900,6 +955,10 @@ def patch_report(source: Path, destination: Path, *, benchmark_bundle: Path) -> 
                 f"row {row_index} cell {cell_index}"
             )
         _set_paragraph(cell.paragraphs[paragraph_index], text)
+
+    for table in document.tables:
+        if table.rows:
+            _set_repeat_table_header(table.rows[0])
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(

@@ -285,6 +285,8 @@ def _evidence_table(document: Document, facts: BenchmarkFacts) -> None:
     _set_repeat_table_header(table.rows[0])
     route = facts.routing_all
     route_info = facts.routing_informative
+    category = facts.categorization
+    summary = facts.summary
     weak_count = facts.weak_labels["eligible_ticket_labels"]["valid_single_label"]
     rows = (
         (
@@ -294,6 +296,25 @@ def _evidence_table(document: Document, facts: BenchmarkFacts) -> None:
             f"{route_info['top_k_accuracy']['3']:.2%} where intake category is informative.",
             "Moving from one suggestion to three raises historical-destination coverage; officer usefulness still has to be measured.",
             "Historical agreement is not proof that the destination was legally correct or produced the best outcome.",
+        ),
+        (
+            f"Category shortlist: {category['accuracy']:.2%} top-1 and "
+            f"{category['top_k_accuracy']['3']:.2%} top-3 historical-label "
+            f"agreement on a viewed 2024 test of {category['n']:,} later cases.",
+            "The local candidate can often place the recorded category in a short "
+            "officer-review list.",
+            "The split prevents exact-text leakage, but the result is not policy "
+            "correctness or release evidence and must not auto-assign a case.",
+        ),
+        (
+            f"Summary baseline: {summary['critical_fact_recall']['successes']}/"
+            f"{summary['critical_fact_recall']['n']} critical facts retained; "
+            f"{summary['usable_without_edit_rate']['successes']}/"
+            f"{summary['generated_n']} drafts usable without edit.",
+            "The local model was conservative about invention: the single judge found no unsupported or contradictory generated case.",
+            f"It repeated residual identifying detail in "
+            f"{summary['pii_leak_case_rate']['successes']}/{summary['generated_n']} "
+            "drafts and failed the vague-input/Odia skip cases; officer validation is still required.",
         ),
         (
             f"Low-signal taxonomy: {weak_count:,} non-conflicting administrative "
@@ -462,7 +483,7 @@ def create_brief(destination: Path, *, benchmark_bundle: Path = DEFAULT_BUNDLE) 
     _callout(
         document,
         "Example of better triage",
-        "An abusive or content-free sentence is marked low-signal, its language is left unknown, and category and summary are skipped. The evaluation taxonomy keeps an incomplete request separate from irrelevant, outside-purview and policy-blocked cases; no compatible five-class serving model is active yet. This fixes the screenshot failure without pretending all four cases are ‘spam’.",
+        "An abusive or content-free sentence is marked low-signal, its language is left unknown, and category and summary are skipped. The evaluation taxonomy keeps an incomplete request separate from irrelevant, outside-purview and policy-blocked cases. A checksummed binary model can now serve the advisory review decision, but it does not invent a five-class reason and is not approved for release. This fixes the screenshot failure without pretending all four cases are ‘spam’.",
     )
     _section_label(document, "What a supervisor gains")
     _body(
@@ -484,16 +505,26 @@ def create_brief(destination: Path, *, benchmark_bundle: Path = DEFAULT_BUNDLE) 
     _evidence_table(document, facts)
     _body(
         document,
-        f"Two practical findings stand out. First, the tracked frontier-adjudicated "
+        f"Four practical findings stand out. First, the tracked frontier-adjudicated "
         f"binary development test caught {facts.actionability['confusion']['true_review']}/"
         f"{facts.actionability['actual_review']} complaints needing extra review, while "
         f"also sending {facts.actionability['confusion']['false_review']}/"
         f"{facts.actionability['confusion']['true_actionable'] + facts.actionability['confusion']['false_review']} "
-        f"ordinary complaints to review; it is not compatible with the five-class "
-        f"serving slot. Second, category plus district places the later historical "
+        f"ordinary complaints to review. Its checksummed binary artifact can serve "
+        f"that advisory review decision, but does not assign five-class reasons and "
+        f"is not release-eligible. Second, a separate chronological category model "
+        f"placed the recorded category in its top three for 90.89% of a viewed 2024 "
+        f"development test (n=3,160), with 46.55% top-1 and 36.49% macro-F1; this "
+        f"is historical-label agreement, not policy correctness. Third, the local "
+        f"BART baseline retained {facts.summary['critical_fact_recall']['successes']}/"
+        f"{facts.summary['critical_fact_recall']['n']} critical facts and produced "
+        f"{facts.summary['usable_without_edit_rate']['successes']}/"
+        f"{facts.summary['generated_n']} drafts usable without edit; privacy and "
+        f"skip failures make it a repair baseline. Fourth, category plus district "
+        f"places the later historical "
         f"destination in the top three for {facts.routing_all['top_k_accuracy']['3']:.2%} "
         f"of cases, rising to {facts.routing_informative['top_k_accuracy']['3']:.2%} "
-        "where the intake category is informative. Both need a newly frozen, "
+        "where the intake category is informative. All need a newly frozen, "
         "officer-reviewed release set.",
         size=10,
         after=8,

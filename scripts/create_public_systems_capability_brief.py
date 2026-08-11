@@ -251,8 +251,19 @@ def create_brief(destination: Path, *, benchmark_bundle: Path = DEFAULT_BUNDLE) 
         f"{facts.actionability['actual_review']} complaints needing review while "
         f"also flagging {facts.actionability['confusion']['false_review']}/"
         f"{facts.actionability['confusion']['true_actionable'] + facts.actionability['confusion']['false_review']} "
-        "ordinary complaints. The binary model is not serving-compatible; these "
-        "are proof points, not release or impact claims.",
+        "ordinary complaints. Its checksummed binary artifact is serving-compatible "
+        "for advisory review, but does not assign five-class reasons and is not "
+        "release-eligible. A separate 2024 chronological, exact-text-group-disjoint "
+        "category benchmark placed the historical label in its top three for 90.89% "
+        "of the viewed development test (n=3,160), with 46.55% top-1 and 36.49% "
+        "macro-F1. That is historical-label agreement, not policy correctness. "
+        f"A separate local-BART summary baseline retained "
+        f"{facts.summary['critical_fact_recall']['successes']}/"
+        f"{facts.summary['critical_fact_recall']['n']} critical facts and produced "
+        f"{facts.summary['usable_without_edit_rate']['successes']}/"
+        f"{facts.summary['generated_n']} drafts usable without edit; residual-PII "
+        "and skip failures keep it below release quality. "
+        "These are proof points, not release or impact claims.",
         fill=PALE_BLUE,
     )
     _callout(
