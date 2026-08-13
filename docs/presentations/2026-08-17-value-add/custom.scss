@@ -103,6 +103,172 @@ $presentation-heading-font-weight: 600;
   .chip-estimated { background: rgba($terracotta, 0.20);  color: darken($terracotta, 18%); }
   .chip-open      { background: transparent; color: $muted; border: 1px solid $rule; }
 
+  // ==========================================================================
+  // STATUS QUO vs WHAT WE ADD
+  //
+  // Deliberately a different visual CHANNEL from the evidence chips above, so
+  // the two systems cannot be confused. Chips are inline pills attached to a
+  // single claim, answering "how sure are we?". This one is spatial -- a
+  // gutter down the left edge and a two-panel divider -- answering "is this
+  // slide describing the problem, or our contribution?". Different question,
+  // different channel, no shared colour meaning to hold in your head.
+  //
+  // Three roles, matching the three section-divider panels:
+  //   .sq-slide     grey gutter    the problem as it stands today
+  //   .add-slide    maroon gutter  what this work adds
+  //   .open-slide   dashed gutter  what is not settled
+  // ==========================================================================
+
+  section.sq-slide,
+  section.add-slide,
+  section.open-slide {
+    padding-left: 1.1em;
+    position: relative;
+  }
+
+  section.sq-slide::before,
+  section.add-slide::before,
+  section.open-slide::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.1em;
+    bottom: 0.1em;
+    width: 6px;
+    border-radius: 3px;
+  }
+  section.sq-slide::before   { background: $rule; }
+  section.add-slide::before  { background: $maroon; }
+  section.open-slide::before { background: repeating-linear-gradient(
+                                 to bottom, $terracotta 0 8px, transparent 8px 16px); }
+
+  // The word in the gutter. Rotated so it costs no horizontal room and never
+  // competes with the heading for the eye.
+  section.sq-slide::after,
+  section.add-slide::after,
+  section.open-slide::after {
+    position: absolute;
+    left: -0.15em;
+    bottom: 0;
+    transform: rotate(180deg);
+    writing-mode: vertical-rl;
+    font-family: "Inter", sans-serif;
+    font-size: 0.32em;
+    font-weight: 800;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+  }
+  section.sq-slide::after   { content: "Today";      color: $muted; }
+  section.add-slide::after  { content: "We add";     color: $maroon; }
+  section.open-slide::after { content: "Unresolved"; color: $terracotta; }
+
+  // ---- Section dividers: the before/after scorecard ------------------------
+  // Every part of the deck opens by declaring its own status quo and its own
+  // contribution, side by side. This is the slide the audience should be able
+  // to photograph.
+  .scorecard {
+    display: flex;
+    gap: 0;
+    align-items: stretch;
+    margin-top: 0.5em;
+    font-size: 0.72em;
+  }
+  .scorecard > .sq,
+  .scorecard > .add {
+    flex: 1;
+    padding: 0.9em 1.1em;
+    text-align: left;
+  }
+  .scorecard > .sq {
+    background: transparent;
+    border-left: 6px solid $rule;
+    color: $muted;
+  }
+  .scorecard > .add {
+    background: $paper-deep;
+    border-left: 6px solid $maroon;
+    color: $ink;
+  }
+  // A span, not a heading. Pandoc wraps a heading inside a fenced div in its
+  // own <section>, and reveal.js reads a nested <section> as a VERTICAL SLIDE --
+  // so `### Today` silently turned each scorecard panel into its own sub-slide
+  // and left the divider blank. A span cannot do that.
+  .scorecard .sc-h {
+    display: block;
+    font-family: "Inter", sans-serif;
+    font-size: 0.62em;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin: 0 0 0.6em 0;
+  }
+  .scorecard > .sq .sc-h  { color: $muted; }
+  .scorecard > .add .sc-h { color: $maroon; }
+
+  // Part dividers are level-2 headings with .part, not level-1. A level-1
+  // heading in Quarto revealjs opens a vertical STACK that then contains the
+  // following slides, which is not what a divider is.
+  section.part h2 {
+    font-size: 1.05em;
+    border-bottom: 3px solid $maroon;
+    padding-bottom: 0.25em;
+    margin-bottom: 0.1em;
+  }
+  .scorecard p { margin: 0 0 0.45em 0; line-height: 1.3; }
+
+  // The arrow between the panels. A pseudo-element on the container so it
+  // needs no markup and stays centred whatever the panels contain.
+  .scorecard { position: relative; }
+  .scorecard::after {
+    content: "→";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 1.6em;
+    color: $maroon;
+    background: $paper;
+    border-radius: 50%;
+    width: 1.3em;
+    height: 1.3em;
+    line-height: 1.3em;
+    text-align: center;
+  }
+
+  // ---- The running ledger --------------------------------------------------
+  // Sits under each divider. Six pips, one per contribution, filled once that
+  // contribution has been introduced. Pure CSS, no JS and no per-slide state:
+  // each divider hard-codes its own row, so nothing can desynchronise.
+  .ledger {
+    display: flex;
+    gap: 0.5em;
+    justify-content: center;
+    margin-top: 1.1em;
+    font-family: "Inter", sans-serif;
+    font-size: 0.42em;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .ledger span,
+  .ledger span.off {
+    padding: 0.3em 0.75em;
+    border-radius: 999px;
+    border: 1px solid $rule;
+    color: $rule;
+  }
+  .ledger span.on {
+    background: $maroon;
+    border-color: $maroon;
+    color: $paper;
+  }
+  .ledger span.now {
+    background: transparent;
+    border-color: $maroon;
+    border-width: 2px;
+    color: $maroon;
+    font-weight: 800;
+  }
+
   // ---- Tables --------------------------------------------------------------
   table { font-size: 0.62em; }
   table th {

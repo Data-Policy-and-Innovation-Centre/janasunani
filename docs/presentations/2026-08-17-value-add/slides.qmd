@@ -23,11 +23,34 @@ date-format: "D MMMM YYYY"
   exists. Replace a placeholder with `![](assets/<file>)` as each one lands.
   assets/README.md is the checklist.
 
-  EVIDENCE CHIPS. Three states, used consistently from slide 4 onward:
-    [measured]{.chip .chip-measured}   from the records or a timed run
-    [estimated]{.chip .chip-estimated} model output with an interval
-    [open]{.chip .chip-open}           not settled; we say so
-  Teach the audience to read them early and they will trust the deck later.
+  TWO MARKING SYSTEMS, ON DELIBERATELY DIFFERENT CHANNELS. They answer
+  different questions, so they must never share a colour meaning.
+
+  1. THE GUTTER -- what is this SLIDE for? A coloured rule down the left edge
+     with a rotated word in it, set by a class on the heading:
+       {.sq-slide}    grey     the problem as it stands today
+       {.add-slide}   maroon   what this work adds
+       {.open-slide}  dashed   what is not settled
+     Spatial, applies to the whole slide, needs no markup in the body.
+
+  2. THE CHIPS -- how sure are we of this NUMBER? Inline pills next to a claim:
+       [measured]{.chip .chip-measured}   from the records or a timed run
+       [estimated]{.chip .chip-estimated} model output with an interval
+       [open]{.chip .chip-open}           not settled; we say so
+
+  The "How to read these slides" legend teaches both in thirty seconds. After
+  that they work by repetition and should never be explained again.
+
+  SECTION SCORECARDS. Every Part divider opens with a `.scorecard` -- today on
+  the left in grey, what we add on the right in maroon, an arrow between them --
+  followed by a `.ledger` row of six pips naming the six contributions:
+  time, problems, privacy, drafting, routing, proof. `.on` = already introduced,
+  `.now` = introduced in this section, bare = still to come. The rows are
+  hard-coded per divider rather than computed, so nothing can desynchronise, but
+  that also means EDITING ONE MEANS CHECKING ALL FOUR.
+  The sixth pip, proof, deliberately stays empty until Part IV: the first five
+  contributions are built, and the last one needs permission rather than
+  software. That is the argument of the deck, drawn as a row of dots.
 
   HARD RULE ON FIGURES. No screenshot of the live portal goes in this deck.
   The 11 August screens carry real citizen names, mobile numbers and addresses,
@@ -75,7 +98,7 @@ in a press note on Tuesday.
 
 ---
 
-## What we were given {data-menu-title="The data"}
+## What we were given {.sq-slide data-menu-title="The data"}
 
 ::: {.cols}
 ::: {}
@@ -112,19 +135,99 @@ English.
 
 ---
 
-# Part I · What the record already says {data-menu-title="Part I"}
+## How to read these slides {data-menu-title="Legend"}
 
-Three findings. None of them needs a model.
+::: {.cols}
+::: {}
+**Down the left edge** — what a slide is doing
+
+[Today]{.chip .chip-open} the problem as it stands
+
+[We add]{.chip .chip-measured} our contribution
+
+[Unresolved]{.chip .chip-estimated} not settled
+:::
+
+::: {}
+**Beside a number** — how sure we are
+
+[measured]{.chip .chip-measured} from the records or a timed run
+
+[estimated]{.chip .chip-estimated} with an interval, not a point
+
+[open]{.chip .chip-open} we do not know yet
+:::
+:::
+
+::: {.lead}
+Every section opens by putting today beside what we add. Nothing on these slides is unlabelled.
+:::
 
 ::: notes
-~15 sec. Signpost. Say explicitly: "nothing in this section involves AI at all.
-This is arithmetic on records you already have." That framing is what makes the
-section land with a sceptical audience, and it is true.
+~30 sec, and worth every second. Teach both systems once, here, and the rest of
+the deck reads itself.
+
+The distinction to make out loud: the gutter down the left says what the *slide*
+is for — is this the problem, or our contribution, or something we have not
+settled. The chip beside a number says how sure we are of that *number*. Two
+different questions, so two different marks.
+
+Then make the promise explicit, because it is the one that earns you the room:
+there is no unlabelled claim anywhere in this deck. If something is unresolved,
+it is marked unresolved on the slide, not in a footnote and not in the
+appendix.
 :::
 
 ---
 
-## Nobody can see how long anything takes {data-menu-title="No time metric"}
+## Part I · What the record already says {.part data-menu-title="Part I"}
+
+::: {.scorecard}
+::: {.sq}
+[Today]{.sc-h}
+
+Disposal percentage and pendency. Both counts.
+
+The denominator is filings, so one road complained about four hundred times is
+four hundred grievances.
+
+How a case was closed is recorded and never read.
+:::
+
+::: {.add}
+[What we add]{.sc-h}
+
+Time to resolve, and how it is distributed.
+
+Problems and citizens as denominators, beside filings.
+
+A read of what the closing wording actually means, and what it cannot say.
+:::
+:::
+
+::: {.ledger}
+[time]{.now} [problems]{.now} [privacy]{.off} [drafting]{.off} [routing]{.off} [proof]{.off}
+:::
+
+Three findings. None of them needs a model.
+
+::: notes
+~30 sec. Let them read the two panels, then say the one sentence that matters:
+nothing in this section involves AI at all. This is arithmetic on records you
+already have.
+
+That framing is what makes the section land with a sceptical audience, and it
+happens to be true. It also sets up the contrast for Part II: by the time we get
+to models, they will already have accepted three findings that needed none.
+
+The row of pills at the bottom is what we will have added by the end of the
+talk. Two of the six are on the table in this section. Point at it once here,
+and then never explain it again — it does its work by repetition.
+:::
+
+---
+
+## Nobody can see how long anything takes {.sq-slide data-menu-title="No time metric"}
 
 ::: {.lead}
 The reporting screens carry no median age, no time to resolve, no ageing at all.
@@ -172,7 +275,7 @@ else does is the single highest-return move available in a room like this.
 
 ---
 
-## The disposal rate counts the wrong thing {data-menu-title="Filings, not problems"}
+## The disposal rate counts the wrong thing {.sq-slide data-menu-title="Filings, not problems"}
 
 ::: {.lead}
 Four hundred citizens complaining about one road are four hundred grievances.
@@ -214,7 +317,7 @@ satisfied without anything happening."
 
 ---
 
-## Closing a case and solving it are not the same thing {data-menu-title="The closure ladder"}
+## Closing a case and solving it are not the same thing {.sq-slide data-menu-title="The closure ladder"}
 
 | Closing wording | Cases | Share | Median days |
 |---|---:|---:|---:|
@@ -255,19 +358,53 @@ for speed."
 
 ---
 
-# Part II · What we built {data-menu-title="Part II"}
+## Part II · What we built {.part data-menu-title="Part II"}
+
+::: {.scorecard}
+::: {.sq}
+[Today]{.sc-h}
+
+An officer does all six steps by hand, and no record is kept of how well any of
+them went.
+
+Personal detail sits in the record while it is analysed.
+
+Repeats are caught when somebody happens to notice.
+:::
+
+::: {.add}
+[What we add]{.sc-h}
+
+A drafted complaint in about fourteen seconds, and ranked suggestions the
+officer can accept or ignore.
+
+Redaction before anything else runs, every time.
+
+The same problem counted once.
+:::
+:::
+
+::: {.ledger}
+[time]{.on} [problems]{.on} [privacy]{.now} [drafting]{.now} [routing]{.off} [proof]{.off}
+:::
 
 Six steps, in the order they have to happen.
 
 ::: notes
-~10 sec. Signpost only. Keep Part II brisk — it is the part the audience expects
-and therefore the part that earns least. The routing block is where the talk
-actually pays.
+~30 sec. Keep Part II brisk. It is the part the audience expects, and therefore
+the part that earns least — the routing block is where the talk actually pays.
+
+The one thing to land from the scorecard is the middle row on each side.
+Redaction is not a review step at the end, it is the first thing that happens,
+and that ordering is a privacy control rather than an implementation detail.
+
+Two more pills fill here. If anyone is counting, the sixth one — proof — stays
+empty until the very last section, and that is the point of the deck.
 :::
 
 ---
 
-## The six steps {data-menu-title="Six steps"}
+## The six steps {.add-slide data-menu-title="Six steps"}
 
 | Step | Today | With this |
 |---|---|---|
@@ -310,7 +447,7 @@ four asks.
 
 ---
 
-## Fourteen seconds {data-menu-title="Speed"}
+## Fourteen seconds {.add-slide data-menu-title="Speed"}
 
 ::: {.bignum}
 14 s
@@ -356,7 +493,7 @@ typing.
 
 ---
 
-## Privacy is the first step, not a review stage {data-menu-title="Redaction"}
+## Privacy is the first step, not a review stage {.add-slide data-menu-title="Redaction"}
 
 Across every redacted complaint in one district-year — **55,544 records** — no
 mobile number, Aadhaar number, PAN or non-government email survived.
@@ -394,18 +531,52 @@ on names; and the analysis pipeline never sees unredacted text either way.
 
 ---
 
-# Part III · Routing {data-menu-title="Part III"}
+## Part III · Routing {.part data-menu-title="Part III"}
+
+::: {.scorecard}
+::: {.sq}
+[Today]{.sc-h}
+
+About fifty preset routes in a flat list. No default, no order, nothing to
+indicate which is better.
+
+The only standard available is *the same as last time*, so the best a model
+could do is reproduce current practice.
+:::
+
+::: {.add}
+[What we add]{.sc-h}
+
+Routes ranked by how quickly they have actually resolved cases like this one.
+
+A constraint written into the objective, so speed cannot be bought by closing
+cases without working on them.
+:::
+:::
+
+::: {.ledger}
+[time]{.on} [problems]{.on} [privacy]{.on} [drafting]{.on} [routing]{.now} [proof]{.off}
+:::
 
 The question nobody has been able to ask.
 
 ::: notes
-~10 sec. Change gear audibly. Tell them this is the part that is new and that it
-will take ten minutes. Attention is a budget; spend it here.
+~40 sec. Change gear audibly. Tell them this is the part that is new and that it
+will take about ten minutes. Attention is a budget; spend it here.
+
+The right-hand panel is the thesis of the whole talk, so read it out rather than
+letting them skim it. Two claims: routes ranked by outcome instead of by
+precedent, and a constraint that stops the obvious way of cheating.
+
+The left-hand panel is worth a beat of its own. "The best a model could do is
+reproduce current practice" is the sentence that explains why we are not going
+to show an accuracy score for route suggestions later, and saying it here means
+you do not have to defend that decision when it arrives.
 :::
 
 ---
 
-## Every grievance is routed. Nothing says whether the route was right {data-menu-title="Routing today"}
+## Every grievance is routed. Nothing says whether the route was right {.sq-slide data-menu-title="Routing today"}
 
 A flat list of about **50 preset routes**. No default. Nothing to indicate which
 is better. [measured]{.chip .chip-measured}
@@ -444,7 +615,7 @@ suggestions. It would be measuring the wrong thing.
 
 ---
 
-## So we changed the question {data-menu-title="The new question"}
+## So we changed the question {.add-slide data-menu-title="The new question"}
 
 ::: {.cols}
 ::: {}
@@ -491,7 +662,7 @@ recommend acting on it yet."
 
 ---
 
-## The trap {data-menu-title="The trap"}
+## The trap {.sq-slide data-menu-title="The trap"}
 
 ::: {.lead}
 Route for speed alone and you will find the offices that close cases, not the offices that solve them.
@@ -531,7 +702,7 @@ also where the open question lives.
 
 ---
 
-## Four corrections {data-menu-title="Four corrections"}
+## Four corrections {.add-slide data-menu-title="Four corrections"}
 
 | Problem | Left uncorrected |
 |---|---|
@@ -579,7 +750,7 @@ as we checked it, you should not trust it.
 
 ---
 
-## What we found {data-menu-title="The result"}
+## What we found {.add-slide data-menu-title="The result"}
 
 ::: {.bignum}
 11–23 days
@@ -618,7 +789,7 @@ tell you before anyone writes this down."
 
 ---
 
-## The honest gap {data-menu-title="The open question"}
+## The honest gap {.open-slide data-menu-title="The open question"}
 
 ::: {.lead}
 Does the faster routing still get action taken? We do not know.
@@ -667,18 +838,50 @@ distinction we are asking for help to close.
 
 ---
 
-# Part IV · What it would be worth {data-menu-title="Part IV"}
+## Part IV · What it would be worth {.part data-menu-title="Part IV"}
+
+::: {.scorecard}
+::: {.sq}
+[Today]{.sc-h}
+
+No officer-time figure exists. No citizen outcome is reported.
+
+The one field recording whether a petitioner benefited reaches the database and
+nothing reads it.
+
+There is no way to tell whether any change helped.
+:::
+
+::: {.add}
+[What we add]{.sc-h}
+
+Named metrics with named denominators, and an honest column saying which are
+already derivable and which are not.
+
+The instrumentation that turns *not measured* into *measured*.
+:::
+:::
+
+::: {.ledger}
+[time]{.on} [problems]{.on} [privacy]{.on} [drafting]{.on} [routing]{.on} [proof]{.now}
+:::
 
 What we expect, clearly separated from what we have measured.
 
 ::: notes
-~15 sec. Signpost, and say the words "this next section is what we think, not
-what we know." Then keep to it.
+~30 sec. Say the words out loud: "this next section is what we think, not what
+we know." Then keep to it rigorously — every slide in this part carries the
+unresolved marker down its left edge, and that is deliberate.
+
+The last pill fills here, and it is the one the four asks are about. Worth
+naming: the first five contributions are things we have already built. The sixth
+is the only one we cannot build ourselves, because it needs permission rather
+than software.
 :::
 
 ---
 
-## Officer workload {data-menu-title="Officer workload"}
+## Officer workload {.open-slide data-menu-title="Officer workload"}
 
 ::: {.bignum}
 201,000–302,000
@@ -723,7 +926,7 @@ not claiming to save any of it" out loud.
 
 ---
 
-## What a citizen would notice {data-menu-title="Citizen experience"}
+## What a citizen would notice {.open-slide data-menu-title="Citizen experience"}
 
 **Shorter waits**, if the routing result holds. [open]{.chip .chip-open}
 
@@ -760,7 +963,7 @@ makes that visible.
 
 ---
 
-## Almost everything worth knowing is nearly measurable {data-menu-title="Measurability"}
+## Almost everything worth knowing is nearly measurable {.add-slide data-menu-title="Measurability"}
 
 | What we would want to know | Can we measure it? |
 |---|---|
@@ -792,7 +995,7 @@ Bridge: "which brings me to the four things we are actually asking for."
 
 ---
 
-## What we are asking for {data-menu-title="The ask"}
+## What we are asking for {.add-slide data-menu-title="The ask"}
 
 | Decision | What it involves |
 |---|---|
@@ -834,7 +1037,7 @@ asks is about being able to tell whether any of it is working.
 
 ---
 
-## What we are not claiming {data-menu-title="Not claimed"}
+## What we are not claiming {.open-slide data-menu-title="Not claimed"}
 
 ::: {.nonincremental}
 - No officer minutes saved

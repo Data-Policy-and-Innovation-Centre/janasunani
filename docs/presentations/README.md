@@ -38,10 +38,35 @@ schematics with invented names, or capture the synthetic demo stack.
 **No real complaint text**, redacted or otherwise. Write sample petitions by hand
 for the slide.
 
-**Every claim carries its evidence state.** The `.chip-measured` /
-`.chip-estimated` / `.chip-open` chips are a visual primitive, not decoration. A
-deck that shows an unresolved disagreement as clearly as it shows a result is the
-only kind worth giving to this audience.
+**Two marking systems, on different visual channels.** They answer different
+questions and must never share a colour meaning.
+
+| | Question | How it looks |
+|---|---|---|
+| Gutter (`.sq-slide` / `.add-slide` / `.open-slide` on the heading) | What is this **slide** for — the problem, our contribution, or something unsettled? | A coloured rule down the left edge with a rotated word in it |
+| Chips (`.chip-measured` / `.chip-estimated` / `.chip-open`) | How sure are we of this **number**? | An inline pill next to the claim |
+
+Both are visual primitives, not decoration. A deck that shows an unresolved
+disagreement as clearly as it shows a result is the only kind worth giving to
+this audience.
+
+Section dividers carry a `.scorecard` — today on the left, what we add on the
+right — and a `.ledger` row of pips tracking which contributions are on the
+table so far. The ledger rows are hard-coded per divider rather than computed,
+so nothing can desynchronise; editing one means checking them all.
+
+## Two things reveal.js will do to you
+
+Both cost a render to find, so they are worth knowing before writing a deck.
+
+**Do not put a heading inside a fenced div.** Pandoc wraps it in its own
+`<section>`, and reveal reads a nested `<section>` as a *vertical slide* — so a
+`### Today` inside a two-panel layout silently turns each panel into a sub-slide
+and leaves the containing slide blank. Use a styled span instead.
+
+**Section dividers are `##` with a class, not `#`.** A level-1 heading in Quarto
+revealjs opens a vertical *stack* that then contains the following slides, which
+is not what a divider is.
 
 **Numbers reconcile upward.** `docs/value-add-report/` is the evidence record and
 `docs/QUALITY_BENCHMARKS.md` is the register. Where a slide disagrees with
