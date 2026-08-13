@@ -538,3 +538,127 @@ $presentation-heading-font-weight: 600;
 /* The desk card is an illustration standing next to a real map, so it says so
    on its own face and not only in the speaker notes. */
 .reveal .desk-head b { color: #8B1524; font-weight: 800; }
+
+/*-- The reporting surface, redrawn ---------------------------------------
+    Two panels: what the pendency screen carries, beside the fields already in
+    the database that never reach it. Grey means today and maroon means what we
+    add, the same as the gutter and the .compare tables, so the right panel
+    lighting up IS the argument.
+
+    Never an image. The real screens carry citizen PII and may not be captured
+    here at all, so this is drawn and labelled as drawn.                     */
+.reveal .repgap {
+  display: flex;
+  gap: 1.1em;
+  align-items: stretch;
+  max-width: 96%;
+  margin: 0.6em auto 0;
+  font-size: 0.62em;
+  text-align: left;
+}
+.reveal .rg-panel {
+  flex: 1;
+  border: 1px solid #DAD6CC;
+  border-radius: 10px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.reveal .rg-today { background: #FFFFFF; }
+.reveal .rg-missing { background: #FAF9F5; border-style: dashed; }
+.reveal .rg-head {
+  background: #F2F0E9;
+  color: #6B6862;
+  font-family: "Inter", sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  font-size: 0.66em;
+  padding: 0.6em 1em;
+  border-bottom: 1px solid #DAD6CC;
+}
+.reveal .rg-missing .rg-head { color: #8B1524; }
+
+/* Scoped so it cannot reach the .compare and .grid tables on other slides,
+   which carry their own colouring. */
+.reveal .rg-table {
+  width: 100%;
+  table-layout: fixed;
+  font-size: 0.92em;
+  margin: 0;
+  border-collapse: collapse;
+}
+.reveal .rg-table th {
+  border-bottom: 1px solid #DAD6CC;
+  color: #6B6862;
+  font-size: 0.76em;
+  padding: 0.5em 0.7em;
+  text-align: right;
+}
+.reveal .rg-table th:first-child, .reveal .rg-table td:first-child { text-align: left; }
+.reveal .rg-table td {
+  border-bottom: 1px solid #F2F0E9;
+  padding: 0.42em 0.7em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: #141413;
+}
+.reveal .rg-formula {
+  margin-top: auto;
+  padding: 0.7em 1em;
+  border-top: 1px solid #DAD6CC;
+  background: #F2F0E9;
+  color: #6B6862;
+  font-family: "Inter", sans-serif;
+  font-size: 0.72em;
+}
+
+.reveal .rg-fields {
+  padding: 0.7em 0.9em;
+  display: flex;
+  flex-direction: column;
+  gap: 0.38em;
+}
+/* Reveal hides .fragment until it is stepped to. Here the field must be
+   visible from the start and merely unlit, because the point of the panel is
+   that these things exist and are ignored. Overriding at the same depth reveal
+   uses so it wins without !important. */
+.reveal .slides section .fragment.rg-f {
+  opacity: 1;
+  visibility: inherit;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.8em;
+  padding: 0.34em 0.6em;
+  border-left: 4px solid #DAD6CC;
+  background: #F2F0E9;
+  color: #6B6862;
+  transition: background 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+}
+.reveal .rg-f b { font-weight: 600; }
+.reveal .rg-f i {
+  font-style: normal;
+  font-family: "SFMono-Regular", Menlo, monospace;
+  font-size: 0.76em;
+  color: #A29D94;
+  white-space: nowrap;
+}
+.reveal .slides section .fragment.rg-f.visible {
+  background: rgba(139, 21, 36, 0.09);
+  border-left-color: #8B1524;
+  color: #141413;
+}
+.reveal .rg-f.visible i { color: #8B1524; }
+.reveal .rg-foot {
+  margin-top: auto;
+  padding: 0.7em 1em;
+  border-top: 1px dashed #DAD6CC;
+  color: #8B1524;
+  font-size: 0.76em;
+}
+.reveal .rg-table .rg-total td {
+  border-top: 1px solid #DAD6CC;
+  border-bottom: none;
+  font-weight: 700;
+  padding-top: 0.55em;
+}

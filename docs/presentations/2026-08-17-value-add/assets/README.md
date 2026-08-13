@@ -52,10 +52,15 @@ give this talk at all.
       of Part 2 at once, which is why it closes the section. Aggregate
       description only, never a citizen.
       — slide "Where the two questions meet: campaigns"
-- [ ] `reporting_surface_gap.*` — the pendency screen as it is (counts by office
-      and status, a disposal percentage) beside a greyed panel of everything it
-      does not carry: median age, time to first action, subject, location, who
-      filed. **REDRAWN, NEVER SCREENSHOTTED.** Invented office names.
+- [x] `reporting_surface_gap` — **built**, as `_reporting-gap.qmd`, in CSS. The
+      pendency screen redrawn (office types only, never a named office, invented
+      numbers that add up) beside the fields already in the database that never
+      reach a report. Each field names its actual column in
+      `janasunani/db/models.py`, so the claim is checkable rather than rhetorical.
+      Reveal fragments light them one at a time; `.rg-f` overrides reveal's
+      default hide so they start visible-but-grey, which is what makes an absence
+      visible. No custom JS, so it degrades to the all-grey state.
+      **REDRAWN, NEVER SCREENSHOTTED**, and the panel header says so on its face.
       — slide "What the officer sees today"
 - [ ] `latency_waterfall.*` — the 13.7 s scanned path as a horizontal bar
       segmented by stage, ideally filling left to right. Reading the page (6.0 s)

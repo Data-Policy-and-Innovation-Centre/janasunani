@@ -506,18 +506,10 @@ Both pips fill here. By the end of this section the ledger is complete.
 
 ## What the officer sees today {.sq-slide data-menu-title="Today's reporting"}
 
-::: {.visual}
-[Visual · the reporting surface, redrawn]{.vtag}
-The pendency screen as it is: a plain table of counts by office and status, and
-a disposal percentage. Beside it, greyed out, everything it does not carry —
-median age, time to first action, subject, location, who filed.
-[why]{.why} An absence is hard to see. Present and absent side by side makes the
-gap obvious in two seconds, which no sentence does.
-[source]{.src} **REDRAWN, NEVER SCREENSHOTTED.** The 11 August captures carry real citizen data. Invent the office names.
-:::
+{{< include assets/_reporting-gap.qmd >}}
 
-Counts of resolved and pending. A disposal percentage whose denominator is
-filings. [measured]{.chip .chip-measured}
+Counts and a disposal percentage over filings. Nothing on the right needs new
+data collection. [measured]{.chip .chip-measured}
 
 ::: {.src-line}
 Verified for the CM Grievance Cell, screens reviewed 11 August 2026. Believed general; a department or Collector login has not been checked.
@@ -528,9 +520,18 @@ Verified for the CM Grievance Cell, screens reviewed 11 August 2026. Believed ge
 something.
 
 Ask the room, lightly, what the median age of a pending grievance is. Nobody
-will know, because it is not on any screen. Then point out the stranger thing:
-the subject of the complaint is in the database, the district is in the
-database, the block is in the database, and none of it reaches a report.
+will know, because it is not on any screen. Let that sit before you touch the
+arrow key.
+
+Then step the right panel one field at a time. Each one names the column the
+portal already writes, and that is the whole move: this is not a request for
+new data collection, it is a request to report what is already recorded. Do not
+rush the last one. `benefitted` is filled in by the closing officer, it reaches
+the database, and no indicator anywhere reads it.
+
+Say out loud that the left panel is drawn, not captured, and why: the real
+screens carry citizen names and phone numbers. Saying it costs five seconds and
+buys the room's trust in every other number today.
 
 Scope it honestly and out loud rather than leaving it to the footer: we verified
 this in the CM Grievance Cell. We believe it is the same product everywhere. We
