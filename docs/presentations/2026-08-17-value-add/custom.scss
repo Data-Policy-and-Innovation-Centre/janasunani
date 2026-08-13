@@ -502,3 +502,7 @@ $presentation-heading-font-weight: 600;
   margin-top: 0.2em; min-height: 1.4em;
 }
 .reveal .hs-readout b { color: #8B1524; }
+
+/* The desk card is an illustration standing next to a real map, so it says so
+   on its own face and not only in the speaker notes. */
+.reveal .desk-head b { color: #8B1524; font-weight: 800; }

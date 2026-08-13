@@ -572,7 +572,7 @@ now.
 
 ::: {.deskcard}
 ::: {.desk-head}
-Grievance intake · draft ready
+Grievance intake · draft ready · <b>illustration, invented figures</b>
 :::
 ::: {.desk-alert}
 **This is the 300th complaint about water supply from Jharpada this month.**
@@ -585,7 +585,12 @@ Related open cases: 12 · Assigned across 3 offices
 :::
 
 The same signal, delivered where a decision is being made rather than in a
-monthly report. [estimated]{.chip .chip-estimated}
+monthly report. [open]{.chip .chip-open}
+
+*Every figure on that card is invented. The components behind it exist — the
+dedup grouping, the category model, the spike mart — but this assembly is a
+design we have not built, and the map two slides back is real in a way this is
+not.*
 
 ::: notes
 ~2 min. This is the slide people remember, so present the card as if it were on
