@@ -1,0 +1,128 @@
+/*-- scss:defaults --*/
+
+// DPIC palette. The maroon is the accent the dpic package's document renderer
+// already uses (8B1524), so a slide and a rendered brief look like one family.
+$maroon:      #8B1524;
+$terracotta:  #CC785C;
+$paper:       #FAF9F5;
+$paper-deep:  #F2F0E9;
+$ink:         #141413;
+$muted:       #6B6862;
+$rule:        #DAD6CC;
+
+$body-bg:            $paper;
+$body-color:         $ink;
+$link-color:         $maroon;
+$selection-bg:       rgba($terracotta, 0.28);
+
+$font-family-sans-serif: "Inter", "Calibri", "Helvetica Neue", sans-serif;
+$presentation-font-size-root: 34px;
+$presentation-heading-font: "Source Serif 4", "Cambria", Georgia, serif;
+$presentation-heading-color: $ink;
+$presentation-heading-font-weight: 600;
+
+/*-- scss:rules --*/
+
+.reveal {
+
+  // ---- Figure placeholders -------------------------------------------------
+  // A dashed box that says what figure belongs here and where the data comes
+  // from. The deck is legible and presentable WITH these still in place, which
+  // is the point: the script can be reviewed before any figure exists.
+  .visual {
+    border: 2px dashed rgba($maroon, 0.45);
+    border-radius: 14px;
+    background: $paper-deep;
+    color: $maroon;
+    padding: 1.1em 1.2em;
+    margin: 0.5em auto;
+    font-size: 0.68em;
+    line-height: 1.4;
+    text-align: left;
+    max-width: 92%;
+  }
+  .visual .vtag {
+    display: inline-block;
+    font-family: "Inter", sans-serif;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-size: 0.8em;
+    margin-bottom: 0.3em;
+  }
+  .visual .src   { color: $muted; font-size: 0.88em; display: block; margin-top: 0.4em; }
+  .visual .why   { color: $ink;   font-size: 0.95em; display: block; margin-top: 0.3em; }
+
+  // ---- The one-line claim that opens a slide -------------------------------
+  .lead {
+    font-family: $presentation-heading-font;
+    font-size: 1.25em;
+    line-height: 1.25;
+    color: $ink;
+    border-left: 5px solid $maroon;
+    padding-left: 0.6em;
+    margin: 0.3em 0 0.6em 0;
+  }
+
+  // ---- The single number a slide exists to deliver -------------------------
+  .bignum {
+    font-family: $presentation-heading-font;
+    font-size: 3.2em;
+    font-weight: 700;
+    color: $maroon;
+    line-height: 1;
+    display: block;
+    text-align: center;
+    margin: 0.15em 0;
+  }
+  .bignum-sub {
+    display: block;
+    text-align: center;
+    color: $muted;
+    font-size: 0.8em;
+    margin-bottom: 0.5em;
+  }
+
+  // ---- Evidence chips ------------------------------------------------------
+  // Every claim on a slide is tagged with where it stands. This is the whole
+  // credibility argument of the deck, so it is a visual primitive, not a
+  // footnote: the audience learns to read the colour in the first three slides.
+  .chip {
+    display: inline-block;
+    font-family: "Inter", sans-serif;
+    font-size: 0.5em;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 0.2em 0.7em;
+    border-radius: 999px;
+    vertical-align: middle;
+    margin-right: 0.4em;
+  }
+  .chip-measured  { background: rgba($maroon, 0.12);      color: $maroon; }
+  .chip-estimated { background: rgba($terracotta, 0.20);  color: darken($terracotta, 18%); }
+  .chip-open      { background: transparent; color: $muted; border: 1px solid $rule; }
+
+  // ---- Tables --------------------------------------------------------------
+  table { font-size: 0.62em; }
+  table th {
+    border-bottom: 2px solid $maroon;
+    font-family: "Inter", sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 0.85em;
+  }
+  table td { border-bottom: 1px solid $rule; }
+
+  // ---- Two-column split ----------------------------------------------------
+  .cols { display: flex; gap: 1.4em; align-items: flex-start; }
+  .cols > * { flex: 1; }
+
+  // ---- A quiet source line at the foot of a slide --------------------------
+  .src-line {
+    font-size: 0.5em;
+    color: $muted;
+    font-family: "Inter", sans-serif;
+    margin-top: 0.8em;
+  }
+}
