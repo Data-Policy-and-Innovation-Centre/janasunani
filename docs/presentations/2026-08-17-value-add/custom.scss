@@ -404,10 +404,6 @@ $presentation-heading-font-weight: 600;
   display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 0.45em;
 }
-.reveal .replay-doc {
-  font-family: "Inter", sans-serif; color: #6B6862;
-  text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.82em;
-}
 .reveal .replay-controls { display: flex; align-items: center; gap: 0.5em; }
 .reveal .replay-btn {
   font: inherit; font-weight: 700; cursor: pointer;
@@ -420,7 +416,43 @@ $presentation-heading-font-weight: 600;
   min-width: 3.4em; text-align: right;
 }
 
-.reveal .replay-track { display: flex; gap: 3px; height: 4.4em; }
+/* input card, arrow and track share one row */
+.reveal .replay-stage { display: flex; align-items: stretch; gap: 0.55em; }
+.reveal .replay-in {
+  flex: 0 0 25%; border: 1px solid #DAD6CC; border-radius: 8px;
+  background: #FFFDF8; overflow: hidden; display: flex; flex-direction: column;
+}
+.reveal .replay-in-doc { box-shadow: 3px 3px 0 0 #F2F0E9, 6px 6px 0 0 #EDEAE1; }
+.reveal .replay-in-h {
+  font-family: "Inter", sans-serif; font-size: 0.68em; color: #6B6862;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  padding: 0.35em 0.7em; border-bottom: 1px solid #DAD6CC; background: #F2F0E9;
+}
+.reveal .replay-in-body { padding: 0.5em 0.7em; }
+.reveal .replay-in-body p { margin: 0 0 0.3em 0; line-height: 1.3; }
+/* Odia renders natively in Chromium on macOS (verified). The romanization
+   below it is not decoration: it is the fallback if the presenting machine's
+   font stack lacks Odia, and it lets a non-Odia reader follow along. */
+.reveal .replay-od { font-size: 1.02em; color: #141413; }
+.reveal .replay-in-doc .replay-od { font-style: italic; }
+.reveal .replay-rom { font-size: 0.8em; color: #8B1524; }
+.reveal .replay-gloss { font-size: 0.78em; color: #6B6862; }
+.reveal .replay-feed {
+  align-self: center; color: #DAD6CC; font-size: 1.5em; line-height: 1;
+  transition: color 0.3s ease;
+}
+.reveal .replay.running .replay-feed { color: #8B1524; }
+
+.reveal .replay-seg2 { display: inline-flex; border: 1px solid #DAD6CC; border-radius: 8px; overflow: hidden; }
+.reveal .replay-seg2 button {
+  font: inherit; font-family: "Inter", sans-serif; cursor: pointer;
+  padding: 0.3em 0.9em; border: 0; background: transparent; color: #6B6862;
+}
+.reveal .replay-seg2 button.active { background: #8B1524; color: #FAF9F5; font-weight: 700; }
+
+.reveal .replay-track { display: flex; gap: 3px; height: 4.4em; transition: width 0.3s ease; }
+.reveal .replay-track-narrow .replay-lab,
+.reveal .replay-track-narrow .replay-dur { display: none; }
 .reveal .replay-seg {
   position: relative; overflow: hidden; flex-basis: 0;
   background: #F2F0E9; border-radius: 5px;

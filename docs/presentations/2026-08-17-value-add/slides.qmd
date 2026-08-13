@@ -185,12 +185,13 @@ itself, a route is a suggestion.
 |---|---|---|
 | **Time** | 10–15 minutes to turn a petition into a complaint, self-reported [open]{.chip .chip-open} | 14 seconds for a scanned petition, under 1 second for typed text [measured]{.chip .chip-measured} |
 | **Performance** | No measure exists for any step. Personal detail sits in the record while it is analysed | Four of the five steps now have a number. They are not equally good — see below |
+| **Where it runs** | On the officer's screen, in the officer's head | Open-source models on Odisha's own hardware. No citizen text leaves, no per-call cost, no vendor lock-in [measured]{.chip .chip-measured} |
 :::
 
 ::: {.grid}
 | Step | How well it does it |
 |---|---|
-| Read the page | **Not separately scored.** We measure the pipeline's output, not the transcription [open]{.chip .chip-open} |
+| Read the page | **Not separately scored.** We measure the pipeline's output, not the transcription. Today's reader is English-first; **Sarvam Vision is the planned route to Odia and handwriting** [open]{.chip .chip-open} |
 | Remove personal detail | Zero mobile numbers, Aadhaar, PAN or email survived 55,544 records. 78% of hand-marked items found; over-redaction unmeasured [measured]{.chip .chip-measured} |
 | Suggest a category | Right one in the top three 90.9% of the time, n=3,160. Top-1 is 46.6%, against labels officers say they do not invest in [measured]{.chip .chip-measured} |
 | Draft a summary | 8 of 26 usable unedited. **The weakest component**, and not one we are asking a decision on [measured]{.chip .chip-measured} |
@@ -239,6 +240,8 @@ comprehension and typing, and it is the same in either language.
 
 {{< include assets/_pipeline-replay.qmd >}}
 
+*Every stage in that bar is **open-source, on our own hardware**. Nothing leaves, nothing is metered. **Sarvam Vision is the planned route** to Odia and handwriting — hosted, so the one deliberate exception, and not a result yet.* [open]{.chip .chip-open}
+
 ::: notes
 ~2 min, and most of it is silence. Press Run and let it play at 1×.
 
@@ -267,7 +270,43 @@ running in this browser. It is a replay of a measured run, not a live demo. The
 live system is on the other laptop if anyone wants to see it afterwards.
 
 Use 4× only if you are short of time. The point is partly that 14 seconds is
-genuinely quick.
+genuinely quick, and `slow` is there if you want to walk the typed path stage by
+stage.
+
+THEN SWITCH TO TYPED and press Run again. It is over before you finish the
+sentence: 0.13 seconds against 13.66, about a hundred times faster, and the bar
+is visibly a sliver of the one before it. Two stages account for the entire
+difference — there is no page to read, and this fixture ran no summary. Note the
+summary card stays dark, which is honest: it did not run rather than being
+hidden. Do not let it be heard as "typed complaints never get summarised"; it is
+what this benchmark measured.
+
+The operational reading, if a Secretary asks what to do with it: the expensive
+path is the one citizens actually use for the hardest cases, so anything that
+moves filings to typed intake, or makes the scan easier to read, pays for itself
+twice.
+
+ON THE STACK, and say this unprompted rather than waiting to be asked. Every
+model in that bar is open-source and runs on hardware the state controls:
+pytesseract for the page, Presidio for personal detail, MuRIL for the category,
+BART for the draft. Model bytes are pinned by checksum. No citizen text leaves
+the building, there is no per-call meter, and nothing in the stack can be
+withdrawn, repriced or deprecated by a vendor. For a system holding a million
+grievances that is a procurement and sovereignty argument as much as a technical
+one, and it is the reason the whole thing runs on a laptop.
+
+ON SARVAM, and be careful here, including about how it sits against the point
+you just made: Sarvam is hosted, so adopting it would be a deliberate exception
+to local-by-default, made with approval and on redacted text, and it is not in
+the serving path today. Today's reader is English-first, and the measured
+Odia gap is ours: the summariser skipped every coherent Odia case it was given,
+through an English-only gate. Sarvam Vision is the planned route to Odia and
+handwriting. It is not a result. What we have is a cached 56-page comparison in
+which Sarvam extracted 1.33 times the characters, and with no hand transcription
+to score against, that is a difference and not an improvement. The evidence file
+says so in its own reporting rule. If asked whether Sarvam is better, the honest
+answer is that we do not know yet and the test that would tell us is a
+hand-transcribed set.
 :::
 
 ---
