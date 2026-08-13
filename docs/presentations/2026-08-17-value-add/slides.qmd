@@ -184,32 +184,49 @@ itself, a route is a suggestion.
 | | Today | With this |
 |---|---|---|
 | **Time** | 10–15 minutes to turn a petition into a complaint, self-reported [open]{.chip .chip-open} | 14 seconds for a scanned petition, under 1 second for typed text [measured]{.chip .chip-measured} |
-| **Performance** | No measure exists. Personal detail sits in the record while it is analysed | Names, numbers and addresses stripped first, every time. Zero mobile numbers, Aadhaar, PAN or email survived across 55,544 records [measured]{.chip .chip-measured} |
+| **Performance** | No measure exists for any step. Personal detail sits in the record while it is analysed | Four of the five steps now have a number. They are not equally good — see below |
 :::
 
-::: {.visual}
-[Visual · stage waterfall, animated]{.vtag}
-The 13.7 s scanned path as a horizontal bar filling left to right, segmented by
-stage. Reading the page (6.0 s) and drafting the summary (6.6 s) are 92%; the
-five stages between them are hairline.
-[why]{.why} It answers "what would you even optimise?" before it is asked, and
-shows that all the privacy and triage logic is effectively free.
-[source]{.src} `pipeline_latency_development`. n=20 scanned, n=40 typed, synthetic filings, one laptop.
+::: {.grid}
+| Step | How well it does it |
+|---|---|
+| Read the page | **Not separately scored.** We measure the pipeline's output, not the transcription [open]{.chip .chip-open} |
+| Remove personal detail | Zero mobile numbers, Aadhaar, PAN or email survived 55,544 records. 78% of hand-marked items found; over-redaction unmeasured [measured]{.chip .chip-measured} |
+| Suggest a category | Right one in the top three 90.9% of the time, n=3,160. Top-1 is 46.6%, against labels officers say they do not invest in [measured]{.chip .chip-measured} |
+| Draft a summary | 8 of 26 usable unedited. **The weakest component**, and not one we are asking a decision on [measured]{.chip .chip-measured} |
 :::
 
 ::: notes
-~2 min. Give the 14 seconds, then take it back immediately.
+~3 min. This is four models in one row, so the second table is the slide.
 
-Machine seconds are not officer minutes. The officer still reads the draft,
-checks it and corrects it. What changes is what they are doing in those minutes:
-checking rather than producing. Whether checking is faster has not been
-measured, and a poor draft is slower than no draft.
+First the time. Give the 14 seconds, then take it back immediately: machine
+seconds are not officer minutes. The officer still reads the draft, checks it
+and corrects it. What changes is what they are doing in those minutes, checking
+rather than producing, and whether checking is faster has not been measured. A
+poor draft is slower than no draft.
 
-On performance, lead with the corpus scan rather than an accuracy score. Shaped
-identifiers do not survive, checked on every record in a district-year rather
-than a sample. Names are harder: on a small hand-corrected set we find 78% of
-what a human marked, and we have not measured over-redaction, which has its own
-cost because it removes what the officer needs.
+Then walk the four steps, and do not flatten them — they are genuinely of
+different quality and saying so is what makes the good ones credible.
+
+Reading the page has no score of its own. We measure what comes out of the
+pipeline, not the transcription, so if someone asks how good the OCR is, the
+honest answer is that we have not measured it separately.
+
+Redaction is the strongest claim and it is the corpus scan, not the accuracy
+score: shaped identifiers do not survive, checked on every record in a
+district-year rather than a sample. Names are harder, 78% of what a human
+marked, and over-redaction is unmeasured and has its own cost because it removes
+what the officer needs.
+
+Category is a shortlist, and it should only ever be sold as one: the right
+answer is in the top three nine times in ten. Top-1 is 46.6%, and the reason
+matters — officers have told us the category field does not affect routing, so
+they do not invest in getting it right. We are measuring agreement with a label
+nobody has an incentive to make correct.
+
+Summary is the weakest thing we have built. Say so plainly, say we are not
+asking for a decision on it, and move on. Volunteering your own worst number
+before anyone finds it is worth more than the number costs.
 
 Correct the Odia assumption here if the room holds it: officers fluent in Odia
 say reading the document is not what takes the time. The constraint is
@@ -341,7 +358,7 @@ number smaller.
 ::: {.grid}
 | Component | Time | Performance |
 |---|---|---|
-| **Pipeline** | 15 min → 14 s | 0 shaped identifiers survive in 55,544 records |
+| **Pipeline** | 15 min → 14 s | Redaction: 0 shaped identifiers in 55,544. Category: 90.9% top-3. Summary: weakest, 8/26. Reading: unscored |
 | **Actionability** | judgement → flagged at intake | 13/13 caught, 3/44 false, n=57 |
 | **Deduplication** | handled *n* times → once | 37,299 confirmed repeats; our increment unmeasured |
 | **Routing** | 11–23 days per case | one constraint unresolved |

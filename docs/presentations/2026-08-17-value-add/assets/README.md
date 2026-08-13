@@ -61,6 +61,9 @@ give this talk at all.
       segmented by stage, ideally filling left to right. Reading the page (6.0 s)
       and drafting the summary (6.6 s) are 92%; the five stages between them are
       hairline and should look it. From `pipeline_latency_development`.
+      **The pipeline slide has no `.visual` block for this** — it carries two
+      tables already and a third element overflows it. Replace the TIME row's
+      prose with the figure when it exists, or give it its own slide.
       — slide "The pipeline"
 - [ ] `dedup_three_bars.*` — filings / distinct problems / distinct citizens for
       one district-year, with the gaps annotated. The message is the *gap*, which
