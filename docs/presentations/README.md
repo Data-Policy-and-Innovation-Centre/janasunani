@@ -15,8 +15,20 @@ Build:
 make deck                             # the default deck, set in the Makefile
 make deck DECK=2026-08-17-value-add   # a named one
 make deck-list                        # what is available
+make deck-check                       # slides whose content runs off the bottom
+make deck-shots                       # PNG of every slide, to look at
 make deck-clean                       # remove the rendered output
 ```
+
+**Look at the deck before you believe it.** A deck can be structurally perfect
+and visually broken: the DOM correct, the CSS compiled, and every title at the
+bottom of the page because one rule fought reveal's layout. Checking the
+compiled CSS does not catch that, because the bug is in the interaction rather
+than in either side of it. `make deck-check` catches overflow; `make deck-shots`
+is how you actually see it.
+
+Playwright backs both and is not a repo dependency, for the same reason quarto
+is not. First use needs `uv run --with playwright playwright install chromium`.
 
 Quarto is deliberately **not** a repository dependency — it is a separate binary
 needed only by whoever is building a deck. `make deck` checks for it and tells

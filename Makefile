@@ -547,6 +547,8 @@ help:
 	@echo "  make deck            Render a slide script to reveal.js (DECK=<dir>)"
 	@echo "  make deck-list       List the slide scripts under docs/presentations/"
 	@echo "  make deck-clean      Remove the rendered deck (slides.html)"
+	@echo "  make deck-check      Report slides whose content runs off the bottom"
+	@echo "  make deck-shots      Screenshot every slide to outputs/deck-shots/"
 	@echo "  make box-paths       Show resolved local and Box paths"
 	@echo "  make status          Show what has changed"
 	@echo "  make infra           Read-only health pass over the cloud infra"
@@ -654,7 +656,7 @@ docs/%.docx: docs/%.md scripts/md_to_docx.py
 docs-clean:
 	rm -f $(DOC_TARGETS)
 
-.PHONY: deck deck-list deck-clean
+.PHONY: deck deck-list deck-clean deck-check deck-shots
 
 # --- Slide decks (Quarto + reveal.js) ---------------------------------------
 #
@@ -706,6 +708,23 @@ deck-list:
 	@for d in $(DECK_ROOT)/*/; do \
 	  [ -f "$$d/slides.qmd" ] && echo "  $$(basename $$d)" || true; \
 	done
+
+# A deck can be structurally perfect and visually broken -- `slides.html`
+# renders, the DOM is right, the CSS compiles, and every title sits at the
+# bottom because one rule fought reveal's layout. That happened. Only rendering
+# the page finds it, so these two targets exist.
+#
+# Playwright is not a repo dependency for the same reason quarto is not: it is
+# needed only when someone is working on a deck, and it drags a browser with it.
+# `uv run --with` installs it for the one command. First use also needs
+#   uv run --with playwright playwright install chromium
+DECK_SHOT = uv run --with playwright python scripts/screenshot_deck.py $(call sh_quote,$(DECK_DIR))
+
+deck-check:
+	@$(DECK_SHOT) --check
+
+deck-shots:
+	@$(DECK_SHOT)
 
 deck-clean:
 	rm -rf $(call sh_quote,$(DECK_DIR))/slides.html $(call sh_quote,$(DECK_DIR))/slides_files

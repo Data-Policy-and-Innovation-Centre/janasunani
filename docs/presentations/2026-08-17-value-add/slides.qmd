@@ -4,64 +4,62 @@ subtitle: "What the grievance record can tell us that no report currently does"
 author: "Data, Policy & Innovation Centre"
 date: "2026-08-17"
 date-format: "D MMMM YYYY"
+
+#   THIS FILE IS A SCRIPT, NOT A BUILT DECK.
+#
+#   Format options live in _quarto.yml, not here (document YAML overrides project
+#   profiles in Quarto and cannot be flipped later).
+#
+#   Every slide carries:
+#     - the claim, as few words as it can be made in
+#     - a `.visual` placeholder saying what figure goes there, why that figure and
+#       not another, and where the data comes from
+#     - a `::: notes` speaker script
+#
+#   The deck renders and presents WITH the placeholders in place. That is
+#   deliberate: the argument can be reviewed and rehearsed before a single figure
+#   exists. Replace a placeholder with `![](assets/<file>)` as each one lands.
+#   assets/README.md is the checklist.
+#
+#   TWO MARKING SYSTEMS, ON DELIBERATELY DIFFERENT CHANNELS. They answer
+#   different questions, so they must never share a colour meaning.
+#
+#   1. THE GUTTER -- what is this SLIDE for? A coloured rule down the left edge
+#      with a rotated word in it, set by a class on the heading:
+#        {.sq-slide}    grey     the problem as it stands today
+#        {.add-slide}   maroon   what this work adds
+#        {.open-slide}  dashed   what is not settled
+#      Spatial, applies to the whole slide, needs no markup in the body.
+#
+#   2. THE CHIPS -- how sure are we of this NUMBER? Inline pills next to a claim:
+#        [measured]{.chip .chip-measured}   from the records or a timed run
+#        [estimated]{.chip .chip-estimated} model output with an interval
+#        [open]{.chip .chip-open}           not settled; we say so
+#
+#   The "How to read these slides" legend teaches both in thirty seconds. After
+#   that they work by repetition and should never be explained again.
+#
+#   SECTION SCORECARDS. Every Part divider opens with a `.scorecard` -- today on
+#   the left in grey, what we add on the right in maroon, an arrow between them --
+#   followed by a `.ledger` row of six pips naming the six contributions:
+#   time, problems, privacy, drafting, routing, proof. `.on` = already introduced,
+#   `.now` = introduced in this section, bare = still to come. The rows are
+#   hard-coded per divider rather than computed, so nothing can desynchronise, but
+#   that also means EDITING ONE MEANS CHECKING ALL FOUR.
+#   The sixth pip, proof, deliberately stays empty until Part IV: the first five
+#   contributions are built, and the last one needs permission rather than
+#   software. That is the argument of the deck, drawn as a row of dots.
+#
+#   HARD RULE ON FIGURES. No screenshot of the live portal goes in this deck.
+#   The 11 August screens carry real citizen names, mobile numbers and addresses,
+#   and the source document is marked not for circulation. Where a slide needs to
+#   show a screen, it is REDRAWN as a schematic or captured from the synthetic
+#   demo stack. Every placeholder below states which.
+#
+#   TIMING. 23 content slides, ~28 minutes at pace, leaving room in a 40-minute
+#   slot for interruption. The routing block (slides 12-18) is the centrepiece and
+#   should get a third of the time.
 ---
-
-<!--
-  THIS FILE IS A SCRIPT, NOT A BUILT DECK.
-
-  Format options live in _quarto.yml, not here (document YAML overrides project
-  profiles in Quarto and cannot be flipped later).
-
-  Every slide carries:
-    - the claim, as few words as it can be made in
-    - a `.visual` placeholder saying what figure goes there, why that figure and
-      not another, and where the data comes from
-    - a `::: notes` speaker script
-
-  The deck renders and presents WITH the placeholders in place. That is
-  deliberate: the argument can be reviewed and rehearsed before a single figure
-  exists. Replace a placeholder with `![](assets/<file>)` as each one lands.
-  assets/README.md is the checklist.
-
-  TWO MARKING SYSTEMS, ON DELIBERATELY DIFFERENT CHANNELS. They answer
-  different questions, so they must never share a colour meaning.
-
-  1. THE GUTTER -- what is this SLIDE for? A coloured rule down the left edge
-     with a rotated word in it, set by a class on the heading:
-       {.sq-slide}    grey     the problem as it stands today
-       {.add-slide}   maroon   what this work adds
-       {.open-slide}  dashed   what is not settled
-     Spatial, applies to the whole slide, needs no markup in the body.
-
-  2. THE CHIPS -- how sure are we of this NUMBER? Inline pills next to a claim:
-       [measured]{.chip .chip-measured}   from the records or a timed run
-       [estimated]{.chip .chip-estimated} model output with an interval
-       [open]{.chip .chip-open}           not settled; we say so
-
-  The "How to read these slides" legend teaches both in thirty seconds. After
-  that they work by repetition and should never be explained again.
-
-  SECTION SCORECARDS. Every Part divider opens with a `.scorecard` -- today on
-  the left in grey, what we add on the right in maroon, an arrow between them --
-  followed by a `.ledger` row of six pips naming the six contributions:
-  time, problems, privacy, drafting, routing, proof. `.on` = already introduced,
-  `.now` = introduced in this section, bare = still to come. The rows are
-  hard-coded per divider rather than computed, so nothing can desynchronise, but
-  that also means EDITING ONE MEANS CHECKING ALL FOUR.
-  The sixth pip, proof, deliberately stays empty until Part IV: the first five
-  contributions are built, and the last one needs permission rather than
-  software. That is the argument of the deck, drawn as a row of dots.
-
-  HARD RULE ON FIGURES. No screenshot of the live portal goes in this deck.
-  The 11 August screens carry real citizen names, mobile numbers and addresses,
-  and the source document is marked not for circulation. Where a slide needs to
-  show a screen, it is REDRAWN as a schematic or captured from the synthetic
-  demo stack. Every placeholder below states which.
-
-  TIMING. 23 content slides, ~28 minutes at pace, leaving room in a 40-minute
-  slot for interruption. The routing block (slides 12-18) is the centrepiece and
-  should get a third of the time.
--->
 
 ## The short version {data-menu-title="The short version"}
 
@@ -141,11 +139,11 @@ English.
 ::: {}
 **Down the left edge** — what a slide is doing
 
-[Today]{.chip .chip-open} the problem as it stands
+[**Today** · the problem as it stands]{.key-sq}
 
-[We add]{.chip .chip-measured} our contribution
+[**We add** · our contribution]{.key-add}
 
-[Unresolved]{.chip .chip-estimated} not settled
+[**Unresolved** · not settled]{.key-open}
 :::
 
 ::: {}
