@@ -544,6 +544,9 @@ help:
 	@echo "  make deliver         Copy exhibits to Box without deleting remote files"
 	@echo "  make docs            Render docs/*.md to DPIC-branded Word files"
 	@echo "  make docs-clean      Remove rendered Word files (docs/*.docx)"
+	@echo "  make deck            Render a slide script to reveal.js (DECK=<dir>)"
+	@echo "  make deck-list       List the slide scripts under docs/presentations/"
+	@echo "  make deck-clean      Remove the rendered deck (slides.html)"
 	@echo "  make box-paths       Show resolved local and Box paths"
 	@echo "  make status          Show what has changed"
 	@echo "  make infra           Read-only health pass over the cloud infra"
@@ -650,6 +653,62 @@ docs/%.docx: docs/%.md scripts/md_to_docx.py
 
 docs-clean:
 	rm -f $(DOC_TARGETS)
+
+.PHONY: deck deck-list deck-clean
+
+# --- Slide decks (Quarto + reveal.js) ---------------------------------------
+#
+#   make deck                          render the default deck below
+#   make deck DECK=2026-08-17-value-add  render a named one
+#   make deck ARGS="--profile live"    pass anything through to quarto
+#
+# One directory per talk under docs/presentations/, named YYYY-MM-DD-slug.
+# `slides.qmd` is the SCRIPT: every slide, every speaker note, and a dashed
+# `.visual` placeholder wherever a figure goes. It renders and presents with
+# those placeholders still in it, so a deck is reviewable before any figure
+# exists -- which means this target is useful from the first commit of a talk,
+# not only once the assets land.
+#
+# Quarto is deliberately NOT a repository dependency. It is a separate binary,
+# it is only needed by whoever is building a deck, and adding it to the uv
+# environment would put a large toolchain in every CI run and every fresh
+# checkout for the benefit of one target. So this checks for it and says how to
+# install it rather than assuming it, the same way `down` handles a missing
+# `lsof` -- loudly, not by silently doing nothing.
+#
+# Rendered output (slides.html + its _files/ directory) is gitignored: the .qmd
+# is the source of truth, exactly as the Markdown is for `docs` above.
+DECK ?= 2026-08-17-value-add
+DECK_ROOT := docs/presentations
+DECK_DIR   = $(DECK_ROOT)/$(DECK)
+
+# The DECK check comes first deliberately: it is the one specific to what the
+# operator typed, so a typo is diagnosed even on a machine with no quarto
+# installed -- which is the common case, since most people here never build a
+# deck.
+deck:
+	@if [ ! -f $(call sh_quote,$(DECK_DIR))/slides.qmd ]; then \
+	  echo "No slides.qmd under $(DECK_DIR). Available decks:"; \
+	  $(MAKE) --no-print-directory deck-list; \
+	  exit 1; \
+	fi
+	@if ! command -v quarto >/dev/null 2>&1; then \
+	  echo "quarto not found. It is not a repo dependency -- install it separately:"; \
+	  echo "  macOS:  brew install --cask quarto"; \
+	  echo "  else:   https://quarto.org/docs/get-started/"; \
+	  exit 1; \
+	fi
+	cd $(call sh_quote,$(DECK_DIR)) && quarto render $(ARGS)
+	@echo "Rendered $(DECK_DIR)/slides.html"
+	@echo "Placeholders still showing? See $(DECK_DIR)/assets/README.md for the figure checklist."
+
+deck-list:
+	@for d in $(DECK_ROOT)/*/; do \
+	  [ -f "$$d/slides.qmd" ] && echo "  $$(basename $$d)" || true; \
+	done
+
+deck-clean:
+	rm -rf $(call sh_quote,$(DECK_DIR))/slides.html $(call sh_quote,$(DECK_DIR))/slides_files
 
 # The _RAW forms so this echoes exactly what ingest/publish-raw/deliver
 # actually use (see the #118 block above) rather than the plain variable,

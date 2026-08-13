@@ -9,12 +9,20 @@ that figure and not another, and where the data comes from. The deck renders and
 presents with the placeholders still in it, so the argument can be rehearsed
 while the figures are still being made.
 
-Build (Quarto is not a repository dependency; install it separately):
+Build:
 
 ```bash
-cd docs/presentations/<talk>
-quarto render          # -> slides.html, single self-contained file
+make deck                             # the default deck, set in the Makefile
+make deck DECK=2026-08-17-value-add   # a named one
+make deck-list                        # what is available
+make deck-clean                       # remove the rendered output
 ```
+
+Quarto is deliberately **not** a repository dependency — it is a separate binary
+needed only by whoever is building a deck. `make deck` checks for it and tells
+you how to install it rather than assuming it. Rendered output (`slides.html`)
+is gitignored: the `.qmd` is the source of truth, as the Markdown is for
+`docs/*.docx`.
 
 Format options live in `_quarto.yml`, not in the document front matter: document
 YAML overrides project profiles in Quarto and cannot be flipped per build.
