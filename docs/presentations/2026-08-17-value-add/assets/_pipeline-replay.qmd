@@ -1,0 +1,144 @@
+```{=html}
+<!--
+  PIPELINE REPLAY. Included by slides.qmd via {{< include >}}.
+
+  This is a REPLAY, not live inference. Every stage duration below is the real
+  measured p50 from `pipeline_latency_development` in the benchmark bundle, so
+  the clock is honest and the shape of the bar is the finding: reading the page
+  and drafting the summary are 92% of the work. The OUTPUTS are canned and
+  synthetic -- no model runs, nothing is fetched, and the petition is written
+  for this slide. The label on the component says so, and it must stay.
+
+  No build step, no library, no network. It has to survive a room with no wifi.
+-->
+<div class="replay" id="replay">
+  <div class="replay-bar">
+    <div class="replay-doc">Scanned petition &middot; 2 pages &middot; Odia</div>
+    <div class="replay-controls">
+      <button id="replay-go" class="replay-btn">Run</button>
+      <button id="replay-speed" class="replay-btn replay-btn-quiet" data-mult="1">1&times;</button>
+      <span class="replay-clock" id="replay-clock">0.0s</span>
+    </div>
+  </div>
+
+  <div class="replay-track" id="replay-track"></div>
+
+  <div class="replay-out">
+    <div class="replay-card" data-out="redact">
+      <span class="replay-card-h">Redacted text</span>
+      <span class="replay-card-b">&ldquo;… the water supply to <em>[NAME]</em>&rsquo;s ward has been
+      irregular for three weeks. Contact <em>[PHONE]</em> …&rdquo;</span>
+    </div>
+    <div class="replay-card" data-out="categorize">
+      <span class="replay-card-h">Category shortlist</span>
+      <span class="replay-card-b"><b>Infrastructure</b> · Social Welfare · General</span>
+    </div>
+    <div class="replay-card" data-out="route">
+      <span class="replay-card-h">Route shortlist</span>
+      <span class="replay-card-b"><b>Collector → BDO</b> · Collector → EE, RWSS</span>
+    </div>
+    <div class="replay-card" data-out="summarize">
+      <span class="replay-card-h">Draft summary</span>
+      <span class="replay-card-b">Irregular piped water supply affecting one ward
+      for three weeks. Requests restoration and inspection.</span>
+    </div>
+  </div>
+
+  <div class="replay-note">
+    Replay at measured speed. Stage durations are the recorded p50 from the
+    benchmark run; the outputs are canned and the petition is synthetic. No model
+    is running.
+  </div>
+</div>
+
+<script>
+(function () {
+  // Measured p50 seconds, document path, from pipeline_latency_development.
+  // `heavy` marks the two stages worth engineering; everything else is noise by
+  // comparison and the bar should make that obvious without a word being said.
+  var STAGES = [
+    { k: "ocr",        label: "Read the page",     s: 6.000, heavy: true },
+    { k: "language",   label: "Detect language",   s: 0.006 },
+    { k: "pii",        label: "Find personal detail", s: 0.021 },
+    { k: "redact",     label: "Redact",            s: 0.053 },
+    { k: "triage",     label: "Flag for review",   s: 0.001 },
+    { k: "categorize", label: "Suggest category",  s: 0.749, mid: true },
+    { k: "route",      label: "Suggest route",     s: 0.001 },
+    { k: "summarize",  label: "Draft summary",     s: 6.590, heavy: true }
+  ];
+  var TOTAL = STAGES.reduce(function (a, x) { return a + x.s; }, 0);
+
+  var root = document.getElementById("replay");
+  if (!root) return;
+  var track = document.getElementById("replay-track");
+  var clock = document.getElementById("replay-clock");
+  var go = document.getElementById("replay-go");
+  var speed = document.getElementById("replay-speed");
+  var timer = null;
+
+  STAGES.forEach(function (st) {
+    var seg = document.createElement("div");
+    seg.className = "replay-seg" + (st.heavy ? " replay-seg-heavy" : st.mid ? " replay-seg-mid" : "");
+    seg.style.flexGrow = String(st.s);
+    seg.dataset.k = st.k;
+    seg.innerHTML = '<span class="replay-fill"></span>' +
+                    '<span class="replay-lab">' + st.label + "</span>" +
+                    '<span class="replay-dur">' + (st.s >= 0.1 ? st.s.toFixed(1) + "s" : "&lt;0.1s") + "</span>";
+    track.appendChild(seg);
+  });
+
+  function reset() {
+    if (timer) { cancelAnimationFrame(timer); timer = null; }
+    root.querySelectorAll(".replay-seg").forEach(function (e) { e.classList.remove("on", "done"); });
+    root.querySelectorAll(".replay-card").forEach(function (e) { e.classList.remove("on"); });
+    root.querySelectorAll(".replay-fill").forEach(function (e) { e.style.width = "0%"; });
+    clock.textContent = "0.0s";
+  }
+
+  function run() {
+    reset();
+    var mult = parseFloat(speed.dataset.mult);
+    var t0 = performance.now();
+    function frame(now) {
+      var elapsed = ((now - t0) / 1000) * mult;
+      clock.textContent = Math.min(elapsed, TOTAL).toFixed(1) + "s";
+      var acc = 0;
+      STAGES.forEach(function (st) {
+        var seg = track.querySelector('[data-k="' + st.k + '"]');
+        var fill = seg.querySelector(".replay-fill");
+        var into = elapsed - acc;
+        if (into <= 0) { fill.style.width = "0%"; }
+        else if (into >= st.s) {
+          fill.style.width = "100%";
+          seg.classList.add("done"); seg.classList.remove("on");
+          var card = root.querySelector('[data-out="' + st.k + '"]');
+          if (card) card.classList.add("on");
+        } else {
+          fill.style.width = (100 * into / st.s).toFixed(1) + "%";
+          seg.classList.add("on");
+        }
+        acc += st.s;
+      });
+      if (elapsed < TOTAL) { timer = requestAnimationFrame(frame); }
+      else { clock.textContent = TOTAL.toFixed(1) + "s"; timer = null; }
+    }
+    timer = requestAnimationFrame(frame);
+  }
+
+  go.addEventListener("click", run);
+  speed.addEventListener("click", function () {
+    var next = speed.dataset.mult === "1" ? "4" : "1";
+    speed.dataset.mult = next;
+    speed.innerHTML = next + "&times;";
+  });
+
+  // Re-arm whenever the slide is reached, so it is never left mid-run from a
+  // previous pass through the deck.
+  if (window.Reveal && Reveal.on) {
+    Reveal.on("slidechanged", function (e) {
+      if (e.currentSlide && e.currentSlide.contains(root)) reset();
+    });
+  }
+})();
+</script>
+```

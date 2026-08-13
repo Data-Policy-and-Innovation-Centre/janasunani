@@ -235,6 +235,43 @@ comprehension and typing, and it is the same in either language.
 
 ---
 
+## Watch it run {.add-slide data-menu-title="1b · Replay"}
+
+{{< include assets/_pipeline-replay.qmd >}}
+
+::: notes
+~2 min, and most of it is silence. Press Run and let it play at 1×.
+
+Say one sentence at the start — "this is a scanned two-page Odia petition, and
+the clock is the real measured timing" — and then stop talking until the bar
+reaches the summary. Thirteen seconds is long enough to feel and short enough
+that nobody gets restless, and the room watching a petition become a complaint
+does more than any number on the previous slide.
+
+Two things to point at when it finishes.
+
+The shape. Two blocks carry almost all the width: reading the page and drafting
+the summary. Everything between them — language, personal detail, redaction, the
+review flag, category, route — is the thin strip in the middle, and together it
+is under a second. So every privacy and triage control in this system is
+effectively free, and if anyone wants it faster there are exactly two places to
+look.
+
+The cards. They lit up in order as each stage finished. That is the officer's
+actual working material: a redacted text, a category shortlist, a route
+shortlist and a draft.
+
+Be straight about what it is if asked, and ideally before: the clock is real, the
+outputs are canned, the petition was written for this slide, and no model is
+running in this browser. It is a replay of a measured run, not a live demo. The
+live system is on the other laptop if anyone wants to see it afterwards.
+
+Use 4× only if you are short of time. The point is partly that 14 seconds is
+genuinely quick.
+:::
+
+---
+
 ## Actionability: what can be acted on at all {.add-slide data-menu-title="2 · Actionability"}
 
 ::: {.compare}
@@ -464,19 +501,9 @@ would settle it. Say the limit of your own evidence before someone else does.
 
 ---
 
-## Question one · What are people complaining about? {.add-slide data-menu-title="What: hotspots"}
+## What are people complaining about? {.add-slide data-menu-title="What: hotspots"}
 
-::: {.visual}
-[Visual · Odisha district hotspot map, INTERACTIVE]{.vtag}
-Choropleth of the 30 districts by complaint rate for one category, with a
-category selector so it can be switched live in the room. Drill to block level
-on click. Build with deck.gl or a plain inline SVG choropleth — the
-`ml-ai-climate-change` deck's `aqli-map` block is the working pattern.
-[why]{.why} This is the single most persuasive artifact in the deck. Nobody in
-the room has ever seen this data on a map, and switching category live makes the
-point that it is a system rather than a chart.
-[source]{.src} `janasunani/analytics` category × district counts, aggregates only. **A static PNG fallback must sit on this slide for a projector with no GPU or no wifi.**
-:::
+{{< include assets/_hotspot-map.qmd >}}
 
 Where a problem is concentrated is in the record already. It has never been
 drawn. [measured]{.chip .chip-measured}
@@ -582,7 +609,7 @@ not a measured one. Do not let it be heard as available today.
 
 ---
 
-## Question two · Who is complaining? {.add-slide data-menu-title="Who: petitioners"}
+## Who is complaining? {.add-slide data-menu-title="Who: petitioners"}
 
 ::: {.grid}
 | Already in the record | What it would answer |
