@@ -43,7 +43,7 @@ questions and must never share a colour meaning.
 
 | | Question | How it looks |
 |---|---|---|
-| Gutter (`.sq-slide` / `.add-slide` / `.open-slide` on the heading) | What is this **slide** for — the problem, our contribution, or something unsettled? | A coloured rule down the left edge with a rotated word in it |
+| Gutter (`.sq-slide` / `.add-slide` / `.open-slide` on the heading) | What is this **slide** for — the problem, our contribution, or something unsettled? | A coloured left border: grey, maroon, dashed terracotta |
 | Chips (`.chip-measured` / `.chip-estimated` / `.chip-open`) | How sure are we of this **number**? | An inline pill next to the claim |
 
 Both are visual primitives, not decoration. A deck that shows an unresolved
@@ -67,6 +67,14 @@ and leaves the containing slide blank. Use a styled span instead.
 **Section dividers are `##` with a class, not `#`.** A level-1 heading in Quarto
 revealjs opens a vertical *stack* that then contains the following slides, which
 is not what a divider is.
+
+**Never set a layout property on a slide `section`** — not `position`,
+`display`, `top`/`left`/`width`/`height`, `transform` or `margin`. reveal
+positions slides with `.reveal .slides>section{position:absolute}` at the same
+specificity as anything a theme can write, so your rule wins on cascade order
+alone, drops every slide into normal flow and stacks the deck down the page. It
+looks like every title has moved to the bottom. Decorate with borders,
+backgrounds and colour; leave layout to reveal.
 
 **Numbers reconcile upward.** `docs/value-add-report/` is the evidence record and
 `docs/QUALITY_BENCHMARKS.md` is the register. Where a slide disagrees with

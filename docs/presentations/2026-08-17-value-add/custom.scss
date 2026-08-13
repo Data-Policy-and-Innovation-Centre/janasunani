@@ -119,48 +119,31 @@ $presentation-heading-font-weight: 600;
   //   .open-slide   dashed gutter  what is not settled
   // ==========================================================================
 
+  // TOUCH NOTHING THAT REVEAL USES TO LAY A SLIDE OUT. Not `position`, not
+  // `display`, not `top`/`left`/`width`/`height`/`transform`/`margin`.
+  //
+  // This cost a broken deck once already. reveal positions slides with
+  // `.reveal .slides>section{position:absolute}`, at the same specificity as
+  // anything writable here, so a `position: relative` in this file wins on
+  // cascade order alone, drops every slide into normal flow and stacks the
+  // whole deck down the page. It reads as "the titles are all at the bottom".
+  //
+  // So the marker is a plain left border and nothing else: no positioning, no
+  // pseudo-elements, nothing that can interact with reveal's layout at all. It
+  // is less clever than a rotated label in the gutter and it cannot break.
+  // The word each colour stands for is taught once on the legend slide and
+  // repeated on every section divider's scorecard, which is where the audience
+  // actually reads it.
   section.sq-slide,
   section.add-slide,
   section.open-slide {
-    padding-left: 1.1em;
-    position: relative;
+    padding-left: 0.9em;
+    border-left-width: 7px;
+    border-left-style: solid;
   }
-
-  section.sq-slide::before,
-  section.add-slide::before,
-  section.open-slide::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 0.1em;
-    bottom: 0.1em;
-    width: 6px;
-    border-radius: 3px;
-  }
-  section.sq-slide::before   { background: $rule; }
-  section.add-slide::before  { background: $maroon; }
-  section.open-slide::before { background: repeating-linear-gradient(
-                                 to bottom, $terracotta 0 8px, transparent 8px 16px); }
-
-  // The word in the gutter. Rotated so it costs no horizontal room and never
-  // competes with the heading for the eye.
-  section.sq-slide::after,
-  section.add-slide::after,
-  section.open-slide::after {
-    position: absolute;
-    left: -0.15em;
-    bottom: 0;
-    transform: rotate(180deg);
-    writing-mode: vertical-rl;
-    font-family: "Inter", sans-serif;
-    font-size: 0.32em;
-    font-weight: 800;
-    letter-spacing: 0.22em;
-    text-transform: uppercase;
-  }
-  section.sq-slide::after   { content: "Today";      color: $muted; }
-  section.add-slide::after  { content: "We add";     color: $maroon; }
-  section.open-slide::after { content: "Unresolved"; color: $terracotta; }
+  section.sq-slide   { border-left-color: $rule; }
+  section.add-slide  { border-left-color: $maroon; }
+  section.open-slide { border-left-color: $terracotta; border-left-style: dashed; }
 
   // ---- Section dividers: the before/after scorecard ------------------------
   // Every part of the deck opens by declaring its own status quo and its own
