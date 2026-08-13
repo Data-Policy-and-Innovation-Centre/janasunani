@@ -263,6 +263,108 @@ $presentation-heading-font-weight: 600;
     font-weight: 800;
   }
 
+  // ---- The compare table ---------------------------------------------------
+  // Part 1 asks the same two questions of all four components -- how long does
+  // it take, how well does it do it -- in this same table each time. The
+  // repetition is the argument: by the third component the audience stops
+  // reading the shape and reads only the numbers.
+  //
+  // Column 2 is the status quo and column 3 is ours, styled to match the
+  // scorecard's grey/maroon so the two devices reinforce rather than compete.
+  // Styling by position rather than by class keeps the markdown a plain table.
+  .compare table,
+  .grid table {
+    font-size: 0.58em;
+    border-collapse: collapse;
+    width: 100%;
+    table-layout: fixed;
+  }
+  .compare table th,
+  .grid table th {
+    border-bottom: 2px solid $maroon;
+    text-align: left;
+    padding: 0.35em 0.7em;
+  }
+  .compare table td,
+  .grid table td {
+    padding: 0.55em 0.7em;
+    vertical-align: top;
+    border-bottom: 1px solid $rule;
+  }
+  // The axis label column carries no prose, so hold it narrow -- left to
+  // auto-size it takes a third of the slide for the word "PERFORMANCE".
+  .compare table td:first-child,
+  .compare table th:first-child  { width: 14%; }
+  .compare table td:nth-child(2),
+  .compare table th:nth-child(2) { width: 43%; }
+  .compare table td:nth-child(3),
+  .compare table th:nth-child(3) { width: 43%; }
+  .grid table td:first-child,
+  .grid table th:first-child     { width: 22%; }
+
+  // First column is the axis label (Time / Performance), not content.
+  .compare table td:first-child,
+  .grid table td:first-child {
+    font-family: "Inter", sans-serif;
+    font-size: 0.85em;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: $ink;
+    white-space: nowrap;
+  }
+  // ONLY on `.compare`. Grey column 2 and maroon column 3 assert "today versus
+  // ours", so applying it to a table whose columns mean something else states a
+  // contrast that is not there -- which it did, on the opening slide, where the
+  // columns are "what it means" and "where it stands". Tables that are not that
+  // comparison use `.grid` and get the neutral styling above.
+  .compare table td:nth-child(2):not(:last-child) {
+    color: $muted;
+    border-left: 5px solid $rule;
+  }
+  .compare table td:nth-child(3) {
+    background: $paper-deep;
+    border-left: 5px solid $maroon;
+  }
+
+  // ---- The officer's desk ---------------------------------------------------
+  // A mock of the live signal arriving where the decision is made. Built in
+  // CSS rather than as an image so it can be edited in the script and can never
+  // be mistaken for a screenshot of the real portal -- which is forbidden here,
+  // since the real screens carry citizen names and addresses.
+  .deskcard {
+    max-width: 82%;
+    margin: 0.7em auto;
+    border: 1px solid $rule;
+    border-radius: 12px;
+    overflow: hidden;
+    text-align: left;
+    font-size: 0.62em;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+  }
+  .desk-head {
+    background: $paper-deep;
+    color: $muted;
+    font-family: "Inter", sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 0.72em;
+    padding: 0.55em 1em;
+    border-bottom: 1px solid $rule;
+  }
+  .desk-alert {
+    background: rgba($maroon, 0.08);
+    border-left: 7px solid $maroon;
+    color: $maroon;
+    padding: 0.9em 1em;
+    font-size: 1.15em;
+  }
+  .desk-alert strong { color: $maroon; }
+  .desk-body {
+    padding: 0.8em 1em;
+    color: $ink;
+  }
+  .desk-body p { margin: 0 0 0.35em 0; }
+
   // ---- Tables --------------------------------------------------------------
   table { font-size: 0.62em; }
   table th {

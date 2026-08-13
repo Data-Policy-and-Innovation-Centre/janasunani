@@ -5,6 +5,9 @@ Drop real figures here and replace the matching `.visual` placeholder block in
 any of these — the placeholders show what goes where — so the argument can be
 reviewed and rehearsed before a single figure exists.
 
+Check your work by looking at it: `make deck-check` reports slides whose content
+runs off the bottom, `make deck-shots` writes a PNG of every slide.
+
 ## The hard rule
 
 **No screenshot of the live portal goes in this deck.** The 11 August 2026
@@ -14,81 +17,61 @@ Facts derived from those screens are fine and are most of the value. The screens
 themselves are not.
 
 Where a slide needs to show a screen, it is redrawn as a schematic with invented
-office names, or captured from the synthetic demo stack. Every entry below states
-which.
+office names, or captured from the synthetic demo stack. The officer's-desk card
+on "At the desk" is built in CSS for exactly this reason: it can never be
+mistaken for a capture of the real thing.
 
-Same rule for complaint text: the redaction before/after slide uses a petition
-written by hand for the slide. Never a real complaint, redacted or otherwise.
+Same rule for complaint text. Never a real complaint, redacted or otherwise.
 
 ## Checklist
 
-Ordered by how much the deck loses without them.
+Ordered by how much the deck loses without them. The first two are the reason to
+give this talk at all.
 
-- [ ] `routing_correction_waterfall.*` — **the most persuasive figure available.**
-      Naive route-time gap on the left, descending waterfall as each of the four
-      corrections lands, ending at the 11–23 day range. Annotate the largest drop.
-      The number getting *smaller* as the work gets more careful is the point.
-      Self-made from the ablation in `docs/experiments/routing-outcome-model.tex` §7.
-      — slide "Four corrections"
-- [ ] `past_vs_best_practice.*` — the conceptual pivot of the deck. One case
-      fanning out to candidate routes, each annotated with historical resolution
-      time, the historically-chosen one highlighted and visibly not the quickest.
-      Self-made schematic; illustrative routes, real orders of magnitude.
-      — slide "So we changed the question"
-- [ ] `constraint_disagreement.*` — the correctness floor as a horizontal line
-      with both estimates against it, one above (0.4335) and one below (0.3530),
-      floor at 0.3868. **Reuse the visual grammar of `objective_trap.*`** so the
-      audience recognises the line from the earlier slide.
-      — slide "The honest gap"
-- [ ] `result_interval.*` — one horizontal interval on a day axis spanning both
-      estimators, historical average marked. Deliberately *not* a bar chart and
-      *not* a single point: the width is the message and a point estimate would be
-      misquoted within days.
-      — slide "What we found"
-- [ ] `reporting_surface_gap.*` — what the pendency screen shows (counts by
-      office and status) beside a greyed panel of what it does not (median age,
-      time to first action, time to resolve, ageing buckets).
-      **REDRAWN, NOT SCREENSHOTTED.** Invented office names.
-      — slide "Nobody can see how long anything takes"
-- [ ] `routing_chain.*` — a two-link chain (Collector → BDO) and a four-link
-      chain (CM Cell → Collector → BDO → Collector) as connected nodes, days on
-      each hop, the return leg visibly doubling back. Representative chains, not
-      a real case.
-      — slide "Every grievance is routed"
-- [ ] `objective_trap.*` — unconstrained speed ending in a route that closes
-      everything on day one, beside the constrained version with the correctness
-      floor drawn as a line the policy must stay above. Self-made.
-      — slide "The trap"
-- [ ] `pipeline_strip.*` — six linked stages left to right, simple line icons,
-      the two that cost real time drawn heavier. **No stock robot or AI imagery.**
-      The audience should be able to redraw this on a whiteboard.
-      — slide "The six steps"
+- [ ] `hotspot_map.*` — **the most persuasive artifact available, and the only
+      genuinely interactive one.** Odisha's 30 districts as a choropleth by
+      complaint rate for a selected category, switchable live in the room,
+      drilling to block on click. The `aqli-map` deck.gl block in
+      `../../../../ml-ai-climate-change/presentation/slides.qmd` is the working
+      pattern; a plain inline SVG choropleth is an acceptable simpler route.
+      Aggregates only, from `janasunani/analytics` category × district counts.
+      **A static PNG fallback must sit on the same slide** for a projector with
+      no GPU or no wifi.
+      — slide "Question one · What are people complaining about?"
+- [ ] `spike_decomposition.*` — one worked spike, built in three fragments: the
+      weekly series against the same period last year, then the same rise split
+      into filings, distinct problems, distinct citizens. The separation of the
+      three lines is the capability, and it only lands as a surprise if the
+      single line is seen first, so it must be steppable rather than one static
+      image. Restyle `docs/value-add-report/figures/fig_spike.png` or rebuild
+      from `janasunani/analytics/findings/spike.py`.
+      — slide "Concentrated *and* rising"
+- [ ] `campaign_two_lenses.*` — one detected campaign shown twice: the issue view
+      (filings and citizens climbing, distinct problems flat) beside the people
+      view (concentrated in a few blocks, skewed on channel). Needs both halves
+      of Part 2 at once, which is why it closes the section. Aggregate
+      description only, never a citizen.
+      — slide "Where the two questions meet: campaigns"
+- [ ] `reporting_surface_gap.*` — the pendency screen as it is (counts by office
+      and status, a disposal percentage) beside a greyed panel of everything it
+      does not carry: median age, time to first action, subject, location, who
+      filed. **REDRAWN, NEVER SCREENSHOTTED.** Invented office names.
+      — slide "What the officer sees today"
+- [ ] `latency_waterfall.*` — the 13.7 s scanned path as a horizontal bar
+      segmented by stage, ideally filling left to right. Reading the page (6.0 s)
+      and drafting the summary (6.6 s) are 92%; the five stages between them are
+      hairline and should look it. From `pipeline_latency_development`.
+      — slide "The pipeline"
 - [ ] `dedup_three_bars.*` — filings / distinct problems / distinct citizens for
-      one district-year, gaps annotated. Restyle
+      one district-year, with the gaps annotated. The message is the *gap*, which
+      a number cannot show. Restyle
       `docs/value-add-report/figures/fig_dedup.png` to the deck palette rather
       than reusing it at report resolution.
-      — slide "The disposal rate counts the wrong thing"
-- [ ] `latency_waterfall.*` — horizontal stacked bar of the scanned path, 13.7 s
-      total, by stage. Reading the page (6.0 s) and drafting the summary (6.6 s)
-      are 92%; the five stages between them total under a second and should be
-      visibly hairline. From `pipeline_latency_development` in the benchmark
-      bundle.
-      — slide "Fourteen seconds"
-- [ ] `redaction_before_after.*` — two panels of the same short petition,
-      identical layout, redactions in the accent colour. **Include one
-      over-redaction and label it** — showing a failure case on your own slide is
-      the most persuasive thing available, and over-redaction has a real cost.
-      **SYNTHETIC TEXT, written for this slide.**
-      — slide "Privacy is the first step"
-- [ ] `corpus_funnel.*` — filing to closure, with the four corpus counts overlaid
-      at the right points. Not a stock database icon. Lowest priority: the slide
-      works as text if this never arrives.
-      — slide "What we were given"
-- [ ] `workload_mass.*` — registration hours as a mass diagram, the three
-      reduction mechanisms sized by area and shaded by **confidence**, not by
-      magnitude. The biggest mechanism is the least certain and the figure should
-      say so. Optional; the slide stands on the number alone.
-      — slide "Officer workload"
+      — slide "Deduplication"
+
+Slides with no figure and no need of one: the legend, the three section
+dividers, the processing summary, the desk card (CSS, already built), "Who is
+complaining", and everything in Part 3. Do not add art to them.
 
 ## Style
 
@@ -100,3 +83,7 @@ Prefer SVG for anything self-made so it stays sharp on a projector and can be
 recoloured without a re-export. Keep figures free of their own titles — the slide
 heading is the title, and a figure that repeats it reads as a slide within a
 slide.
+
+Grey means *today* and maroon means *what we add*, consistently, in the gutter
+down each slide, in the section scorecards and in the `.compare` tables. A figure
+that shows a before and an after should use the same two colours the same way.
