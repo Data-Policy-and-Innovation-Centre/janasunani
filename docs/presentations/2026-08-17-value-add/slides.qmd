@@ -694,11 +694,13 @@ Nothing about what the complaints are *about*, or who is making them.
 :::
 
 ::: {.add}
-[What we add]{.sc-h}
+[What is possible]{.sc-h}
 
-**What are people complaining about?** Hotspots, spikes, and a live signal at the officer's desk.
+**Is the system working?** How long cases take, and whether anything was done.
 
-**Who is complaining?** Geography, gender, channel — and who is being missed.
+**What is the state learning?** Where problems are, and what is rising.
+
+**Can anyone ask it?** A question in plain language, not a data request.
 :::
 :::
 
@@ -717,8 +719,8 @@ self-reported, dated and geocoded record of what is going wrong across
 thirty districts, and the only question anyone asks of it is how many are
 closed. Nothing in the reporting surface asks what the complaints are about.
 
-Two questions organise everything after this. What are people complaining about,
-and who is complaining. Say them now and then answer them in order.
+Three questions organise everything after this, and they are the same three that
+become the cell's remit at the end. Say them now and answer them in order.
 
 Both pips fill here. By the end of this section the ledger is complete.
 :::
@@ -762,7 +764,63 @@ would settle it. Say the limit of your own evidence before someone else does.
 
 ---
 
-## What are people complaining about? {.add-slide data-menu-title="What: hotspots"}
+## Is the system working? {.add-slide data-menu-title="1 · Performance"}
+
+::: {.compare}
+| | Today | What the record already supports |
+|---|---|---|
+| **Time** | A disposal percentage. No median age, no time to first action, no ageing | All of it, by office, subject and district, from dates already recorded [measured]{.chip .chip-measured} |
+| **Quality** | Nothing. A case closed and a case solved are the same row | Whether the closing officer claimed any action at all [measured]{.chip .chip-measured} 1,209,144 closed cases |
+:::
+
+::: {.grid .prose-first}
+| How 1.2M grievances were closed | Share | Median days |
+|---|---|---|
+| Closed claiming **no action** | 39.1% | 46 |
+| Closed with wording that fits no standard category | 35.7% | 25 |
+| Closed claiming **appropriate action** | 23.2% | 54 |
+| Closed claiming the citizen **benefited** | 1.9% | 44 |
+:::
+
+::: {.lead}
+Closing a case with action recorded takes longer than closing one without. A percentage that counts both as success cannot see that.
+:::
+
+::: notes
+~3 min. This is the first of the three capabilities and it is the one officers
+feel immediately. It is also the most delicate slide in the deck, so set the tone
+before the numbers: this audits the existing report rather than competing with
+it, and nothing here is an accusation about any office.
+
+Time first, and it is the easy half. Every date needed to compute median age,
+time to first action and ageing is already in the database. None of it is on any
+screen. That is not a data problem, it is a reporting one.
+
+Then quality, which is the half that does not exist at all today. A case that was
+solved and a case that was closed with "no action possible" are the same row in
+every report. Read the table slowly.
+
+Land the last line and let it sit. Closures claiming appropriate action run at a
+median of 54 days; closures claiming no action, 46. Doing the work takes longer
+than not doing it, which is obvious when said aloud and invisible in a disposal
+percentage. Any target built on that percentage rewards the faster of the two.
+
+Do not present this as a discovery about officer behaviour. The wording comes
+from a dropdown, the categories overlap, and a third of closures use text that
+fits no standard category at all. What it establishes is narrower and stronger:
+the state currently has no measure of whether anything was done, and it could
+have one from records it already holds.
+
+If asked about the benefit flag, this is the moment. Closures claiming no action
+carry it more often, 9.2%, than closures claiming appropriate action, 6.2%. The
+two signals disagree and in the wrong direction, which is exactly why we do not
+use the flag to define whether action was taken, and why it should not be
+reported as satisfaction.
+:::
+
+---
+
+## What is the state learning? {.add-slide data-menu-title="2 · What: hotspots"}
 
 {{< include assets/_hotspot-map.qmd >}}
 
@@ -790,41 +848,57 @@ the live one round afterwards.
 
 ---
 
-## Concentrated *and* rising is the alert worth having {.add-slide data-menu-title="What: spikes"}
+## More than usual, for this place, at this time of year {.add-slide data-menu-title="2b · What is rising"}
 
-::: {.visual}
-[Visual · one worked spike, built in three steps]{.vtag}
-A weekly time series for one category in one district, baselined against the
-same period last year. Then, as fragments, the same spike resolved into three
-lines: filings, distinct problems, distinct citizens. Reveal them one at a time.
-[why]{.why} The three lines separating is the whole capability, and it only
-reads as a surprise if the audience sees the single line first. Restyle
-`fig_spike.png`, or rebuild so the fragments can be stepped through live.
-[source]{.src} `janasunani/analytics/findings/spike.py` — EWMA over category × district × week, baselined year-on-year for monsoon seasonality.
+::: {.grid .prose-first}
+| The question | Why the obvious version fails |
+|---|---|
+| Is this more than usual **for this place**? | A big district files more of everything. Raw counts rank by population |
+| More than usual **at this time of year**? | Drainage complaints rise every June. Against last month, the monsoon is an emergency every year |
+| Is this **new**, or every year? | A place that complains about the same thing each year needs a different answer from one that just started |
+| Is it more **people**, or more **problems**? | Four hundred citizens about one road, or two hundred separate problems. Opposite responses, identical in a count |
 :::
 
-A rise in filings can be four hundred citizens about one road, or two hundred
-separate problems. Opposite responses, identical in a count.
-[measured]{.chip .chip-measured}
+::: {.lead}
+A rise is only news against the right baseline. Three of these four are computable from the record today.
+:::
+
+*The fourth needs the repeat-matching to run across the whole corpus rather than the demonstration slice.* [open]{.chip .chip-open}
 
 ::: notes
-~2 min. Build the spike in three beats and pause between them.
+~2.5 min. Deliberately a capability slide rather than one worked example, and
+that is a decision worth understanding rather than reversing.
 
-One: here is a rise, against the same weeks last year rather than last month,
-because monsoon seasonality would otherwise generate a spike every June.
+Two reasons. First, the honest one: the strongest rise in our data turns out to
+be a week when every district and every category rose together, which is a system
+event rather than a local story, and putting it up as a district finding would
+invite a correction from anyone who remembers that week. Second, the useful one:
+the four questions are the actual product. Any one spike is a demonstration; the
+questions are what the cell would ask every week.
 
-Two: here is that rise split into filings, distinct problems and distinct
-citizens. Let them look at the separation.
+Walk the four as questions and let each land before the next. The second is the
+one that gets nods, because everyone in the room already knows that June looks
+like a crisis and is not one.
 
-Three: the interpretation. If filings rise and distinct problems do not, it is
-one problem being reported by many people, and it needs one fix. If problems
-rise too, something is genuinely deteriorating. If citizens rise but problems do
-not, that is often a campaign — which is not a false alarm, it is a different
-kind of signal, and we come back to it.
+The third is worth the extra twenty seconds because people find it genuinely
+interesting: chronic and acute are different problems. A place that files the
+same complaint every year is a standing failure nobody has fixed. A place that
+has just started is a change worth investigating now.
 
-The honest limit: full decomposition needs the dedup index, which is built for
-the demonstration slice and not yet corpus-wide. The spike detection itself runs
-now.
+The fourth is the one that changes what an officer does, which is why it is last.
+Say it as the road example: a stretch of road in one block, four hundred people
+file in a week. That needs a contractor. Two hundred separate problems in the
+same block needs two hundred decisions. Every report you have today shows those
+two as the same number.
+
+Be straight about the limit rather than burying it: separating people from
+problems needs the repeat-matching running corpus-wide, and it currently runs on
+the demonstration slice. Detection of the rise itself runs today.
+
+Method names only if pressed, and only afterwards: exponentially weighted moving
+average with a seasonal residual and a Poisson surprise threshold, per category
+and district and week, baselined same-period-last-year, with contribution
+analysis to decompose which places and subjects drove a rise.
 :::
 
 ---
