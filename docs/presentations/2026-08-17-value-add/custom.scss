@@ -504,31 +504,51 @@ $presentation-heading-font-weight: 600;
   font-family: "Inter", sans-serif;
 }
 
-/*-- Odisha district hotspot map ------------------------------------------
-    Outlines are pre-projected at build time by scripts/build_deck_map.py, so
-    this is plain inline SVG: no projection library, no deck.gl, no network,
-    and nothing to fail in a room with no wifi.                            */
+/*-- Odisha complaint dot map ---------------------------------------------
+    Outlines and dot positions are pre-projected at build time by
+    scripts/build_deck_map.py, so this is plain inline SVG: no projection
+    library, no deck.gl, no network, and nothing to fail in a room with no wifi.
+
+    Colour is the theme and dot AREA is the count. The district outlines are
+    deliberately faint: they are a reference frame for reading the dots, not a
+    second data channel competing with them.                                */
 .reveal .hotspot { margin: 0.15em auto 0; max-width: 100%; }
 .reveal .hs-controls {
-  display: flex; align-items: center; justify-content: space-between;
-  font-size: 0.46em; margin-bottom: 0.25em;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.42em; margin-bottom: 0.2em;
 }
-.reveal .hs-seg { display: inline-flex; border: 1px solid #DAD6CC; border-radius: 8px; overflow: hidden; }
-.reveal .hs-seg button {
+.reveal .hs-chips { display: inline-flex; flex-wrap: wrap; gap: 0.3em; justify-content: center; }
+.reveal .hs-chips button {
   font: inherit; font-family: "Inter", sans-serif; cursor: pointer;
-  padding: 0.4em 0.9em; border: 0; background: transparent; color: #6B6862;
+  display: inline-flex; align-items: center; gap: 0.4em;
+  padding: 0.3em 0.7em; border: 1px solid #DAD6CC; border-radius: 999px;
+  background: transparent; color: #6B6862;
 }
-.reveal .hs-seg button.active { background: #8B1524; color: #FAF9F5; font-weight: 700; }
-.reveal .hs-legend { display: inline-flex; align-items: center; gap: 4px; color: #6B6862; }
-.reveal .hs-legend i { width: 26px; height: 9px; display: inline-block; }
-.reveal .hs-lk { margin: 0 5px; }
+.reveal .hs-chips button i {
+  width: 0.72em; height: 0.72em; border-radius: 50%;
+  background: var(--c, #6B6862); display: inline-block;
+}
+// The "all themes" chip has no single colour, so it shows a neutral ring rather
+// than borrowing one theme's colour and implying a default.
+.reveal .hs-chips button i.hs-all { background: transparent; border: 2px solid #6B6862; }
+.reveal .hs-chips button.active {
+  border-color: #141413; color: #141413; font-weight: 700;
+  background: rgba(20, 20, 19, 0.05);
+}
 
-.reveal .hs-map { width: 100%; max-height: 66vh; display: block; margin: 0 auto; }
-.reveal .hs-d {
-  stroke: #FAF9F5; stroke-width: 1.1; cursor: pointer;
-  transition: fill 0.25s ease;
+.reveal .hs-map { width: 100%; max-height: 68vh; display: block; margin: 0 auto; }
+.reveal .hs-d { fill: #F2F0E9; stroke: #DAD6CC; stroke-width: 1; }
+.reveal .hs-dot {
+  fill-opacity: 0.72;
+  stroke: #FAF9F5;
+  stroke-width: 1;
+  cursor: pointer;
+  transition: fill-opacity 0.25s ease, stroke-width 0.15s ease;
 }
-.reveal .hs-d:hover { stroke: #141413; stroke-width: 2; }
+.reveal .hs-dot:hover { fill-opacity: 0.95; stroke: #141413; stroke-width: 2; }
+// Filtered out rather than removed: keeping the muted dots on screen preserves
+// the sense of how much else is going on in that district.
+.reveal .hs-dot.hs-mute { fill-opacity: 0.07; }
 .reveal .hs-readout {
   text-align: center; font-size: 0.46em; color: #141413;
   margin-top: 0.2em; min-height: 1.4em;

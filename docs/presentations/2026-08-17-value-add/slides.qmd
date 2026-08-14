@@ -824,8 +824,7 @@ reported as satisfaction.
 
 {{< include assets/_hotspot-map.qmd >}}
 
-Where a problem is concentrated is in the record already. It has never been
-drawn. [measured]{.chip .chip-measured}
+All of this is in the record already. It has never been drawn. [measured]{.chip .chip-measured}
 
 ::: notes
 ~2 min, and this is the moment to slow down and let them look.
