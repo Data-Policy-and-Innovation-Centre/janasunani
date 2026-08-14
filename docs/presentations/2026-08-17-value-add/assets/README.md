@@ -28,29 +28,36 @@ Same rule for complaint text. Never a real complaint, redacted or otherwise.
 Ordered by how much the deck loses without them. The first two are the reason to
 give this talk at all.
 
-- [ ] `hotspot_map.*` — **the most persuasive artifact available, and the only
-      genuinely interactive one.** Odisha's 30 districts as a choropleth by
-      complaint rate for a selected category, switchable live in the room,
-      drilling to block on click. The `aqli-map` deck.gl block in
-      `../../../../ml-ai-climate-change/presentation/slides.qmd` is the working
-      pattern; a plain inline SVG choropleth is an acceptable simpler route.
-      Aggregates only, from `janasunani/analytics` category × district counts.
-      **A static PNG fallback must sit on the same slide** for a projector with
-      no GPU or no wifi.
-      — slide "Question one · What are people complaining about?"
-- [ ] `spike_decomposition.*` — one worked spike, built in three fragments: the
-      weekly series against the same period last year, then the same rise split
-      into filings, distinct problems, distinct citizens. The separation of the
-      three lines is the capability, and it only lands as a surprise if the
-      single line is seen first, so it must be steppable rather than one static
-      image. Restyle `docs/value-add-report/figures/fig_spike.png` or rebuild
-      from `janasunani/analytics/findings/spike.py`.
-      — slide "Concentrated *and* rising"
+- [x] `hotspot_map` — **built**, as a generated dot map (`_hotspot-map.qmd`, from
+      `scripts/build_deck_map.py`), over 1,132,341 real filings. One dot per
+      district per theme: colour is the theme, dot *area* is the count, chips
+      filter. Dots sit at **district centroids**, which is what the geometry in
+      this repo supports. Block would be better — `block` is populated on 82.7%
+      of filings across 461 district-block pairs — but that needs a public
+      boundary download and a crosswalk over 427 spellings. **Do not scatter dots
+      inside a district outline to look block-level**; it invents precision the
+      data does not have. Static fallback shipped.
+      — slide "What is the state learning?"
+- [x] `nl_query` — **built**, as a mock (`_nl-query.qmd`, from
+      `scripts/build_deck_nlq.py`). Four preset questions, the structured form
+      each parses into, and the answer. **Answers are real**, computed from the
+      same aggregate as the map; **parsing is canned** and the slide says so.
+      Static fallback shipped.
+      — slide "Can anyone ask it a question?"
+- [ ] `spike_decomposition.*` — **optional now.** The slide was rewritten as four
+      plain questions rather than one worked example, which is the honest form:
+      the year-on-year baseline is not populated in the current output of
+      `janasunani/analytics/findings/spike.py`, and its strongest candidate is a
+      week when all 31 districts and 35 categories rose together — a system
+      event, not a local story. Any figure added here must survive both problems.
+      — slide "More than usual, for this place, at this time of year"
 - [ ] `campaign_two_lenses.*` — one detected campaign shown twice: the issue view
       (filings and citizens climbing, distinct problems flat) beside the people
-      view (concentrated in a few blocks, skewed on channel). Needs both halves
-      of Part 2 at once, which is why it closes the section. Aggregate
-      description only, never a citizen.
+      view (concentrated in a few blocks, skewed on channel). **No detected
+      campaign artifact exists yet**, so this cannot currently be built from real
+      data — and it would sit beside a map that is real, which is exactly the
+      contrast that makes an invented figure dangerous. Preferred route is to
+      fold it into the spike slide as a labelled case rather than build it.
       — slide "Where the two questions meet: campaigns"
 - [x] `reporting_surface_gap` — **built**, as `_reporting-gap.qmd`, in CSS. The
       pendency screen redrawn (office types only, never a named office, invented
@@ -62,24 +69,55 @@ give this talk at all.
       visible. No custom JS, so it degrades to the all-grey state.
       **REDRAWN, NEVER SCREENSHOTTED**, and the panel header says so on its face.
       — slide "What the officer sees today"
-- [ ] `latency_waterfall.*` — the 13.7 s scanned path as a horizontal bar
-      segmented by stage, ideally filling left to right. Reading the page (6.0 s)
-      and drafting the summary (6.6 s) are 92%; the five stages between them are
-      hairline and should look it. From `pipeline_latency_development`.
-      **The pipeline slide has no `.visual` block for this** — it carries two
-      tables already and a third element overflows it. Replace the TIME row's
-      prose with the figure when it exists, or give it its own slide.
-      — slide "The pipeline"
+- [x] `latency_waterfall` — **built**, as the pipeline replay
+      (`_pipeline-replay.qmd`), on its own slide. Runs at the real measured
+      timings with an Odia petition feeding in, and toggles between the scanned
+      and typed paths on a shared time axis. Static fallback shipped.
+      — slide "Watch it run"
 - [ ] `dedup_three_bars.*` — filings / distinct problems / distinct citizens for
       one district-year, with the gaps annotated. The message is the *gap*, which
       a number cannot show. Restyle
       `docs/value-add-report/figures/fig_dedup.png` to the deck palette rather
-      than reusing it at report resolution.
+      than reusing it at report resolution. Reconcile the count first: the deck
+      and briefs say 37,299 officer-confirmed repeats, while
+      `outputs/findings/duplicate_baseline_summary.csv` says 18,432 confirmed and
+      34,671 roadmap total. Different vintage; settle it before drawing.
       — slide "Deduplication"
 
 Slides with no figure and no need of one: the legend, the three section
-dividers, the processing summary, the desk card (CSS, already built), "Who is
+dividers, the processing summary, the three Part 1 argument slides (measurement,
+cheap baselines, open vs bought), the desk card (CSS, already built), "Who is
 complaining", and everything in Part 3. Do not add art to them.
+
+## Generated and interactive components
+
+Four components are code, not images. Three of them need JavaScript.
+
+| Component | Source | Rebuild with |
+|---|---|---|
+| Pipeline replay | `_pipeline-replay.qmd`, hand-written | edit directly |
+| Dot map | `_hotspot-map.qmd`, **generated** | `make deck-assets` |
+| Query mock | `_nl-query.qmd`, **generated** | `make deck-assets` |
+| Reporting gap | `_reporting-gap.qmd`, hand-written, CSS only | edit directly |
+
+Do not hand-edit a generated partial: the next `make deck-assets` overwrites it.
+
+**Every JavaScript component ships a picture of itself** in `fallback/`, and
+shows that picture by default. The component's own script adds `.live` as its
+last statement, which swaps the picture for the real thing. So a script that
+throws halfway still leaves something on screen instead of a blank slide.
+
+`<noscript>` would not help and is deliberately not used: reveal.js is itself
+JavaScript, so with scripts fully blocked the deck does not render at all.
+
+After changing how any component looks:
+
+```
+make deck && make deck-fallbacks && make deck
+```
+
+The second render embeds the new images. Then check the swap still works both
+ways, healthy and failed, rather than assuming it.
 
 ## Style
 

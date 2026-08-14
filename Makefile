@@ -549,6 +549,8 @@ help:
 	@echo "  make deck-clean      Remove the rendered deck (slides.html)"
 	@echo "  make deck-check      Report slides whose content runs off the bottom"
 	@echo "  make deck-shots      Screenshot every slide to outputs/deck-shots/"
+	@echo "  make deck-assets     Rebuild the generated components (map, query mock)"
+	@echo "  make deck-fallbacks  Re-shoot the static images shown if scripts fail"
 	@echo "  make box-paths       Show resolved local and Box paths"
 	@echo "  make status          Show what has changed"
 	@echo "  make infra           Read-only health pass over the cloud infra"
@@ -656,7 +658,7 @@ docs/%.docx: docs/%.md scripts/md_to_docx.py
 docs-clean:
 	rm -f $(DOC_TARGETS)
 
-.PHONY: deck deck-list deck-clean deck-check deck-shots
+.PHONY: deck deck-list deck-clean deck-check deck-shots deck-assets deck-fallbacks
 
 # --- Slide decks (Quarto + reveal.js) ---------------------------------------
 #
@@ -731,6 +733,25 @@ deck-check:
 
 deck-shots:
 	@$(DECK_SHOT)
+
+# The generated components of the value-add deck: the dot map and the query
+# mock. Both read only committed aggregates, so this never touches `data/` --
+# regenerating those aggregates is a separate, deliberate step (see
+# assets/data/README.md).
+#
+# Plain python3, no uv: both scripts import nothing outside the standard
+# library, and that is worth keeping true so rebuilding a slide never waits on
+# dependency resolution.
+deck-assets:
+	python3 scripts/build_deck_map.py --deck $(call sh_quote,$(DECK_DIR))
+	python3 scripts/build_deck_nlq.py --deck $(call sh_quote,$(DECK_DIR))
+
+# Static pictures of the three interactive components, shown if their scripts
+# fail. Needs a rendered deck to shoot, so: make deck && make deck-fallbacks &&
+# make deck (the second render embeds the new images).
+deck-fallbacks:
+	uv run --no-project --with playwright python scripts/build_deck_fallbacks.py \
+	  --deck $(call sh_quote,$(DECK_DIR))
 
 deck-clean:
 	rm -rf $(call sh_quote,$(DECK_DIR))/slides.html $(call sh_quote,$(DECK_DIR))/slides_files
