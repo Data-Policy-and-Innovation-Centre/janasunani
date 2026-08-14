@@ -168,7 +168,9 @@ def build(deck: Path) -> Path:
   why they are not at block level and must not be scattered to look as if they
   are.
 -->
-<div class="hotspot" id="hotspot">
+<div class="hotspot fb-host" id="hotspot">
+  <div class="fb"><img src="assets/fallback/hotspot.png" alt="Odisha districts with one dot per theme, sized by complaint volume"></div>
+
   <div class="hs-controls">
     <div class="hs-chips" id="hs-chips">
       <button data-t="__all" class="active"><i class="hs-all"></i>All themes</button>{chips}
@@ -206,6 +208,8 @@ def build(deck: Path) -> Path:
       c.classList.toggle("hs-mute", t !== "__all" && c.dataset.t !== t);
     }});
   }});
+
+  root.classList.add("live");
 }})();
 </script>
 ```

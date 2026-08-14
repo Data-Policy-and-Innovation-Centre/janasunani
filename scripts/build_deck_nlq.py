@@ -154,7 +154,9 @@ def build(deck: Path) -> Path:
   running. The slide says so and that label must stay -- the whole point of the
   measurement argument in Part 1 collapses if this slide overstates itself.
 -->
-<div class="nlq" id="nlq">
+<div class="nlq fb-host" id="nlq">
+  <div class="fb"><img src="assets/fallback/nlq.png" alt="A question, the structured form it parses into, and the answer"></div>
+
   <div class="nlq-chips" id="nlq-chips">{chips}</div>
 
   <div class="nlq-stage">
@@ -205,6 +207,7 @@ def build(deck: Path) -> Path:
   }});
 
   show(0);
+  root.classList.add("live");
 }})();
 </script>
 ```

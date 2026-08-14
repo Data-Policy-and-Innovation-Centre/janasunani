@@ -7,7 +7,9 @@
   running. The slide says so and that label must stay -- the whole point of the
   measurement argument in Part 1 collapses if this slide overstates itself.
 -->
-<div class="nlq" id="nlq">
+<div class="nlq fb-host" id="nlq">
+  <div class="fb"><img src="assets/fallback/nlq.png" alt="A question, the structured form it parses into, and the answer"></div>
+
   <div class="nlq-chips" id="nlq-chips"><button data-i="0" class="active">Which districts file the most infrastructure complaints?</button><button data-i="1">What do people in Sambalpur complain about most?</button><button data-i="2">Where are land disputes the biggest share of complaints?</button><button data-i="3">Which districts file the most housing complaints?</button></div>
 
   <div class="nlq-stage">
@@ -58,6 +60,7 @@
   });
 
   show(0);
+  root.classList.add("live");
 })();
 </script>
 ```

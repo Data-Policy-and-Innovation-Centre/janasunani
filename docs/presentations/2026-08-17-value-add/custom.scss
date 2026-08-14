@@ -815,3 +815,20 @@ $presentation-heading-font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 .reveal .nlq-unit { color: #6B6862; font-size: 0.82em; margin-top: 0.4em; }
+
+/*-- Static fallbacks for the interactive components ----------------------
+    The replay, the dot map and the query mock all need JavaScript. If scripts
+    are blocked, or a component throws before it finishes wiring itself up, the
+    slide would be blank in front of the room with no recovery.
+
+    So each component ships a picture of itself and shows that by DEFAULT. Its
+    own script adds `.live` as its last statement, which swaps the picture for
+    the real thing. Defaulting to the image rather than to the component is the
+    whole point: a script that dies halfway still leaves something on screen,
+    which `<noscript>` alone would not catch.
+
+    Regenerate the images with scripts/build_deck_fallbacks.py after changing
+    how any of them looks.                                                   */
+.reveal .fb img { width: 100%; display: block; border-radius: 8px; }
+.reveal .fb-host:not(.live) > *:not(.fb) { display: none; }
+.reveal .fb-host.live > .fb { display: none; }

@@ -9,7 +9,9 @@
   why they are not at block level and must not be scattered to look as if they
   are.
 -->
-<div class="hotspot" id="hotspot">
+<div class="hotspot fb-host" id="hotspot">
+  <div class="fb"><img src="assets/fallback/hotspot.png" alt="Odisha districts with one dot per theme, sized by complaint volume"></div>
+
   <div class="hs-controls">
     <div class="hs-chips" id="hs-chips">
       <button data-t="__all" class="active"><i class="hs-all"></i>All themes</button><button data-t="Housing" style="--c:#8B1524"><i></i>Housing</button><button data-t="Social Welfare" style="--c:#CC785C"><i></i>Social Welfare</button><button data-t="Infrastructure" style="--c:#3E6B7C"><i></i>Infrastructure</button><button data-t="Land Matters" style="--c:#7A6A3E"><i></i>Land Matters</button><button data-t="Police Case" style="--c:#5B4A6B"><i></i>Police Case</button><button data-t="Service Matters" style="--c:#4A7A5C"><i></i>Service Matters</button>
@@ -47,6 +49,8 @@
       c.classList.toggle("hs-mute", t !== "__all" && c.dataset.t !== t);
     });
   });
+
+  root.classList.add("live");
 })();
 </script>
 ```

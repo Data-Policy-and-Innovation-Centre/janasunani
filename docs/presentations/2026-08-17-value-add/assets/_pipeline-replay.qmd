@@ -20,7 +20,9 @@
 
   No build step, no library, no network. It has to survive a room with no wifi.
 -->
-<div class="replay" id="replay">
+<div class="replay fb-host" id="replay">
+  <div class="fb"><img src="assets/fallback/replay.png" alt="The pipeline replay, run to completion: reading the page and drafting the summary are 92% of 13.66 seconds"></div>
+
   <div class="replay-bar">
     <div class="replay-seg2" id="replay-path">
       <button data-path="doc" class="active">Scanned petition</button>
@@ -223,6 +225,7 @@
   }
 
   build();
+  root.classList.add("live");
 })();
 </script>
 ```
