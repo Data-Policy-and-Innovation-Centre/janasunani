@@ -711,3 +711,41 @@ $presentation-heading-font-weight: 600;
   font-size: 0.8em;
   color: #8B1524;
 }
+
+/*-- The cell's remit, four columns ---------------------------------------
+    Four questions the Grievance Intelligence Cell exists to answer. Equal
+    weight deliberately: the fourth ("can we tell if it works") is the one that
+    justifies a standing capability rather than a contract, so it must not read
+    as an afterthought tacked onto three real ones.                          */
+.reveal .cell {
+  display: flex;
+  gap: 0.7em;
+  align-items: stretch;
+  max-width: 98%;
+  margin: 0.7em auto 0;
+  font-size: 0.6em;
+  text-align: left;
+}
+.reveal .cell-col {
+  flex: 1;
+  padding: 0.9em 0.9em;
+  border-top: 3px solid #8B1524;
+  background: #F2F0E9;
+  border-radius: 0 0 8px 8px;
+}
+.reveal .cell-col p { margin: 0 0 0.5em 0; color: #141413; line-height: 1.35; }
+.reveal .cell-col p:last-child { margin-bottom: 0; }
+.reveal .cell-h {
+  display: block;
+  font-family: "Inter", sans-serif;
+  font-weight: 700;
+  color: #8B1524;
+  font-size: 1.05em;
+  line-height: 1.25;
+  margin-bottom: 0.2em;
+}
+
+// A big number that has to share its slide with a table. The full 3.2em is
+// sized to be the only thing on screen.
+.reveal .bignum.bignum-compact { font-size: 2.1em; margin: 0; }
+.reveal .bignum.bignum-compact + .bignum-sub { font-size: 0.62em; margin-bottom: 0.3em; }

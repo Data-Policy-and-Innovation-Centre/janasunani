@@ -954,7 +954,7 @@ rather than collapsed.
 
 ---
 
-## Part 3 · What it adds up to {.part data-menu-title="Part 3 · Together"}
+## Part 3 · Who should own this {.part data-menu-title="Part 3 · Who owns it"}
 
 ::: {.scorecard}
 ::: {.sq}
@@ -966,11 +966,13 @@ Performance is a disposal percentage over filings.
 :::
 
 ::: {.add}
-[What we add]{.sc-h}
+[What is possible]{.sc-h}
 
-**Processing** makes each case cheaper and more consistent, with a number on every component.
+**Automation** makes each case cheaper and more consistent, with a number on every component.
 
 **Intelligence** makes the corpus answer questions the state cannot currently ask.
+
+Neither survives without somebody whose job is to check that it works.
 :::
 :::
 
@@ -983,91 +985,153 @@ Performance is a disposal percentage over filings.
 promised in the first minute, and each pip was shown with a number and a
 limitation.
 
-Then set up the last three slides: what we think it is worth, what could be
-measured, and what we need from you.
+Then pose the question this part answers, and pose it as an open one: all of that
+was built by a research centre that will not be here forever. Who owns it, who
+runs it, and who checks it. That is the last four slides.
 :::
 
 ---
 
-## What we expect it to be worth {.open-slide data-menu-title="Expected value"}
+## A Grievance Intelligence Cell {.add-slide data-menu-title="The cell"}
 
-::: {.bignum}
+::: {.cell}
+::: {.cell-col}
+[Is the system working?]{.cell-h}
+
+How long cases actually take, by office and subject
+
+Whether anything was actually done, not just closed
+
+Whether women, rural and paper filers are served equally
+:::
+
+::: {.cell-col}
+[What is the state learning?]{.cell-h}
+
+Where problems concentrate, by place and subject
+
+What is rising more than usual for this place and season
+
+Chronic versus new: the same complaint every year is a different problem
+:::
+
+::: {.cell-col}
+[Can anyone ask it?]{.cell-h}
+
+Questions in plain Odia or English, not a data request
+
+Reports that assemble themselves
+
+Answers in minutes, not a fortnight
+:::
+
+::: {.cell-col}
+[Can we tell if it works?]{.cell-h}
+
+Acceptance testing for any system, ours or a supplier's
+
+Re-testing on a schedule, because hosted models change
+
+Custody of the frozen cases that make any claim checkable
+:::
+:::
+
+::: {.lead}
+A standing capability inside government. We would help build it, support it, and independently check the fourth column.
+:::
+
+::: notes
+~3 min, and this is the slide the talk has been walking towards.
+
+Lead with why a cell and not a contract. Everything shown today is either a
+capability that has to be maintained or a claim that has to be re-checked, and
+both are jobs, not deliverables. A supplier can build a dashboard; nobody but the
+state can own the question of whether the dashboard is telling the truth.
+
+Take the four columns in order and keep each to about thirty seconds. The first
+is the one officers feel immediately: there is currently no measure of how long
+anything takes, and none at all of whether anything was actually done. The second
+is what the last twenty minutes demonstrated. The third is what makes it usable
+by people who do not write queries. The fourth is the one that only exists
+because somebody independent is in the room, and it is the reason we are
+proposing a cell rather than handing over a tool.
+
+Be concrete about DPIC's role and bound it, because the obvious suspicion is that
+we are proposing ourselves a permanent job. We would help stand it up, we would
+support it, and we would independently monitor whether the automation actually
+delivers. We are not asking to run it and we should not run it. The measurement
+has to survive us leaving.
+
+The full remit is wider than twelve lines: reopen rates, case-mix-adjusted office
+comparison, scheme-level feedback, cross-department root cause, under-served
+geographies, the definitions layer. Offer the longer list rather than putting it
+on the slide, and offer to write it up.
+:::
+
+---
+
+## What we could prove {.open-slide data-menu-title="Worth and proof"}
+
+::: {.bignum .bignum-compact}
 201,000–302,000
 :::
 ::: {.bignum-sub}
-officer-hours spent registering the 1.2M grievances already resolved [estimated]{.chip .chip-estimated}
+officer-hours spent registering the 1.2M grievances already resolved — the size of the pot, not a saving [estimated]{.chip .chip-estimated}
 :::
 
-That is the size of the pot. **We are not claiming to save any of it.**
-
-Three things would reduce it, in ascending order of certainty: drafting instead
-of typing; handling a repeat once instead of four times; one assignment decision
-instead of three.
-
-For citizens: shorter waits if the routing result holds, and fewer occasions to
-file the same complaint twice.
-
-::: notes
-~2 min. This section is reasoning, not evidence, and the gutter says so.
-
-Be very careful with the big number and say why. It is arithmetic on an estimate
-officers gave us. It is the denominator, not a saving. It is on the slide because
-any future claim of time saved has to be stated against something.
-
-The ordering is counter-intuitive and worth stating: the largest possible
-effect, checking a draft instead of writing one, is the one we are least sure
-of, because a bad draft is slower than no draft. The smallest, not doing the
-same repeat four times, is the one we are most sure of, because officers already
-recognise that work as waste.
-
-One warning to deliver here. The database records whether a petitioner
-benefited, and it is tempting to report that as satisfaction. It should not be:
-cases closed claiming no action carry that flag more often than cases closed
-claiming appropriate action. Whatever it measures, it is not what its name
-suggests. Satisfaction is something a citizen tells you, and nothing asks them.
-:::
-
----
-
-## Almost everything is nearly measurable {.open-slide data-menu-title="Measurability"}
-
-::: {.grid}
-| | Can we measure it? |
+::: {.grid .prose-first}
+| | Can it be proven? |
 |---|---|
 | Citizens wait less | **Yes**, from existing records, once the routing constraint is settled |
 | Where the system is not reaching people | **Yes**, today, against population |
-| Fewer repeat complaints | Almost — needs safe citizen-to-problem linkage |
+| Fewer repeat complaints | Almost. Needs safe citizen-to-problem linkage |
 | Cases reach the right office first time | Needs the suggestion-and-override log |
 | Officers spend less time per case | Needs timing in the screen and a staffing figure |
 | Citizens are more satisfied | No. Nothing asks them |
 :::
 
 ::: {.lead}
-What blocks these is instrumentation and permission, not software.
+The blocker is instrumentation and permission, not software.
 :::
 
 ::: notes
-~90 sec. Give them time to read the right-hand column before you speak.
+~2.5 min. Two beats: the size of the prize, then what could be proven about it.
 
-The pattern is the argument of the whole talk: nearly every row is blocked on
-something small and administrative — a log line, three hundred cases read, a
-timer in a screen — and not one row is blocked on a model that does not exist.
-The software is the part that is nearly done.
+Be very careful with the big number and say why. It is arithmetic on an estimate
+officers gave us. It is the denominator, not a saving, and we are claiming none
+of it. It is on the slide because any future claim of time saved has to be stated
+against something.
 
-Note the second row deliberately. Under-representation is measurable *today*,
-with no permission and no new instrumentation, and it is arguably the highest
+If asked what would reduce it, three things in ascending order of certainty, and
+the ordering is counter-intuitive: drafting instead of typing is the largest
+possible effect and the one we are least sure of, because a bad draft is slower
+than no draft; handling a repeat once instead of four times is the smallest and
+the one we are most sure of, because officers already recognise that work as
+waste.
+
+Then give them time to read the right-hand column before you speak. The pattern is
+the argument of the whole talk: nearly every row is blocked on something small and
+administrative — a log line, three hundred cases read, a timer in a screen — and
+not one row is blocked on a model that does not exist. The software is the part
+that is nearly done.
+
+Note the second row deliberately. Under-representation is measurable today, with
+no permission and no new instrumentation, and it is arguably the highest
 public-value number on this slide.
 
-That reframes the ask: not budget, not procurement, not a technology decision.
-Permission to record what is already happening.
+One warning to deliver here. The database records whether a petitioner benefited,
+and it is tempting to report that as satisfaction. It should not be: cases closed
+claiming no action carry that flag more often than cases closed claiming
+appropriate action. Whatever it measures, it is not what its name suggests.
+Satisfaction is something a citizen tells you, and nothing asks them.
 :::
 
 ---
 
-## What we are asking for {.add-slide data-menu-title="The ask"}
+## The cell's first quarter {.add-slide data-menu-title="The ask"}
 
-::: {.grid}
-| Decision | What it involves |
+::: {.grid .prose-first}
+| Four permissions | What it involves |
 |---|---|
 | **Let officers check our work** | A few officers review a fixed set of cases we have already scored |
 | **Name one department for a trial** | A bounded rollout with a comparison group |
@@ -1076,11 +1140,15 @@ Permission to record what is already happening.
 :::
 
 ::: {.lead}
-None of these is a decision about automation.
+None of these is a decision about automation, and none of them costs money. They are what the cell would do first.
 :::
 
 ::: notes
 ~2 min. This is what the meeting is for. Do not hurry it and do not add to it.
+
+Present these as a work programme rather than four favours. That is the whole
+gain from the previous slide: a cell with a first quarter is a proposal, whereas
+four disconnected requests are an imposition.
 
 One: nothing shown today has been confirmed by an officer, so nothing can
 responsibly be recommended for real use, and we are not recommending it.
@@ -1094,6 +1162,10 @@ it is any good, because nothing records what officers do with it. We are not
 asking to add a model. We are asking to measure the one already there.
 
 Four: three hundred cases, about two days, and the open routing question closes.
+
+If the room wants to say yes to the cell but not yet to the four, take that. The
+permissions are worth more with a cell behind them, but they stand alone and the
+cell can be constituted later.
 
 End on automation and mean it: the flag never blocks a filing, the category never
 assigns itself, the route is a suggestion. Every ask here is about being able to
