@@ -79,12 +79,24 @@ date-format: "D MMMM YYYY"
 
 ## Why we are in the room {data-menu-title="Why we are here"}
 
-::: {.grid}
-| | |
-|---|---|
-| **What we are** | A research centre working under an MoU with the Government of Odisha |
-| **What we are selling** | Nothing. No product, no licence, no fee, no stake in any decision taken here |
-| **What we brought** | A working proof of concept, and the measurements to judge it by |
+::: {.cell}
+::: {.cell-col}
+[What we are]{.cell-h}
+
+A research centre, working under an MoU with the Government of Odisha.
+:::
+
+::: {.cell-col}
+[What we are selling]{.cell-h}
+
+Nothing. No product, no licence, no fee, and no stake in any decision taken in this room.
+:::
+
+::: {.cell-col}
+[What we brought]{.cell-h}
+
+A working proof of concept, and the measurements to judge it by.
+:::
 :::
 
 ::: {.lead}
@@ -829,20 +841,30 @@ All of this is in the record already. It has never been drawn. [measured]{.chip 
 ::: notes
 ~2 min, and this is the moment to slow down and let them look.
 
-Say what they are seeing: every grievance carries a district and most carry a
-block, so complaint intensity by place and subject is computable today, for any
-category, over five years. Nothing new was collected to make this.
+Say what they are seeing and give the denominator: 1,132,341 filings, all
+thirty districts, 2021 to 2025. Every grievance carries a district and most
+carry a block, so complaint intensity by place and subject is computable today,
+for any category, over five years. Nothing new was collected to make this.
 
-Switch category live if the room is engaged. Water, roads, pensions. The point
-lands harder from the switching than from any single map: it is not a chart
-someone made, it is a question anyone can now ask.
+Read the encoding out loud once, because nobody guesses it: each dot is one
+theme in one district, the colour is the theme, and the size is how many. Then
+switch theme live if the room is engaged. Housing, land, police. The point lands
+harder from the switching than from any single view: it is not a chart someone
+made, it is a question anyone can now ask.
 
-Then the operational sentence: a concentration is not automatically a problem —
-a big district files more of everything. What matters is concentration relative
-to what that place normally files, which is the next slide.
+Two honest limits, and volunteer both rather than waiting.
 
-If the projector cannot run it, use the static fallback and say you will send
-the live one round afterwards.
+A dot sits at the middle of a district, not where the complaints are. Block is
+recorded on most filings and block-level dots are the obvious next version; we
+have not built them because it needs boundary data we do not hold. Do not let
+the dot be read as a location.
+
+And a concentration is not automatically a problem, because a big district files
+more of everything. What matters is concentration relative to what that place
+normally files, which is the next slide.
+
+If the projector cannot run it, the slide falls back to a picture of itself
+automatically. Say you will send the live one round afterwards.
 :::
 
 ---
