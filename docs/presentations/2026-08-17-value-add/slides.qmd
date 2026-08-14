@@ -902,6 +902,47 @@ analysis to decompose which places and subjects drove a rise.
 
 ---
 
+## Can anyone ask it a question? {.add-slide data-menu-title="3 · Ask it"}
+
+{{< include assets/_nl-query.qmd >}}
+
+*The answers are real, computed from the same records as the map. The understanding is canned: four fixed questions, nothing typed, no model running. Specced, not built.* [open]{.chip .chip-open}
+
+::: notes
+~2 min. The third capability, and the one that decides whether any of this gets
+used by people who do not write queries.
+
+Click through two or three presets and let the middle panel do the work. The
+question goes in, the machine fills in a form, the form produces an answer. Say
+plainly that today this question takes a written request to a data team and comes
+back in a fortnight, if it comes back.
+
+Be scrupulous about what is real here, and say it before anyone wonders. The
+answers are genuine, computed from the same 1.1 million filings behind the map.
+The understanding is not: these are four fixed questions and nothing is being
+typed. Nothing is running in this browser. That distinction is exactly the
+discipline the measurement slide argued for, so getting caught overstating it
+here would cost more than the slide is worth.
+
+The middle panel is worth thirty seconds because it is the design decision. The
+model never writes database code. It fills in a form, and a hand-written,
+tested compiler turns the form into a query. So the set of things it can ask is
+bounded by construction: it cannot invent a table, cannot join something it
+should not, and cannot return a number nobody can trace.
+
+If asked why not just point a chatbot at the database, two reasons and both are
+concrete. The space of legal questions across thirty districts and thirty-five
+categories is combinatorial, not a list somebody can write out. And matching a
+question against a bank of stored questions by similarity fails exactly where it
+matters: "water complaints rising in Puri" and "water complaints falling in Puri"
+look nearly identical to that kind of matching and require opposite answers.
+
+Odia matters here and is worth saying: the intended input is a question in plain
+Odia or English, not English only.
+:::
+
+---
+
 ## At the desk, while the officer works {.add-slide data-menu-title="What: live signal"}
 
 ::: {.deskcard}
