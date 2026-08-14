@@ -1,6 +1,6 @@
 ---
 title: "Janasunani 2.0"
-subtitle: "Processing and intelligence: what changes, and what it is worth"
+subtitle: "What automation can do, how to tell whether it works, and who should own it"
 author: "Data, Policy & Innovation Centre"
 date: "2026-08-17"
 date-format: "D MMMM YYYY"
@@ -14,17 +14,34 @@ date-format: "D MMMM YYYY"
 #   Format options live in _quarto.yml, not here (document YAML overrides
 #   project profiles in Quarto and cannot be flipped later).
 #
-#   SHAPE. Two dimensions of impact, then what they add up to.
-#     Part 1  Processing    the pipeline, actionability, dedup, routing.
-#                           Each one on the same two axes: TIME and PERFORMANCE,
-#                           status quo beside prototype, in the same `.compare`
-#                           table every time. The repetition is the argument.
-#     Part 2  Intelligence  today the officer gets resolved/pending counts.
-#                           We offer two questions: what are people complaining
-#                           about (hotspots, spikes, real-time at the desk) and
-#                           who is complaining (gender, geography, channel).
-#                           Campaigns are where the two meet.
-#     Part 3  Together      what the two dimensions are worth, and the ask.
+#   POSTURE. DPIC is not a supplier. There is an MoU with the Government of
+#   Odisha, no product, no licence, no fee and no stake in any decision taken in
+#   this room. That is not a courtesy line, it is the load-bearing premise: the
+#   specific models are interchangeable and mostly uninteresting, and what only
+#   an independent party can offer is the measurement. Every slide should read as
+#   "here is what is achievable and how you would check it", never as "buy this".
+#
+#   SHAPE. What automation can do, what intelligence makes possible, and who
+#   should own both.
+#     Part 1  Automation     the pipeline, actionability, dedup, routing.
+#                            Each one on the same two axes: TIME and PERFORMANCE,
+#                            status quo beside prototype, in the same `.compare`
+#                            table every time. The repetition is the argument.
+#                            Then three slides that are the real contribution:
+#                            the measurement protocol, the finding that the
+#                            expensive option lost, and the open/proprietary
+#                            tradeoffs.
+#     Part 2  Intelligence   today the officer gets resolved/pending counts.
+#                            Three capabilities: is the system working
+#                            (performance), what is the state learning (systemic
+#                            issues), and can anyone ask it a question.
+#     Part 3  The cell       a Grievance Intelligence Cell owns all of it. The
+#                            four permissions become its first work programme.
+#
+#   NON-TECHNICAL, AND THIS IS A HARD RULE. No model or method names on any
+#   slide: no MuRIL, TF-IDF, SGD, BART, Presidio, EWMA, STL, Poisson. An IAS
+#   officer does not need them and naming them turns a procurement warning into a
+#   technical aside. All of them are welcome in the speaker notes.
 #
 #   TWO MARKING SYSTEMS, ON DELIBERATELY DIFFERENT CHANNELS. They answer
 #   different questions and must never share a colour meaning.
@@ -60,33 +77,72 @@ date-format: "D MMMM YYYY"
 #   structurally perfect and visually broken, and only rendering finds that.
 ---
 
-## The short version {data-menu-title="The short version"}
-
-::: {.lead}
-We are making a difference on two dimensions, and they are worth different things.
-:::
+## Why we are in the room {data-menu-title="Why we are here"}
 
 ::: {.grid}
-| | What it means | Where it stands |
-|---|---|---|
-| **Processing** | The six things that happen to a grievance before anyone can act on it | Built and measured. Four components, each faster and each with a number attached |
-| **Intelligence** | What the office can *see* across a million grievances | Barely exists today. The reporting surface is resolved and pending counts |
+| | |
+|---|---|
+| **What we are** | A research centre working under an MoU with the Government of Odisha |
+| **What we are selling** | Nothing. No product, no licence, no fee, no stake in any decision taken here |
+| **What we brought** | A working proof of concept, and the measurements to judge it by |
 :::
 
-Processing makes each case cheaper. Intelligence is the one that changes what
-the government can do at all.
+::: {.lead}
+The specific models do not matter. Being able to tell whether any of them works is the part you cannot buy.
+:::
 
 ::: notes
-~90 sec. Set both dimensions in the first minute, and be explicit that they are
-not the same kind of contribution.
+~60 sec, and it must come before any number. It changes how everything after it
+is heard.
 
-Processing is the expected half. It is real, it is measured, and on its own it
-is an efficiency story: the same work, done faster and more consistently.
+Say it plainly. We are not a vendor. There is nothing on sale in this room, we do
+not benefit from a yes and we do not lose from a no, and that is unusual enough
+in a conversation about automation that it is worth thirty seconds of your
+attention.
+
+Then the consequence, which is the actual point: because we have no stake, we
+built the thing *and* measured it honestly, and the measurement is the part that
+survives. Whatever the state eventually runs, whoever builds it, the question
+"how would we know if this works" has to be answered by somebody with no reason
+to flatter the answer.
+
+Do not say the word vendor with any edge on it. The room may contain people with
+supplier relationships and the point lands better as a description of our
+position than as a warning about anyone else's.
+:::
+
+---
+
+## The short version {data-menu-title="The short version"}
+
+::: {.grid}
+| | | Where it stands |
+|---|---|---|
+| **What automation can do** | The steps a grievance goes through before anyone can act on it | Built and measured, four components |
+| **What intelligence makes possible** | What the state can *see* across a million grievances | Barely exists today. The reporting surface is resolved and pending counts |
+| **How you would know** | Whether any of it, ours or anyone's, actually works | The protocol exists. Nothing has been confirmed by an officer |
+:::
+
+::: {.lead}
+Automation makes each case cheaper. Intelligence changes what the state can do at all. The third one is what lets you trust either.
+:::
+
+::: notes
+~90 sec. Three things, and be explicit that they are not the same kind of
+contribution.
+
+Automation is the expected half. It is real, it is measured, and on its own it is
+an efficiency story: the same work, done faster and more consistently.
 
 Intelligence is the half nobody has asked for, because nobody knew it was
 available. A million grievances is a continuous, self-reported, geocoded record
 of what is going wrong across the state, and the system currently uses it to
-count how many are closed. That is the part of this talk worth staying for.
+count how many are closed.
+
+The third is the one that follows from the previous slide, and it is the one to
+land hardest. Everything in the first two columns will eventually be built by
+somebody. The question of whether it works is separate, it is permanent, and it
+needs an answer that does not come from whoever built it.
 
 Do not give any numbers yet. The next twenty minutes are numbers.
 :::
@@ -134,7 +190,7 @@ appendix, and not left for someone to find later.
 
 ---
 
-## Part 1 · Processing {.part data-menu-title="Part 1 · Processing"}
+## Part 1 · What automation can do {.part data-menu-title="Part 1 · Automation"}
 
 ::: {.scorecard}
 ::: {.sq}
@@ -148,7 +204,7 @@ A grievance goes wherever cases like it went before.
 :::
 
 ::: {.add}
-[What we add]{.sc-h}
+[What is achievable]{.sc-h}
 
 Four components, each with a time and a quality number against it.
 
@@ -160,7 +216,8 @@ Every one of them advisory: nothing blocks a filing, nothing assigns itself.
 [pipeline]{.now} [actionability]{.now} [dedup]{.now} [routing]{.now} [issues]{.off} [people]{.off}
 :::
 
-Four components, each on the same two axes: **time** and **performance**.
+Four components on the same two axes, **time** and **performance**. Then how you
+would check any of it.
 
 ::: notes
 ~40 sec. Signpost the structure and then hold to it rigidly: four components,
@@ -174,6 +231,11 @@ the time you reach routing.
 Say now that all four are advisory. It defuses the automation question before it
 is asked, and it is true: a flag never blocks a filing, a category never assigns
 itself, a route is a suggestion.
+
+Frame the whole part as a demonstration of what is achievable rather than a
+product tour, and promise the three slides at the end of it: how we measured, what
+surprised us, and how to think about open versus bought. Those are the ones that
+keep their value after the models are replaced.
 :::
 
 ---
@@ -453,8 +515,167 @@ component is faster and each has a quality number, and every quality number
 rests on a test we ran on ourselves. That is the honest state of Part 1, and it
 converts directly into the first ask.
 
-Then hand over: "that is the efficiency half. The other half is the one I think
-is actually worth your time."
+Then set up the next three slides, which are the part of this section worth
+keeping: "those are our numbers. The next three slides are how we got them, what
+surprised us, and how you would think about buying any of this — and those
+outlive whatever models anyone ends up running."
+:::
+
+---
+
+## How you would check any of this {.add-slide data-menu-title="The measurement"}
+
+::: {.lead}
+The models will be replaced. The way you check them does not have to be.
+:::
+
+::: {.grid .prose-first}
+| Ask of any system, including ours | Why it matters |
+|---|---|
+| **How many cases was it tested on?** | 57 and 3,160 are different kinds of evidence, and both get called "tested" |
+| **Which cases were held back and never looked at?** | A score on cases used to build the thing is not a score |
+| **Were the held-back cases from a later period, or picked at random?** | Random picking lets the future leak into the past |
+| **Could the same complaint sit on both sides?** | Grievances repeat. If a repeat is in both, the system is being marked on cases it has already seen |
+| **How wide is the uncertainty?** | A number without a range hides how little it may rest on |
+| **What result would have made you say it is not ready?** | If there is no such result, nothing was ever at risk |
+
+:::
+
+*Our own answer to the last one: none of what you have just seen is ready. We say so on every slide.* [measured]{.chip .chip-measured}
+
+::: notes
+~2 min, and this is the most portable slide in the deck. Slow down.
+
+Frame it as the thing we can give that a supplier structurally cannot. We built
+these components, and we also built the test that could have failed them. Anyone
+selling a system has a reason not to design that test carefully. We do not.
+
+Walk the six questions as questions, not as our methodology. The officer should
+leave able to use this list in a meeting we are not in. That is the entire point
+of the slide.
+
+The third and fourth are the ones that actually catch people, and they are worth
+a sentence each. Splitting cases at random rather than by date lets a system be
+tested on the same period it learned from, which flatters it. And because the
+same grievance genuinely does get filed more than once, an unsplit repeat means
+the system is graded on an answer it has already been given.
+
+Then our own answer, and do not soften it: nothing here is release-eligible, we
+have said so on every slide, and the last question is the one we would want asked
+of us.
+
+If anyone wants the technical version afterwards: chronological splits January to
+June, July to September, October to December; exact normalised text grouped into
+one split so repetitions cannot leak; Wilson intervals throughout; and the 2024
+test was viewed while improving the harness, which is why we call it
+developmental held-out evidence rather than a release gate.
+:::
+
+---
+
+## The expensive option is not automatically the better one {.add-slide data-menu-title="What surprised us"}
+
+::: {.grid .prose-first}
+| Flagging complaints that need clarification | Large multilingual AI model | Simple word-counting method |
+|---|---|---|
+| **Cases needing clarification, caught** | 9 of 13 | **13 of 13** |
+| **Overall accuracy** | 86% | **95%** |
+:::
+
+On 57 cases. The method now doing the work in our categoriser is also the simple
+one. [measured]{.chip .chip-measured}
+
+::: {.lead}
+We are not saying simple always wins. We are saying nobody can tell you which wins on Odisha's grievances without testing both on Odisha's grievances.
+:::
+
+::: notes
+~2 min. Short slide, disproportionate value, and the one most likely to be quoted
+back to you later.
+
+Tell it as a story about being wrong. We expected the large multilingual model to
+win, because that is what everyone expects. It lost, clearly and repeatedly, on
+two separate tasks. The thing now suggesting categories is a method that
+essentially counts words and weighs them.
+
+Then the transferable point, which is the reason the slide exists. When a
+proposal arrives built on a large model, the size of the model is not evidence
+that it will work here. Odia, administrative vocabulary, short and messy text,
+and a category list specific to this state are all things that make general
+capability a poor predictor of local performance. The only thing that settles it
+is a test on your own records, which is the previous slide.
+
+Careful with the denominator and say it before anyone asks: 57 cases. It is a
+small test. It is enough to say the expensive option did not automatically win;
+it is not enough to say the simple one is better in general, and we are not
+saying that.
+
+Model names if anyone asks, and only if: the large model was MuRIL, the simple
+one TF-IDF, and the categoriser is a word-and-character hashing SGD. None of that
+belongs on the slide.
+:::
+
+---
+
+## Open, or bought {.add-slide data-menu-title="Open vs bought"}
+
+::: {.grid .prose-first}
+| | Running it yourself | Buying a hosted service |
+|---|---|---|
+| **Cost** | Fixed. Hardware you already own | Per call. Grows with adoption, and adoption is the goal |
+| **Citizen data** | Never leaves the state's control | Leaves for processing, under whatever the contract says |
+| **Capability today** | Good enough for most of the pipeline | Likely better on Odia and handwriting — we have not proven it either way [open]{.chip .chip-open} |
+| **Reproducibility** | Pinned by checksum. This year's result repeats next year | The model can change behind the same name, without notice |
+| **Switching** | Replace a component | Re-procure |
+| **Can it be adapted to Odisha at all?** | Yes, on the state's own records | Often no. Many offerings are a fixed general model behind a prompt |
+:::
+
+::: {.asks}
+[Ask in this order]{.asks-h}
+
+**1.** Can it be adapted to our categories, our languages, our routing — at all?
+
+**2.** If yes, who owns what our officers' corrections produce?
+
+**3.** If no, what is the plan when it is wrong here in particular?
+:::
+
+*Not a recommendation. This is how to decide, not what to decide.* [open]{.chip .chip-open}
+
+::: notes
+~3 min. Present the table as a decision aid, not a position, and say that out
+loud at the start. If pushed for a recommendation, the honest answer is that it
+depends on the workload and that this table is how to decide.
+
+Spend your time on the last row, because it is the one that is usually got
+backwards. The instinctive question is "who owns the learning if the system
+improves from our officers' corrections". That is a real contract question and it
+should be settled before procurement rather than after — the improvement your
+officers generate is either an asset of the state or an asset of the supplier,
+and nobody negotiates that well afterwards.
+
+But it is the second question, not the first. Ask first whether any adaptation is
+possible at all. A great many offerings resell a general-purpose model that the
+supplier cannot retrain on your data — what is on sale is a fixed model behind a
+carefully written prompt. If that is what it is, "it will learn from your
+officers" is not a feature that can be delivered, and the right question becomes
+what happens when it is systematically wrong in a way that is specific to Odisha,
+because nothing in the arrangement will fix that.
+
+So, three questions in order: can it be adapted to our categories, our languages
+and our routing at all; if yes, who owns what our officers' corrections produce;
+if no, what is the plan when it is wrong here in particular.
+
+On reproducibility, give the concrete version: a hosted model can be updated
+behind a stable name, so an acceptance test passed in March may not describe what
+is running in September. The mitigation is not to avoid hosted services, it is to
+record what answered every call and re-run the test on a schedule — which is a
+job, and it is one of the jobs the cell at the end of this talk would do.
+
+Sarvam belongs here if it comes up: hosted, authorised under an existing
+government MoU, and our planned route for Odia and handwriting. That is a
+deliberate exception made with approval, not an endorsement, and we have not
+proven it is better.
 :::
 
 ---

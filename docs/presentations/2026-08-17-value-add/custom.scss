@@ -662,3 +662,52 @@ $presentation-heading-font-weight: 600;
   font-weight: 700;
   padding-top: 0.55em;
 }
+
+/*-- Tables whose first column is prose, not a label ----------------------
+    `.grid` and `.compare` treat column one as an axis label: uppercase, letter
+    spaced and `white-space: nowrap`, which is right for "TIME" and "PERFORMANCE"
+    and wrong for a full question. Without this the long cells refuse to wrap,
+    run under column two and collide with it.
+
+    Add `.prose-first` beside `.grid` when column one carries sentences.        */
+.reveal .prose-first table td:first-child {
+  font-family: inherit;
+  font-size: 1em;
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: normal;
+  font-weight: 600;
+}
+.reveal .prose-first table td:first-child,
+.reveal .prose-first table th:first-child { width: 38%; }
+
+/*-- An ordered "ask this" block ------------------------------------------
+    Three questions in sequence, where the order is the content. Used on the
+    open-versus-bought slide, where the instinctive first question (who owns the
+    learning) is actually the second.                                        */
+.reveal .asks {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5em 1.1em;
+  max-width: 96%;
+  margin: 0.7em auto 0;
+  padding: 0.6em 0.9em;
+  font-size: 0.5em;
+  text-align: left;
+  border-left: 4px solid #8B1524;
+  background: rgba(139, 21, 36, 0.06);
+}
+.reveal .asks p { margin: 0; flex: 1 1 28%; color: #141413; }
+.reveal .asks p strong { color: #8B1524; }
+// Quarto wraps `[Ask in this order]{.asks-h}` in a paragraph, so the flex child
+// is the <p> and not the span -- sizing the span does nothing. Claim the row on
+// the paragraph.
+.reveal .asks p:first-child { flex: 0 0 100%; }
+.reveal .asks-h {
+  font-family: "Inter", sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 0.8em;
+  color: #8B1524;
+}

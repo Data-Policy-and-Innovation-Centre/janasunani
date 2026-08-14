@@ -718,7 +718,13 @@ deck-list:
 # needed only when someone is working on a deck, and it drags a browser with it.
 # `uv run --with` installs it for the one command. First use also needs
 #   uv run --with playwright playwright install chromium
-DECK_SHOT = uv run --with playwright python scripts/screenshot_deck.py $(call sh_quote,$(DECK_DIR))
+#
+# --no-project is load-bearing, not tidiness. screenshot_deck.py imports nothing
+# but the standard library and playwright, so resolving the project environment
+# buys nothing and costs everything: it drags the whole ML dependency tree,
+# including a spacy model fetched from a GitHub release, and a checking tool that
+# fails because a model download timed out is a checking tool nobody runs.
+DECK_SHOT = uv run --no-project --with playwright python scripts/screenshot_deck.py $(call sh_quote,$(DECK_DIR))
 
 deck-check:
 	@$(DECK_SHOT) --check
