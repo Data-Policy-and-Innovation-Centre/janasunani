@@ -216,8 +216,10 @@ def test_evaluate_dry_run_digitise_arm(tmp_path: Path):
     assert progress["complete"] is True
     assert progress["pages_processed"] == 2
     assert progress["pages_scored"] == 2
+    assert "partial_scorecard" not in progress
     assert progress["privacy"]["contains_page_or_ticket_ids"] is False
     assert progress["privacy"]["contains_text_or_provider_payloads"] is False
+    assert progress["privacy"]["contains_category_or_demographic_breakdowns"] is False
     assert progress_path.stat().st_mode & 0o777 == 0o600
     # markdown mentions arm/slice
     md = md_path.read_text()
