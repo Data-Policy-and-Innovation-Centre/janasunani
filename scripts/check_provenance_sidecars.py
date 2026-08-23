@@ -154,12 +154,25 @@ def _check_counter(key: str, value: Any) -> list[str]:
     return problems
 
 
-def _check_string_list(key: str, value: Any, *, limit: int = MAX_STRING) -> list[str]:
+def _check_allowlisted_list(
+    key: str,
+    value: Any,
+    *,
+    allowed: set[str],
+    require_all: bool = True,
+) -> list[str]:
+    """Validate a metadata list without admitting arbitrary short text."""
     if not isinstance(value, list):
         return [f"'{key}' must be a list"]
     problems: list[str] = []
     for position, item in enumerate(value):
-        problems += _check_scalar(f"{key}[{position}]", item, limit)
+        if not isinstance(item, str) or item not in allowed:
+            problems.append(f"{key} entry {position} is not allowlisted; value withheld")
+    hashable_items = [item for item in value if isinstance(item, str)]
+    if len(hashable_items) != len(set(hashable_items)):
+        problems.append(f"{key} must not contain duplicates")
+    if require_all and set(hashable_items) != allowed:
+        problems.append(f"{key} must contain the complete allowlisted metadata set")
     return problems
 
 
@@ -211,8 +224,28 @@ def _check_actionability_sample(payload: dict[str, Any]) -> list[str]:
     records = payload.get("records")
     if isinstance(records, bool) or not isinstance(records, int) or records < 0:
         problems.append("actionability records must be a nonnegative integer")
-    problems += _check_string_list("forbidden_fields", payload.get("forbidden_fields"))
-    problems += _check_string_list("selected_fields", payload.get("selected_fields"))
+    problems += _check_allowlisted_list(
+        "forbidden_fields",
+        payload.get("forbidden_fields"),
+        allowed={
+            "ticket_no",
+            "raw grievance",
+            "officer remark",
+            "petitioner identifiers",
+            "office",
+        },
+    )
+    problems += _check_allowlisted_list(
+        "selected_fields",
+        payload.get("selected_fields"),
+        allowed={
+            "salted item/group id",
+            "grievance_redacted",
+            "created_year",
+            "split",
+            "opaque sampling stratum",
+        },
+    )
     sample_design = payload.get("sample_design")
     sample_design_keys = {
         "sampling_scheme",
@@ -396,7 +429,17 @@ def _check_summary_development(payload: dict[str, Any]) -> list[str]:
     problems += _check_bool("publication_ready", payload["publication_ready"])
     if payload["publication_ready"] is not False:
         problems.append("summary development evidence cannot be publication-ready")
-    problems += _check_string_list("limitations", payload["limitations"], limit=MAX_NOTE)
+    problems += _check_allowlisted_list(
+        "limitations",
+        payload["limitations"],
+        allowed={
+            "typed redacted inputs only",
+            "language labels not adjudicated",
+            "single frontier-agent judge",
+            "development test viewed",
+            "edit time is adjudicator time, not officer time saved",
+        },
+    )
 
     adjudication = payload["adjudication"]
     adjudication_keys = {
@@ -582,8 +625,18 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
     }
     problems += _check_exact_keys("actionability frontier deterministic_stages", stages, allowed_stages)
     if isinstance(stages, dict):
-        for position, outputs in enumerate(stages.values()):
-            problems += _check_string_list(f"deterministic_stages[{position}]", outputs)
+        expected_outputs = {
+            "actionability-adjudication-prepare": {"consensus.jsonl"},
+            "actionability-adjudication-finalize": {"gold.jsonl"},
+            "actionability-local-candidate-benchmark": {"scorecard.json"},
+        }
+        for position, (stage, outputs) in enumerate(stages.items()):
+            if stage in expected_outputs:
+                problems += _check_allowlisted_list(
+                    f"deterministic_stages[{position}]",
+                    outputs,
+                    allowed=expected_outputs[stage],
+                )
 
     canonical = payload["canonical_reproducible_gold"]
     canonical_keys = {"excluded_uncertain_resolver_rows", "label_counts", "policy", "records", "sha256"}
@@ -621,7 +674,11 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
         for position, digest in enumerate(reports.values()):
             problems += _check_sha256(f"preserved_reports[{position}]", digest)
 
-    problems += _check_string_list("limitations", payload["limitations"], limit=MAX_NOTE)
+    problems += _check_allowlisted_list(
+        "limitations",
+        payload["limitations"],
+        allowed={"No officer-confirmed labels."},
+    )
     return problems
 
 
@@ -679,7 +736,16 @@ def _check_sarvam_snapshots(payload: dict[str, Any]) -> list[str]:
                 problems += _check_scalar(
                     f"artifacts[{artifact_position}][{field_position}]", value, MAX_STRING
                 )
-    problems += _check_string_list("limitations", payload.get("limitations"))
+    problems += _check_allowlisted_list(
+        "limitations",
+        payload.get("limitations"),
+        allowed={
+            "No hand transcription exists.",
+            "No hand transcription; divergence is not OCR accuracy.",
+            "No hand transcription; divergence and character length do not establish quality.",
+        },
+        require_all=False,
+    )
     return problems
 
 

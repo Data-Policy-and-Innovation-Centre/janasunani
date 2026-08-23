@@ -85,7 +85,13 @@ def test_actionability_sample_sidecar_is_metadata_only():
         "schema_version": "actionability-adjudication-sample-v1",
         "dataset_fingerprint": "sha256:" + "a" * 64,
         "counts": {"train/s1": 5, "validation/s5": 40, "test/s3": 5},
-        "forbidden_fields": ["ticket_no", "raw grievance"],
+        "forbidden_fields": [
+            "ticket_no",
+            "raw grievance",
+            "officer remark",
+            "petitioner identifiers",
+            "office",
+        ],
         "parameters": {
             "adjudicator_blinding": "opaque strata",
             "per_weak_stratum_split": 5,
@@ -102,9 +108,47 @@ def test_actionability_sample_sidecar_is_metadata_only():
             "intended_use": "development model comparison and error analysis",
         },
         "records": 180,
-        "selected_fields": ["salted item id", "grievance_redacted"],
+        "selected_fields": [
+            "salted item/group id",
+            "grievance_redacted",
+            "created_year",
+            "split",
+            "opaque sampling stratum",
+        ],
     }
     assert check.check_payload(payload) == []
+
+
+@pytest.mark.parametrize("field", ["forbidden_fields", "selected_fields"])
+def test_actionability_sample_rejects_free_text_lists_without_echoing(field):
+    payload = {
+        "schema_version": "actionability-adjudication-sample-v1",
+        "dataset_fingerprint": "sha256:" + "a" * 64,
+        "counts": {"train/s1": 5},
+        "forbidden_fields": [
+            "ticket_no",
+            "raw grievance",
+            "officer remark",
+            "petitioner identifiers",
+            "office",
+        ],
+        "parameters": {},
+        "records": 5,
+        "selected_fields": [
+            "salted item/group id",
+            "grievance_redacted",
+            "created_year",
+            "split",
+            "opaque sampling stratum",
+        ],
+        "sample_design": {},
+    }
+    payload[field] = [CITIZEN_TEXT]
+
+    problems = check.check_payload(payload)
+
+    assert problems
+    assert all(CITIZEN_TEXT not in problem for problem in problems)
 
 
 def _categorization_payload():
@@ -153,7 +197,13 @@ def test_summary_development_sidecar_is_metadata_only():
         "schema_version": "summary-development-provenance/v1",
         "evidence_status": "single-frontier-judge-development-only",
         "publication_ready": False,
-        "limitations": ["No officer validation."],
+        "limitations": [
+            "typed redacted inputs only",
+            "language labels not adjudicated",
+            "single frontier-agent judge",
+            "development test viewed",
+            "edit time is adjudicator time, not officer time saved",
+        ],
         "adjudication": {
             "independent_judges": False,
             "judge_type": "single-frontier-agent-context",
@@ -201,6 +251,29 @@ def test_summary_development_sidecar_is_metadata_only():
         },
     }
     assert check.check_payload(payload) == []
+
+
+def test_summary_sidecar_rejects_free_text_limitations_without_echoing():
+    payload = {
+        "schema_version": "summary-development-provenance/v1",
+        "evidence_status": "single-frontier-judge-development-only",
+        "publication_ready": False,
+        "limitations": [CITIZEN_TEXT],
+        "adjudication": {},
+        "environment": {},
+        "model": {},
+        "selection": {},
+        "source": {},
+    }
+
+    problems = check.check_payload(payload)
+
+    assert problems
+    assert all(CITIZEN_TEXT not in problem for problem in problems)
+
+
+def test_allowlisted_list_rejects_non_string_items_without_crashing():
+    assert check._check_allowlisted_list("metadata", [{}], allowed={"fixed"})
 
 
 @pytest.mark.parametrize(
@@ -285,6 +358,29 @@ def test_actionability_frontier_rejects_unexpected_nested_fields_without_echoing
     assert all(CITIZEN_TEXT not in problem for problem in problems)
 
 
+@pytest.mark.parametrize(
+    "payload_factory",
+    [
+        lambda: {
+            **_frontier_payload(),
+            "limitations": [CITIZEN_TEXT],
+        },
+        lambda: {
+            **_frontier_payload(),
+            "deterministic_stages": {
+                **_frontier_payload()["deterministic_stages"],
+                "actionability-adjudication-prepare": [CITIZEN_TEXT],
+            },
+        },
+    ],
+)
+def test_actionability_frontier_rejects_free_text_lists_without_echoing(payload_factory):
+    problems = check.check_payload(payload_factory())
+
+    assert problems
+    assert all(CITIZEN_TEXT not in problem for problem in problems)
+
+
 def test_sarvam_source_snapshot_sidecar_is_metadata_only():
     payload = {
         "schema_version": "janasunani.sarvam-source-snapshots/v1",
@@ -304,6 +400,31 @@ def test_sarvam_source_snapshot_sidecar_is_metadata_only():
         "limitations": ["No hand transcription exists."],
     }
     assert check.check_payload(payload) == []
+
+
+def test_sarvam_sidecar_rejects_free_text_limitations_without_echoing():
+    payload = {
+        "schema_version": "janasunani.sarvam-source-snapshots/v1",
+        "claim_status": "cached provider evidence; not OCR accuracy",
+        "privacy": {
+            "contains_operational_ticket_and_document_identifiers": True,
+            "contains_provider_response_metadata": True,
+            "git_contains_row_level_bytes": False,
+            "storage": "private DVC remote",
+        },
+        "artifacts": {
+            "validation_5_page_scorecard.json": {
+                "sha256": "a" * 64,
+                "role": "machine-readable aggregate scorecard",
+            }
+        },
+        "limitations": [CITIZEN_TEXT],
+    }
+
+    problems = check.check_payload(payload)
+
+    assert problems
+    assert all(CITIZEN_TEXT not in problem for problem in problems)
 
 
 def test_nested_sidecar_schema_rejects_unexpected_fields():
