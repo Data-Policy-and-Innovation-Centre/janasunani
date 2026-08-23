@@ -343,6 +343,12 @@ def test_identified_real_latency_run_is_publication_ready():
 
     assert payload["publication_ready"] is True
 
+    result["git_sha"] = None
+    assert latency_json_payload(result)["publication_ready"] is False
+    result["git_sha"] = "abc1234"
+    result["benchmark_context"]["host_label"] = "   "
+    assert latency_json_payload(result)["publication_ready"] is False
+
 
 def test_write_latency_json_creates_file(tmp_path):
     result = run_benchmark(variant="standard", n_text=2, n_image=1, repeats=2, discard_warm=True, seed=5)

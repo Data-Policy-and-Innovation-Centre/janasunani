@@ -672,14 +672,18 @@ def latency_json_payload(
         clean = {k: v for k, v in result.items() if k != "_raw"}
         variants_payload[variant] = clean
 
+    def nonblank(value: object) -> bool:
+        return isinstance(value, str) and bool(value.strip())
+
     publication_ready = bool(variants_payload) and all(
         not result.get("is_fake_timing", True)
         and result.get("n_measured", 0) > 0
         and result.get("attempts")
         == result.get("completed_attempts", 0) + result.get("failed_attempts", 0)
         and isinstance(result.get("benchmark_context"), dict)
-        and bool(result["benchmark_context"].get("host_label"))
-        and bool(result["benchmark_context"].get("model_release_id"))
+        and nonblank(result["benchmark_context"].get("host_label"))
+        and nonblank(result["benchmark_context"].get("model_release_id"))
+        and nonblank(result.get("git_sha"))
         for result in variants_payload.values()
     )
 
