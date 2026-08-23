@@ -338,6 +338,24 @@ def test_triage_model_serves_binary_review_without_fabricating_reason(tmp_path, 
     assert result.actionability.objective == "actionable_vs_officer_review"
 
 
+def test_triage_model_resolves_the_configured_models_root(tmp_path, monkeypatch):
+    artifact = tmp_path / "actionability"
+    _write_binary_actionability_artifact(artifact)
+    monkeypatch.delenv("JANASUNANI_ACTIONABILITY_ARTIFACT", raising=False)
+    monkeypatch.delenv("JANASUNANI_MODELS_DIR", raising=False)
+    monkeypatch.delenv("JANASUNANI_RELEASE_MANIFEST", raising=False)
+    monkeypatch.delenv("JANASUNANI_RELEASE_ROOT", raising=False)
+    monkeypatch.setenv(TRIAGE_ENV_VAR, TRIAGE_MODEL)
+
+    provider = triage_provider_from_env(TRIAGE_MODEL, models_dir=tmp_path)
+    name, ok, detail = triage_status(models_dir=tmp_path)
+
+    assert isinstance(provider, ActionabilityTriageProvider)
+    assert name == TRIAGE_MODEL
+    assert ok is True
+    assert "checksummed actionability artifact loaded" in detail
+
+
 def test_actionability_failure_preserves_one_bounded_spam_assessment(monkeypatch):
     class BrokenActionabilityScorer:
         def score(self, text):

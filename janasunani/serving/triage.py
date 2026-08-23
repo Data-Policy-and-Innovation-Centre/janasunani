@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
+from pathlib import Path
 from typing import Optional, Protocol
 
 from loguru import logger
@@ -269,7 +270,12 @@ class ActionabilityTriageProvider:
         return TriageResult(spam=spam, actionability=actionability)
 
 
-def triage_provider_from_env(value: str | None = None) -> TriageProvider:
+def triage_provider_from_env(
+    value: str | None = None,
+    *,
+    models_dir: Path | None = None,
+    verified_artifacts: dict[tuple[Path, str], Path] | None = None,
+) -> TriageProvider:
     """Select a triage provider by environment, never raising.
 
     Unset keeps the shipped bounded scorer. ``off`` disables advisory triage.
@@ -283,7 +289,10 @@ def triage_provider_from_env(value: str | None = None) -> TriageProvider:
         return OffTriageProvider()
     if configured == TRIAGE_MODEL:
         try:
-            scorer = _resolve_learned_scorer()
+            scorer = _resolve_learned_scorer(
+                models_dir=models_dir,
+                verified_artifacts=verified_artifacts,
+            )
         except ScorerArtifactAbsent:
             logger.warning(
                 "{}={} but no learned scorer artifact resolved; using the bounded scorer",
@@ -309,7 +318,11 @@ def triage_provider_from_env(value: str | None = None) -> TriageProvider:
     return UnwiredTriageProvider()
 
 
-def _resolve_learned_scorer():
+def _resolve_learned_scorer(
+    *,
+    models_dir: Path | None = None,
+    verified_artifacts: dict[tuple[Path, str], Path] | None = None,
+):
     """Resolve a trained scorer artifact.
 
     Absence and structural/load failure remain distinct operator states, while
@@ -317,7 +330,11 @@ def _resolve_learned_scorer():
     """
     from janasunani.tracking.artifacts import resolve_artifact
 
-    artifact = resolve_artifact("actionability")
+    artifact = resolve_artifact(
+        "actionability",
+        models_dir=models_dir,
+        verified_artifacts=verified_artifacts,
+    )
     if artifact is None:
         raise ScorerArtifactAbsent("no actionability artifact resolved")
     try:
@@ -330,14 +347,21 @@ def _resolve_learned_scorer():
         ) from exc
 
 
-def triage_status() -> tuple[str, bool, str]:
+def triage_status(
+    *,
+    models_dir: Path | None = None,
+    verified_artifacts: dict[tuple[Path, str], Path] | None = None,
+) -> tuple[str, bool, str]:
     """Report ``(name, ok, detail)`` for preflight without scoring anything."""
     configured = os.environ.get(TRIAGE_ENV_VAR, "").strip().lower() or TRIAGE_BOUNDED
     if configured == TRIAGE_OFF:
         return (TRIAGE_OFF, True, "advisory triage disabled by configuration")
     if configured == TRIAGE_MODEL:
         try:
-            _resolve_learned_scorer()
+            _resolve_learned_scorer(
+                models_dir=models_dir,
+                verified_artifacts=verified_artifacts,
+            )
         except ScorerArtifactAbsent:
             return (
                 TRIAGE_BOUNDED,

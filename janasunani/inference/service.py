@@ -708,7 +708,11 @@ def _router_check() -> DependencyCheck:
     return DependencyCheck(f"router ({name})", ok, detail, required=False)
 
 
-def _triage_check() -> DependencyCheck:
+def _triage_check(
+    root: Path,
+    *,
+    verified_artifacts: dict[tuple[Path, str], Path] | None = None,
+) -> DependencyCheck:
     """Which spam scorer is live, and whether it is learned or heuristic.
 
     Reported so the distinction cannot be lost between the code and the
@@ -717,7 +721,10 @@ def _triage_check() -> DependencyCheck:
     advisory output. Neither may block a submission.
     """
     try:
-        name, ok, detail = triage_status()
+        name, ok, detail = triage_status(
+            models_dir=root,
+            verified_artifacts=verified_artifacts,
+        )
     except Exception as exc:  # pragma: no cover - defensive; never raise
         return DependencyCheck("triage", False, f"unavailable: {exc}", required=False)
     return DependencyCheck(f"triage ({name})", ok, detail, required=False)
@@ -980,7 +987,9 @@ def preflight(models_dir: str | Path | None = None) -> list[DependencyCheck]:
     checks.append(_routing_mappings_check())
     checks.append(_model_release_check(verified_artifacts=verified_artifacts))
     checks.append(_router_check())
-    checks.append(_triage_check())
+    checks.append(
+        _triage_check(root, verified_artifacts=verified_artifacts)
+    )
     checks.append(_lake_check())
     checks.append(_oltp_check())
     return checks
@@ -1069,7 +1078,12 @@ def build_processor(
         is_english_compatible=_is_english,
         detect_language=_detect_language,
         triage_provider=(
-            triage_provider if triage_provider is not None else triage_provider_from_env()
+            triage_provider
+            if triage_provider is not None
+            else triage_provider_from_env(
+                models_dir=root,
+                verified_artifacts=verified_artifacts,
+            )
         ),
         timing_sink=timing_sink,
     )
