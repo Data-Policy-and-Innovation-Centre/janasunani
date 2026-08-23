@@ -70,20 +70,28 @@ def _route_cell_sql(*, use_subcategory: bool) -> str:
         if use_subcategory
         else "'' AS subcategory,"
     )
-    group_subcategory = ", subcategory" if use_subcategory else ""
     return f"""
+WITH normalized AS (
+    SELECT
+        created_year,
+        trim(category) AS category,
+        {subcategory}
+        coalesce(nullif(trim(district), ''), '') AS district,
+        trim(dept) AS department
+    FROM read_parquet(?)
+    WHERE created_year IS NOT NULL
+      AND category IS NOT NULL AND trim(category) <> ''
+      AND dept IS NOT NULL AND trim(dept) <> ''
+)
 SELECT
     created_year,
-    trim(category) AS category,
-    {subcategory}
-    coalesce(nullif(trim(district), ''), '') AS district,
-    trim(dept) AS department,
+    category,
+    subcategory,
+    district,
+    department,
     count(*)::BIGINT AS cases
-FROM read_parquet(?)
-WHERE created_year IS NOT NULL
-  AND category IS NOT NULL AND trim(category) <> ''
-  AND dept IS NOT NULL AND trim(dept) <> ''
-GROUP BY created_year, category, district, dept{group_subcategory}
+FROM normalized
+GROUP BY created_year, category, subcategory, district, department
 ORDER BY created_year, category, subcategory, district, department
 """.strip()
 

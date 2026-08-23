@@ -376,6 +376,34 @@ def test_triage_status_validates_without_deserializing_model_weights(
     assert ok is True
 
 
+@pytest.mark.parametrize(
+    ("field", "invalid"),
+    [
+        ("method", ""),
+        ("review_threshold", "0.7"),
+        ("review_threshold", -0.1),
+        ("review_threshold", 1.1),
+    ],
+)
+def test_triage_status_rejects_invalid_scorer_metadata(
+    tmp_path, monkeypatch, field, invalid
+):
+    artifact = tmp_path / "actionability"
+    _write_binary_actionability_artifact(artifact)
+    manifest_path = artifact / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest[field] = invalid
+    manifest_path.write_text(json.dumps(manifest))
+    monkeypatch.setenv(TRIAGE_ENV_VAR, TRIAGE_MODEL)
+    monkeypatch.setenv("JANASUNANI_ACTIONABILITY_ARTIFACT", str(artifact))
+
+    name, ok, detail = triage_status()
+
+    assert name == TRIAGE_BOUNDED
+    assert ok is False
+    assert "could not be loaded or validated" in detail
+
+
 def test_actionability_failure_preserves_one_bounded_spam_assessment(monkeypatch):
     class BrokenActionabilityScorer:
         def score(self, text):

@@ -257,6 +257,36 @@ def test_cli_generate_then_check(tmp_path: Path):
     assert rc == 0
 
 
+def test_cli_can_disable_ambient_optional_scorecards(tmp_path: Path, monkeypatch):
+    ambient_spam = tmp_path / "ambient-spam.json"
+    ambient_spam.write_text(
+        json.dumps(
+            {
+                "slice": "ambient",
+                "prevalence": 1.0,
+                "total": 1,
+                "flagged": 1,
+            }
+        )
+    )
+    monkeypatch.setattr(benchmark_report, "DEFAULT_SPAM_PATH", ambient_spam)
+    out = tmp_path / "out"
+
+    assert (
+        benchmark_report.main(
+            ["--out", str(out), "--no-auto-discovery"]
+        )
+        == 0
+    )
+
+    report = json.loads((out / "table2.json").read_text())
+    spam_row = next(
+        row for row in report["rows"] if row["stage"] == "Spam / low-signal"
+    )
+    assert spam_row["status"] == benchmark_report.NOT_MEASURED
+    assert spam_row["our_measurement"] == benchmark_report.NOT_MEASURED
+
+
 def test_cli_check_detects_corrupt_json(tmp_path: Path):
     benchmark_report.main(["--out", str(tmp_path)])
     p = tmp_path / "table2.json"

@@ -385,6 +385,7 @@ stages:
     cmd: >-
       uv run --frozen janasunani-evaluate-benchmark
       --out outputs/benchmark
+      --no-auto-discovery
       --latency outputs/benchmark/latency.json
       --pii outputs/evaluation/pii_release.json
       --sarvam docs/evidence/sarvam_cached_benchmark.json
@@ -395,6 +396,7 @@ stages:
       - janasunani/evaluation/benchmark_report.py
       - janasunani/evaluation/dsi_baselines.py
       - janasunani/evaluation/pricing.py
+      - janasunani/config.py
       - pyproject.toml
       - uv.lock
     outs:

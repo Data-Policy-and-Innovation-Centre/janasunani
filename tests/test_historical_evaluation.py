@@ -75,6 +75,37 @@ def test_loader_aggregates_cases_and_holds_out_years(tmp_path):
     }
 
 
+def test_loader_groups_on_normalized_route_dimensions(tmp_path):
+    target = tmp_path / "complaints.parquet"
+    pl.DataFrame(
+        [
+            {
+                "created_year": 2025,
+                "category": "Housing",
+                "subcategory": "PMAY",
+                "district": "Sambalpur",
+                "dept": "Housing Department",
+            },
+            {
+                "created_year": 2025,
+                "category": " Housing ",
+                "subcategory": " PMAY ",
+                "district": " Sambalpur ",
+                "dept": " Housing Department ",
+            },
+        ]
+    ).write_parquet(target)
+
+    data = load_route_cells(target, use_subcategory=True)
+
+    assert len(data.records) == 1
+    assert data.records[0].weight == 2
+    assert data.records[0].category == "Housing"
+    assert data.records[0].subcategory == "PMAY"
+    assert data.records[0].district == "Sambalpur"
+    assert data.records[0].department == "Housing Department"
+
+
 def test_informative_scope_excludes_general_but_reports_it(tmp_path):
     data = load_route_cells(
         complaints(tmp_path), informative_categories_only=True

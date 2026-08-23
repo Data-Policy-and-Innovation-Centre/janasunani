@@ -126,6 +126,18 @@ def _validate_probabilities(
         raise ValueError("probabilities must sum to one")
 
 
+def _validate_scorer_metadata(method: object, review_threshold: object) -> None:
+    if not isinstance(method, str) or not method.strip():
+        raise ValueError("method must be non-empty")
+    if (
+        isinstance(review_threshold, bool)
+        or not isinstance(review_threshold, (int, float))
+        or not math.isfinite(review_threshold)
+        or not 0.0 <= review_threshold <= 1.0
+    ):
+        raise ValueError("review_threshold must be in [0, 1]")
+
+
 class LocalActionabilityScorer:
     """Validate and expose a fitted local classifier as an advisory scorer.
 
@@ -142,15 +154,7 @@ class LocalActionabilityScorer:
         method: str,
         review_threshold: float,
     ) -> None:
-        if not isinstance(method, str) or not method.strip():
-            raise ValueError("method must be non-empty")
-        if (
-            isinstance(review_threshold, bool)
-            or not isinstance(review_threshold, (int, float))
-            or not math.isfinite(review_threshold)
-            or not 0.0 <= review_threshold <= 1.0
-        ):
-            raise ValueError("review_threshold must be in [0, 1]")
+        _validate_scorer_metadata(method, review_threshold)
         classes = tuple(str(label) for label in classifier.classes_)
         if len(classes) != len(set(classes)) or set(classes) != set(ACTIONABILITY_LABELS):
             raise ValueError("classifier classes must exactly match the taxonomy")
@@ -214,15 +218,7 @@ class LocalBinaryReviewScorer:
         method: str,
         review_threshold: float,
     ) -> None:
-        if not isinstance(method, str) or not method.strip():
-            raise ValueError("method must be non-empty")
-        if (
-            isinstance(review_threshold, bool)
-            or not isinstance(review_threshold, (int, float))
-            or not math.isfinite(review_threshold)
-            or not 0.0 <= review_threshold <= 1.0
-        ):
-            raise ValueError("review_threshold must be in [0, 1]")
+        _validate_scorer_metadata(method, review_threshold)
         classes = tuple(str(label) for label in classifier.classes_)
         if len(classes) != len(set(classes)) or set(classes) != set(
             BINARY_REVIEW_LABELS
@@ -321,6 +317,7 @@ def validate_actionability_artifact(path: Path) -> tuple[dict, Path]:
             raise ValueError("binary actionability objective mismatch")
         if manifest["labels"] != list(BINARY_REVIEW_LABELS):
             raise ValueError("binary actionability labels do not match the objective")
+    _validate_scorer_metadata(manifest["method"], manifest["review_threshold"])
     model_file = manifest["model_file"]
     if (
         not isinstance(model_file, str)

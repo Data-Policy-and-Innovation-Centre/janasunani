@@ -558,7 +558,7 @@ stages:
       size: 315567
   benchmark-table:
     cmd: uv run --frozen janasunani-evaluate-benchmark --out outputs/benchmark
-      --latency outputs/benchmark/latency.json --pii
+      --no-auto-discovery --latency outputs/benchmark/latency.json --pii
       outputs/evaluation/pii_release.json --sarvam
       docs/evidence/sarvam_cached_benchmark.json
     deps:
@@ -566,10 +566,14 @@ stages:
       hash: md5
       md5: b19e45a4bfd16cfdb6f2f3a831617cf2
       size: 3730
+    - path: janasunani/config.py
+      hash: md5
+      md5: 5dbca406ad1a8351276b854c3d2d87ae
+      size: 8522
     - path: janasunani/evaluation/benchmark_report.py
       hash: md5
-      md5: f23a45eb57f18d39e537a66adf221219
-      size: 44836
+      md5: e55a77ff89089ef0a6a699af75369de9
+      size: 45910
     - path: janasunani/evaluation/dsi_baselines.py
       hash: md5
       md5: 48267bd7229786ee9da9933b930bce4e
@@ -597,11 +601,11 @@ stages:
     outs:
     - path: outputs/benchmark/table2.json
       hash: md5
-      md5: 31b37b30e06417bb7c6063ffa6ce58d0
-      size: 47360
+      md5: c5efe1047b6ce5b324c1e13533d5c945
+      size: 47494
     - path: outputs/benchmark/table2.md
       hash: md5
-      md5: 9dc61482d0ca75b60db7e999dde43b09
+      md5: 1076bef2263589384e170f5f9680bc14
       size: 9564
   categorization-historical-benchmark:
     cmd: uv run --frozen --extra pipeline-core python -m
