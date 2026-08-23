@@ -55,15 +55,21 @@
     },
     "routing_incidence": {
       "registry_name": "janasunani-routing-incidence",
-      "alias": "production",
+      "alias": "candidate",
       "provider": "local_empirical_bayes",
-      "trust_tier": "local",
+      "trust_tier": "experimental",
       "artifact_sha256": "replace-with-approved-sha256",
       "parameters": {
         "alpha": 100.0,
         "history_years": 1,
         "use_subcategory": false,
-        "outcome_optimized": false
+        "artifact_schema": "routing-incidence-v3",
+        "objective": "recorded_department_snapshot_agreement",
+        "label_semantics": "unconfirmed_recorded_department_snapshot",
+        "source_owner_confirmation": "unavailable",
+        "correct_authority_adjudicated": false,
+        "outcome_optimized": false,
+        "serving_approved": false
       },
       "input_schema_version": "category-district/v1",
       "output_schema_version": "routing-result/v1",
