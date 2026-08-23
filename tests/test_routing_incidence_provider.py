@@ -158,6 +158,35 @@ def test_invalid_incidence_artifact_is_not_served(tmp_path, monkeypatch):
     assert "corrupt, or invalid" in detail
 
 
+def test_all_abstaining_incidence_artifact_is_not_reported_healthy(
+    tmp_path, monkeypatch
+):
+    rows = [
+        RouteRecord(
+            item_id=f"ambiguous-{index}",
+            group_id=f"ambiguous-{index}",
+            observed_on=date(2024, 1, 1),
+            category="Housing",
+            district="Sambalpur",
+            department=department,
+            split="train",
+        )
+        for index, department in enumerate(("A", "B", "C", "D"))
+    ]
+    artifact = save_incidence_router(
+        IncidenceRouter(alpha=10.0, serving_min_support=3).fit(rows),
+        tmp_path / "ambiguous-status",
+    )
+    monkeypatch.setenv(ROUTER_ENV_VAR, ROUTER_INCIDENCE)
+    monkeypatch.setenv("JANASUNANI_ROUTING_INCIDENCE_ARTIFACT", str(artifact))
+
+    name, ok, detail = router_status()
+
+    assert name == ROUTER_DEFAULT
+    assert ok is False
+    assert "no aggregate that clears its serving gates" in detail
+
+
 def test_fallback_failure_is_not_retried_or_misattributed():
     class AbstainingRouter:
         def predict_with_evidence(self, **_kwargs):

@@ -336,6 +336,41 @@ class IncidenceRouter:
             width=width,
         )
 
+    def has_eligible_prediction(self) -> bool:
+        """Return whether any serialized cell can answer a live lookup.
+
+        Preflight must exercise ``predict_with_evidence`` itself instead of
+        reimplementing its support, concentration, and margin gates.  Walking
+        the artifact's finite key tables is acceptable at startup and keeps
+        the health check aligned with the serving path as those gates evolve.
+        """
+
+        candidates: set[tuple[str, str | None, str | None]] = {
+            (category, None, None) for category in self._category
+        }
+        candidates.update(
+            (category, district, None)
+            for category, district in self._category_district
+        )
+        if self.use_subcategory:
+            candidates.update(
+                (category, None, subcategory)
+                for category, subcategory in self._subcategory
+            )
+            candidates.update(
+                (category, district, subcategory)
+                for category, subcategory, district in self._full
+            )
+        return any(
+            self.predict_with_evidence(
+                category=category,
+                district=district,
+                subcategory=subcategory,
+            )
+            is not None
+            for category, district, subcategory in candidates
+        )
+
 
 def _canonical_json_bytes(payload: Mapping[str, object]) -> bytes:
     return json.dumps(

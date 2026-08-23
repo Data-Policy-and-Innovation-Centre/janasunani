@@ -255,12 +255,20 @@ def router_status() -> tuple[str, bool, str]:
                     "incidence router requested but no local routing_incidence "
                     "artifact resolved; using the crosswalk/rules fallback",
                 )
-            if load_incidence_router(artifact) is None:
+            router = load_incidence_router(artifact)
+            if router is None:
                 return (
                     ROUTER_DEFAULT,
                     False,
                     "incidence router artifact is unreadable, corrupt, or invalid; "
                     "using the crosswalk/rules fallback",
+                )
+            if not router.has_eligible_prediction():
+                return (
+                    ROUTER_DEFAULT,
+                    False,
+                    "incidence router artifact has no aggregate that clears its "
+                    "serving gates; using the crosswalk/rules fallback",
                 )
             return (
                 ROUTER_INCIDENCE,
