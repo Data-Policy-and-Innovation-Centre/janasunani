@@ -54,13 +54,17 @@ def test_cached_import_logs_aggregate_without_provider_call(tmp_path, monkeypatc
     logged = calls[0]
     assert logged["pipeline_variant"] == "sarvam_both"
     assert logged["sample_n"] == 56
-    assert logged["cost_per_doc_rupees"] == pytest.approx(95 / 65)
+    assert "cost_per_doc_rupees" not in logged
+    assert logged["extra_metrics"]["cost_per_attempted_page_rupees"] == pytest.approx(
+        95 / 65
+    )
     assert logged["extra_metrics"]["paired_page_coverage"] == pytest.approx(56 / 65)
     assert logged["extra_metrics"]["provider_job_failure_rate"] == pytest.approx(7 / 127)
     assert logged["extra_metrics"]["cost_total_rupees"] == 95.0
     assert logged["extra_params"]["cost_evidence"] == (
         "estimated_list_price_accepted_jobs"
     )
+    assert logged["extra_params"]["cost_denominator"] == "attempted_page"
     assert logged["extra_params"]["quality_claim_permitted"] == "false"
     assert logged["artifacts"]
 
@@ -79,6 +83,29 @@ def test_estimated_cost_never_implies_actual_billing(tmp_path, monkeypatch):
 
     sarvam_cached.import_evidence(path)
 
+    assert calls[0]["extra_params"]["actual_billing_available"] == "false"
+
+
+def test_recorded_list_price_never_implies_actual_billing(tmp_path, monkeypatch):
+    path = _evidence(tmp_path)
+    payload = json.loads(path.read_text())
+    run = payload["runs"][0]
+    run.pop("estimated_list_price_accepted_jobs_rupees")
+    run["recorded_cost_rupees"] = 95.0
+    run["cost_basis"] = "list-price calculation; actual billing unavailable"
+    path.write_text(json.dumps(payload))
+    calls = []
+    monkeypatch.setattr(
+        sarvam_cached,
+        "log_benchmark_run",
+        lambda **kwargs: calls.append(kwargs) or "run",
+    )
+
+    sarvam_cached.import_evidence(path)
+
+    assert calls[0]["extra_params"]["cost_evidence"] == (
+        "recorded_non_billing_amount"
+    )
     assert calls[0]["extra_params"]["actual_billing_available"] == "false"
 
 

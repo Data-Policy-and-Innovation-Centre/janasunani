@@ -279,7 +279,11 @@ def import_evidence(
             "provider_job_failure_rate": failures / accepted if accepted else 0.0,
         }
         cost = run.get("recorded_cost_rupees")
-        cost_kind = "recorded"
+        cost_kind = (
+            "actual_billing"
+            if run.get("actual_billing_available", False)
+            else "recorded_non_billing_amount"
+        )
         if cost is None:
             cost = run.get("estimated_list_price_accepted_jobs_rupees")
             cost_kind = "estimated_list_price_accepted_jobs"
@@ -295,9 +299,6 @@ def import_evidence(
             slice_id=str(payload["slice"]),
             ocr_engine="sarvam",
             sample_n=scored,
-            cost_per_doc_rupees=(
-                float(cost) / attempted if cost is not None and attempted else None
-            ),
             ocr_divergence_rate=float(run["normalized_exact_text_divergence"]),
             extra_params={
                 "cached_evidence_run_id": str(run["run_id"]),
@@ -312,6 +313,7 @@ def import_evidence(
                     run.get("actual_billing_available", False)
                 ).lower(),
                 "cost_evidence": cost_kind if cost is not None else "unavailable",
+                "cost_denominator": "attempted_page",
                 "cost_basis": str(run.get("cost_basis", "not recorded")),
                 "quality_claim_permitted": "false",
             },
