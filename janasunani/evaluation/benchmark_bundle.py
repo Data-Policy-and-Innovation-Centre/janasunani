@@ -69,6 +69,20 @@ def _validate_config(config: object) -> dict[str, Any]:
             isinstance(key, str) and key for key in required_values
         ):
             raise ValueError(f"{artifact_id}: required_values must be an object of dotted paths")
+        expected_schema = artifact.get("schema_version")
+        if expected_schema is not None and (
+            not isinstance(expected_schema, str) or not expected_schema
+        ):
+            raise ValueError(f"{artifact_id}: schema_version must be a non-empty string")
+        if artifact["required_for_publication"]:
+            if expected_schema is None:
+                raise ValueError(
+                    f"{artifact_id}: required artifacts must declare schema_version"
+                )
+            if required_values.get("publication_ready") is not True:
+                raise ValueError(
+                    f"{artifact_id}: required artifacts must require publication_ready=true"
+                )
     return config
 
 
@@ -104,6 +118,7 @@ def build_bundle(config: dict[str, Any], *, root: Path) -> dict[str, Any]:
             "producer": spec.get("producer"),
             "claim": spec.get("claim"),
             "required_for_publication": spec["required_for_publication"],
+            "expected_schema_version": spec.get("schema_version"),
         }
         if not path.is_file():
             record["status"] = "missing"
@@ -122,11 +137,15 @@ def build_bundle(config: dict[str, Any], *, root: Path) -> dict[str, Any]:
                 payload = json.loads(raw)
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                 raise ValueError(f"{spec['id']}: expected aggregate JSON at {relative}: {exc}") from exc
-            mismatches = [
+            mismatches: list[str] = []
+            expected_schema = spec.get("schema_version")
+            if expected_schema is not None and _lookup(payload, "schema_version") != expected_schema:
+                mismatches.append(f"schema_version must equal {expected_schema!r}")
+            mismatches.extend(
                 f"{dotted_path} must equal {expected!r}"
                 for dotted_path, expected in spec.get("required_values", {}).items()
                 if _lookup(payload, dotted_path) != expected
-            ]
+            )
             record["status"] = "incomplete" if mismatches else "available"
             record["sha256"] = _sha256(raw)
             record["payload"] = payload
