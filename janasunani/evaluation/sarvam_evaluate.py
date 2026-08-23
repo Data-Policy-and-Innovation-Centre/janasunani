@@ -96,12 +96,14 @@ def discover_pages(input_dir: Path, limit: int | None) -> list[tuple[Path, int]]
 
 
 def _input_snapshot_id(pages: list[tuple[Path, int]]) -> str:
-    """Content-address the exact document bytes and requested page inventory.
+    """Content-address document bytes, pages, and ticket assignments.
 
-    Filenames can contain ticket identifiers and mtimes change when a governed
-    sample is copied. Neither belongs in the identity. Hash each source file's
-    bytes once, then bind that digest to every requested page number so changed
-    pixels cannot retain the same snapshot merely by preserving size/mtime.
+    Filenames can contain ticket identifiers, so never persist them or their
+    individual hashes. The ticket parsed from each filename nevertheless
+    determines the metadata join and must be part of the aggregate identity.
+    Hash each source file's bytes once, then bind its digest, requested page,
+    and an in-memory ticket digest into the final order-independent snapshot.
+    Mtimes and filename decorations outside the parsed ticket are irrelevant.
     """
 
     digest = hashlib.sha256()
@@ -117,7 +119,10 @@ def _input_snapshot_id(pages: list[tuple[Path, int]]) -> str:
                     source_digest.update(chunk)
             file_digest = source_digest.digest()
             file_digests[resolved] = file_digest
-        members.append(file_digest + b"\0" + str(number).encode("ascii"))
+        ticket_digest = hashlib.sha256(_ticket_of(path).encode("utf-8")).digest()
+        members.append(
+            file_digest + ticket_digest + b"\0" + str(number).encode("ascii")
+        )
     for value in sorted(members):
         digest.update(len(value).to_bytes(8, "big"))
         digest.update(value)

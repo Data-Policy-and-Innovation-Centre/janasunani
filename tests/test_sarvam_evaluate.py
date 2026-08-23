@@ -327,16 +327,19 @@ def test_evaluate_hashes_the_input_snapshot_once_per_run(tmp_path: Path, monkeyp
     assert progress["input_snapshot_id"] == "sha256:" + "b" * 64
 
 
-def test_input_snapshot_is_content_addressed_not_filename_or_mtime(tmp_path: Path):
+def test_input_snapshot_binds_content_page_and_ticket_not_mtime(tmp_path: Path):
     from janasunani.evaluation.sarvam_evaluate import _input_snapshot_id
 
     first = tmp_path / "SECRET-TICKET_first.png"
-    renamed = tmp_path / "DIFFERENT-TICKET_copy.png"
+    renamed = tmp_path / "SECRET-TICKET_copy.png"
+    reassigned = tmp_path / "DIFFERENT-TICKET_copy.png"
     first.write_bytes(b"pixel-content-v1")
     renamed.write_bytes(first.read_bytes())
+    reassigned.write_bytes(first.read_bytes())
 
     original = _input_snapshot_id([(first, 1)])
     assert _input_snapshot_id([(renamed, 1)]) == original
+    assert _input_snapshot_id([(reassigned, 1)]) != original
 
     stat = first.stat()
     first.write_bytes(b"pixel-content-v2")
