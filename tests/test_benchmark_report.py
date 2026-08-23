@@ -186,6 +186,20 @@ def test_live_latency_names_flow_into_historical_report_labels():
     assert "throughput/s" in rendered
 
 
+def test_live_pii_latency_replaces_empty_batch_placeholder():
+    latency = {
+        "stages": {
+            "pii": {"n": 0, "mean_seconds": 0.0},
+            "redact": {"n": 2, "mean_seconds": 0.2},
+        }
+    }
+
+    report = benchmark_report.build_report(latency_result=latency)
+    pii_row = next(row for row in report["rows"] if row["stage"] == "PII redaction")
+
+    assert pii_row["latency"] == latency["stages"]["redact"]
+
+
 def test_write_outputs(tmp_path: Path):
     report = benchmark_report.build_report()
     paths = benchmark_report.write_outputs(report, tmp_path)

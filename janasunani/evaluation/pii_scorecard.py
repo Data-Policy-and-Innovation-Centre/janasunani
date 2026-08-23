@@ -82,6 +82,8 @@ def _slice_by_language(
 def score_per_language(
     gold_path: Path,
     baseline_overlap: float = LEGACY_OVERLAP_BASELINE,
+    *,
+    require_analyzer: bool = False,
 ) -> dict[str, LanguageSlice]:
     """Score per language over a gold JSONL that may carry a language tag.
 
@@ -116,6 +118,8 @@ def score_per_language(
 
             rep = score_examples(exs, baseline_overlap_recall=baseline_overlap)
         except Exception:
+            if require_analyzer:
+                raise
             rep = score_predictions(exs, {}, baseline_overlap_recall=baseline_overlap)
         gold_total = rep.overall.gold
         low = gold_total < MIN_GOLD_FOR_REPORTABLE_SLICE
@@ -144,8 +148,8 @@ def _format_slice(name: str, s: LanguageSlice) -> list[str]:
     return lines
 
 
-def render_scorecard(gold_path: Path) -> str:
-    per_lang = score_per_language(gold_path)
+def render_scorecard(gold_path: Path, *, require_analyzer: bool = False) -> str:
+    per_lang = score_per_language(gold_path, require_analyzer=require_analyzer)
     lines = ["# PII scorecard — per-entity, per-language", ""]
     lines.append("Missed-PII rate = 1 − overlap_recall (the release-critical metric; F1 hides leaked PII). "
                  "Coverage is the DSI-comparable untyped overlap; by_entity is typed.")
@@ -363,6 +367,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, default=None, help="Write scorecard markdown to file")
     parser.add_argument("--json", action="store_true", help="Print per-language JSON")
     parser.add_argument("--json-out", type=Path, help="Write per-language aggregate JSON")
+    parser.add_argument(
+        "--require-analyzer",
+        action="store_true",
+        help="Fail instead of emitting zero-recall evidence when the live analyzer fails",
+    )
     parser.add_argument("--corpus", type=Path, default=None, help="Parquet file to scan for shaped PII (e.g. data/interim/complaints.parquet)")
     parser.add_argument("--corpus-column", type=str, default="grievance_redacted", help="Text column in the corpus parquet (default: grievance_redacted)")
     parser.add_argument("--corpus-sample-limit", type=int, default=3, help="Max examples per entity in corpus scan output")
@@ -384,7 +393,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.gold is None:
         parser.error("--gold is required unless --corpus is given")
     if args.json or args.json_out:
-        per_lang = score_per_language(args.gold)
+        per_lang = score_per_language(
+            args.gold, require_analyzer=args.require_analyzer
+        )
         out = {lang: sl.report.to_dict() | {"is_low_power": sl.is_low_power} for lang, sl in per_lang.items()}
         encoded = json.dumps(out, indent=2, sort_keys=True) + "\n"
         if args.json_out:
@@ -395,7 +406,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if not args.out:
             return 0
-    text = render_scorecard(args.gold)
+    text = render_scorecard(args.gold, require_analyzer=args.require_analyzer)
     if args.out:
         args.out.write_text(text)
     print(text)

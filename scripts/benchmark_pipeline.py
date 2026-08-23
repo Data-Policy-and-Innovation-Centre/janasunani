@@ -457,6 +457,9 @@ def _measure_with_processor(
     """
     per_stage_times: dict[str, list[float]] = {k: [] for k in ALL_KEYS}
     per_stage_tickets: dict[str, list[str]] = {k: [] for k in ALL_KEYS}
+    temperature_times: dict[str, list[float]] = {"cold": [], "warm": []}
+    temperature_tickets: dict[str, list[str]] = {"cold": [], "warm": []}
+    has_completed_request = False
     attempts = 0
     completed_attempts = 0
     failures_by_error: defaultdict[str, int] = defaultdict(int)
@@ -501,6 +504,13 @@ def _measure_with_processor(
                     failures_by_error["IncompleteTimingRecord"] += 1
                     continue
                 completed_attempts += 1
+                # "Cold" means the first successful request after processor
+                # construction, not the first repeat of every document.  The
+                # latter would relabel already-warm requests as cold.
+                temperature = "warm" if has_completed_request else "cold"
+                temperature_times[temperature].append(captured.get(E2E_KEY, elapsed))
+                temperature_tickets[temperature].append(ticket)
+                has_completed_request = True
                 if is_warm:
                     continue
                 # Prefer the sink's own e2e; fall back to the outer wall clock
@@ -523,6 +533,10 @@ def _measure_with_processor(
                 # BENCHMARK_FAKE_SLEEP is set (for manual wall-clock checks).
                 timings = _fake_process(variant, ticket, r)
                 completed_attempts += 1
+                temperature = "warm" if has_completed_request else "cold"
+                temperature_times[temperature].append(timings.e2e)
+                temperature_tickets[temperature].append(ticket)
+                has_completed_request = True
                 if sleep_fake:
                     # Optionally sleep a tiny fraction so wall-clock is real
                     time.sleep(min(timings.e2e * 0.01, 0.005))
@@ -542,6 +556,8 @@ def _measure_with_processor(
         "completed_attempts": completed_attempts,
         "failed_attempts": attempts - completed_attempts,
         "failures_by_error": dict(sorted(failures_by_error.items())),
+        "temperature_times": temperature_times,
+        "temperature_tickets": temperature_tickets,
     }
 
 
@@ -632,6 +648,17 @@ def run_benchmark(
         "git_sha": git_sha,
         "stages": stages_stats,
         "input_paths": _stats_by_input(per_stage_times, per_stage_tickets),
+        "temperature_e2e": {
+            temperature: compute_stage_stats(
+                raw["temperature_times"][temperature],
+                raw["temperature_tickets"][temperature],
+            )
+            for temperature in ("cold", "warm")
+        },
+        "temperature_definition": {
+            "cold": "first successful request after processor construction",
+            "warm": "all subsequent successful requests in the same process",
+        },
         "is_fake_timing": bool(is_fake),
         "environment": {
             "python": platform.python_version(),
@@ -675,9 +702,18 @@ def latency_json_payload(
     def nonblank(value: object) -> bool:
         return isinstance(value, str) and bool(value.strip())
 
+    def has_cold_and_warm(result: dict[str, Any]) -> bool:
+        temperatures = result.get("temperature_e2e")
+        return isinstance(temperatures, dict) and all(
+            isinstance(temperatures.get(key), dict)
+            and temperatures[key].get("n", 0) > 0
+            for key in ("cold", "warm")
+        )
+
     publication_ready = bool(variants_payload) and all(
         not result.get("is_fake_timing", True)
         and result.get("n_measured", 0) > 0
+        and has_cold_and_warm(result)
         and result.get("attempts")
         == result.get("completed_attempts", 0) + result.get("failed_attempts", 0)
         and isinstance(result.get("benchmark_context"), dict)

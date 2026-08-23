@@ -321,7 +321,7 @@ def test_identified_real_latency_run_is_publication_ready():
         variant="standard",
         n_text=1,
         n_image=0,
-        repeats=1,
+        repeats=2,
         discard_warm=False,
         processor_factory=lambda _variant: type(
             "Processor",
@@ -342,12 +342,66 @@ def test_identified_real_latency_run_is_publication_ready():
     payload = latency_json_payload(result)
 
     assert payload["publication_ready"] is True
+    assert payload["temperature_e2e"]["cold"]["n"] == 1
+    assert payload["temperature_e2e"]["warm"]["n"] == 1
 
     result["git_sha"] = None
     assert latency_json_payload(result)["publication_ready"] is False
     result["git_sha"] = "abc1234"
     result["benchmark_context"]["host_label"] = "   "
     assert latency_json_payload(result)["publication_ready"] is False
+
+
+def test_real_latency_without_warm_sample_is_not_publication_ready():
+    result = run_benchmark(
+        variant="standard",
+        n_text=1,
+        n_image=0,
+        repeats=1,
+        discard_warm=False,
+        processor_factory=lambda _variant: type(
+            "Processor",
+            (),
+            {
+                "_timing_sink": None,
+                "process": lambda self, **kwargs: self._timing_sink(
+                    {"redact": 0.1, "e2e": 0.2, "ok": 1.0}
+                ),
+            },
+        )(),
+    )
+    result["benchmark_context"] = {
+        "host_label": "release-host",
+        "model_release_id": "model-release-1",
+    }
+
+    assert latency_json_payload(result)["publication_ready"] is False
+
+
+def test_temperature_aggregates_have_one_cold_request_per_processor():
+    result = run_benchmark(
+        variant="standard",
+        n_text=2,
+        n_image=0,
+        repeats=2,
+        discard_warm=False,
+        processor_factory=lambda _variant: type(
+            "Processor",
+            (),
+            {
+                "_timing_sink": None,
+                "process": lambda self, **kwargs: self._timing_sink(
+                    {"redact": 0.1, "e2e": 0.2, "ok": 1.0}
+                ),
+            },
+        )(),
+    )
+
+    assert result["temperature_e2e"]["cold"]["n"] == 1
+    assert result["temperature_e2e"]["warm"]["n"] == 3
+    assert result["temperature_definition"]["cold"].startswith(
+        "first successful request"
+    )
 
 
 def test_write_latency_json_creates_file(tmp_path):

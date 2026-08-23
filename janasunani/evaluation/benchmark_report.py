@@ -215,8 +215,6 @@ def build_report(
         if latency_result is None:
             return NOT_MEASURED
         stages = latency_result.get("stages") if isinstance(latency_result, dict) else None
-        if isinstance(stages, dict) and stage_key in stages:
-            return stages[stage_key]
         # The live serving timer uses verbs for the actual operations. Keep
         # the report's historical noun labels without silently dropping the
         # new measurements. Components nested inside OCR/triage remain
@@ -227,8 +225,18 @@ def build_report(
             "pii": "redact",
         }
         alias = live_aliases.get(stage_key)
-        if isinstance(stages, dict) and alias in stages:
-            return stages[alias]
+        direct = stages.get(stage_key) if isinstance(stages, dict) else None
+        aliased = stages.get(alias) if isinstance(stages, dict) and alias else None
+        # Batch-compatible placeholders can coexist with live serving names.
+        # Prefer the live alias when the direct entry contains no observations.
+        if isinstance(aliased, dict) and aliased.get("n", 0) > 0 and (
+            not isinstance(direct, dict) or direct.get("n", 0) == 0
+        ):
+            return aliased
+        if direct is not None:
+            return direct
+        if aliased is not None:
+            return aliased
         if stage_key == "e2e" and isinstance(latency_result, dict) and "e2e" in latency_result:
             return latency_result["e2e"]
         return NOT_MEASURED

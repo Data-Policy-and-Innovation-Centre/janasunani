@@ -280,6 +280,7 @@ stages:
     cmd: >-
       uv run --frozen --extra pii python -m janasunani.evaluation.pii_scorecard
       --gold data/external/pii_gold_draft_n50.jsonl
+      --require-analyzer
       --out outputs/evaluation/pii_release.md
       --json-out outputs/evaluation/pii_release.json
     deps:

@@ -22,7 +22,9 @@ proxies.
 - **Speed:** cold and warm end-to-end timing plus every supported stage and
   input path; release and hardware IDs; attempts, successes and failures;
   throughput, p50, p90 and p95; and clustered uncertainty where repeated pages
-  belong to one grievance.
+  belong to one grievance. The timing artifact defines cold as the first
+  successful request after processor construction and warm as subsequent
+  requests in that process; processor construction time is reported separately.
 - **Accuracy and safety:** every supported task on a frozen, independently
   reviewed test set; numerator, denominator, coverage/abstention, confidence
   intervals, per-class and supported-language results, subgroup support,
