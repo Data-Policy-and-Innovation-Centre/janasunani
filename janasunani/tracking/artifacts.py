@@ -87,6 +87,20 @@ def _usable(path: Path) -> bool:
     return False
 
 
+def artifact_override_is_usable(name: str) -> bool:
+    """Whether *name* has an operator override that can actually be served.
+
+    Health checks use this without exposing the configured path. An unset,
+    missing, empty, unreadable, or symlinked override does not shadow the
+    immutable manifest because :func:`resolve_artifact` ignores it too.
+    """
+    try:
+        override = os.environ.get(artifact_override_env_var(name))
+        return bool(override) and _usable(Path(override))
+    except Exception:  # pragma: no cover - mirrors the never-raise resolver
+        return False
+
+
 def resolve_artifact(
     name: str,
     *,

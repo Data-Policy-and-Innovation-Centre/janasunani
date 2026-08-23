@@ -1,6 +1,10 @@
 import pytest
 
-from janasunani.tracking.artifacts import artifact_override_env_var, resolve_artifact
+from janasunani.tracking.artifacts import (
+    artifact_override_env_var,
+    artifact_override_is_usable,
+    resolve_artifact,
+)
 from janasunani.tracking.release import (
     RELEASE_MANIFEST_ENV_VAR,
     ModelRelease,
@@ -114,3 +118,14 @@ def test_override_variable_name_is_public_but_validated():
     )
     with pytest.raises(ValueError, match="invalid artifact name"):
         artifact_override_env_var("../escape")
+
+
+def test_override_usability_matches_resolution_boundary(tmp_path, monkeypatch):
+    missing = tmp_path / "missing"
+    monkeypatch.setenv("JANASUNANI_SPAM_SCORER_ARTIFACT", str(missing))
+    assert artifact_override_is_usable("spam_scorer") is False
+
+    usable = tmp_path / "usable.bin"
+    usable.write_bytes(b"model")
+    monkeypatch.setenv("JANASUNANI_SPAM_SCORER_ARTIFACT", str(usable))
+    assert artifact_override_is_usable("spam_scorer") is True

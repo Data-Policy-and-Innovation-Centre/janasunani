@@ -748,7 +748,7 @@ def _model_release_check(
             load_manifest,
             resolve_manifest_artifact,
         )
-        from janasunani.tracking.artifacts import artifact_override_env_var
+        from janasunani.tracking.artifacts import artifact_override_is_usable
 
         path = active_manifest_path()
         if path is None:
@@ -763,7 +763,7 @@ def _model_release_check(
         shadowed = []
         for name in sorted(manifest.models):
             model = manifest.models[name]
-            if os.environ.get(artifact_override_env_var(name)):
+            if artifact_override_is_usable(name):
                 shadowed.append(name)
             if model.artifact_path is not None:
                 resolve_manifest_artifact(
