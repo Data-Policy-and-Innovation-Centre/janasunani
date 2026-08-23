@@ -94,6 +94,29 @@ def test_rejects_paths_outside_root(tmp_path: Path) -> None:
         build_bundle(config, root=tmp_path)  # type: ignore[arg-type]
 
 
+def test_rejects_artifacts_under_data_even_when_they_are_json(tmp_path: Path) -> None:
+    config = _config()
+    config["artifacts"][0]["path"] = "data/private.json"  # type: ignore[index]
+    private = tmp_path / "data" / "private.json"
+    private.parent.mkdir()
+    private.write_text('{"citizen_record":"must not be bundled"}\n')
+
+    with pytest.raises(ValueError, match="under data/"):
+        build_bundle(config, root=tmp_path)  # type: ignore[arg-type]
+
+
+def test_rejects_internal_symlink_that_escapes_root(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "latency.json").write_text("{}\n")
+    (root / "results").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="resolved path"):
+        build_bundle(_config(), root=root)
+
+
 def test_cli_writes_incomplete_bundle_but_strict_check_fails(tmp_path: Path) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps(_config()))
