@@ -136,7 +136,7 @@ def _parse_spec(
             raise ReleaseManifestError("each model spec must be a named object")
         validate_release_identifier(name, field="model name")
         if config.get("endpoint"):
-            ModelRelease.from_dict(name, config)
+            _hosted_release(name, config)
         else:
             unknown = set(config) - _LOCAL_MODEL_FIELDS
             if unknown:
@@ -278,10 +278,12 @@ def _materialize_registry_model(
 
 
 def _hosted_release(name: str, config: Mapping[str, Any]) -> ModelRelease:
-    version = config.get("version")
-    if not isinstance(version, str) or not version:
-        raise ReleaseManifestError(f"hosted model {name!r} must pin observed version")
-    return ModelRelease.from_dict(name, dict(config))
+    version = _concrete_identifier(
+        config.get("version"), model=name, field="observed hosted version"
+    )
+    payload = dict(config)
+    payload["version"] = version
+    return ModelRelease.from_dict(name, payload)
 
 
 def _git_sha() -> str | None:

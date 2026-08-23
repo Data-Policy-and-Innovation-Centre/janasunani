@@ -247,3 +247,23 @@ def test_materialize_validates_hosted_shape_before_creating_release_root(tmp_pat
         )
 
     assert not release_root.exists()
+
+
+def test_materialize_rejects_hosted_version_placeholder_before_write(tmp_path):
+    spec = _spec()
+    spec["models"]["sarvam_digitise"]["version"] = (
+        "replace-with-observed-provider-model-id"
+    )
+    release_root = tmp_path / "releases"
+    client = FakeClient()
+
+    with pytest.raises(ReleaseManifestError, match="concrete observed hosted version"):
+        materialize_release(
+            spec=spec,
+            release_root=release_root,
+            client=client,
+            downloader=_downloader,
+        )
+
+    assert client.calls == []
+    assert not release_root.exists()
