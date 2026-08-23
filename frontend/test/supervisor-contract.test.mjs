@@ -93,7 +93,8 @@ test("sample GrievanceResult carries triage with bounded spam_score and duplicat
   assert.ok(result.classification.category.length > 0);
   assert.ok(result.summary.length > 0);
 
-  // triage contract — duplicate_review and spam must be present
+  // triage contract — duplicate_review and spam must be present;
+  // actionability is additive and may be absent when its artifact is unavailable.
   assert.ok(result.triage);
   assert.ok(result.triage.duplicate_review);
   assert.match(result.triage.duplicate_review.decision, /^(matched|no_match|abstained|not_indexed|unavailable)$/);
@@ -110,6 +111,39 @@ test("sample GrievanceResult carries triage with bounded spam_score and duplicat
   const rep = spam.evidence.find((e) => e.kind === "repetition_collapse");
   assert.ok(rep);
   assert.equal(typeof rep.observed, "boolean");
+  assert.equal(result.triage.actionability, undefined);
+});
+
+test("sample GrievanceResult accepts an advisory actionability review", () => {
+  const result = makeSampleGrievanceResult({
+    triage: {
+      duplicate: null,
+      duplicate_review: { decision: "not_indexed", reason: "Not indexed." },
+      spam: {
+        decision: "abstained",
+        reason_code: "clean",
+        spam_score: 0.08,
+        spam_reason: "clean",
+        method: "spam-v1-bounded",
+        evidence: [],
+      },
+      actionability: {
+        decision: "review",
+        predicted_label: "review_required",
+        confidence: 0.71,
+        probabilities: { actionable: 0.29, review_required: 0.71 },
+        method: "local-binary-candidate",
+        objective: "actionable_vs_officer_review",
+        taxonomy_version: "actionability-v1",
+      },
+    },
+  });
+
+  assert.equal(result.triage.actionability.decision, "review");
+  assert.equal(result.triage.actionability.predicted_label, "review_required");
+  assert.equal(result.triage.actionability.objective, "actionable_vs_officer_review");
+  assert.ok(result.triage.actionability.confidence >= 0.0);
+  assert.ok(result.triage.actionability.confidence <= 1.0);
 });
 
 test("sample GrievanceResult routing ladder is never mock and empirical evidence matches method", () => {

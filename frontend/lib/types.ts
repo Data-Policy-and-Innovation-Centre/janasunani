@@ -177,6 +177,34 @@ export interface SpamReview {
   evidence: OcrQualityEvidence[];
 }
 
+export type ActionabilityReasonLabel =
+  | "actionable"
+  | "underspecified"
+  | "irrelevant"
+  | "out_of_scope"
+  | "policy_blocked";
+
+interface ActionabilityReviewBase {
+  decision: "review" | "abstained";
+  confidence: number; // 0..1
+  method: string;
+  taxonomy_version: "actionability-v1";
+}
+
+export type ActionabilityReview = ActionabilityReviewBase &
+  (
+    | {
+        objective: "five_class_reason";
+        predicted_label: ActionabilityReasonLabel;
+        probabilities: Record<ActionabilityReasonLabel, number>;
+      }
+    | {
+        objective: "actionable_vs_officer_review";
+        predicted_label: "actionable" | "review_required";
+        probabilities: Record<"actionable" | "review_required", number>;
+      }
+  );
+
 /** Officer-facing gloss for each reason_code. Advisory framing throughout:
  * the scorer abstains by design, and a "clean" result is a screening
  * outcome, not a claim that the grievance is genuine or complete. See
@@ -208,6 +236,7 @@ export interface TriageResult {
   duplicate?: DuplicateSignal | null;
   duplicate_review: DuplicateReview;
   spam: SpamReview;
+  actionability?: ActionabilityReview | null;
 }
 
 export interface GrievanceResult {
