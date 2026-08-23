@@ -280,11 +280,8 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def load_actionability_scorer(
-    path: Path,
-) -> LocalActionabilityScorer | LocalBinaryReviewScorer:
-    """Load a checksummed local model directory, failing closed on drift."""
-
+def validate_actionability_artifact(path: Path) -> tuple[dict, Path]:
+    """Validate local artifact structure and bytes without deserializing them."""
     artifact_dir = Path(path)
     manifest_path = artifact_dir / "manifest.json"
     try:
@@ -334,6 +331,15 @@ def load_actionability_scorer(
         raise ValueError("actionability model file is absent or empty")
     if _sha256(model_path) != manifest["model_sha256"]:
         raise ValueError("actionability model checksum mismatch")
+    return manifest, model_path
+
+
+def load_actionability_scorer(
+    path: Path,
+) -> LocalActionabilityScorer | LocalBinaryReviewScorer:
+    """Load a checksummed local model directory, failing closed on drift."""
+
+    manifest, model_path = validate_actionability_artifact(path)
 
     try:
         import joblib
@@ -341,6 +347,7 @@ def load_actionability_scorer(
         classifier = joblib.load(model_path)
     except Exception as exc:
         raise ValueError("actionability model could not be loaded") from exc
+    artifact_format = manifest["artifact_format"]
     scorer_type = (
         LocalActionabilityScorer
         if artifact_format == ACTIONABILITY_ARTIFACT_FORMAT

@@ -328,6 +328,25 @@ def _resolve_learned_scorer(
     Absence and structural/load failure remain distinct operator states, while
     both degrade to the bounded advisory scorer on the request path.
     """
+    artifact = _resolve_actionability_artifact(
+        models_dir=models_dir,
+        verified_artifacts=verified_artifacts,
+    )
+    try:
+        from janasunani.inference.actionability import load_actionability_scorer
+
+        return load_actionability_scorer(artifact)
+    except Exception as exc:
+        raise ScorerLoaderUnimplemented(
+            "the actionability artifact is present but could not be loaded"
+        ) from exc
+
+
+def _resolve_actionability_artifact(
+    *,
+    models_dir: Path | None = None,
+    verified_artifacts: dict[tuple[Path, str], Path] | None = None,
+) -> Path:
     from janasunani.tracking.artifacts import resolve_artifact
 
     artifact = resolve_artifact(
@@ -337,14 +356,7 @@ def _resolve_learned_scorer(
     )
     if artifact is None:
         raise ScorerArtifactAbsent("no actionability artifact resolved")
-    try:
-        from janasunani.inference.actionability import load_actionability_scorer
-
-        return load_actionability_scorer(artifact)
-    except Exception as exc:
-        raise ScorerLoaderUnimplemented(
-            "the actionability artifact is present but could not be loaded"
-        ) from exc
+    return artifact
 
 
 def triage_status(
@@ -358,10 +370,20 @@ def triage_status(
         return (TRIAGE_OFF, True, "advisory triage disabled by configuration")
     if configured == TRIAGE_MODEL:
         try:
-            _resolve_learned_scorer(
+            artifact = _resolve_actionability_artifact(
                 models_dir=models_dir,
                 verified_artifacts=verified_artifacts,
             )
+            from janasunani.inference.actionability import (
+                validate_actionability_artifact,
+            )
+
+            try:
+                validate_actionability_artifact(artifact)
+            except Exception as exc:
+                raise ScorerLoaderUnimplemented(
+                    "the actionability artifact is present but could not be validated"
+                ) from exc
         except ScorerArtifactAbsent:
             return (
                 TRIAGE_BOUNDED,

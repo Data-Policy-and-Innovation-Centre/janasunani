@@ -356,6 +356,25 @@ def test_triage_model_resolves_the_configured_models_root(tmp_path, monkeypatch)
     assert "checksummed actionability artifact loaded" in detail
 
 
+def test_triage_status_validates_without_deserializing_model_weights(
+    tmp_path, monkeypatch
+):
+    artifact = tmp_path / "actionability"
+    _write_binary_actionability_artifact(artifact)
+    monkeypatch.setenv(TRIAGE_ENV_VAR, TRIAGE_MODEL)
+    monkeypatch.setenv("JANASUNANI_ACTIONABILITY_ARTIFACT", str(artifact))
+
+    def reject_deserialization(*_args, **_kwargs):
+        raise AssertionError("preflight must not deserialize model weights")
+
+    monkeypatch.setattr("joblib.load", reject_deserialization)
+
+    name, ok, _detail = triage_status()
+
+    assert name == TRIAGE_MODEL
+    assert ok is True
+
+
 def test_actionability_failure_preserves_one_bounded_spam_assessment(monkeypatch):
     class BrokenActionabilityScorer:
         def score(self, text):
