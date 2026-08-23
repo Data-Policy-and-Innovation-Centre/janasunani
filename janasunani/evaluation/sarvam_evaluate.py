@@ -161,16 +161,6 @@ def _write_progress_checkpoint(
         normalize_text(row.pytesseract_text) != normalize_text(row.sarvam_markdown)
         for row in eligible_pairs
     )
-    partial: dict[str, object] | None = None
-    if records:
-        report = build_scorecard(records, slice_label=slice_label, arm=arm).to_dict()
-        partial = {
-            key: report.get(key)
-            for key in (
-                "category", "transcription_accuracy", "transcription_divergence",
-                "by_handwritten", "by_language", "per_category", "summary_divergence",
-            )
-        }
     payload = {
         "schema_version": PROGRESS_SCHEMA_VERSION,
         "updated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
@@ -199,10 +189,10 @@ def _write_progress_checkpoint(
             0.0 if dry_run else _price_for_arm(arm, pages_discovered)
         ),
         "actual_billing_available": False,
-        "partial_scorecard": partial,
         "privacy": {
             "contains_page_or_ticket_ids": False,
             "contains_text_or_provider_payloads": False,
+            "contains_category_or_demographic_breakdowns": False,
             "mode": "0600",
         },
     }
