@@ -53,7 +53,7 @@ API_ROOT = "https://api.github.com"
 CODEX_LOGINS = {"chatgpt-codex-connector", "chatgpt-codex-connector[bot]"}
 
 REVIEWED_COMMIT_RE = re.compile(r"Reviewed commit:\*\*\s*`([0-9a-f]{7,40})`")
-SHA_RE = re.compile(r"[0-9a-f]{7,40}")
+STRUCTURED_SHA_RE = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 
 # Out of review credits, Codex answers `@codex review` with a plain issue
 # comment and never looks at the diff. Without recognising it the check sits
@@ -183,7 +183,7 @@ def reviewed_shas(reviews: Iterable[dict[str, Any]]) -> list[str]:
         if not is_codex((review.get("user") or {}).get("login")):
             continue
         commit_id = review.get("commit_id")
-        if isinstance(commit_id, str) and SHA_RE.fullmatch(commit_id):
+        if isinstance(commit_id, str) and STRUCTURED_SHA_RE.fullmatch(commit_id):
             found.append(commit_id)
             continue
         match = REVIEWED_COMMIT_RE.search(review.get("body") or "")

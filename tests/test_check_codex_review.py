@@ -491,6 +491,18 @@ def test_reviewed_shas_prefers_structured_commit_over_legacy_body_text():
     assert check.reviewed_shas(reviews) == [HEAD]
 
 
+def test_reviewed_shas_rejects_an_abbreviated_structured_commit_id():
+    reviews = [
+        {
+            "user": CODEX,
+            "body": CODEX_REVIEW_BODY.format(sha=HEAD[:10]),
+            "commit_id": "deadbee",
+            "state": "COMMENTED",
+        }
+    ]
+    assert check.reviewed_shas(reviews) == [HEAD[:10]]
+
+
 def test_reviewed_shas_keeps_legacy_body_fallback():
     assert check.reviewed_shas([codex_review("f319c879a1")]) == ["f319c879a1"]
 
