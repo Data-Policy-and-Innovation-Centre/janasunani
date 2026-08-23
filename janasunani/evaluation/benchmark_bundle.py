@@ -72,6 +72,21 @@ def _validate_config(config: object) -> dict[str, Any]:
     return config
 
 
+def _resolve_artifact_path(*, root: Path, relative: Path, artifact_id: str) -> Path:
+    """Confine aggregate evidence reads to non-data files below ``root``."""
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError(f"{artifact_id}: path must stay below the repository root")
+    if relative.parts and relative.parts[0] == "data":
+        raise ValueError(f"{artifact_id}: paths under data/ cannot be bundled")
+    resolved_root = root.resolve()
+    resolved = (resolved_root / relative).resolve()
+    if not resolved.is_relative_to(resolved_root):
+        raise ValueError(
+            f"{artifact_id}: resolved path must stay below the repository root"
+        )
+    return resolved
+
+
 def build_bundle(config: dict[str, Any], *, root: Path) -> dict[str, Any]:
     """Load configured aggregate artifacts and return a deterministic bundle."""
     config = _validate_config(config)
@@ -79,9 +94,9 @@ def build_bundle(config: dict[str, Any], *, root: Path) -> dict[str, Any]:
     blockers: list[dict[str, str]] = []
     for spec in sorted(config["artifacts"], key=lambda row: row["id"]):
         relative = Path(spec["path"])
-        if relative.is_absolute() or ".." in relative.parts:
-            raise ValueError(f"{spec['id']}: path must stay below the repository root")
-        path = root / relative
+        path = _resolve_artifact_path(
+            root=root, relative=relative, artifact_id=spec["id"]
+        )
         record: dict[str, Any] = {
             "id": spec["id"],
             "section": spec["section"],
