@@ -467,6 +467,46 @@ def test_reviewed_shas_ignores_non_codex_reviews():
     assert check.reviewed_shas(reviews) == ["f319c879a1"]
 
 
+def test_reviewed_shas_accepts_the_current_structured_commit_without_legacy_body_text():
+    reviews = [
+        {
+            "user": CODEX,
+            "body": "### Codex Review\n\nOne finding follows.",
+            "commit_id": HEAD,
+            "state": "COMMENTED",
+        }
+    ]
+    assert check.reviewed_shas(reviews) == [HEAD]
+
+
+def test_reviewed_shas_prefers_structured_commit_over_legacy_body_text():
+    reviews = [
+        {
+            "user": CODEX,
+            "body": CODEX_REVIEW_BODY.format(sha="deadbeef12"),
+            "commit_id": HEAD,
+            "state": "COMMENTED",
+        }
+    ]
+    assert check.reviewed_shas(reviews) == [HEAD]
+
+
+def test_reviewed_shas_rejects_an_abbreviated_structured_commit_id():
+    reviews = [
+        {
+            "user": CODEX,
+            "body": CODEX_REVIEW_BODY.format(sha=HEAD[:10]),
+            "commit_id": "deadbee",
+            "state": "COMMENTED",
+        }
+    ]
+    assert check.reviewed_shas(reviews) == [HEAD[:10]]
+
+
+def test_reviewed_shas_keeps_legacy_body_fallback():
+    assert check.reviewed_shas([codex_review("f319c879a1")]) == ["f319c879a1"]
+
+
 def test_reviewed_shas_keeps_posting_order():
     reviews = [codex_review("aaaaaaaaaa"), codex_review("bbbbbbbbbb")]
     assert check.reviewed_shas(reviews) == ["aaaaaaaaaa", "bbbbbbbbbb"]
