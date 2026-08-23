@@ -198,6 +198,7 @@ stages:
       - janasunani/evaluation/classification.py
       - janasunani/evaluation/embedding_actionability.py
       - janasunani/evaluation/stats.py
+      - janasunani/inference/actionability.py
       - scripts/benchmark_actionability_candidates.py
       - pyproject.toml
       - uv.lock
@@ -243,6 +244,8 @@ stages:
       - data/external/categorization_historical_v1/benchmark.jsonl
       - data/external/categorization_historical_v1/benchmark.provenance.json
       - janasunani/evaluation/categorization.py
+      - janasunani/evaluation/classification.py
+      - janasunani/evaluation/stats.py
       - pyproject.toml
       - uv.lock
     outs:
