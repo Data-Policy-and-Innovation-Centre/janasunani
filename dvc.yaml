@@ -273,6 +273,7 @@ stages:
       - outputs/evaluation/routing_historical_informative.json
 
   full-benchmark-bundle:
+    always_changed: true
     desc: >-
       Assemble available aggregate scorecards into one deterministic evidence
       bundle. Missing speed, accuracy, or impact evidence remains an explicit
