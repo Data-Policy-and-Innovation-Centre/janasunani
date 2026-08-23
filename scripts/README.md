@@ -195,6 +195,10 @@ with the **production** Presidio analyzer, writing two files:
 - `pii_gold_draft.review.txt` — the same pages with spans marked inline
   (`⟦NAME:Ramesh Kumar⟧`) for a fast human read.
 
+`rederive_pii_draft.py` also writes a metadata-only sidecar with schema
+`janasunani.pii-rederived-draft-provenance/v1`; nested sidecars without a
+recognized schema fail the raw-data CI guard.
+
 **The draft is not gold.** It contains what the analyzer already finds, so an
 unedited draft scores ~100% by construction. The human pass *is* the
 measurement: **add** the PII the analyzer missed (these become the recall

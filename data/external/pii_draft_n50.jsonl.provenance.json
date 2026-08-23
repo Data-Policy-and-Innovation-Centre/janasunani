@@ -1,4 +1,5 @@
 {
+  "schema_version": "janasunani.pii-rederived-draft-provenance/v1",
   "kind": "rederived_draft",
   "note": "Analyzer output on the gold's own text, NOT the original bootstrap draft. Cannot prove the human pass happened, cannot detect an edited text, cannot detect pages dropped from the drafted sample. See scripts/rederive_pii_draft.py.",
   "created_utc": "2026-08-06T09:48:58+00:00",

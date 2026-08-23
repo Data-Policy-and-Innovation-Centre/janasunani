@@ -38,6 +38,7 @@ from typing import Any
 
 # Mirrors provenance() in scripts/rederive_pii_draft.py.
 ALLOWED_TOP = {
+    "schema_version",
     "kind",
     "note",
     "created_utc",
@@ -75,12 +76,14 @@ _SHA256_RE = re.compile(r"^(sha256:)?[0-9a-f]{64}$")
 _ACTIONABILITY_SCHEMA = "actionability-adjudication-sample-v1"
 _ACTIONABILITY_FRONTIER_SCHEMA = "janasunani.actionability-frontier-artifacts/v1"
 _CATEGORIZATION_SCHEMA = "categorization-benchmark-sample-v1"
+_PII_REDERIVED_SCHEMA = "janasunani.pii-rederived-draft-provenance/v1"
 _SARVAM_SCHEMA = "janasunani.sarvam-source-snapshots/v1"
 _SUMMARY_SCHEMA = "summary-development-provenance/v1"
 _RECOGNIZED_SCHEMAS = {
     _ACTIONABILITY_SCHEMA,
     _ACTIONABILITY_FRONTIER_SCHEMA,
     _CATEGORIZATION_SCHEMA,
+    _PII_REDERIVED_SCHEMA,
     _SARVAM_SCHEMA,
     _SUMMARY_SCHEMA,
 }
@@ -692,10 +695,16 @@ def check_payload(payload: Any) -> list[str]:
         return _check_actionability_frontier(payload)
     if schema == _CATEGORIZATION_SCHEMA:
         return _check_categorization_sample(payload)
+    if schema == _PII_REDERIVED_SCHEMA:
+        problems = _check_exact_keys("PII re-derived sidecar", payload, ALLOWED_TOP)
+        if problems:
+            return problems
     if schema == _SARVAM_SCHEMA:
         return _check_sarvam_snapshots(payload)
     if schema == _SUMMARY_SCHEMA:
         return _check_summary_development(payload)
+    if schema is not None and schema != _PII_REDERIVED_SCHEMA:
+        return ["unrecognized provenance schema_version"]
 
     problems: list[str] = []
     for key, value in payload.items():

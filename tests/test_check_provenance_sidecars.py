@@ -32,6 +32,7 @@ verify = _load("verify_pii_gold")
 
 # A structurally valid sidecar, matching what rederive_pii_draft.py writes.
 VALID = {
+    "schema_version": "janasunani.pii-rederived-draft-provenance/v1",
     "kind": "rederived_draft",
     "note": "Analyzer output on the gold's own text, NOT the original bootstrap draft.",
     "created_utc": "2026-08-07T09:00:00+00:00",
@@ -62,6 +63,21 @@ def sidecar(tmp_path: Path, payload: dict, name: str = "x.provenance.json") -> P
 
 def test_the_real_shape_passes():
     assert check.check_payload(VALID) == []
+
+
+def test_pii_schema_requires_the_complete_allowlisted_shape():
+    payload = dict(VALID)
+    payload.pop("environment")
+
+    assert check.check_payload(payload) == [
+        "PII re-derived sidecar does not have the exact allowlisted metadata keys"
+    ]
+
+
+def test_unknown_schema_is_rejected():
+    assert check.check_payload({**VALID, "schema_version": "unknown/v1"}) == [
+        "unrecognized provenance schema_version"
+    ]
 
 
 def test_actionability_sample_sidecar_is_metadata_only():

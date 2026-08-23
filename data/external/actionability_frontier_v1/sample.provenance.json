@@ -33,6 +33,12 @@
     "ticket_identifier": "salted_sha256_not_reversible",
     "unlabeled_per_split": 40
   },
+  "sample_design": {
+    "sampling_scheme": "fixed quotas across opaque sampling strata",
+    "production_prevalence_representative": false,
+    "metric_interpretation": "composition-specific development metrics",
+    "intended_use": "development model comparison and error analysis"
+  },
   "records": 180,
   "schema_version": "actionability-adjudication-sample-v1",
   "selected_fields": [

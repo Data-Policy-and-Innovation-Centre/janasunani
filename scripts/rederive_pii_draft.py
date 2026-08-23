@@ -57,6 +57,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
+PROVENANCE_SCHEMA_VERSION = "janasunani.pii-rederived-draft-provenance/v1"
 
 # Reuse bootstrap's writer rather than reimplementing it: the on-disk format is a
 # contract with pii_eval's loader (tests/test_bootstrap_pii_gold.py), and a
@@ -160,6 +161,7 @@ def _git_commit() -> str:
 def provenance(gold: Path, out: Path, records: int, by_entity: Counter) -> dict[str, Any]:
     """What a reader needs to know before trusting this file as a draft."""
     return {
+        "schema_version": PROVENANCE_SCHEMA_VERSION,
         "kind": "rederived_draft",
         "note": (
             "Analyzer output on the gold's own text, NOT the original bootstrap "
