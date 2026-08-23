@@ -279,7 +279,8 @@ def test_progress_checkpoint_contains_only_aggregates(tmp_path: Path):
     ]
     destination = _write_progress_checkpoint(
         out_dir=tmp_path / "out",
-        pages=[(page, 1)],
+        input_snapshot_id="sha256:" + "a" * 64,
+        pages_discovered=1,
         pages_processed=1,
         records=records,
         failures=[{"page_id": "SECRET-TICKET:p1", "error": "HTTP402", "arm": "extract"}],
@@ -300,6 +301,30 @@ def test_progress_checkpoint_contains_only_aggregates(tmp_path: Path):
     assert payload["failure_events"] == 1
     assert payload["failures_by_error"] == {"HTTP402": 1}
     assert payload["paired_exact_divergence_count"] == 1
+
+
+def test_evaluate_hashes_the_input_snapshot_once_per_run(tmp_path: Path, monkeypatch):
+    from janasunani.evaluation import sarvam_evaluate
+
+    inp = _make_dummy_input(tmp_path, n=3)
+    out = tmp_path / "out"
+    calls = []
+
+    def fake_snapshot(pages):
+        calls.append(list(pages))
+        return "sha256:" + "b" * 64
+
+    monkeypatch.setattr(sarvam_evaluate, "_input_snapshot_id", fake_snapshot)
+
+    rc = sarvam_evaluate.main(
+        ["--input", str(inp), "--out", str(out), "--arm", "digitise", "--dry-run"]
+    )
+
+    assert rc == 0
+    assert len(calls) == 1
+    assert len(calls[0]) == 3
+    progress = json.loads((out / "sarvam_progress.json").read_text())
+    assert progress["input_snapshot_id"] == "sha256:" + "b" * 64
 
 
 def test_input_snapshot_is_content_addressed_not_filename_or_mtime(tmp_path: Path):
