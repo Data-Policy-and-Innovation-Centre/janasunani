@@ -56,6 +56,13 @@ class SummaryJudgment:
         if not all((self.item_id, self.group_id, self.language, self.source_type)):
             raise ValueError("item/group/language/source values must be non-empty")
         for value, name in (
+            (self.should_skip, "should_skip"),
+            (self.skipped, "skipped"),
+            (self.pii_leak, "pii_leak"),
+        ):
+            if not isinstance(value, bool):
+                raise ValueError(f"{name} must be a boolean")
+        for value, name in (
             (self.critical_facts_total, "critical_facts_total"),
             (self.critical_facts_present, "critical_facts_present"),
             (self.unsupported_claims, "unsupported_claims"),
@@ -214,7 +221,11 @@ def build_scorecard(
             "structured_judgments_only": True,
             "narrative_and_identity_fields_forbidden": True,
             "adjudication_required": True,
-            "item_level_wilson_intervals": True,
+            "wilson_interval_units": {
+                "critical_fact_recall": "pooled_fact",
+                "case_rates": "item",
+            },
+            "critical_fact_within_item_dependence_adjusted": False,
             "cluster_uncertainty_pending": True,
         },
     }

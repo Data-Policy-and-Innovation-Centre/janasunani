@@ -84,6 +84,11 @@ def test_scorecard_covers_factuality_usefulness_editing_and_abstention():
     assert overall["median_edit_seconds"] == 15.0
     assert set(report["by_language"]) == {"English", "Odia", "unknown"}
     assert set(report["by_source_type"]) == {"scan", "typed"}
+    assert report["safety"]["wilson_interval_units"] == {
+        "critical_fact_recall": "pooled_fact",
+        "case_rates": "item",
+    }
+    assert report["safety"]["critical_fact_within_item_dependence_adjusted"] is False
 
 
 def test_exact_screenshot_behavior_is_a_correct_skip_judgment():
@@ -131,3 +136,9 @@ def test_skipped_rows_cannot_hide_generated_output_findings():
 def test_generated_judgment_rejects_boolean_or_nonfinite_metrics(field, value, message):
     with pytest.raises(ValueError, match=message):
         generated("invalid", **{field: value})
+
+
+@pytest.mark.parametrize("field", ["should_skip", "skipped", "pii_leak"])
+def test_judgment_requires_actual_booleans(field):
+    with pytest.raises(ValueError, match=field):
+        generated("invalid-boolean", **{field: "false"})
