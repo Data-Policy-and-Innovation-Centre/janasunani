@@ -340,6 +340,19 @@ def benchmark_hashing_classifier(
             top_k=(1, 3, 5),
             abstain_threshold=threshold,
         ),
+        "test_by_source_kind": {
+            source_kind: classification_metrics(
+                [
+                    example
+                    for example, record in zip(test_examples, test, strict=True)
+                    if record.source_kind == source_kind
+                ],
+                expected_labels=expected_labels,
+                top_k=(1, 3, 5),
+                abstain_threshold=threshold,
+            )
+            for source_kind in sorted({record.source_kind for record in test})
+        },
         "candidate_validation": [
             {
                 "alpha": candidate_alpha,

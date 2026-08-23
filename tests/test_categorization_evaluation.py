@@ -12,7 +12,16 @@ from janasunani.evaluation.categorization import (
 from janasunani.evaluation.classification import ScoredExample
 
 
-def record(item_id, text, category, split, *, language="English", group=None):
+def record(
+    item_id,
+    text,
+    category,
+    split,
+    *,
+    language="English",
+    source_kind="typed",
+    group=None,
+):
     return CategorizationRecord(
         item_id=item_id,
         group_id=group or item_id,
@@ -20,6 +29,7 @@ def record(item_id, text, category, split, *, language="English", group=None):
         category=category,
         split=split,
         language=language,
+        source_kind=source_kind,
     )
 
 
@@ -77,6 +87,9 @@ def dataset():
                         category,
                         split,
                         language="Odia" if i % 2 else "English",
+                        source_kind=(
+                            "scanned" if split == "test" and i % 2 else "typed"
+                        ),
                     )
                 )
     return rows
@@ -147,6 +160,9 @@ def test_hashing_baseline_reports_per_class_language_and_calibration():
     assert report["test"]["n"] == 9
     assert set(report["test"]["per_class"]) == set(PHRASES)
     assert set(report["test_by_language"]) == {"English", "Odia"}
+    assert set(report["test_by_source_kind"]) == {"scanned", "typed"}
+    assert report["test_by_source_kind"]["scanned"]["n"] == 3
+    assert report["test_by_source_kind"]["typed"]["n"] == 6
     assert 0.0 <= report["test"]["expected_calibration_error"] <= 1.0
     assert report["missing_training_labels"] == []
     assert len(report["candidate_validation"]) == 2
