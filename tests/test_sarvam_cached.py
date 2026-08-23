@@ -81,6 +81,26 @@ def test_cached_import_logs_aggregate_without_provider_call(tmp_path, monkeypatc
     assert logged["artifacts"]
 
 
+def test_cached_import_omits_failure_rate_without_accepted_job_denominator(
+    tmp_path, monkeypatch
+):
+    path = _evidence(tmp_path)
+    payload = json.loads(path.read_text())
+    payload["runs"][0].pop("accepted_jobs")
+    path.write_text(json.dumps(payload))
+    calls = []
+    monkeypatch.setattr(
+        sarvam_cached,
+        "log_benchmark_run",
+        lambda **kwargs: calls.append(kwargs) or "run",
+    )
+
+    sarvam_cached.import_evidence(path)
+
+    assert calls[0]["extra_metrics"]["provider_job_failures"] == 7.0
+    assert "provider_job_failure_rate" not in calls[0]["extra_metrics"]
+
+
 def test_estimated_cost_never_implies_actual_billing(tmp_path, monkeypatch):
     path = _evidence(tmp_path)
     payload = json.loads(path.read_text())

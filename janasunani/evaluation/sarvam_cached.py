@@ -266,7 +266,7 @@ def import_evidence(
         attempted = int(run.get("pages_attempted", run.get("pages_submitted", 0)))
         scored = int(run["pages_paired_scored"])
         failures = int(run.get("provider_job_failures", run.get("provider_failures", 0)))
-        accepted = int(run.get("accepted_jobs", 0))
+        accepted = run.get("accepted_jobs")
         metrics = {
             "pages_attempted": float(attempted),
             "pages_paired_scored": float(scored),
@@ -278,8 +278,9 @@ def import_evidence(
                 run["sarvam_to_pytesseract_character_ratio"]
             ),
             "provider_job_failures": float(failures),
-            "provider_job_failure_rate": failures / accepted if accepted else 0.0,
         }
+        if accepted is not None and int(accepted) > 0:
+            metrics["provider_job_failure_rate"] = failures / int(accepted)
         cost = run.get("recorded_cost_rupees")
         cost_kind = (
             "actual_billing"
