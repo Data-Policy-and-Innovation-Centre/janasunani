@@ -79,6 +79,7 @@ DEFAULT_REPEATS = 3
 
 # Output location (relative to repo root)
 DEFAULT_OUTPUT = Path("outputs/benchmark/latency.json")
+LATENCY_SCHEMA_VERSION = "janasunani.pipeline-latency/v1"
 
 # Fake per-stage mean seconds (CPU laptop, no GPU). These are not
 # performance claims — they are deterministic stand-ins so the harness
@@ -441,7 +442,7 @@ def _measure_with_processor(
     discard_warm: bool,
     processor_factory: Callable[[str], Any] | None,
     sleep_fake: bool = False,
-) -> dict[str, list[float]]:
+) -> dict[str, Any]:
     """Run processor over docs repeats times, collect per-stage wall seconds.
 
     Returns dict stage -> list of wall seconds (one entry per measured
@@ -456,6 +457,9 @@ def _measure_with_processor(
     """
     per_stage_times: dict[str, list[float]] = {k: [] for k in ALL_KEYS}
     per_stage_tickets: dict[str, list[str]] = {k: [] for k in ALL_KEYS}
+    attempts = 0
+    completed_attempts = 0
+    failures_by_error: defaultdict[str, int] = defaultdict(int)
 
     # Optionally warm a real processor once per variant
     processor = None
@@ -465,6 +469,7 @@ def _measure_with_processor(
     for doc in docs:
         ticket = doc["ticket"]
         for r in range(repeats):
+            attempts += 1
             is_warm = discard_warm and r == 0
             # Timing path: real processor vs fake
             if processor is not None:
@@ -484,16 +489,18 @@ def _measure_with_processor(
                         document_bytes=doc.get("document_bytes"),
                         district=doc.get("district"),
                     )
-                except Exception:
-                    # Benchmark must not hide processor bugs as slow timings.
-                    # Re-raise so the harness fails visibly.
-                    raise
+                except Exception as exc:  # noqa: BLE001
+                    # Failed attempts are reliability evidence, not latency
+                    # samples. Record only the exception type so processor
+                    # messages cannot leak grievance content, then continue.
+                    failures_by_error[type(exc).__name__] += 1
+                    continue
                 elapsed = time.perf_counter() - start
                 completed = captured.pop("ok", 1.0)
                 if completed != 1.0:
-                    raise RuntimeError(
-                        "processor emitted an incomplete timing record without raising"
-                    )
+                    failures_by_error["IncompleteTimingRecord"] += 1
+                    continue
+                completed_attempts += 1
                 if is_warm:
                     continue
                 # Prefer the sink's own e2e; fall back to the outer wall clock
@@ -515,6 +522,7 @@ def _measure_with_processor(
                 # Fake timing path — deterministic, fast, no sleep unless
                 # BENCHMARK_FAKE_SLEEP is set (for manual wall-clock checks).
                 timings = _fake_process(variant, ticket, r)
+                completed_attempts += 1
                 if sleep_fake:
                     # Optionally sleep a tiny fraction so wall-clock is real
                     time.sleep(min(timings.e2e * 0.01, 0.005))
@@ -530,6 +538,10 @@ def _measure_with_processor(
     return {
         "times": per_stage_times,  # type: ignore[return-value]
         "tickets": per_stage_tickets,  # type: ignore[return-value]
+        "attempts": attempts,
+        "completed_attempts": completed_attempts,
+        "failed_attempts": attempts - completed_attempts,
+        "failures_by_error": dict(sorted(failures_by_error.items())),
     }
 
 
@@ -612,9 +624,10 @@ def run_benchmark(
         "repeats": repeats,
         "warm_discarded": discard_warm,
         "n_measured": len(per_stage_times.get(E2E_KEY, [])),
-        "attempts": n_docs * repeats,
-        "completed_attempts": n_docs * repeats,
-        "failed_attempts": 0,
+        "attempts": raw["attempts"],
+        "completed_attempts": raw["completed_attempts"],
+        "failed_attempts": raw["failed_attempts"],
+        "failures_by_error": raw["failures_by_error"],
         "timestamp": timestamp,
         "git_sha": git_sha,
         "stages": stages_stats,
@@ -659,6 +672,17 @@ def latency_json_payload(
         clean = {k: v for k, v in result.items() if k != "_raw"}
         variants_payload[variant] = clean
 
+    publication_ready = bool(variants_payload) and all(
+        not result.get("is_fake_timing", True)
+        and result.get("n_measured", 0) > 0
+        and result.get("attempts")
+        == result.get("completed_attempts", 0) + result.get("failed_attempts", 0)
+        and isinstance(result.get("benchmark_context"), dict)
+        and bool(result["benchmark_context"].get("host_label"))
+        and bool(result["benchmark_context"].get("model_release_id"))
+        for result in variants_payload.values()
+    )
+
     # If single variant, also expose top-level stages for backwards compat
     if len(variants_payload) == 1:
         only_variant = next(iter(variants_payload))
@@ -666,11 +690,15 @@ def latency_json_payload(
         # Top-level is that variant's payload plus variants wrapper
         payload: dict[str, Any] = {
             **only_result,
+            "schema_version": LATENCY_SCHEMA_VERSION,
+            "publication_ready": publication_ready,
             "variants": variants_payload,
         }
     else:
         # Multi-variant file: top-level is variants plus summary
         payload = {
+            "schema_version": LATENCY_SCHEMA_VERSION,
+            "publication_ready": publication_ready,
             "variants": variants_payload,
             "n_variants": len(variants_payload),
             "timestamp": datetime.now(UTC).isoformat(),

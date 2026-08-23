@@ -236,6 +236,38 @@ def test_run_benchmark_with_fake_processor_factory():
     assert result["stages"]["e2e"]["n"] == 6
 
 
+def test_real_processor_failures_are_counted_without_polluting_timings():
+    class IntermittentProcessor:
+        _timing_sink = None
+
+        def __init__(self):
+            self.calls = 0
+
+        def process(self, **kwargs):
+            self.calls += 1
+            if self.calls == 2:
+                self._timing_sink({"redact": 99.0, "e2e": 99.0})
+                raise RuntimeError("synthetic failure")
+            self._timing_sink({"redact": 0.1, "e2e": 0.2, "ok": 1.0})
+
+    result = run_benchmark(
+        variant="standard",
+        n_text=2,
+        n_image=0,
+        repeats=2,
+        discard_warm=False,
+        processor_factory=lambda _variant: IntermittentProcessor(),
+    )
+
+    assert result["attempts"] == 4
+    assert result["completed_attempts"] == 3
+    assert result["failed_attempts"] == 1
+    assert result["failures_by_error"] == {"RuntimeError": 1}
+    assert result["n_measured"] == 3
+    assert result["stages"]["redact"]["n"] == 3
+    assert result["stages"]["redact"]["mean_seconds"] == pytest.approx(0.1)
+
+
 def test_real_processor_stage_names_are_preserved():
     class TimedProcessor:
         _timing_sink = None
@@ -265,6 +297,8 @@ def test_latency_json_payload_single_variant(tmp_path):
     assert "stages" in payload
     assert "variants" in payload
     assert "standard" in payload["variants"]
+    assert payload["schema_version"] == "janasunani.pipeline-latency/v1"
+    assert payload["publication_ready"] is False
     # Stages should have all required keys
     assert "e2e" in payload["stages"]
     assert "mean_seconds" in payload["stages"]["e2e"]
@@ -278,6 +312,36 @@ def test_latency_json_payload_multi_variant(tmp_path):
     assert "standard" in payload["variants"]
     assert "sarvam_digitise" in payload["variants"]
     assert payload["n_variants"] == 2
+    assert payload["schema_version"] == "janasunani.pipeline-latency/v1"
+    assert payload["publication_ready"] is False
+
+
+def test_identified_real_latency_run_is_publication_ready():
+    result = run_benchmark(
+        variant="standard",
+        n_text=1,
+        n_image=0,
+        repeats=1,
+        discard_warm=False,
+        processor_factory=lambda _variant: type(
+            "Processor",
+            (),
+            {
+                "_timing_sink": None,
+                "process": lambda self, **kwargs: self._timing_sink(
+                    {"redact": 0.1, "e2e": 0.2, "ok": 1.0}
+                ),
+            },
+        )(),
+    )
+    result["benchmark_context"] = {
+        "host_label": "release-host",
+        "model_release_id": "model-release-1",
+    }
+
+    payload = latency_json_payload(result)
+
+    assert payload["publication_ready"] is True
 
 
 def test_write_latency_json_creates_file(tmp_path):
