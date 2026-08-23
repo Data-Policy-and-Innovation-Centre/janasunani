@@ -638,7 +638,7 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
                 "gold.manifest.json",
             },
             "actionability-local-candidate-benchmark": {
-                "actionability_candidates_muril_high_catch.json",
+                "outputs/evaluation/actionability_candidates_muril_high_catch.json",
             },
         }
         for position, (stage, outputs) in enumerate(stages.items()):
@@ -689,28 +689,12 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
         "limitations",
         payload["limitations"],
         allowed={
-            "This historical benchmark admitted six resolver judgments marked uncertain; use the 174-row reproducible benchmark for current development evidence.",
-            "The final adjudication is produced by frontier models, not officers.",
-            "No out_of_scope example was defensible, so this does not establish five-class quality.",
-            "The 60-case test has wide item-level confidence intervals and has now been viewed.",
-            "The snapshot split is not chronological and duplicate-group isolation is unavailable.",
-            "Accuracy and review precision describe the enriched sample composition, not production prevalence or PPV.",
-            "Language, source and intake-office strata are not large enough for release decisions.",
-            "The high-catch point estimate exceeded its actionable-review target on test by 0.87 percentage points.",
-            "Judge independence is between Codex agent contexts, not between model families or providers.",
-            "Exact hidden prompts, inference sampling configuration, and provider retention evidence were unavailable in this run.",
-            "All outputs remain advisory; no automatic rejection or eligibility decision is permitted.",
-            "candidate selection is development-only and not a production promotion",
-            "accuracy, precision, PPV, and review workload are specific to this designed sample composition and are not production prevalence",
-            "frontier-adjudicated development gold is not officer-confirmed truth",
-            "single-snapshot hash splits are not chronological release evidence",
-            "duplicate-group isolation is unavailable in this pilot sample",
-            "binary review does not replace the complete five-class production contract",
-            "frozen encoder with a train-only linear probe",
-            "test split is report-only and did not select model or threshold",
-            "Wilson intervals are item-level and do not establish population representativeness",
+            "The adjudicators were separate Codex contexts, not independent model families or providers.",
+            "Exact hidden prompts, sampling configuration and provider retention evidence were unavailable.",
+            "The sample contains no defensible out_of_scope example and cannot validate the five-class serving contract.",
+            "The four historical candidate reports used the preserved 180-row historical gold; the reproducible benchmark uses the stricter 174-row canonical gold.",
+            "The historical MiniLM comparisons depend on an untracked local Hugging Face cache and are preserved as direct evidence rather than represented as reproducible stages.",
         },
-        require_all=False,
     )
     return problems
 
@@ -773,18 +757,11 @@ def _check_sarvam_snapshots(payload: dict[str, Any]) -> list[str]:
         "limitations",
         payload.get("limitations"),
         allowed={
-            "No hand transcription exists.",
-            "No hand transcription; divergence is not OCR accuracy.",
-            "No hand transcription; divergence and character length do not establish quality.",
-            "No reportable category accuracy or summary comparison.",
-            "Language is an en-IN request hint, not an observed language split.",
-            "Handwriting status is unknown.",
-            "The original runner did not checkpoint a scorecard before HTTP 402.",
-            "Failed pages are excluded from paired divergence and may be non-random.",
-            "The category-stratified sample is not handwriting- or language-stratified.",
-            "The original sample manifest contained ticket and object identifiers and was not recovered.",
+            "The original 300-page sample manifest and benchmark log were not recovered.",
+            "The paid run ended before it wrote a complete scorecard.",
+            "No hand transcription exists, so paired text divergence is not OCR accuracy.",
+            "Latency distributions and actual provider billing records were not recovered.",
         },
-        require_all=False,
     )
     return problems
 

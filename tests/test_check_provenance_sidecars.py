@@ -325,7 +325,7 @@ def _frontier_payload():
             ],
             "actionability-adjudication-finalize": ["gold.jsonl", "gold.manifest.json"],
             "actionability-local-candidate-benchmark": [
-                "actionability_candidates_muril_high_catch.json"
+                "outputs/evaluation/actionability_candidates_muril_high_catch.json"
             ],
         },
         "canonical_reproducible_gold": {
@@ -355,7 +355,11 @@ def _frontier_payload():
             "historical_candidates_muril_minilm_high_catch.json": "2" * 64,
         },
         "limitations": [
-            "frontier-adjudicated development gold is not officer-confirmed truth"
+            "The adjudicators were separate Codex contexts, not independent model families or providers.",
+            "Exact hidden prompts, sampling configuration and provider retention evidence were unavailable.",
+            "The sample contains no defensible out_of_scope example and cannot validate the five-class serving contract.",
+            "The four historical candidate reports used the preserved 180-row historical gold; the reproducible benchmark uses the stricter 174-row canonical gold.",
+            "The historical MiniLM comparisons depend on an untracked local Hugging Face cache and are preserved as direct evidence rather than represented as reproducible stages.",
         ],
     }
 
@@ -411,7 +415,12 @@ def test_sarvam_source_snapshot_sidecar_is_metadata_only():
                 "role": "machine-readable aggregate scorecard",
             }
         },
-        "limitations": ["No hand transcription exists."],
+        "limitations": [
+            "The original 300-page sample manifest and benchmark log were not recovered.",
+            "The paid run ended before it wrote a complete scorecard.",
+            "No hand transcription exists, so paired text divergence is not OCR accuracy.",
+            "Latency distributions and actual provider billing records were not recovered.",
+        ],
     }
     assert check.check_payload(payload) == []
 
