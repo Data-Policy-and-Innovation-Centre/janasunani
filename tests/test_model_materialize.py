@@ -155,6 +155,32 @@ def test_materialize_rejects_malformed_dvc_provenance(tmp_path):
     assert not (tmp_path / "release-12").exists()
 
 
+def test_materialize_requires_dvc_model_mirror_path(tmp_path):
+    client = FakeClient(
+        tags={"dvc.path": "artifacts/actionability", "dvc.hash": "a" * 32 + ".dir"}
+    )
+
+    with pytest.raises(ReleaseManifestError, match="must live under models/"):
+        materialize_release(
+            spec=_spec(), release_root=tmp_path, client=client, downloader=_downloader
+        )
+
+    assert not (tmp_path / "release-12").exists()
+
+
+def test_materialize_rejects_noncanonical_dvc_model_path(tmp_path):
+    client = FakeClient(
+        tags={"dvc.path": "models\\actionability", "dvc.hash": "a" * 32 + ".dir"}
+    )
+
+    with pytest.raises(ReleaseManifestError, match="unsafe DVC provenance path"):
+        materialize_release(
+            spec=_spec(), release_root=tmp_path, client=client, downloader=_downloader
+        )
+
+    assert not (tmp_path / "release-12").exists()
+
+
 def test_materialize_never_overwrites_an_existing_release(tmp_path):
     materialize_release(
         spec=_spec(), release_root=tmp_path, client=FakeClient(), downloader=_downloader

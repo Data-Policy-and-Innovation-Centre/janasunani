@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import shutil
 import subprocess
@@ -182,6 +182,31 @@ def _validate_local_spec(name: str, config: Mapping[str, Any]) -> None:
         raise ReleaseManifestError(f"model {name!r} parameters must be an object")
 
 
+def _validated_dvc_path(name: str, value: object) -> str:
+    if not isinstance(value, str):
+        raise ReleaseManifestError(
+            f"model {name!r} has invalid DVC provenance path {value!r}"
+        )
+    relative = PurePosixPath(value)
+    if (
+        not value
+        or value != value.strip()
+        or "\\" in value
+        or any(ord(character) < 32 for character in value)
+        or relative.is_absolute()
+        or ".." in relative.parts
+        or relative.as_posix() != value
+    ):
+        raise ReleaseManifestError(
+            f"model {name!r} has unsafe DVC provenance path {value!r}"
+        )
+    if len(relative.parts) < 2 or relative.parts[0] != "models":
+        raise ReleaseManifestError(
+            f"model {name!r} DVC provenance must live under models/"
+        )
+    return value
+
+
 def _materialize_registry_model(
     *,
     name: str,
@@ -202,11 +227,7 @@ def _materialize_registry_model(
         raise ReleaseManifestError(
             f"model {name!r} version {version.version} lacks DVC provenance tags"
         )
-    dvc_relative = Path(str(dvc_path))
-    if dvc_relative.is_absolute() or ".." in dvc_relative.parts:
-        raise ReleaseManifestError(
-            f"model {name!r} has unsafe DVC provenance path {dvc_path!r}"
-        )
+    dvc_path = _validated_dvc_path(name, dvc_path)
     if _DVC_HASH.fullmatch(str(dvc_hash)) is None:
         raise ReleaseManifestError(
             f"model {name!r} has invalid DVC provenance hash {dvc_hash!r}"
