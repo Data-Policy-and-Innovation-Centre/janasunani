@@ -349,6 +349,11 @@ def test_input_snapshot_is_content_addressed_not_filename_or_mtime(tmp_path: Pat
     assert _input_snapshot_id([(first, 1)]) != original
     assert _input_snapshot_id([(renamed, 2)]) != original
 
+    first.write_bytes(b"first-document")
+    renamed.write_bytes(b"second-document")
+    forward = _input_snapshot_id([(first, 1), (renamed, 1)])
+    assert _input_snapshot_id([(renamed, 1), (first, 1)]) == forward
+
 
 def test_evaluate_join_metadata_from_lake(tmp_path: Path):
     """--join-metadata should populate gold_category from lake complaints parquet."""
