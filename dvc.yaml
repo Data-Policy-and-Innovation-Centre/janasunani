@@ -22,6 +22,7 @@ stages:
       Runs sequentially in the pipeline-core and PII environments; needs the
       tesseract binary (+ tesseract-lang for Odia).
     cmd: >-
+      JANASUNANI_FORMAT_CLASSIFIER_ARTIFACT=models/format_classifier/page_split_v3.0_doc_split.pkl
       uv run --extra pipeline-core janasunani-pipeline run
       --input data/raw/documents-sample
       --db data/processed/pipeline-sample.sqlite
@@ -138,6 +139,7 @@ stages:
       - data/external/actionability_frontier_v1/judge_a.jsonl
       - data/external/actionability_frontier_v1/judge_b.jsonl
       - janasunani/evaluation/adjudication.py
+      - janasunani/inference/actionability.py
       - scripts/reconcile_actionability_adjudication.py
       - pyproject.toml
       - uv.lock
@@ -168,6 +170,7 @@ stages:
       - data/external/actionability_frontier_v1/consensus.jsonl
       - data/external/actionability_frontier_v1/resolver.jsonl
       - janasunani/evaluation/adjudication.py
+      - janasunani/inference/actionability.py
       - scripts/reconcile_actionability_adjudication.py
       - pyproject.toml
       - uv.lock

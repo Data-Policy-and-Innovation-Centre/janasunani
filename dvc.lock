@@ -29,7 +29,8 @@ stages:
       md5: 4ad7a17893cb22a396f572b899e68c25
       size: 3925
   pipeline-sample:
-    cmd: uv run --extra pipeline-core janasunani-pipeline run --input
+    cmd: JANASUNANI_FORMAT_CLASSIFIER_ARTIFACT=models/format_classifier/page_split_v3.0_doc_split.pkl
+      uv run --extra pipeline-core janasunani-pipeline run --input
       data/raw/documents-sample --db data/processed/pipeline-sample.sqlite
       --models models --ocr-engine pytesseract --stages format_classifier
       ocr_extraction --workers 1 && uv run --extra pii janasunani-pipeline run
@@ -217,6 +218,10 @@ stages:
       hash: md5
       md5: 20c44867183cc01c9dde0929a9fa2398
       size: 17058
+    - path: janasunani/inference/actionability.py
+      hash: md5
+      md5: 0baf5452a92c097aff6c518be1b66ac6
+      size: 14479
     - path: pyproject.toml
       hash: md5
       md5: a75720710945819f44a16c502fb9c665
@@ -275,6 +280,10 @@ stages:
       hash: md5
       md5: 20c44867183cc01c9dde0929a9fa2398
       size: 17058
+    - path: janasunani/inference/actionability.py
+      hash: md5
+      md5: 0baf5452a92c097aff6c518be1b66ac6
+      size: 14479
     - path: pyproject.toml
       hash: md5
       md5: a75720710945819f44a16c502fb9c665

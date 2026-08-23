@@ -25,6 +25,7 @@ models to find out.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Optional, Protocol
 
 from loguru import logger
@@ -124,7 +125,11 @@ class IncidenceRoutingProvider:
         )
 
 
-def _load_incidence_provider() -> IncidenceRoutingProvider | None:
+def _load_incidence_provider(
+    *,
+    models_dir: Path | None = None,
+    verified_artifacts: dict[tuple[Path, str], Path] | None = None,
+) -> IncidenceRoutingProvider | None:
     """Resolve and load the local artifact; never contact MLflow or a registry."""
 
     try:
@@ -132,7 +137,11 @@ def _load_incidence_provider() -> IncidenceRoutingProvider | None:
         from janasunani.routing.rules import DEFAULT_ROUTER
         from janasunani.tracking.artifacts import resolve_artifact
 
-        artifact = resolve_artifact(ROUTING_INCIDENCE_ARTIFACT_NAME)
+        artifact = resolve_artifact(
+            ROUTING_INCIDENCE_ARTIFACT_NAME,
+            models_dir=models_dir,
+            verified_artifacts=verified_artifacts,
+        )
         if artifact is None:
             return None
         router = load_incidence_router(artifact)
@@ -143,7 +152,12 @@ def _load_incidence_provider() -> IncidenceRoutingProvider | None:
         return None
 
 
-def router_from_env(value: str | None = None) -> RoutingProvider:
+def router_from_env(
+    value: str | None = None,
+    *,
+    models_dir: Path | None = None,
+    verified_artifacts: dict[tuple[Path, str], Path] | None = None,
+) -> RoutingProvider:
     """Select a router by environment, degrading to the default on anything odd.
 
     Unset, unknown, or unconstructable all return the shipped router. An
@@ -164,7 +178,10 @@ def router_from_env(value: str | None = None) -> RoutingProvider:
             logger.warning("{}={} could not be constructed; using the default router", ROUTER_ENV_VAR, configured)
             return RuleRouter()
     if configured == ROUTER_INCIDENCE:
-        provider = _load_incidence_provider()
+        provider = _load_incidence_provider(
+            models_dir=models_dir,
+            verified_artifacts=verified_artifacts,
+        )
         if provider is not None:
             return provider
         logger.warning(
@@ -183,7 +200,11 @@ def router_from_env(value: str | None = None) -> RoutingProvider:
     return DEFAULT_ROUTER
 
 
-def router_status() -> tuple[str, bool, str]:
+def router_status(
+    *,
+    models_dir: Path | None = None,
+    verified_artifacts: dict[tuple[Path, str], Path] | None = None,
+) -> tuple[str, bool, str]:
     """Report ``(name, ok, detail)`` naming the rung that will answer first.
 
     Validates by **loading** the crosswalk, not by checking that a file
@@ -249,7 +270,11 @@ def router_status() -> tuple[str, bool, str]:
             )
             from janasunani.tracking.artifacts import resolve_artifact
 
-            artifact = resolve_artifact(ROUTING_INCIDENCE_ARTIFACT_NAME)
+            artifact = resolve_artifact(
+                ROUTING_INCIDENCE_ARTIFACT_NAME,
+                models_dir=models_dir,
+                verified_artifacts=verified_artifacts,
+            )
             if artifact is None:
                 return (
                     ROUTER_DEFAULT,

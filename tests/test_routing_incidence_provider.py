@@ -20,7 +20,7 @@ from janasunani.routing.provider import (
 from janasunani.routing.rules import RuleRouter
 
 
-def _artifact(tmp_path):
+def _artifact(tmp_path, directory="release"):
     rows = [
         RouteRecord(
             item_id=f"aggregate-source-{index}",
@@ -34,7 +34,7 @@ def _artifact(tmp_path):
         for index in range(4)
     ]
     router = IncidenceRouter(alpha=10.0, serving_min_support=3).fit(rows)
-    return save_incidence_router(router, tmp_path / "release")
+    return save_incidence_router(router, tmp_path / directory)
 
 
 def test_incidence_provider_returns_support_and_concentration(tmp_path, monkeypatch):
@@ -51,6 +51,23 @@ def test_incidence_provider_returns_support_and_concentration(tmp_path, monkeypa
     assert result.empirical_evidence.support == 4
     assert result.empirical_evidence.concentration == 1.0
     assert result.empirical_evidence.width == "category+district"
+
+
+def test_incidence_provider_and_status_use_explicit_models_root(
+    tmp_path, monkeypatch
+):
+    models_root = tmp_path / "custom-models"
+    _artifact(models_root, "routing_incidence")
+    monkeypatch.setenv(ROUTER_ENV_VAR, ROUTER_INCIDENCE)
+    monkeypatch.delenv("JANASUNANI_MODELS_DIR", raising=False)
+    monkeypatch.delenv("JANASUNANI_ROUTING_INCIDENCE_ARTIFACT", raising=False)
+
+    provider = router_from_env(models_dir=models_root)
+    name, ok, _detail = router_status(models_dir=models_root)
+
+    assert isinstance(provider, IncidenceRoutingProvider)
+    assert name == ROUTER_INCIDENCE
+    assert ok is True
 
 
 def test_incidence_provider_uses_existing_fallback_for_unseen_category(

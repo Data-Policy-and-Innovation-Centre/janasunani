@@ -694,7 +694,11 @@ def _routing_mappings_check() -> DependencyCheck:
     return DependencyCheck("routing mappings", True, detail, required=False)
 
 
-def _router_check() -> DependencyCheck:
+def _router_check(
+    root: Path,
+    *,
+    verified_artifacts: dict[tuple[Path, str], Path] | None = None,
+) -> DependencyCheck:
     """Which routing rung will actually answer the first live submission.
 
     ``_routing_mappings_check`` above covers the CSV masters, which are the
@@ -705,7 +709,10 @@ def _router_check() -> DependencyCheck:
     PERFORMANCE.md recorded exactly that state on 7 August.
     """
     try:
-        name, ok, detail = router_status()
+        name, ok, detail = router_status(
+            models_dir=root,
+            verified_artifacts=verified_artifacts,
+        )
     except Exception as exc:  # pragma: no cover - defensive; never raise
         return DependencyCheck("router", False, f"unavailable: {exc}", required=False)
     return DependencyCheck(f"router ({name})", ok, detail, required=False)
@@ -989,7 +996,9 @@ def preflight(models_dir: str | Path | None = None) -> list[DependencyCheck]:
     # connection (_OLTP_PROBE_TIMEOUT_S) rather than just checking presence.
     checks.append(_routing_mappings_check())
     checks.append(_model_release_check(verified_artifacts=verified_artifacts))
-    checks.append(_router_check())
+    checks.append(
+        _router_check(root, verified_artifacts=verified_artifacts)
+    )
     checks.append(
         _triage_check(root, verified_artifacts=verified_artifacts)
     )
@@ -1077,7 +1086,14 @@ def build_processor(
         detect_pii=detect_pii_spans,
         categorizer=categorizer,
         summarizer=summarizer,
-        router=router if router is not None else router_from_env(),
+        router=(
+            router
+            if router is not None
+            else router_from_env(
+                models_dir=root,
+                verified_artifacts=verified_artifacts,
+            )
+        ),
         is_english_compatible=_is_english,
         detect_language=_detect_language,
         triage_provider=(
