@@ -224,13 +224,18 @@ class PipelineGrievanceProcessor:
                 redacted_text=redacted_text,
                 entities=pii_entities,
             )
+            classifier_text = (
+                redacted_text if extraction.source == "text" else model_text_source
+            )
             submitted_on = self._now()
             with timer.stage("triage"):
                 try:
-                    # The provider is intentionally called after redaction, never on
-                    # raw OCR or typed citizen text.  Its result is advisory only.
+                    # The provider receives the same redacted grievance-bearing
+                    # text as the downstream models. For documents this excludes
+                    # identification, bill, and miscellaneous pages; raw OCR and
+                    # typed citizen text never reach triage.
                     triage = self._triage_provider.assess(
-                        redacted_text=redaction.redacted_text,
+                        redacted_text=classifier_text,
                         district=district,
                         submitted_on=submitted_on,
                     )
@@ -243,9 +248,6 @@ class PipelineGrievanceProcessor:
                     )
                     triage = unavailable_triage()
 
-            classifier_text = (
-                redacted_text if extraction.source == "text" else model_text_source
-            )
             with timer.stage("detect_language"):
                 language = self._detect_language(classifier_text)
                 is_english = self._is_english_compatible(classifier_text)
@@ -258,12 +260,13 @@ class PipelineGrievanceProcessor:
                 and is_content_free_abuse(classifier_text)
             )
             if observed_content_free_regression:
-                # Triage runs on redacted text before downstream models.  A
-                # named, content-free regression does not need model calls, and
-                # a language-detector guess must not become the explanation for
-                # why no summary was produced. Broader bounded-spam reviews stay
-                # advisory and continue through the normal category/routing
-                # path; only this exact regression takes manual intake.
+                # Triage runs on the redacted model input before downstream
+                # models. A named, content-free regression does not need model
+                # calls, and a language-detector guess must not become the
+                # explanation for why no summary was produced. Broader bounded-
+                # spam reviews stay advisory and continue through the normal
+                # category/routing path; only this exact regression takes manual
+                # intake.
                 category = "Uncategorized"
                 summary = LOW_SIGNAL_SUMMARY
                 with timer.stage("route"):

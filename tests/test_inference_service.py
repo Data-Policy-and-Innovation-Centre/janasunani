@@ -193,6 +193,14 @@ def test_triage_provider_outage_is_nonblocking_and_explicit():
 
 
 def test_pdf_preserves_all_ocr_but_gates_models_to_class_one_pages():
+    class RecordingTriageProvider:
+        def __init__(self):
+            self.inputs = []
+
+        def assess(self, *, redacted_text, **_kwargs):
+            self.inputs.append(redacted_text)
+            return TriageResult()
+
     def ocr(_bytes, _name):
         return OcrResult(
             full_text=(
@@ -209,10 +217,12 @@ def test_pdf_preserves_all_ocr_but_gates_models_to_class_one_pages():
         )
     categorizer = RecordingCategorizer(category="Roads & Bridges")
     summarizer = RecordingSummarizer()
+    triage_provider = RecordingTriageProvider()
     processor = _processor(
         ocr=ocr,
         categorizer=categorizer,
         summarizer=summarizer,
+        triage_provider=triage_provider,
     )
 
     result = _process(
@@ -239,6 +249,7 @@ def test_pdf_preserves_all_ocr_but_gates_models_to_class_one_pages():
     assert "IDENTITY [PHONE]" in result.redaction.redacted_text
     assert categorizer.inputs == [model_input]
     assert summarizer.inputs == [model_input]
+    assert triage_provider.inputs == [model_input]
     assert "IDENTITY" not in categorizer.inputs[0]
     assert result.routing.method == "rules"
     assert result.routing.dept == "Works"
