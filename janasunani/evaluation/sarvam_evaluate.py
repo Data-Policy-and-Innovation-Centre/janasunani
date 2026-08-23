@@ -96,16 +96,19 @@ def discover_pages(input_dir: Path, limit: int | None) -> list[tuple[Path, int]]
 
 
 def _input_snapshot_id(pages: list[tuple[Path, int]]) -> str:
-    """Content-address the exact document bytes and requested page inventory.
+    """Content-address document bytes, pages, and ticket assignments.
 
-    Filenames can contain ticket identifiers and mtimes change when a governed
-    sample is copied. Neither belongs in the identity. Hash each source file's
-    bytes once, then bind that digest to every requested page number so changed
-    pixels cannot retain the same snapshot merely by preserving size/mtime.
+    Filenames can contain ticket identifiers, so never persist them or their
+    individual hashes. The ticket parsed from each filename nevertheless
+    determines the metadata join and must be part of the aggregate identity.
+    Hash each source file's bytes once, then bind its digest, requested page,
+    and an in-memory ticket digest into the final order-independent snapshot.
+    Mtimes and filename decorations outside the parsed ticket are irrelevant.
     """
 
     digest = hashlib.sha256()
     file_digests: dict[Path, bytes] = {}
+    members: list[bytes] = []
     for path, number in pages:
         resolved = path.resolve()
         file_digest = file_digests.get(resolved)
@@ -116,7 +119,11 @@ def _input_snapshot_id(pages: list[tuple[Path, int]]) -> str:
                     source_digest.update(chunk)
             file_digest = source_digest.digest()
             file_digests[resolved] = file_digest
-        value = file_digest + b"\0" + str(number).encode("ascii")
+        ticket_digest = hashlib.sha256(_ticket_of(path).encode("utf-8")).digest()
+        members.append(
+            file_digest + ticket_digest + b"\0" + str(number).encode("ascii")
+        )
+    for value in sorted(members):
         digest.update(len(value).to_bytes(8, "big"))
         digest.update(value)
     return f"sha256:{digest.hexdigest()}"
@@ -125,7 +132,8 @@ def _input_snapshot_id(pages: list[tuple[Path, int]]) -> str:
 def _write_progress_checkpoint(
     *,
     out_dir: Path,
-    pages: list[tuple[Path, int]],
+    input_snapshot_id: str,
+    pages_discovered: int,
     pages_processed: int,
     records: list[PageRecord],
     failures: list[dict[str, str]],
@@ -153,26 +161,16 @@ def _write_progress_checkpoint(
         normalize_text(row.pytesseract_text) != normalize_text(row.sarvam_markdown)
         for row in eligible_pairs
     )
-    partial: dict[str, object] | None = None
-    if records:
-        report = build_scorecard(records, slice_label=slice_label, arm=arm).to_dict()
-        partial = {
-            key: report.get(key)
-            for key in (
-                "category", "transcription_accuracy", "transcription_divergence",
-                "by_handwritten", "by_language", "per_category", "summary_divergence",
-            )
-        }
     payload = {
         "schema_version": PROGRESS_SCHEMA_VERSION,
         "updated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "complete": complete,
-        "input_snapshot_id": _input_snapshot_id(pages),
+        "input_snapshot_id": input_snapshot_id,
         "arm": arm,
         "extract_schema_version": schema_version,
         "slice": slice_label,
         "dry_run": dry_run,
-        "pages_discovered": len(pages),
+        "pages_discovered": pages_discovered,
         "pages_processed": pages_processed,
         "pages_scored": len(records),
         "pages_excluded": max(0, pages_processed - len(records)),
@@ -187,12 +185,14 @@ def _write_progress_checkpoint(
         ),
         "paired_exact_divergence_count": divergence_n,
         "paired_exact_divergence_n": len(eligible_pairs),
-        "maximum_list_price_rupees": 0.0 if dry_run else _price_for_arm(arm, len(pages)),
+        "maximum_list_price_rupees": (
+            0.0 if dry_run else _price_for_arm(arm, pages_discovered)
+        ),
         "actual_billing_available": False,
-        "partial_scorecard": partial,
         "privacy": {
             "contains_page_or_ticket_ids": False,
             "contains_text_or_provider_payloads": False,
+            "contains_category_or_demographic_breakdowns": False,
             "mode": "0600",
         },
     }
@@ -409,6 +409,7 @@ def main(argv: list[str] | None = None) -> int:
     if not pages:
         logger.error(f"no documents found under {input_dir}")
         return 1
+    input_snapshot_id = _input_snapshot_id(pages)
 
     cost = _price_for_arm(args.arm, len(pages))
     logger.info(f"{len(pages)} page(s) across {len({p for p, _ in pages})} document(s) — arm={args.arm} schema={args.schema_version}")
@@ -608,7 +609,8 @@ def main(argv: list[str] | None = None) -> int:
                     print(sarvam_summary)
             _write_progress_checkpoint(
                 out_dir=out_dir,
-                pages=pages,
+                input_snapshot_id=input_snapshot_id,
+                pages_discovered=len(pages),
                 pages_processed=processed,
                 records=records,
                 failures=failures,
@@ -660,7 +662,8 @@ def main(argv: list[str] | None = None) -> int:
 
         _write_progress_checkpoint(
             out_dir=out_dir,
-            pages=pages,
+            input_snapshot_id=input_snapshot_id,
+            pages_discovered=len(pages),
             pages_processed=processed,
             records=records,
             failures=failures,
@@ -701,7 +704,8 @@ def main(argv: list[str] | None = None) -> int:
     logger.success(f"scorecard -> {destination}")
     _write_progress_checkpoint(
         out_dir=out_dir,
-        pages=pages,
+        input_snapshot_id=input_snapshot_id,
+        pages_discovered=len(pages),
         pages_processed=len(pages),
         records=records,
         failures=failures,

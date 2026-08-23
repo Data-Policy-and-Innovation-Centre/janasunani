@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import date
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -104,7 +105,7 @@ def load_evidence(path: Path) -> Mapping[str, Any]:
     required_root = {
         "as_of", "provider", "model", "slice", "extract_schema_version",
         "normalizer_version", "credits_available_for_new_calls", "runs",
-        "reporting_rule",
+        "reporting_rule", "reproducibility",
     }
     missing_root = required_root - set(payload)
     if missing_root:
@@ -121,19 +122,18 @@ def load_evidence(path: Path) -> Mapping[str, Any]:
             raise ValueError(f"cached Sarvam evidence {field} must be a non-empty string")
     if not isinstance(payload["credits_available_for_new_calls"], bool):
         raise ValueError("credits_available_for_new_calls must be a boolean")
-    reproducibility = payload.get("reproducibility")
-    if reproducibility is not None:
-        if not isinstance(reproducibility, Mapping):
-            raise ValueError("reproducibility must be an object")
-        if set(reproducibility) != _REPRODUCIBILITY_FIELDS:
-            raise ValueError("reproducibility has an unexpected shape")
-        for field in _REPRODUCIBILITY_FIELDS - {"claim_limit"}:
-            if not isinstance(reproducibility[field], bool):
-                raise ValueError(f"reproducibility.{field} must be a boolean")
-        if not isinstance(reproducibility["claim_limit"], str) or not reproducibility[
-            "claim_limit"
-        ].strip():
-            raise ValueError("reproducibility.claim_limit must be a non-empty string")
+    reproducibility = payload["reproducibility"]
+    if not isinstance(reproducibility, Mapping):
+        raise ValueError("reproducibility must be an object")
+    if set(reproducibility) != _REPRODUCIBILITY_FIELDS:
+        raise ValueError("reproducibility has an unexpected shape")
+    for field in _REPRODUCIBILITY_FIELDS - {"claim_limit"}:
+        if not isinstance(reproducibility[field], bool):
+            raise ValueError(f"reproducibility.{field} must be a boolean")
+    if not isinstance(reproducibility["claim_limit"], str) or not reproducibility[
+        "claim_limit"
+    ].strip():
+        raise ValueError("reproducibility.claim_limit must be a non-empty string")
     runs = payload.get("runs")
     if not isinstance(runs, list) or not runs:
         raise ValueError("cached Sarvam evidence requires at least one run")
@@ -259,12 +259,14 @@ def import_evidence(
     artifact_uri: str | None = None,
 ) -> dict[str, str]:
     payload = load_evidence(path)
+    evidence_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+    reproducibility = payload["reproducibility"]
     imported: dict[str, str] = {}
     for run in payload["runs"]:
         attempted = int(run.get("pages_attempted", run.get("pages_submitted", 0)))
         scored = int(run["pages_paired_scored"])
         failures = int(run.get("provider_job_failures", run.get("provider_failures", 0)))
-        accepted = int(run.get("accepted_jobs", 0))
+        accepted = run.get("accepted_jobs")
         metrics = {
             "pages_attempted": float(attempted),
             "pages_paired_scored": float(scored),
@@ -276,10 +278,15 @@ def import_evidence(
                 run["sarvam_to_pytesseract_character_ratio"]
             ),
             "provider_job_failures": float(failures),
-            "provider_job_failure_rate": failures / accepted if accepted else 0.0,
         }
+        if accepted is not None and int(accepted) > 0:
+            metrics["provider_job_failure_rate"] = failures / int(accepted)
         cost = run.get("recorded_cost_rupees")
-        cost_kind = "recorded"
+        cost_kind = (
+            "actual_billing"
+            if run.get("actual_billing_available", False)
+            else "recorded_non_billing_amount"
+        )
         if cost is None:
             cost = run.get("estimated_list_price_accepted_jobs_rupees")
             cost_kind = "estimated_list_price_accepted_jobs"
@@ -295,9 +302,6 @@ def import_evidence(
             slice_id=str(payload["slice"]),
             ocr_engine="sarvam",
             sample_n=scored,
-            cost_per_doc_rupees=(
-                float(cost) / attempted if cost is not None and attempted else None
-            ),
             ocr_divergence_rate=float(run["normalized_exact_text_divergence"]),
             extra_params={
                 "cached_evidence_run_id": str(run["run_id"]),
@@ -312,8 +316,22 @@ def import_evidence(
                     run.get("actual_billing_available", False)
                 ).lower(),
                 "cost_evidence": cost_kind if cost is not None else "unavailable",
+                "cost_denominator": "attempted_page",
                 "cost_basis": str(run.get("cost_basis", "not recorded")),
                 "quality_claim_permitted": "false",
+                "evidence_sha256": evidence_sha256,
+                "git_sha_role": "cached_evidence_import_code",
+                "source_run_git_sha": "unavailable",
+                "source_artifacts_tracked": str(
+                    reproducibility["source_artifacts_tracked"]
+                ).lower(),
+                "source_artifact_hashes_available": str(
+                    reproducibility["source_artifact_hashes_available"]
+                ).lower(),
+                "derivation_command_recorded": str(
+                    reproducibility["derivation_command_recorded"]
+                ).lower(),
+                "evidence_claim_limit": str(reproducibility["claim_limit"]),
             },
             extra_metrics=metrics,
             artifacts=[path],

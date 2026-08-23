@@ -216,8 +216,10 @@ def test_evaluate_dry_run_digitise_arm(tmp_path: Path):
     assert progress["complete"] is True
     assert progress["pages_processed"] == 2
     assert progress["pages_scored"] == 2
+    assert "partial_scorecard" not in progress
     assert progress["privacy"]["contains_page_or_ticket_ids"] is False
     assert progress["privacy"]["contains_text_or_provider_payloads"] is False
+    assert progress["privacy"]["contains_category_or_demographic_breakdowns"] is False
     assert progress_path.stat().st_mode & 0o777 == 0o600
     # markdown mentions arm/slice
     md = md_path.read_text()
@@ -279,7 +281,8 @@ def test_progress_checkpoint_contains_only_aggregates(tmp_path: Path):
     ]
     destination = _write_progress_checkpoint(
         out_dir=tmp_path / "out",
-        pages=[(page, 1)],
+        input_snapshot_id="sha256:" + "a" * 64,
+        pages_discovered=1,
         pages_processed=1,
         records=records,
         failures=[{"page_id": "SECRET-TICKET:p1", "error": "HTTP402", "arm": "extract"}],
@@ -302,16 +305,43 @@ def test_progress_checkpoint_contains_only_aggregates(tmp_path: Path):
     assert payload["paired_exact_divergence_count"] == 1
 
 
-def test_input_snapshot_is_content_addressed_not_filename_or_mtime(tmp_path: Path):
+def test_evaluate_hashes_the_input_snapshot_once_per_run(tmp_path: Path, monkeypatch):
+    from janasunani.evaluation import sarvam_evaluate
+
+    inp = _make_dummy_input(tmp_path, n=3)
+    out = tmp_path / "out"
+    calls = []
+
+    def fake_snapshot(pages):
+        calls.append(list(pages))
+        return "sha256:" + "b" * 64
+
+    monkeypatch.setattr(sarvam_evaluate, "_input_snapshot_id", fake_snapshot)
+
+    rc = sarvam_evaluate.main(
+        ["--input", str(inp), "--out", str(out), "--arm", "digitise", "--dry-run"]
+    )
+
+    assert rc == 0
+    assert len(calls) == 1
+    assert len(calls[0]) == 3
+    progress = json.loads((out / "sarvam_progress.json").read_text())
+    assert progress["input_snapshot_id"] == "sha256:" + "b" * 64
+
+
+def test_input_snapshot_binds_content_page_and_ticket_not_mtime(tmp_path: Path):
     from janasunani.evaluation.sarvam_evaluate import _input_snapshot_id
 
     first = tmp_path / "SECRET-TICKET_first.png"
-    renamed = tmp_path / "DIFFERENT-TICKET_copy.png"
+    renamed = tmp_path / "SECRET-TICKET_copy.png"
+    reassigned = tmp_path / "DIFFERENT-TICKET_copy.png"
     first.write_bytes(b"pixel-content-v1")
     renamed.write_bytes(first.read_bytes())
+    reassigned.write_bytes(first.read_bytes())
 
     original = _input_snapshot_id([(first, 1)])
     assert _input_snapshot_id([(renamed, 1)]) == original
+    assert _input_snapshot_id([(reassigned, 1)]) != original
 
     stat = first.stat()
     first.write_bytes(b"pixel-content-v2")
@@ -323,6 +353,11 @@ def test_input_snapshot_is_content_addressed_not_filename_or_mtime(tmp_path: Pat
 
     assert _input_snapshot_id([(first, 1)]) != original
     assert _input_snapshot_id([(renamed, 2)]) != original
+
+    first.write_bytes(b"first-document")
+    renamed.write_bytes(b"second-document")
+    forward = _input_snapshot_id([(first, 1), (renamed, 1)])
+    assert _input_snapshot_id([(renamed, 1), (first, 1)]) == forward
 
 
 def test_evaluate_join_metadata_from_lake(tmp_path: Path):

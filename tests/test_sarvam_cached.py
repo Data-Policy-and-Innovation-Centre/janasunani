@@ -18,6 +18,14 @@ def _evidence(tmp_path):
                 "extract_schema_version": "v1",
                 "normalizer_version": "1.0",
                 "credits_available_for_new_calls": False,
+                "reproducibility": {
+                    "tracked_aggregate_only": True,
+                    "source_artifacts_tracked": False,
+                    "source_artifact_hashes_available": False,
+                    "derivation_command_recorded": False,
+                    "latency_distribution_available": False,
+                    "claim_limit": "Aggregate counts cannot reconstruct the source run.",
+                },
                 "reporting_rule": "Report aggregate coverage and divergence only.",
                 "runs": [
                     {
@@ -54,15 +62,43 @@ def test_cached_import_logs_aggregate_without_provider_call(tmp_path, monkeypatc
     logged = calls[0]
     assert logged["pipeline_variant"] == "sarvam_both"
     assert logged["sample_n"] == 56
-    assert logged["cost_per_doc_rupees"] == pytest.approx(95 / 65)
+    assert "cost_per_doc_rupees" not in logged
+    assert logged["extra_metrics"]["cost_per_attempted_page_rupees"] == pytest.approx(
+        95 / 65
+    )
     assert logged["extra_metrics"]["paired_page_coverage"] == pytest.approx(56 / 65)
     assert logged["extra_metrics"]["provider_job_failure_rate"] == pytest.approx(7 / 127)
     assert logged["extra_metrics"]["cost_total_rupees"] == 95.0
     assert logged["extra_params"]["cost_evidence"] == (
         "estimated_list_price_accepted_jobs"
     )
+    assert logged["extra_params"]["cost_denominator"] == "attempted_page"
     assert logged["extra_params"]["quality_claim_permitted"] == "false"
+    assert len(logged["extra_params"]["evidence_sha256"]) == 64
+    assert logged["extra_params"]["git_sha_role"] == "cached_evidence_import_code"
+    assert logged["extra_params"]["source_run_git_sha"] == "unavailable"
+    assert logged["extra_params"]["derivation_command_recorded"] == "false"
     assert logged["artifacts"]
+
+
+def test_cached_import_omits_failure_rate_without_accepted_job_denominator(
+    tmp_path, monkeypatch
+):
+    path = _evidence(tmp_path)
+    payload = json.loads(path.read_text())
+    payload["runs"][0].pop("accepted_jobs")
+    path.write_text(json.dumps(payload))
+    calls = []
+    monkeypatch.setattr(
+        sarvam_cached,
+        "log_benchmark_run",
+        lambda **kwargs: calls.append(kwargs) or "run",
+    )
+
+    sarvam_cached.import_evidence(path)
+
+    assert calls[0]["extra_metrics"]["provider_job_failures"] == 7.0
+    assert "provider_job_failure_rate" not in calls[0]["extra_metrics"]
 
 
 def test_estimated_cost_never_implies_actual_billing(tmp_path, monkeypatch):
@@ -82,6 +118,29 @@ def test_estimated_cost_never_implies_actual_billing(tmp_path, monkeypatch):
     assert calls[0]["extra_params"]["actual_billing_available"] == "false"
 
 
+def test_recorded_list_price_never_implies_actual_billing(tmp_path, monkeypatch):
+    path = _evidence(tmp_path)
+    payload = json.loads(path.read_text())
+    run = payload["runs"][0]
+    run.pop("estimated_list_price_accepted_jobs_rupees")
+    run["recorded_cost_rupees"] = 95.0
+    run["cost_basis"] = "list-price calculation; actual billing unavailable"
+    path.write_text(json.dumps(payload))
+    calls = []
+    monkeypatch.setattr(
+        sarvam_cached,
+        "log_benchmark_run",
+        lambda **kwargs: calls.append(kwargs) or "run",
+    )
+
+    sarvam_cached.import_evidence(path)
+
+    assert calls[0]["extra_params"]["cost_evidence"] == (
+        "recorded_non_billing_amount"
+    )
+    assert calls[0]["extra_params"]["actual_billing_available"] == "false"
+
+
 def test_cached_import_rejects_unknown_schema(tmp_path):
     path = _evidence(tmp_path)
     payload = json.loads(path.read_text())
@@ -89,6 +148,16 @@ def test_cached_import_rejects_unknown_schema(tmp_path):
     path.write_text(json.dumps(payload))
 
     with pytest.raises(ValueError, match="schema"):
+        sarvam_cached.load_evidence(path)
+
+
+def test_cached_import_requires_explicit_reproducibility_boundary(tmp_path):
+    path = _evidence(tmp_path)
+    payload = json.loads(path.read_text())
+    payload.pop("reproducibility")
+    path.write_text(json.dumps(payload))
+
+    with pytest.raises(ValueError, match="reproducibility"):
         sarvam_cached.load_evidence(path)
 
 
