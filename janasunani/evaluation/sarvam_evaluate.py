@@ -125,7 +125,8 @@ def _input_snapshot_id(pages: list[tuple[Path, int]]) -> str:
 def _write_progress_checkpoint(
     *,
     out_dir: Path,
-    pages: list[tuple[Path, int]],
+    input_snapshot_id: str,
+    pages_discovered: int,
     pages_processed: int,
     records: list[PageRecord],
     failures: list[dict[str, str]],
@@ -167,12 +168,12 @@ def _write_progress_checkpoint(
         "schema_version": PROGRESS_SCHEMA_VERSION,
         "updated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "complete": complete,
-        "input_snapshot_id": _input_snapshot_id(pages),
+        "input_snapshot_id": input_snapshot_id,
         "arm": arm,
         "extract_schema_version": schema_version,
         "slice": slice_label,
         "dry_run": dry_run,
-        "pages_discovered": len(pages),
+        "pages_discovered": pages_discovered,
         "pages_processed": pages_processed,
         "pages_scored": len(records),
         "pages_excluded": max(0, pages_processed - len(records)),
@@ -187,7 +188,9 @@ def _write_progress_checkpoint(
         ),
         "paired_exact_divergence_count": divergence_n,
         "paired_exact_divergence_n": len(eligible_pairs),
-        "maximum_list_price_rupees": 0.0 if dry_run else _price_for_arm(arm, len(pages)),
+        "maximum_list_price_rupees": (
+            0.0 if dry_run else _price_for_arm(arm, pages_discovered)
+        ),
         "actual_billing_available": False,
         "partial_scorecard": partial,
         "privacy": {
@@ -409,6 +412,7 @@ def main(argv: list[str] | None = None) -> int:
     if not pages:
         logger.error(f"no documents found under {input_dir}")
         return 1
+    input_snapshot_id = _input_snapshot_id(pages)
 
     cost = _price_for_arm(args.arm, len(pages))
     logger.info(f"{len(pages)} page(s) across {len({p for p, _ in pages})} document(s) — arm={args.arm} schema={args.schema_version}")
@@ -608,7 +612,8 @@ def main(argv: list[str] | None = None) -> int:
                     print(sarvam_summary)
             _write_progress_checkpoint(
                 out_dir=out_dir,
-                pages=pages,
+                input_snapshot_id=input_snapshot_id,
+                pages_discovered=len(pages),
                 pages_processed=processed,
                 records=records,
                 failures=failures,
@@ -660,7 +665,8 @@ def main(argv: list[str] | None = None) -> int:
 
         _write_progress_checkpoint(
             out_dir=out_dir,
-            pages=pages,
+            input_snapshot_id=input_snapshot_id,
+            pages_discovered=len(pages),
             pages_processed=processed,
             records=records,
             failures=failures,
@@ -701,7 +707,8 @@ def main(argv: list[str] | None = None) -> int:
     logger.success(f"scorecard -> {destination}")
     _write_progress_checkpoint(
         out_dir=out_dir,
-        pages=pages,
+        input_snapshot_id=input_snapshot_id,
+        pages_discovered=len(pages),
         pages_processed=len(pages),
         records=records,
         failures=failures,
