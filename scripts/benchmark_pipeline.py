@@ -710,10 +710,22 @@ def latency_json_payload(
             for key in ("cold", "warm")
         )
 
+    def has_clean_full_path_coverage(result: dict[str, Any]) -> bool:
+        if result.get("failed_attempts") != 0:
+            return False
+        input_paths = result.get("input_paths")
+        return isinstance(input_paths, dict) and all(
+            isinstance(input_paths.get(path_name), dict)
+            and isinstance(input_paths[path_name].get("e2e"), dict)
+            and input_paths[path_name]["e2e"].get("n", 0) > 0
+            for path_name in ("text", "document")
+        )
+
     publication_ready = bool(variants_payload) and all(
         not result.get("is_fake_timing", True)
         and result.get("n_measured", 0) > 0
         and has_cold_and_warm(result)
+        and has_clean_full_path_coverage(result)
         and result.get("attempts")
         == result.get("completed_attempts", 0) + result.get("failed_attempts", 0)
         and isinstance(result.get("benchmark_context"), dict)

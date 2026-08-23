@@ -320,7 +320,7 @@ def test_identified_real_latency_run_is_publication_ready():
     result = run_benchmark(
         variant="standard",
         n_text=1,
-        n_image=0,
+        n_image=1,
         repeats=2,
         discard_warm=False,
         processor_factory=lambda _variant: type(
@@ -343,12 +343,68 @@ def test_identified_real_latency_run_is_publication_ready():
 
     assert payload["publication_ready"] is True
     assert payload["temperature_e2e"]["cold"]["n"] == 1
-    assert payload["temperature_e2e"]["warm"]["n"] == 1
+    assert payload["temperature_e2e"]["warm"]["n"] == 3
 
     result["git_sha"] = None
     assert latency_json_payload(result)["publication_ready"] is False
     result["git_sha"] = "abc1234"
     result["benchmark_context"]["host_label"] = "   "
+    assert latency_json_payload(result)["publication_ready"] is False
+
+
+def test_real_latency_with_failure_is_not_publication_ready():
+    calls = 0
+
+    class SometimesFailingProcessor:
+        _timing_sink = None
+
+        def process(self, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("benchmark failure")
+            self._timing_sink({"redact": 0.1, "e2e": 0.2, "ok": 1.0})
+
+    result = run_benchmark(
+        variant="standard",
+        n_text=1,
+        n_image=1,
+        repeats=2,
+        discard_warm=False,
+        processor_factory=lambda _variant: SometimesFailingProcessor(),
+    )
+    result["benchmark_context"] = {
+        "host_label": "release-host",
+        "model_release_id": "model-release-1",
+    }
+
+    assert result["failed_attempts"] == 1
+    assert latency_json_payload(result)["publication_ready"] is False
+
+
+def test_real_latency_without_document_path_is_not_publication_ready():
+    result = run_benchmark(
+        variant="standard",
+        n_text=1,
+        n_image=0,
+        repeats=2,
+        discard_warm=False,
+        processor_factory=lambda _variant: type(
+            "Processor",
+            (),
+            {
+                "_timing_sink": None,
+                "process": lambda self, **kwargs: self._timing_sink(
+                    {"redact": 0.1, "e2e": 0.2, "ok": 1.0}
+                ),
+            },
+        )(),
+    )
+    result["benchmark_context"] = {
+        "host_label": "release-host",
+        "model_release_id": "model-release-1",
+    }
+
     assert latency_json_payload(result)["publication_ready"] is False
 
 
