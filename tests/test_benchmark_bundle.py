@@ -183,6 +183,18 @@ def test_rejects_artifacts_under_data_even_when_they_are_json(tmp_path: Path) ->
         build_bundle(config, root=tmp_path)  # type: ignore[arg-type]
 
 
+def test_rejects_symlink_alias_to_data_inside_root(tmp_path: Path) -> None:
+    config = _config()
+    config["artifacts"][0]["path"] = "results/private.json"  # type: ignore[index]
+    private = tmp_path / "data" / "private.json"
+    private.parent.mkdir()
+    private.write_text('{"citizen_record":"must not be bundled"}\n')
+    (tmp_path / "results").symlink_to(private.parent, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="resolved paths under data/"):
+        build_bundle(config, root=tmp_path)  # type: ignore[arg-type]
+
+
 def test_rejects_internal_symlink_that_escapes_root(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()

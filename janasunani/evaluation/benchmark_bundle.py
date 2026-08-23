@@ -90,14 +90,18 @@ def _resolve_artifact_path(*, root: Path, relative: Path, artifact_id: str) -> P
     """Confine aggregate evidence reads to non-data files below ``root``."""
     if relative.is_absolute() or ".." in relative.parts:
         raise ValueError(f"{artifact_id}: path must stay below the repository root")
-    if relative.parts and relative.parts[0] == "data":
+    if relative.parts and relative.parts[0].casefold() == "data":
         raise ValueError(f"{artifact_id}: paths under data/ cannot be bundled")
     resolved_root = root.resolve()
     resolved = (resolved_root / relative).resolve()
-    if not resolved.is_relative_to(resolved_root):
+    try:
+        resolved_relative = resolved.relative_to(resolved_root)
+    except ValueError as exc:
         raise ValueError(
             f"{artifact_id}: resolved path must stay below the repository root"
-        )
+        ) from exc
+    if resolved_relative.parts and resolved_relative.parts[0].casefold() == "data":
+        raise ValueError(f"{artifact_id}: resolved paths under data/ cannot be bundled")
     return resolved
 
 
