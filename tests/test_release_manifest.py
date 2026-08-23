@@ -154,6 +154,27 @@ def test_hosted_model_requires_authorized_trust_tier():
         ReleaseManifest.from_dict(payload)
 
 
+@pytest.mark.parametrize("endpoint", [["not-a-string"], {"url": "hosted"}, 7, "", "  "])
+def test_hosted_model_requires_a_nonempty_string_endpoint(endpoint):
+    payload = {
+        "schema_version": "janasunani.release/v1",
+        "release_id": "release-1",
+        "created_at": "2026-08-10T10:00:00Z",
+        "git_sha": "a" * 40,
+        "models": {
+            "sarvam_digitise": {
+                "provider": "sarvam",
+                "trust_tier": "authorized_hosted",
+                "version": "observed-model-id",
+                "endpoint": endpoint,
+            }
+        },
+    }
+
+    with pytest.raises(ReleaseManifestError, match="endpoint must be a non-empty string"):
+        ReleaseManifest.from_dict(payload)
+
+
 def test_manifest_rejects_malformed_artifact_digest():
     payload = {
         "schema_version": "janasunani.release/v1",

@@ -150,6 +150,12 @@ class ModelRelease:
         artifact_path = payload.get("artifact_path")
         endpoint = payload.get("endpoint")
         artifact_digest = payload.get("artifact_sha256")
+        if endpoint is not None and (
+            not isinstance(endpoint, str) or not endpoint.strip()
+        ):
+            raise ReleaseManifestError(
+                f"model {name!r} endpoint must be a non-empty string"
+            )
         if bool(artifact_path) == bool(endpoint):
             raise ReleaseManifestError(
                 f"model {name!r} must pin exactly one of artifact_path or endpoint"
