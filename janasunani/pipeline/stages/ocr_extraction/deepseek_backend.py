@@ -26,7 +26,9 @@ DEFAULT_MODEL_NAME = "deepseek-ai/DeepSeek-OCR"
 DEFAULT_PROMPT = "<image>\nFree OCR. Oriya or English."
 
 
-def _resolve_model_source(model_name: str | None = None) -> tuple[str, bool]:
+def _resolve_model_source(
+    model_name: str | None = None, *, models_dir: Path | None = None
+) -> tuple[str, bool]:
     if model_name is not None:
         candidate = Path(model_name)
         if candidate.exists():
@@ -36,7 +38,7 @@ def _resolve_model_source(model_name: str | None = None) -> tuple[str, bool]:
         raise RuntimeError(
             "remote DeepSeek model IDs require JANASUNANI_ALLOW_REMOTE_MODELS=1"
         )
-    artifact = resolve_artifact("deepseek_ocr")
+    artifact = resolve_artifact("deepseek_ocr", models_dir=models_dir)
     if artifact is not None:
         return str(artifact), True
     if remote_models_allowed():
@@ -47,13 +49,15 @@ def _resolve_model_source(model_name: str | None = None) -> tuple[str, bool]:
     )
 
 
-def load_model(model_name: str | None = None) -> tuple[Any, Any]:
+def load_model(
+    model_name: str | None = None, *, models_dir: Path | None = None
+) -> tuple[Any, Any]:
     """Load the DeepSeek-OCR tokenizer and model. Returns (tokenizer, model).
 
     Raises a clear error if CUDA isn't available, since this model is
     GPU-only in practice (the original code calls .cuda() unconditionally).
     """
-    source, local_only = _resolve_model_source(model_name)
+    source, local_only = _resolve_model_source(model_name, models_dir=models_dir)
 
     # Import torch/transformers lazily so importing this module doesn't
     # fail on systems without those deps installed.

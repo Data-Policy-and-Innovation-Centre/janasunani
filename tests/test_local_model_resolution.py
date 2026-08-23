@@ -6,6 +6,7 @@ from janasunani.pipeline.stages.ocr_extraction.deepseek_backend import (
     DEFAULT_MODEL_NAME,
     _resolve_model_source as resolve_deepseek_source,
 )
+from janasunani.pipeline.stages.ocr_extraction import stage as ocr_stage
 from janasunani.tracking.artifacts import ALLOW_REMOTE_MODELS_ENV_VAR
 
 
@@ -26,6 +27,36 @@ def test_deepseek_resolves_local_override_without_network(tmp_path, monkeypatch)
     monkeypatch.delenv(ALLOW_REMOTE_MODELS_ENV_VAR, raising=False)
 
     assert resolve_deepseek_source() == (str(artifact), True)
+
+
+def test_deepseek_resolves_configured_models_root_without_environment(
+    tmp_path, monkeypatch
+):
+    artifact = tmp_path / "deepseek_ocr"
+    artifact.mkdir()
+    (artifact / "config.json").write_text("{}")
+    monkeypatch.delenv("JANASUNANI_MODELS_DIR", raising=False)
+    monkeypatch.delenv("JANASUNANI_DEEPSEEK_OCR_ARTIFACT", raising=False)
+    monkeypatch.delenv(ALLOW_REMOTE_MODELS_ENV_VAR, raising=False)
+
+    assert resolve_deepseek_source(models_dir=tmp_path) == (str(artifact), True)
+
+
+def test_deepseek_worker_receives_configured_models_root(tmp_path, monkeypatch):
+    received = []
+
+    def fake_load_model(*, models_dir=None):
+        received.append(models_dir)
+        return object(), object()
+
+    monkeypatch.setattr(
+        "janasunani.pipeline.stages.ocr_extraction.deepseek_backend.load_model",
+        fake_load_model,
+    )
+
+    ocr_stage._worker_init("deepseek", models_dir=tmp_path)
+
+    assert received == [tmp_path]
 
 
 def test_deepseek_public_id_is_explicit_development_mode(tmp_path, monkeypatch):
