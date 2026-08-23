@@ -66,8 +66,13 @@ def _percentile(values: Iterable[float], probability: float) -> float | None:
     ordered = sorted(values)
     if not ordered:
         return None
-    index = round((len(ordered) - 1) * probability)
-    return ordered[index]
+    if not 0.0 <= probability <= 1.0:
+        raise ValueError("probability must be in [0, 1]")
+    position = (len(ordered) - 1) * probability
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    fraction = position - lower
+    return ordered[lower] + fraction * (ordered[upper] - ordered[lower])
 
 
 def audit_weak_labels(
@@ -152,7 +157,8 @@ def audit_weak_labels(
                 t.ticket_no,
                 t.label_count,
                 t.label_name,
-                coalesce(nullif(trim(c.office), ''), '(missing)') office,
+                c.ticket_no complaint_ticket_no,
+                nullif(trim(c.office), '') office,
                 c.created_year
             FROM ticket_summary t
             LEFT JOIN complaints c USING (ticket_no)
@@ -163,14 +169,24 @@ def audit_weak_labels(
 
     valid = [row for row in label_rows if int(row[1]) == 1]
     conflicts = [row for row in label_rows if int(row[1]) > 1]
-    missing_complaint = sum(row[4] is None for row in label_rows)
+    missing_complaint = sum(row[3] is None for row in label_rows)
+    missing_office = sum(
+        row[3] is not None and row[4] is None for row in label_rows
+    )
 
     global_counts: Counter[str] = Counter(str(row[2]) for row in valid)
-    global_distribution = _distribution(global_counts)
+    office_eligible = [
+        row for row in valid if row[3] is not None and row[4] is not None
+    ]
+    office_global_counts: Counter[str] = Counter(
+        str(row[2]) for row in office_eligible
+    )
+    office_global_distribution = _distribution(office_global_counts)
     office_counts: dict[str, Counter[str]] = defaultdict(Counter)
     year_counts: dict[str, Counter[str]] = defaultdict(Counter)
-    for _, _, label, office, year in valid:
-        office_counts[str(office)][str(label)] += 1
+    for _, _, label, _, office, year in valid:
+        if office is not None:
+            office_counts[str(office)][str(label)] += 1
         year_counts[str(year) if year is not None else "(missing)"][str(label)] += 1
 
     office_rows = []
@@ -184,7 +200,7 @@ def audit_weak_labels(
                 "office": office,
                 "n": support,
                 "total_variation": _total_variation(
-                    distribution, global_distribution
+                    distribution, office_global_distribution
                 ),
                 "distribution": distribution,
             }
@@ -212,6 +228,7 @@ def audit_weak_labels(
             "valid_single_label": len(valid),
             "conflicting_labels_excluded": len(conflicts),
             "missing_complaint_join": missing_complaint,
+            "missing_office": missing_office,
             "distribution": dict(sorted(global_counts.items())),
             "by_created_year": {
                 year: dict(sorted(counts.items()))
@@ -222,7 +239,7 @@ def audit_weak_labels(
             "office_field": "complaints.office_current_not_action_actor",
             "min_support": min_office_support,
             "eligible_offices": len(office_rows),
-            "global_distribution": global_distribution,
+            "global_distribution": office_global_distribution,
             "max_total_variation": max(variations) if variations else None,
             "median_total_variation": _percentile(variations, 0.5),
             "p90_total_variation": _percentile(variations, 0.9),

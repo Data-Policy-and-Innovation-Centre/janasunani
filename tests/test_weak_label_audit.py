@@ -63,6 +63,51 @@ def test_office_variation_is_aggregate_and_support_gated(tmp_path):
     assert office["interpretation"].startswith("descriptive")
 
 
+def test_office_audit_separates_missing_join_office_and_year(tmp_path):
+    complaints = tmp_path / "complaints.parquet"
+    actions = tmp_path / "action_history.parquet"
+    pl.DataFrame(
+        {
+            "ticket_no": ["T1", "T2"],
+            "office": ["A", None],
+            "created_year": [None, 2024],
+        }
+    ).write_parquet(complaints)
+    pl.DataFrame(
+        {
+            "ticket_no": ["T1", "T2", "T3"],
+            "action_taken_remark": [
+                "Complaint details inadequate.",
+                "No specific grievance",
+                "This is not within the purview of this grievance cell",
+            ],
+        }
+    ).write_parquet(actions)
+
+    result = audit_weak_labels(complaints, actions, min_office_support=1)
+
+    labels = result["eligible_ticket_labels"]
+    assert labels["missing_complaint_join"] == 1
+    assert labels["missing_office"] == 1
+    office = result["office_variation"]
+    assert office["eligible_offices"] == 1
+    assert [row["office"] for row in office["worst_supported_offices"]] == ["A"]
+
+
+def test_office_variation_median_interpolates_even_sample(tmp_path):
+    complaints, actions = fixtures(tmp_path)
+    result = audit_weak_labels(complaints, actions, min_office_support=1)
+
+    variations = sorted(
+        row["total_variation"]
+        for row in result["office_variation"]["worst_supported_offices"]
+    )
+    assert len(variations) == 2
+    assert result["office_variation"]["median_total_variation"] == pytest.approx(
+        sum(variations) / 2
+    )
+
+
 def test_audit_validates_inputs(tmp_path):
     with pytest.raises(FileNotFoundError):
         audit_weak_labels(tmp_path / "missing", tmp_path / "also-missing")
