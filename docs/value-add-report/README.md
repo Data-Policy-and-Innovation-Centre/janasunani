@@ -5,7 +5,7 @@ document for the reader; do not use the short briefs as substitutes for the
 definitions and caveats in the long report.
 
 > **Status: working drafts populated from development bundle
-> `9b18d0fa2de7a69c2c7ee8c2ee9fc7c8a0f0f6d4b026230b0633fb1fa21b83a1`;
+> `72076ba23e5ba0ec0db0dc6718378a0150abc3c97c5bf9cbf73429b6b95dbee5`;
 > publication_ready=false.** The bundle now contains reproducible development
 > timing and available accuracy/safety runs, but 0/1 required release-speed,
 > 0/5 required release-accuracy and 0/2 required impact artifacts. The files
@@ -193,7 +193,9 @@ All three generators fail closed if the bundle lacks the tracked real timing,
 selected actionability test, weak-label audit, PII scorecard, or both routing
 scorecards. They also refuse fake timing. Accuracy and speed claims therefore
 come from one bundle; impact remains an explicit missing section until its two
-required artifacts exist. Each generator also canonicalizes DOCX archive
+required artifacts exist. Required release artifacts must match their declared
+schema and contain the configured substantive evidence fields; a self-declared
+`publication_ready=true` stub cannot open the publication gate. Each generator also canonicalizes DOCX archive
 metadata, so identical inputs produce byte-identical DVC outputs.
 
 Render each output with the `documents` skill's `render_docx.py`. Set

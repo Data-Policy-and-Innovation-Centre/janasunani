@@ -403,16 +403,16 @@ stages:
     deps:
     - path: config/benchmark_bundle.json
       hash: md5
-      md5: 862138fe010adcadbb38fcc5350a8e3c
-      size: 6967
+      md5: 13e90f0b6e56174557fc5512d974b55a
+      size: 8443
     - path: docs/evidence/sarvam_cached_benchmark.json
       hash: md5
       md5: b19e45a4bfd16cfdb6f2f3a831617cf2
       size: 3730
     - path: janasunani/evaluation/benchmark_bundle.py
       hash: md5
-      md5: 25f480fb1d1f54268a1dc9bc143802f5
-      size: 9806
+      md5: 21ad3f68c8106b0ee5577d7faad9a347
+      size: 12790
     - path: outputs/benchmark/latency.json
       hash: md5
       md5: 110395e545d5b7a176aaad03d15402de
@@ -456,11 +456,11 @@ stages:
     outs:
     - path: outputs/benchmark/full_benchmark.json
       hash: md5
-      md5: 827923291c1e41dda6957389e7f43504
-      size: 556406
+      md5: e3c55ad7639b989fbd79bfa540b3ad7a
+      size: 557202
     - path: outputs/benchmark/full_benchmark.md
       hash: md5
-      md5: 6a1254348c55bfbf3ecf5a3da64b19b5
+      md5: e326318cba0beb65489f2c49e688fd4f
       size: 2960
   pii-development-scorecard:
     cmd: uv run --frozen --extra pii python -m
@@ -683,8 +683,8 @@ stages:
       size: 5723
     - path: outputs/benchmark/full_benchmark.json
       hash: md5
-      md5: fafe8a12337c431056b092d57f000885
-      size: 562461
+      md5: e3c55ad7639b989fbd79bfa540b3ad7a
+      size: 557202
     - path: pyproject.toml
       hash: md5
       md5: 7650a32a2ab1519840a182edfcf10a50
@@ -712,13 +712,13 @@ stages:
     outs:
     - path: docs/value-add-report/Janasunani_2.0_IAS_Officer_Brief_August_2026.docx
       hash: md5
-      md5: 5ec41fc1686d8601344a3397beb5249d
+      md5: 71e8697302db1727c291054edb2ba945
       size: 41322
     - path: docs/value-add-report/Janasunani_2.0_Public_Systems_Capability_Brief_August_2026.docx
       hash: md5
-      md5: 7c6bd390470b74ee0e3fd3a799df0569
-      size: 40592
+      md5: ff9f691acb0133966ad24e47bb1e0329
+      size: 40591
     - path: docs/value-add-report/Janasunani_2.0_Value_Add_Report_August_2026.docx
       hash: md5
-      md5: 774e0058c710c6cc96eedd0f35765402
-      size: 641925
+      md5: 3aa81d822da4674153b53434d57b9aea
+      size: 641959

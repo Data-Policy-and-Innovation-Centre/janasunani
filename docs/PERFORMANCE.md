@@ -13,7 +13,7 @@ being filled with a placeholder.
 
 The current reproducible development ledger is
 `outputs/benchmark/full_benchmark.json`, bundle
-`9b18d0fa2de7a69c2c7ee8c2ee9fc7c8a0f0f6d4b026230b0633fb1fa21b83a1`.
+`72076ba23e5ba0ec0db0dc6718378a0150abc3c97c5bf9cbf73429b6b95dbee5`.
 It embeds the exact aggregate inputs used by the value-add report and records
 their checksums. Materialize it with
 `dvc pull dvc.yaml:full-benchmark-bundle`; recompute it from already

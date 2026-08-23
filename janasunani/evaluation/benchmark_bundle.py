@@ -39,6 +39,15 @@ def _lookup(payload: object, dotted_path: str) -> object:
     return current
 
 
+def _contains_substantive_value(payload: object, dotted_path: str) -> bool:
+    value = _lookup(payload, dotted_path)
+    if value is None:
+        return False
+    if isinstance(value, (str, list, dict)):
+        return bool(value)
+    return True
+
+
 def _validate_config(config: object) -> dict[str, Any]:
     if not isinstance(config, dict):
         raise ValueError("benchmark bundle config must be an object")
@@ -69,6 +78,13 @@ def _validate_config(config: object) -> dict[str, Any]:
             isinstance(key, str) and key for key in required_values
         ):
             raise ValueError(f"{artifact_id}: required_values must be an object of dotted paths")
+        required_fields = artifact.get("required_fields", [])
+        if not isinstance(required_fields, list) or not all(
+            isinstance(field, str) and field for field in required_fields
+        ):
+            raise ValueError(
+                f"{artifact_id}: required_fields must be a list of dotted paths"
+            )
         expected_schema = artifact.get("schema_version")
         if expected_schema is not None and (
             not isinstance(expected_schema, str) or not expected_schema
@@ -82,6 +98,10 @@ def _validate_config(config: object) -> dict[str, Any]:
             if required_values.get("publication_ready") is not True:
                 raise ValueError(
                     f"{artifact_id}: required artifacts must require publication_ready=true"
+                )
+            if not required_fields:
+                raise ValueError(
+                    f"{artifact_id}: required artifacts must declare substantive required_fields"
                 )
     return config
 
@@ -149,6 +169,11 @@ def build_bundle(config: dict[str, Any], *, root: Path) -> dict[str, Any]:
                 f"{dotted_path} must equal {expected!r}"
                 for dotted_path, expected in spec.get("required_values", {}).items()
                 if _lookup(payload, dotted_path) != expected
+            )
+            mismatches.extend(
+                f"{dotted_path} must contain substantive evidence"
+                for dotted_path in spec.get("required_fields", [])
+                if not _contains_substantive_value(payload, dotted_path)
             )
             record["status"] = "incomplete" if mismatches else "available"
             record["sha256"] = _sha256(raw)

@@ -19,6 +19,7 @@ def _config() -> dict[str, object]:
                 "required_for_publication": True,
                 "schema_version": "test-latency/v1",
                 "required_values": {"publication_ready": True},
+                "required_fields": ["metrics"],
             },
             {
                 "id": "quality",
@@ -27,6 +28,7 @@ def _config() -> dict[str, object]:
                 "required_for_publication": True,
                 "schema_version": "test-quality/v1",
                 "required_values": {"publication_ready": True},
+                "required_fields": ["metrics"],
             },
             {
                 "id": "pilot",
@@ -35,6 +37,7 @@ def _config() -> dict[str, object]:
                 "required_for_publication": True,
                 "schema_version": "test-pilot/v1",
                 "required_values": {"publication_ready": True},
+                "required_fields": ["metrics"],
             },
         ],
     }
@@ -50,6 +53,7 @@ def test_bundle_is_deterministic_and_hashes_exact_inputs(tmp_path: Path) -> None
                     "name": name,
                     "schema_version": f"test-{name}/v1",
                     "publication_ready": True,
+                    "metrics": {"n": 1},
                 }
             )
             + "\n"
@@ -65,10 +69,10 @@ def test_missing_impact_blocks_publication_without_proxy(tmp_path: Path) -> None
     results = tmp_path / "results"
     results.mkdir()
     (results / "latency.json").write_text(
-        '{"schema_version":"test-latency/v1","publication_ready":true}\n'
+        '{"schema_version":"test-latency/v1","publication_ready":true,"metrics":{"n":1}}\n'
     )
     (results / "quality.json").write_text(
-        '{"schema_version":"test-quality/v1","publication_ready":true}\n'
+        '{"schema_version":"test-quality/v1","publication_ready":true,"metrics":{"n":1}}\n'
     )
     bundle = build_bundle(_config(), root=tmp_path)
     assert bundle["publication_ready"] is False
@@ -87,6 +91,7 @@ def test_bundle_id_changes_when_input_bytes_change(tmp_path: Path) -> None:
                 {
                     "schema_version": f"test-{name}/v1",
                     "publication_ready": True,
+                    "metrics": {"n": 1},
                 }
             )
             + "\n"
@@ -107,12 +112,13 @@ def test_present_but_incomplete_required_artifact_still_blocks(tmp_path: Path) -
                 {
                     "schema_version": f"test-{name}/v1",
                     "publication_ready": True,
+                    "metrics": {"n": 1},
                 }
             )
             + "\n"
         )
     (results / "pilot.json").write_text(
-        '{"schema_version":"test-pilot/v1","publication_ready":false}\n'
+        '{"schema_version":"test-pilot/v1","publication_ready":false,"metrics":{"n":1}}\n'
     )
     bundle = build_bundle(config, root=tmp_path)  # type: ignore[arg-type]
     pilot = next(row for row in bundle["artifacts"] if row["id"] == "pilot")
@@ -135,6 +141,11 @@ def test_required_artifact_must_declare_schema_and_publication_predicate() -> No
     with pytest.raises(ValueError, match="must require publication_ready=true"):
         build_bundle(config, root=Path("."))  # type: ignore[arg-type]
 
+    artifact["required_values"] = {"publication_ready": True}
+    artifact.pop("required_fields")
+    with pytest.raises(ValueError, match="must declare substantive required_fields"):
+        build_bundle(config, root=Path("."))  # type: ignore[arg-type]
+
 
 def test_schema_mismatch_blocks_required_artifact(tmp_path: Path) -> None:
     results = tmp_path / "results"
@@ -145,12 +156,13 @@ def test_schema_mismatch_blocks_required_artifact(tmp_path: Path) -> None:
                 {
                     "schema_version": f"test-{name}/v1",
                     "publication_ready": True,
+                    "metrics": {"n": 1},
                 }
             )
             + "\n"
         )
     (results / "quality.json").write_text(
-        '{"schema_version":"wrong/v1","publication_ready":true}\n'
+        '{"schema_version":"wrong/v1","publication_ready":true,"metrics":{"n":1}}\n'
     )
 
     bundle = build_bundle(_config(), root=tmp_path)
@@ -161,6 +173,41 @@ def test_schema_mismatch_blocks_required_artifact(tmp_path: Path) -> None:
         {
             "artifact_id": "quality",
             "reason": "schema_version must equal 'test-quality/v1'",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("include_metrics", "metrics"),
+    [(False, None), (True, None), (True, {}), (True, []), (True, "")],
+)
+def test_required_artifact_needs_substantive_evidence_fields(
+    tmp_path: Path, include_metrics: bool, metrics: object
+) -> None:
+    results = tmp_path / "results"
+    results.mkdir()
+    for name in ("latency", "quality", "pilot"):
+        payload = {
+            "schema_version": f"test-{name}/v1",
+            "publication_ready": True,
+            "metrics": {"n": 1},
+        }
+        if name == "quality":
+            if include_metrics:
+                payload["metrics"] = metrics
+            else:
+                payload.pop("metrics")
+        (results / f"{name}.json").write_text(json.dumps(payload) + "\n")
+
+    bundle = build_bundle(_config(), root=tmp_path)
+
+    quality = next(row for row in bundle["artifacts"] if row["id"] == "quality")
+    assert quality["status"] == "incomplete"
+    assert bundle["publication_ready"] is False
+    assert bundle["blockers"] == [
+        {
+            "artifact_id": "quality",
+            "reason": "metrics must contain substantive evidence",
         }
     ]
 
