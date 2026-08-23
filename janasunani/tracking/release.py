@@ -348,11 +348,25 @@ def activate_manifest(path: Path, *, root: Path | None = None) -> None:
 
 
 def resolve_manifest_artifact(
-    name: str, *, manifest_path: Path | None = None, root: Path | None = None
+    name: str,
+    *,
+    manifest_path: Path | None = None,
+    root: Path | None = None,
+    verified_artifacts: dict[tuple[Path, str], Path] | None = None,
 ) -> Path | None:
+    """Resolve and checksum one pinned artifact.
+
+    ``verified_artifacts`` is deliberately caller-owned: create it fresh for
+    one startup or preflight operation, then discard it. This avoids hashing
+    multi-gigabyte model bytes repeatedly without creating a process-global
+    cache that could outlive an activation or rollback.
+    """
     path = manifest_path or active_manifest_path(root)
     if path is None:
         return None
+    cache_key = (path.resolve(), name)
+    if verified_artifacts is not None and cache_key in verified_artifacts:
+        return verified_artifacts[cache_key]
     manifest = load_manifest(path)
     model = manifest.models.get(name)
     if model is None or model.artifact_path is None:
@@ -360,6 +374,8 @@ def resolve_manifest_artifact(
     artifact = _artifact_path(path, model.artifact_path)
     if artifact_sha256(artifact) != model.artifact_sha256:
         raise ReleaseManifestError(f"artifact checksum mismatch for model {name!r}")
+    if verified_artifacts is not None:
+        verified_artifacts[cache_key] = artifact
     return artifact
 
 

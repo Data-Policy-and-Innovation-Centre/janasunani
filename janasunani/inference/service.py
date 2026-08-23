@@ -496,27 +496,37 @@ def _resolve_models_root(models_dir: str | Path | None) -> Path:
     return Path(configured_dir).expanduser() if configured_dir else MODELS_DIR
 
 
-def _resolved_model_dirs(root: Path) -> tuple[Path, Path, Path]:
+def _resolved_model_dirs(
+    root: Path,
+    *,
+    verified_artifacts: dict[tuple[Path, str], Path] | None = None,
+) -> tuple[Path, Path, Path]:
     """Resolve operator override -> pinned release -> DVC for live models."""
 
     from janasunani.tracking.artifacts import resolve_artifact
 
     unresolved = root / ".unresolved"
-    categorizer = resolve_artifact("categorizer", models_dir=root) or (
-        unresolved / "categorizer"
-    )
-    page_type = resolve_artifact("page_type_classifier", models_dir=root) or (
-        unresolved / "page_type_classifier"
-    )
+    categorizer = resolve_artifact(
+        "categorizer", models_dir=root, verified_artifacts=verified_artifacts
+    ) or (unresolved / "categorizer")
+    page_type = resolve_artifact(
+        "page_type_classifier",
+        models_dir=root,
+        verified_artifacts=verified_artifacts,
+    ) or (unresolved / "page_type_classifier")
     if not (page_type / "config.json").is_file():
         page_type = page_type / "vit_type_classifier"
-    summarizer = resolve_artifact("summarizer", models_dir=root) or (
-        unresolved / "summarizer"
-    )
+    summarizer = resolve_artifact(
+        "summarizer", models_dir=root, verified_artifacts=verified_artifacts
+    ) or (unresolved / "summarizer")
     return categorizer, page_type, summarizer
 
 
-def _required_model_files(root: Path) -> list[tuple[tuple[Path, ...], str]]:
+def _required_model_files(
+    root: Path,
+    *,
+    resolved_dirs: tuple[Path, Path, Path] | None = None,
+) -> list[tuple[tuple[Path, ...], str]]:
     """The mandatory local model artifacts, as (candidate-paths, component).
 
     Single source of truth shared by `build_processor` (which hard-requires
@@ -537,7 +547,9 @@ def _required_model_files(root: Path) -> list[tuple[tuple[Path, ...], str]]:
     holds tokenizer *settings*, so a mirror with just the config still crashes
     in `AutoTokenizer.from_pretrained`.
     """
-    categorizer_dir, page_type_dir, summarizer_dir = _resolved_model_dirs(root)
+    categorizer_dir, page_type_dir, summarizer_dir = (
+        resolved_dirs if resolved_dirs is not None else _resolved_model_dirs(root)
+    )
     return [
         ((categorizer_dir / "config.json",), "categorizer config"),
         (
@@ -711,7 +723,9 @@ def _triage_check() -> DependencyCheck:
     return DependencyCheck(f"triage ({name})", ok, detail, required=False)
 
 
-def _model_release_check() -> DependencyCheck:
+def _model_release_check(
+    *, verified_artifacts: dict[tuple[Path, str], Path] | None = None
+) -> DependencyCheck:
     """Expose the active immutable model release without revealing endpoints.
 
     Serving never resolves MLflow aliases here. This check only reads the
@@ -742,7 +756,11 @@ def _model_release_check() -> DependencyCheck:
             if os.environ.get(artifact_override_env_var(name)):
                 shadowed.append(name)
             if model.artifact_path is not None:
-                resolve_manifest_artifact(name, manifest_path=path)
+                resolve_manifest_artifact(
+                    name,
+                    manifest_path=path,
+                    verified_artifacts=verified_artifacts,
+                )
                 identity = f"sha256:{model.artifact_sha256[:12]}"
             else:
                 identity = "authorized-hosted"
@@ -926,13 +944,19 @@ def preflight(models_dir: str | Path | None = None) -> list[DependencyCheck]:
     for a missing dependency; each check is reported as `ok=False` instead.
     """
     root = _resolve_models_root(models_dir)
+    verified_artifacts: dict[tuple[Path, str], Path] = {}
+    resolved_dirs = _resolved_model_dirs(
+        root, verified_artifacts=verified_artifacts
+    )
     checks = [
         DependencyCheck(
             component,
             any(_usable_model_file(path) for path in candidates),
             " | ".join(str(path) for path in candidates),
         )
-        for candidates, component in _required_model_files(root)
+        for candidates, component in _required_model_files(
+            root, resolved_dirs=resolved_dirs
+        )
     ]
 
     def _binary_check(name: str, probe: Callable[[], bool], detail: str) -> None:
@@ -954,7 +978,7 @@ def preflight(models_dir: str | Path | None = None) -> list[DependencyCheck]:
     # OLTP_DB_URL is explicitly set: it opens a real, timeout-bounded
     # connection (_OLTP_PROBE_TIMEOUT_S) rather than just checking presence.
     checks.append(_routing_mappings_check())
-    checks.append(_model_release_check())
+    checks.append(_model_release_check(verified_artifacts=verified_artifacts))
     checks.append(_router_check())
     checks.append(_triage_check())
     checks.append(_lake_check())
@@ -982,9 +1006,15 @@ def build_processor(
     ``create_app`` already uses for its providers.
     """
     root = _resolve_models_root(models_dir)
-    categorizer_dir, page_type_dir, summarizer_dir = _resolved_model_dirs(root)
+    verified_artifacts: dict[tuple[Path, str], Path] = {}
+    resolved_dirs = _resolved_model_dirs(
+        root, verified_artifacts=verified_artifacts
+    )
+    categorizer_dir, page_type_dir, summarizer_dir = resolved_dirs
 
-    for candidates, component in _required_model_files(root):
+    for candidates, component in _required_model_files(
+        root, resolved_dirs=resolved_dirs
+    ):
         _require_model_artifact(candidates, component)
     _require_ocr_dependencies()
 

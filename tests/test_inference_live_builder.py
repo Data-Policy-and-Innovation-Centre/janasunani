@@ -35,6 +35,7 @@ from janasunani.tracking.release import (  # noqa: E402
     new_manifest,
     write_manifest,
 )
+from janasunani.tracking import release as release_tracking  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -71,6 +72,49 @@ def _write_dummy_model_artifacts(root: Path) -> None:
     (summarizer_dir / "model.safetensors").write_bytes(b"fixture")
     (summarizer_dir / "tokenizer.json").write_text("{}")
     (summarizer_dir / "merges.txt").write_text("#version: 0.2")
+
+
+def _write_dummy_live_release(tmp_path: Path, monkeypatch) -> list[Path]:
+    release_dir = tmp_path / "release-1"
+    artifacts_dir = release_dir / "artifacts"
+    _write_dummy_model_artifacts(artifacts_dir)
+    artifact_paths = [
+        artifacts_dir / "categorizer",
+        artifacts_dir / "page_type_classifier",
+        artifacts_dir / "summarizer",
+    ]
+    models = {
+        path.name: ModelRelease(
+            name=path.name,
+            provider="local",
+            trust_tier="local",
+            version="1",
+            artifact_path=path.relative_to(release_dir).as_posix(),
+            artifact_sha256=artifact_sha256(path),
+        )
+        for path in artifact_paths
+    }
+    manifest_path = release_dir / "release-manifest.json"
+    write_manifest(
+        manifest_path,
+        new_manifest(release_id="release-1", git_sha="a" * 40, models=models),
+    )
+    monkeypatch.setenv(RELEASE_MANIFEST_ENV_VAR, str(manifest_path))
+    return artifact_paths
+
+
+def _record_artifact_hashes(monkeypatch) -> list[Path]:
+    hashed: list[Path] = []
+    real_artifact_sha256 = release_tracking.artifact_sha256
+
+    def recording_artifact_sha256(path: Path) -> str:
+        hashed.append(path)
+        return real_artifact_sha256(path)
+
+    monkeypatch.setattr(
+        release_tracking, "artifact_sha256", recording_artifact_sha256
+    )
+    return hashed
 
 
 def test_preflight_reports_immutable_release_versions_without_hosted_endpoint(
@@ -185,6 +229,43 @@ def test_preflight_marks_manifest_unhealthy_when_operator_override_shadows_it(
     assert "operator override shadows" in release_check.detail
     assert "actionability" in release_check.detail
     assert str(override) not in release_check.detail
+
+
+def test_preflight_hashes_each_live_release_artifact_once(tmp_path, monkeypatch):
+    artifact_paths = _write_dummy_live_release(tmp_path, monkeypatch)
+    hashed = _record_artifact_hashes(monkeypatch)
+    monkeypatch.setattr(service.shutil, "which", lambda _binary: "/usr/bin/fake")
+    monkeypatch.setattr(page_renderer, "POPPLER_PATH", None)
+
+    release_check = next(
+        check for check in preflight(tmp_path / "unused-dvc-root")
+        if check.name == "model release"
+    )
+
+    assert release_check.ok is True
+    assert sorted(hashed) == sorted(artifact_paths)
+
+
+def test_build_processor_hashes_each_live_release_artifact_once(
+    tmp_path, monkeypatch
+):
+    artifact_paths = _write_dummy_live_release(tmp_path, monkeypatch)
+    hashed = _record_artifact_hashes(monkeypatch)
+
+    class _StopAfterArtifactChecks(Exception):
+        pass
+
+    def stop_after_artifact_checks() -> None:
+        raise _StopAfterArtifactChecks
+
+    monkeypatch.setattr(
+        service, "_require_ocr_dependencies", stop_after_artifact_checks
+    )
+
+    with pytest.raises(_StopAfterArtifactChecks):
+        build_processor(tmp_path / "unused-dvc-root")
+
+    assert sorted(hashed) == sorted(artifact_paths)
 
 
 def test_build_processor_fails_closed_when_local_models_are_missing(tmp_path):

@@ -87,11 +87,19 @@ def _usable(path: Path) -> bool:
     return False
 
 
-def resolve_artifact(name: str, *, models_dir: Path | None = None) -> Path | None:
+def resolve_artifact(
+    name: str,
+    *,
+    models_dir: Path | None = None,
+    verified_artifacts: dict[tuple[Path, str], Path] | None = None,
+) -> Path | None:
     """Return a usable artifact path for *name*, or ``None``.
 
     Never raises, for any input, including a name containing path separators
     or an override pointing somewhere unreadable.
+
+    A supplied ``verified_artifacts`` mapping must be scoped to the current
+    startup/preflight operation; see ``resolve_manifest_artifact``.
     """
     try:
         if not isinstance(name, str) or _ARTIFACT_NAME.fullmatch(name) is None:
@@ -111,7 +119,9 @@ def resolve_artifact(name: str, *, models_dir: Path | None = None) -> Path | Non
 
         from janasunani.tracking.release import resolve_manifest_artifact
 
-        resolved = resolve_manifest_artifact(name)
+        resolved = resolve_manifest_artifact(
+            name, verified_artifacts=verified_artifacts
+        )
         if resolved is not None:
             return resolved
 
