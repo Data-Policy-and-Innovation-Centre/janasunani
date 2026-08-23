@@ -399,7 +399,12 @@ def triage_status(
                 "it could not be loaded or validated; serving the bounded "
                 f"heuristic scorer ({SPAM_VERSION})",
             )
-        return (TRIAGE_MODEL, True, "checksummed actionability artifact loaded")
+        return (
+            TRIAGE_MODEL,
+            True,
+            "checksummed actionability artifact validated; model deserialization "
+            "is deferred to processor startup",
+        )
     if configured not in SUPPORTED_TRIAGE_PROVIDERS:
         return (
             TRIAGE_BOUNDED,

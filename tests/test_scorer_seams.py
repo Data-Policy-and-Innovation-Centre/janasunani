@@ -353,7 +353,8 @@ def test_triage_model_resolves_the_configured_models_root(tmp_path, monkeypatch)
     assert isinstance(provider, ActionabilityTriageProvider)
     assert name == TRIAGE_MODEL
     assert ok is True
-    assert "checksummed actionability artifact loaded" in detail
+    assert "checksummed actionability artifact validated" in detail
+    assert "deserialization is deferred" in detail
 
 
 def test_triage_status_validates_without_deserializing_model_weights(
