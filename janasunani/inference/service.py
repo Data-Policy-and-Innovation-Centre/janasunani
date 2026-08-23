@@ -390,12 +390,19 @@ def _detect_language(text: str) -> str:
         return "unknown"
 
 
+def _usable_model_file(path: Path) -> bool:
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
 def _require_model_artifact(candidates: tuple[Path, ...], component: str) -> None:
-    if not any(path.is_file() for path in candidates):
+    if not any(_usable_model_file(path) for path in candidates):
         shown = " | ".join(str(path) for path in candidates)
         raise RuntimeError(
-            f"missing local {component} artifact: {shown}. Run `dvc pull` "
-            "for the mirrored models before starting the live API."
+            f"missing local {component} artifact or artifact is empty: {shown}. "
+            "Run `dvc pull` for the mirrored models before starting the live API."
         )
 
 
@@ -922,7 +929,7 @@ def preflight(models_dir: str | Path | None = None) -> list[DependencyCheck]:
     checks = [
         DependencyCheck(
             component,
-            any(path.is_file() for path in candidates),
+            any(_usable_model_file(path) for path in candidates),
             " | ".join(str(path) for path in candidates),
         )
         for candidates, component in _required_model_files(root)

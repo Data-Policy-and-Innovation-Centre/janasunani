@@ -57,18 +57,18 @@ def _write_dummy_model_artifacts(root: Path) -> None:
     categorizer_dir = root / "categorizer"
     categorizer_dir.mkdir(parents=True)
     (categorizer_dir / "config.json").write_text("{}")
-    (categorizer_dir / "label_encoder_ROS_wDOCS_english.pkl").write_bytes(b"")
-    (categorizer_dir / "model.safetensors").write_bytes(b"")
+    (categorizer_dir / "label_encoder_ROS_wDOCS_english.pkl").write_bytes(b"fixture")
+    (categorizer_dir / "model.safetensors").write_bytes(b"fixture")
     (categorizer_dir / "tokenizer.json").write_text("{}")
     page_type_dir = root / "page_type_classifier" / "vit_type_classifier"
     page_type_dir.mkdir(parents=True)
     (page_type_dir / "config.json").write_text("{}")
-    (page_type_dir / "model.safetensors").write_bytes(b"")
+    (page_type_dir / "model.safetensors").write_bytes(b"fixture")
     (page_type_dir / "preprocessor_config.json").write_text("{}")
     summarizer_dir = root / "summarizer"
     summarizer_dir.mkdir(parents=True)
     (summarizer_dir / "config.json").write_text("{}")
-    (summarizer_dir / "model.safetensors").write_bytes(b"")
+    (summarizer_dir / "model.safetensors").write_bytes(b"fixture")
     (summarizer_dir / "tokenizer.json").write_text("{}")
     (summarizer_dir / "merges.txt").write_text("#version: 0.2")
 
@@ -215,8 +215,8 @@ def test_build_processor_fails_closed_when_only_tokenizer_config_present(tmp_pat
     categorizer_dir = tmp_path / "categorizer"
     categorizer_dir.mkdir(parents=True)
     (categorizer_dir / "config.json").write_text("{}")
-    (categorizer_dir / "model.safetensors").write_bytes(b"")
-    (categorizer_dir / "label_encoder_ROS_wDOCS_english.pkl").write_bytes(b"")
+    (categorizer_dir / "model.safetensors").write_bytes(b"fixture")
+    (categorizer_dir / "label_encoder_ROS_wDOCS_english.pkl").write_bytes(b"fixture")
     (categorizer_dir / "tokenizer_config.json").write_text("{}")  # settings only
 
     with pytest.raises(
@@ -234,6 +234,18 @@ def test_preflight_flags_partial_mirror_missing_weights(tmp_path, monkeypatch):
     monkeypatch.setattr(page_renderer, "POPPLER_PATH", None)
 
     by_name = {c.name: c.ok for c in preflight(tmp_path)}
+
+    assert by_name["categorizer weights"] is False
+    assert by_name["categorizer config"] is True
+
+
+def test_preflight_flags_zero_byte_model_weights(tmp_path, monkeypatch):
+    _write_dummy_model_artifacts(tmp_path)
+    (tmp_path / "categorizer" / "model.safetensors").write_bytes(b"")
+    monkeypatch.setattr(service.shutil, "which", lambda _binary: "/usr/bin/fake")
+    monkeypatch.setattr(page_renderer, "POPPLER_PATH", None)
+
+    by_name = {check.name: check.ok for check in preflight(tmp_path)}
 
     assert by_name["categorizer weights"] is False
     assert by_name["categorizer config"] is True
