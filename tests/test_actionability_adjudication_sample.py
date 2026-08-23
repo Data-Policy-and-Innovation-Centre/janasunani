@@ -14,6 +14,7 @@ def _write_source(path):
         "s4": "can be considered only after a policy decision is made by the government",
     }
     complaints = []
+    redactions = []
     actions = []
     for year in (2021, 2024, 2025):
         for stratum in ("s1", "s2", "s3", "s4", "s5"):
@@ -22,6 +23,11 @@ def _write_source(path):
                 {
                     "ticket_no": ticket,
                     "created_year": year,
+                }
+            )
+            redactions.append(
+                {
+                    "ticket_no": ticket,
                     "grievance_redacted": f"safe redacted complaint {year} {stratum}",
                 }
             )
@@ -29,15 +35,30 @@ def _write_source(path):
                 actions.append(
                     {"ticket_no": ticket, "action_taken_remark": remarks[stratum]}
                 )
-    complaints.append(
+        duplicate_ticket = f"duplicate-{year}"
+        complaints.append({"ticket_no": duplicate_ticket, "created_year": year})
+        redactions.append(
+            {
+                "ticket_no": duplicate_ticket,
+                "grievance_redacted": f"duplicate complaint {year}",
+            }
+        )
+        actions.append(
+            {
+                "ticket_no": duplicate_ticket,
+                "action_taken_remark": "Duplicate copy",
+            }
+        )
+    complaints.append({"ticket_no": "excluded-phone", "created_year": 2024})
+    redactions.append(
         {
             "ticket_no": "excluded-phone",
-            "created_year": 2024,
             "grievance_redacted": "please call 9876543210",
         }
     )
     pl.DataFrame(complaints).write_parquet(path / "complaints.parquet")
     pl.DataFrame(actions).write_parquet(path / "action_history.parquet")
+    pl.DataFrame(redactions).write_parquet(path / "grievance_redactions.parquet")
 
 
 def test_build_sample_is_blinded_deterministic_and_redacted(tmp_path):
@@ -49,6 +70,7 @@ def test_build_sample_is_blinded_deterministic_and_redacted(tmp_path):
     kwargs = {
         "complaints_path": tmp_path / "complaints.parquet",
         "action_history_path": tmp_path / "action_history.parquet",
+        "redactions_path": tmp_path / "grievance_redactions.parquet",
         "oltp_env_file": None,
         "per_stratum_split": 1,
         "unlabeled_per_split": 1,
@@ -71,6 +93,7 @@ def test_build_sample_is_blinded_deterministic_and_redacted(tmp_path):
     assert all("ticket_no" not in row for row in records)
     assert all("action_taken_remark" not in row for row in records)
     assert all("9876543210" not in row["redacted_text"] for row in records)
+    assert all("duplicate complaint" not in row["redacted_text"] for row in records)
     assert stat.S_IMODE(first.stat().st_mode) == 0o600
 
     manifest = json.loads(first_manifest.read_text())
@@ -106,6 +129,6 @@ def test_build_sample_requires_one_source_mode(tmp_path):
             id_salt="salt-value-long-enough-for-test-only",
         )
     except ValueError as exc:
-        assert "choose either" in str(exc)
+        assert "choose all three" in str(exc)
     else:
         raise AssertionError("mixed source modes must fail closed")

@@ -33,6 +33,7 @@ FAMILY_TO_STRATUM = {
     "outside_grievance_cell_purview": "s3",
     "policy_decision_required": "s4",
 }
+EXCLUDED_FAMILIES = {"case_already_taken_up", "duplicate_copy"}
 
 SPLIT_FOR_YEAR = {
     2021: "train",
@@ -88,20 +89,25 @@ def _split_for_item(
 def _load_parquet_rows(
     complaints_path: Path,
     action_history_path: Path,
-    template_rows: Sequence[tuple[str, str]],
-) -> list[tuple[str, int, str, str | None]]:
+    redactions_path: Path,
+    template_rows: Sequence[tuple[str, str, bool]],
+) -> list[tuple[str, int, str, str | None, bool]]:
     import duckdb
 
     connection = duckdb.connect(":memory:")
     try:
         connection.execute(
-            "CREATE TEMP TABLE discard_template(family VARCHAR, template VARCHAR)"
+            "CREATE TEMP TABLE discard_template("
+            "family VARCHAR, template VARCHAR, excluded BOOLEAN)"
         )
         connection.executemany(
-            "INSERT INTO discard_template VALUES (?, ?)", template_rows
+            "INSERT INTO discard_template VALUES (?, ?, ?)", template_rows
         )
         connection.from_parquet(str(complaints_path)).create_view("complaints")
         connection.from_parquet(str(action_history_path)).create_view("action_history")
+        connection.from_parquet(str(redactions_path)).create_view(
+            "grievance_redactions"
+        )
         return connection.execute(
             """
             WITH normalized_action AS (
@@ -114,30 +120,33 @@ def _load_parquet_rows(
                 FROM action_history
                 WHERE action_taken_remark IS NOT NULL
             ), matched_family AS (
-                SELECT DISTINCT a.ticket_no, d.family AS label_family
+                SELECT DISTINCT a.ticket_no, d.family AS label_family, d.excluded
                 FROM normalized_action a
                 INNER JOIN discard_template d ON d.template = a.normalized_remark
             ), ticket_family AS (
                 SELECT
                     ticket_no,
-                    count(*) AS family_count,
-                    min(label_family) AS label_family
+                    count(*) FILTER (WHERE NOT excluded) AS family_count,
+                    min(label_family) FILTER (WHERE NOT excluded) AS label_family,
+                    bool_or(excluded) AS excluded_duplicate
                 FROM matched_family
                 GROUP BY ticket_no
             )
             SELECT
                 cast(c.ticket_no AS VARCHAR) ticket_no,
                 cast(c.created_year AS INTEGER) created_year,
-                cast(c.grievance_redacted AS VARCHAR) redacted_text,
+                cast(g.grievance_redacted AS VARCHAR) redacted_text,
                 CASE
                     WHEN tf.family_count = 1 THEN tf.label_family
                     ELSE NULL
-                END AS label_family
+                END AS label_family,
+                coalesce(tf.excluded_duplicate, false) AS excluded_duplicate
             FROM complaints c
+            INNER JOIN grievance_redactions g USING (ticket_no)
             LEFT JOIN ticket_family tf USING (ticket_no)
             WHERE c.created_year BETWEEN 2021 AND 2025
-              AND c.grievance_redacted IS NOT NULL
-              AND trim(c.grievance_redacted) <> ''
+              AND g.grievance_redacted IS NOT NULL
+              AND trim(g.grievance_redacted) <> ''
             """
         ).fetchall()
     finally:
@@ -146,34 +155,36 @@ def _load_parquet_rows(
 
 async def _load_oltp_rows_async(
     database_url: str,
-    template_rows: Sequence[tuple[str, str]],
-) -> list[tuple[str, int, str, str | None]]:
+    template_rows: Sequence[tuple[str, str, bool]],
+) -> list[tuple[str, int, str, str | None, bool]]:
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import create_async_engine
 
     values = []
-    parameters: dict[str, str] = {}
-    for index, (family, template) in enumerate(template_rows):
-        values.append(f"(:family_{index}, :template_{index})")
+    parameters: dict[str, object] = {}
+    for index, (family, template, excluded) in enumerate(template_rows):
+        values.append(f"(:family_{index}, :template_{index}, :excluded_{index})")
         parameters[f"family_{index}"] = family
         parameters[f"template_{index}"] = template
+        parameters[f"excluded_{index}"] = excluded
     query = text(
         f"""
-        WITH discard_template(family_name, template) AS (
+        WITH discard_template(family_name, template, excluded) AS (
             VALUES {", ".join(values)}
         ), normalized_action AS (
             SELECT ticket_no, {_NORMALIZED_REMARK_SQL} AS normalized_remark
             FROM action_history
             WHERE action_taken_remark IS NOT NULL
         ), matched_family AS (
-            SELECT DISTINCT a.ticket_no, d.family_name AS label_family
+            SELECT DISTINCT a.ticket_no, d.family_name AS label_family, d.excluded
             FROM normalized_action a
             INNER JOIN discard_template d ON d.template = a.normalized_remark
         ), ticket_family AS (
             SELECT
                 ticket_no,
-                count(*) AS family_count,
-                min(label_family) AS label_family
+                count(*) FILTER (WHERE NOT excluded) AS family_count,
+                min(label_family) FILTER (WHERE NOT excluded) AS label_family,
+                bool_or(excluded) AS excluded_duplicate
             FROM matched_family
             GROUP BY ticket_no
         )
@@ -184,7 +195,8 @@ async def _load_oltp_rows_async(
             CASE
                 WHEN tf.family_count = 1 THEN tf.label_family
                 ELSE NULL
-            END AS label_family
+            END AS label_family,
+            coalesce(tf.excluded_duplicate, false) AS excluded_duplicate
         FROM complaints c
         INNER JOIN grievance_redactions g USING (ticket_no)
         LEFT JOIN ticket_family tf USING (ticket_no)
@@ -203,8 +215,8 @@ async def _load_oltp_rows_async(
 
 def _load_oltp_rows(
     env_file: Path,
-    template_rows: Sequence[tuple[str, str]],
-) -> list[tuple[str, int, str, str | None]]:
+    template_rows: Sequence[tuple[str, str, bool]],
+) -> list[tuple[str, int, str, str | None, bool]]:
     from dotenv import dotenv_values
 
     database_url = dotenv_values(env_file).get("OLTP_DB_URL")
@@ -220,19 +232,25 @@ def build_sample(
     output_path: Path,
     manifest_path: Path,
     *,
+    redactions_path: Path | None = None,
     per_stratum_split: int,
     unlabeled_per_split: int,
     seed: str,
     id_salt: str,
 ) -> None:
-    parquet_mode = complaints_path is not None or action_history_path is not None
+    parquet_mode = any(
+        path is not None
+        for path in (complaints_path, action_history_path, redactions_path)
+    )
     if parquet_mode == (oltp_env_file is not None):
-        raise ValueError("choose either both Parquet inputs or one OLTP env file")
+        raise ValueError("choose all three Parquet inputs or one OLTP env file")
     if parquet_mode:
         if complaints_path is None or not complaints_path.is_file():
             raise FileNotFoundError(complaints_path)
         if action_history_path is None or not action_history_path.is_file():
             raise FileNotFoundError(action_history_path)
+        if redactions_path is None or not redactions_path.is_file():
+            raise FileNotFoundError(redactions_path)
     elif oltp_env_file is None or not oltp_env_file.is_file():
         raise FileNotFoundError(oltp_env_file)
     if per_stratum_split < 1 or unlabeled_per_split < 1:
@@ -243,14 +261,22 @@ def build_sample(
     from janasunani.analytics.findings.discards import TEMPLATES
 
     template_rows = [
-        (family, template)
+        (family, template, family in EXCLUDED_FAMILIES)
         for family, templates in TEMPLATES.items()
-        if family in FAMILY_TO_STRATUM
+        if family in FAMILY_TO_STRATUM or family in EXCLUDED_FAMILIES
         for template in templates
     ]
     rows = (
-        _load_parquet_rows(complaints_path, action_history_path, template_rows)
-        if parquet_mode and complaints_path is not None and action_history_path is not None
+        _load_parquet_rows(
+            complaints_path,
+            action_history_path,
+            redactions_path,
+            template_rows,
+        )
+        if parquet_mode
+        and complaints_path is not None
+        and action_history_path is not None
+        and redactions_path is not None
         else _load_oltp_rows(oltp_env_file, template_rows)  # type: ignore[arg-type]
     )
     observed_years = {int(row[1]) for row in rows}
@@ -258,7 +284,9 @@ def build_sample(
 
     candidates: dict[tuple[str, str], list[tuple[str, int, str]]] = {}
     excluded_shaped_pii = 0
-    for ticket_no, year, raw_text, family in rows:
+    for ticket_no, year, raw_text, family, excluded_duplicate in rows:
+        if excluded_duplicate:
+            continue
         split = _split_for_item(
             ticket_no=str(ticket_no),
             year=int(year),
@@ -368,6 +396,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--complaints", type=Path)
     parser.add_argument("--action-history", type=Path)
+    parser.add_argument("--redactions", type=Path)
     parser.add_argument("--oltp-env-file", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
@@ -382,6 +411,7 @@ def main() -> int:
         args.oltp_env_file,
         args.output,
         args.manifest,
+        redactions_path=args.redactions,
         per_stratum_split=args.per_stratum_split,
         unlabeled_per_split=args.unlabeled_per_split,
         seed=args.seed,
