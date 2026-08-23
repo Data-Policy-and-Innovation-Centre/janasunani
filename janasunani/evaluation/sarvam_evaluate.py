@@ -106,6 +106,7 @@ def _input_snapshot_id(pages: list[tuple[Path, int]]) -> str:
 
     digest = hashlib.sha256()
     file_digests: dict[Path, bytes] = {}
+    members: list[bytes] = []
     for path, number in pages:
         resolved = path.resolve()
         file_digest = file_digests.get(resolved)
@@ -116,7 +117,8 @@ def _input_snapshot_id(pages: list[tuple[Path, int]]) -> str:
                     source_digest.update(chunk)
             file_digest = source_digest.digest()
             file_digests[resolved] = file_digest
-        value = file_digest + b"\0" + str(number).encode("ascii")
+        members.append(file_digest + b"\0" + str(number).encode("ascii"))
+    for value in sorted(members):
         digest.update(len(value).to_bytes(8, "big"))
         digest.update(value)
     return f"sha256:{digest.hexdigest()}"
