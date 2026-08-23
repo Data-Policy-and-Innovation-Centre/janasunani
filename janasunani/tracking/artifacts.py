@@ -76,6 +76,8 @@ def _usable(path: Path) -> bool:
     ends up loading nothing while claiming a model is live.
     """
     try:
+        if path.is_symlink():
+            return False
         if path.is_file():
             return path.stat().st_size > 0
         if path.is_dir():

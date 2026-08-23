@@ -90,6 +90,23 @@ def test_artifact_name_cannot_escape_the_models_directory(tmp_path):
     assert resolve_artifact("../outside", models_dir=models) is None
 
 
+def test_resolution_rejects_symlinked_override_and_dvc_roots(tmp_path, monkeypatch):
+    outside = tmp_path / "outside.bin"
+    outside.write_bytes(b"model")
+    override = tmp_path / "override.bin"
+    override.symlink_to(outside)
+    models = tmp_path / "models"
+    models.mkdir()
+    dvc = models / "spam_scorer"
+    dvc.symlink_to(outside)
+    monkeypatch.setenv("JANASUNANI_SPAM_SCORER_ARTIFACT", str(override))
+
+    assert resolve_artifact("spam_scorer", models_dir=models) is None
+
+    monkeypatch.delenv("JANASUNANI_SPAM_SCORER_ARTIFACT")
+    assert resolve_artifact("spam_scorer", models_dir=models) is None
+
+
 def test_override_variable_name_is_public_but_validated():
     assert (
         artifact_override_env_var("routing-incidence")
