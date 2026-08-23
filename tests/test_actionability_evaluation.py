@@ -399,6 +399,26 @@ def test_artifact_round_trip_is_checksummed_and_refuses_overwrite(tmp_path):
         load_actionability_scorer(artifact_dir)
 
 
+def test_actionability_loader_rejects_symlinked_model_file(tmp_path):
+    benchmark = benchmark_binary_review(
+        dataset(),
+        c_values=(1.0,),
+        min_df=1,
+        max_features=2_000,
+        min_review_precision=0.0,
+        max_actionable_review_rate=1.0,
+    )
+    artifact_dir = tmp_path / "actionability"
+    paths = benchmark.save(artifact_dir)
+    outside_model = tmp_path / "outside.joblib"
+    outside_model.write_bytes(paths["model"].read_bytes())
+    paths["model"].unlink()
+    paths["model"].symlink_to(outside_model)
+
+    with pytest.raises(ValueError, match="must not be a symlink"):
+        load_actionability_scorer(artifact_dir)
+
+
 def test_binary_review_artifact_round_trip_is_serving_compatible(tmp_path):
     benchmark = benchmark_binary_review(
         dataset(),

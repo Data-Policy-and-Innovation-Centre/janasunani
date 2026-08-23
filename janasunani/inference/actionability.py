@@ -284,6 +284,8 @@ def validate_actionability_artifact(path: Path) -> tuple[dict, Path]:
     """Validate local artifact structure and bytes without deserializing them."""
     artifact_dir = Path(path)
     manifest_path = artifact_dir / "manifest.json"
+    if artifact_dir.is_symlink() or manifest_path.is_symlink():
+        raise ValueError("actionability artifact paths must not be symlinks")
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -327,6 +329,8 @@ def validate_actionability_artifact(path: Path) -> tuple[dict, Path]:
     ):
         raise ValueError("model_file must be one filename inside the artifact")
     model_path = artifact_dir / model_file
+    if model_path.is_symlink():
+        raise ValueError("actionability model file must not be a symlink")
     if not model_path.is_file() or model_path.stat().st_size == 0:
         raise ValueError("actionability model file is absent or empty")
     if _sha256(model_path) != manifest["model_sha256"]:
