@@ -156,11 +156,15 @@ def load_jsonl(path: Path) -> list[ActionabilityRecord]:
         label = payload["label"]
         split = payload["split"]
         label_source = payload["label_source"]
-        if label not in ACTIONABILITY_LABELS:
+        if not isinstance(label, str) or label not in ACTIONABILITY_LABELS:
             raise ValueError(f"line {line_number}: label is outside the taxonomy")
-        if split not in {"train", "validation", "test"}:
+        if not isinstance(split, str) or split not in {
+            "train",
+            "validation",
+            "test",
+        }:
             raise ValueError(f"line {line_number}: invalid split")
-        if label_source not in {
+        if not isinstance(label_source, str) or label_source not in {
             "adjudicated",
             "frontier_adjudicated",
             "administrative_weak",

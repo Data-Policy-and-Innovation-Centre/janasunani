@@ -148,6 +148,32 @@ def test_jsonl_rejects_raw_text_and_weak_holdout(tmp_path):
         load_jsonl(path)
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("label", ["actionable"], "outside the taxonomy"),
+        ("split", ["train"], "invalid split"),
+        ("label_source", ["adjudicated"], "invalid label_source"),
+    ],
+)
+def test_jsonl_rejects_non_string_enum_fields(tmp_path, field, value, message):
+    payload = {
+        "item_id": "item-1",
+        "redacted_text": "redacted grievance",
+        "label": "actionable",
+        "group_id": "group-1",
+        "language": "English",
+        "split": "train",
+        "label_source": "adjudicated",
+    }
+    payload[field] = value
+    path = tmp_path / "malformed.jsonl"
+    path.write_text(json.dumps(payload) + "\n")
+
+    with pytest.raises(ValueError, match=message):
+        load_jsonl(path)
+
+
 def test_jsonl_requires_group_disjoint_splits(tmp_path):
     rows = []
     for split, suffix in (("train", "a"), ("validation", "b"), ("test", "c")):
