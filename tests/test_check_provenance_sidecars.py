@@ -79,6 +79,12 @@ def test_actionability_sample_sidecar_is_metadata_only():
             "ticket_identifier": "salted sha256",
             "unlabeled_per_split": 40,
         },
+        "sample_design": {
+            "sampling_scheme": "fixed quotas across opaque sampling strata",
+            "production_prevalence_representative": False,
+            "metric_interpretation": "composition-specific development metrics",
+            "intended_use": "development model comparison and error analysis",
+        },
         "records": 180,
         "selected_fields": ["salted item id", "grievance_redacted"],
     }
@@ -394,6 +400,16 @@ class TestFileLevelChecks:
 
     def test_valid_file_passes(self, tmp_path):
         assert check.check_file(sidecar(tmp_path, VALID)) == []
+
+    def test_nested_sidecar_requires_a_recognized_schema_without_echoing(self, tmp_path):
+        path = tmp_path / "data" / "external" / "candidate" / "provenance.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"note": CITIZEN_TEXT}), encoding="utf-8")
+
+        problems = check.check_file(path)
+
+        assert problems
+        assert all(CITIZEN_TEXT not in problem for problem in problems)
 
 
 class TestCLI:

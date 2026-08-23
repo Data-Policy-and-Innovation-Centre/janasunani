@@ -77,6 +77,13 @@ _ACTIONABILITY_FRONTIER_SCHEMA = "janasunani.actionability-frontier-artifacts/v1
 _CATEGORIZATION_SCHEMA = "categorization-benchmark-sample-v1"
 _SARVAM_SCHEMA = "janasunani.sarvam-source-snapshots/v1"
 _SUMMARY_SCHEMA = "summary-development-provenance/v1"
+_RECOGNIZED_SCHEMAS = {
+    _ACTIONABILITY_SCHEMA,
+    _ACTIONABILITY_FRONTIER_SCHEMA,
+    _CATEGORIZATION_SCHEMA,
+    _SARVAM_SCHEMA,
+    _SUMMARY_SCHEMA,
+}
 
 _ADMIN_CATEGORIES = {
     "Accident",
@@ -160,6 +167,7 @@ def _check_actionability_sample(payload: dict[str, Any]) -> list[str]:
         "forbidden_fields",
         "parameters",
         "records",
+        "sample_design",
         "schema_version",
         "selected_fields",
     }
@@ -202,6 +210,25 @@ def _check_actionability_sample(payload: dict[str, Any]) -> list[str]:
         problems.append("actionability records must be a nonnegative integer")
     problems += _check_string_list("forbidden_fields", payload.get("forbidden_fields"))
     problems += _check_string_list("selected_fields", payload.get("selected_fields"))
+    sample_design = payload.get("sample_design")
+    sample_design_keys = {
+        "sampling_scheme",
+        "production_prevalence_representative",
+        "metric_interpretation",
+        "intended_use",
+    }
+    problems += _check_exact_keys(
+        "actionability sample_design", sample_design, sample_design_keys
+    )
+    if isinstance(sample_design, dict):
+        problems += _check_bool(
+            "sample_design.production_prevalence_representative",
+            sample_design.get("production_prevalence_representative"),
+        )
+        for key in sample_design_keys - {"production_prevalence_representative"}:
+            problems += _check_scalar(
+                f"sample_design.{key}", sample_design.get(key), MAX_STRING
+            )
     return problems
 
 
@@ -721,6 +748,18 @@ def check_file(path: Path) -> list[str]:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         return [f"not valid JSON ({exc})"]
+    parts = path.parts
+    for index in range(len(parts) - 1):
+        if parts[index : index + 2] != ("data", "external"):
+            continue
+        relative = parts[index + 2 :]
+        is_legacy_root = relative == ("provenance.json",)
+        if not is_legacy_root and (
+            not isinstance(payload, dict)
+            or payload.get("schema_version") not in _RECOGNIZED_SCHEMAS
+        ):
+            return ["nested provenance sidecar must declare a recognized schema_version"]
+        break
     return check_payload(payload)
 
 
