@@ -276,6 +276,12 @@ def test_allowlisted_list_rejects_non_string_items_without_crashing():
     assert check._check_allowlisted_list("metadata", [{}], allowed={"fixed"})
 
 
+def test_allowlisted_list_rejects_empty_required_metadata():
+    assert check._check_allowlisted_list(
+        "metadata", [], allowed={"fixed"}, require_all=False
+    )
+
+
 @pytest.mark.parametrize(
     "schema",
     ["categorization-benchmark-sample-v1", "summary-development-provenance/v1"],
@@ -312,9 +318,15 @@ def _frontier_payload():
             for name in ["judge_a.jsonl", "judge_b.jsonl", "resolver.jsonl", "resolver_backup.jsonl"]
         },
         "deterministic_stages": {
-            "actionability-adjudication-prepare": ["consensus.jsonl"],
-            "actionability-adjudication-finalize": ["gold.jsonl"],
-            "actionability-local-candidate-benchmark": ["scorecard.json"],
+            "actionability-adjudication-prepare": [
+                "consensus.jsonl",
+                "resolver_input.jsonl",
+                "adjudication_report.json",
+            ],
+            "actionability-adjudication-finalize": ["gold.jsonl", "gold.manifest.json"],
+            "actionability-local-candidate-benchmark": [
+                "actionability_candidates_muril_high_catch.json"
+            ],
         },
         "canonical_reproducible_gold": {
             "records": 3,
@@ -342,7 +354,9 @@ def _frontier_payload():
             "historical_candidates_high_catch.json": "1" * 64,
             "historical_candidates_muril_minilm_high_catch.json": "2" * 64,
         },
-        "limitations": ["No officer-confirmed labels."],
+        "limitations": [
+            "frontier-adjudicated development gold is not officer-confirmed truth"
+        ],
     }
 
 

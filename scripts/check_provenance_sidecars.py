@@ -165,6 +165,8 @@ def _check_allowlisted_list(
     if not isinstance(value, list):
         return [f"'{key}' must be a list"]
     problems: list[str] = []
+    if not value:
+        problems.append(f"{key} must not be empty")
     for position, item in enumerate(value):
         if not isinstance(item, str) or item not in allowed:
             problems.append(f"{key} entry {position} is not allowlisted; value withheld")
@@ -626,9 +628,18 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
     problems += _check_exact_keys("actionability frontier deterministic_stages", stages, allowed_stages)
     if isinstance(stages, dict):
         expected_outputs = {
-            "actionability-adjudication-prepare": {"consensus.jsonl"},
-            "actionability-adjudication-finalize": {"gold.jsonl"},
-            "actionability-local-candidate-benchmark": {"scorecard.json"},
+            "actionability-adjudication-prepare": {
+                "consensus.jsonl",
+                "resolver_input.jsonl",
+                "adjudication_report.json",
+            },
+            "actionability-adjudication-finalize": {
+                "gold.jsonl",
+                "gold.manifest.json",
+            },
+            "actionability-local-candidate-benchmark": {
+                "actionability_candidates_muril_high_catch.json",
+            },
         }
         for position, (stage, outputs) in enumerate(stages.items()):
             if stage in expected_outputs:
@@ -677,7 +688,29 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
     problems += _check_allowlisted_list(
         "limitations",
         payload["limitations"],
-        allowed={"No officer-confirmed labels."},
+        allowed={
+            "This historical benchmark admitted six resolver judgments marked uncertain; use the 174-row reproducible benchmark for current development evidence.",
+            "The final adjudication is produced by frontier models, not officers.",
+            "No out_of_scope example was defensible, so this does not establish five-class quality.",
+            "The 60-case test has wide item-level confidence intervals and has now been viewed.",
+            "The snapshot split is not chronological and duplicate-group isolation is unavailable.",
+            "Accuracy and review precision describe the enriched sample composition, not production prevalence or PPV.",
+            "Language, source and intake-office strata are not large enough for release decisions.",
+            "The high-catch point estimate exceeded its actionable-review target on test by 0.87 percentage points.",
+            "Judge independence is between Codex agent contexts, not between model families or providers.",
+            "Exact hidden prompts, inference sampling configuration, and provider retention evidence were unavailable in this run.",
+            "All outputs remain advisory; no automatic rejection or eligibility decision is permitted.",
+            "candidate selection is development-only and not a production promotion",
+            "accuracy, precision, PPV, and review workload are specific to this designed sample composition and are not production prevalence",
+            "frontier-adjudicated development gold is not officer-confirmed truth",
+            "single-snapshot hash splits are not chronological release evidence",
+            "duplicate-group isolation is unavailable in this pilot sample",
+            "binary review does not replace the complete five-class production contract",
+            "frozen encoder with a train-only linear probe",
+            "test split is report-only and did not select model or threshold",
+            "Wilson intervals are item-level and do not establish population representativeness",
+        },
+        require_all=False,
     )
     return problems
 
@@ -743,6 +776,13 @@ def _check_sarvam_snapshots(payload: dict[str, Any]) -> list[str]:
             "No hand transcription exists.",
             "No hand transcription; divergence is not OCR accuracy.",
             "No hand transcription; divergence and character length do not establish quality.",
+            "No reportable category accuracy or summary comparison.",
+            "Language is an en-IN request hint, not an observed language split.",
+            "Handwriting status is unknown.",
+            "The original runner did not checkpoint a scorecard before HTTP 402.",
+            "Failed pages are excluded from paired divergence and may be non-random.",
+            "The category-stratified sample is not handwriting- or language-stratified.",
+            "The original sample manifest contained ticket and object identifiers and was not recovered.",
         },
         require_all=False,
     )
