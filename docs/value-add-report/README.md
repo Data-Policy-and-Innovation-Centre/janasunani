@@ -180,13 +180,13 @@ report. It intentionally preserves the established layout and embedded charts;
 it is not a from-scratch chart generator. The two short briefs are generated
 from Python sources so that their text and layout can be reproduced.
 
-Generate all three tracked documents from the repository root:
+Generate all three tracked documents from the repository root. DVC treats the
+long report's `.source.docx` as an immutable input and the three published DOCX
+files as outputs, so regeneration cannot silently patch its own previous output:
 
 ```bash
 dvc pull dvc.yaml:full-benchmark-bundle
-uv run python scripts/update_value_add_report.py
-uv run python scripts/create_officer_brief.py
-uv run python scripts/create_public_systems_capability_brief.py
+dvc repro value-add-report-documents
 ```
 
 All three generators fail closed if the bundle lacks the tracked real timing,

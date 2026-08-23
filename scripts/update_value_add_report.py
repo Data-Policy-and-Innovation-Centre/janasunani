@@ -20,6 +20,7 @@ from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Pt
+from dpic.branding import colors as brand_colors
 
 from janasunani.evaluation.value_add_benchmark_facts import (
     DEFAULT_BUNDLE,
@@ -32,6 +33,19 @@ from janasunani.evaluation.value_add_benchmark_facts import (
 DEFAULT_REPORT = Path(
     "docs/value-add-report/Janasunani_2.0_Value_Add_Report_August_2026.docx"
 )
+DEFAULT_SOURCE = Path(
+    "docs/value-add-report/templates/Janasunani_2.0_Value_Add_Report_August_2026.source.docx"
+)
+
+FIG_PRIMARY = brand_colors.PRIMARY
+FIG_BLUE = brand_colors.BLUE
+FIG_ACCENT = brand_colors.ORANGE
+FIG_TEXT = brand_colors.TEXT_BODY
+FIG_TEXT_SECONDARY = brand_colors.TEXT_SECONDARY
+FIG_BORDER = brand_colors.BORDER
+FIG_BACKGROUND = brand_colors.BACKGROUND
+FIG_CARD = brand_colors.CARD_FILL
+FIG_CARD_ALT = brand_colors.CARD_FILL_ALT
 
 
 def _set_repeat_table_header(row) -> None:
@@ -431,7 +445,7 @@ def _runtime_figure(facts: BenchmarkFacts) -> bytes:
         "Janasunani 2.0\ntyped grievance\n(warm p50)",
         "Manual routing\n(median, forwarded\ncomplaints)",
     ]
-    colors = ["#112E51", "#138782", "#C9A86A"]
+    colors = [FIG_PRIMARY, FIG_BLUE, FIG_ACCENT]
     annotations = [
         f"{document['p50']:.2f} sec\n(n={document['n']})",
         f"{text['p50']:.3f} sec\n(n={text['n']})",
@@ -444,20 +458,20 @@ def _runtime_figure(facts: BenchmarkFacts) -> bytes:
     ax.set_xlim(0.001, 5000)
     ax.set_yticks(list(positions), labels)
     ax.invert_yaxis()
-    ax.set_xlabel("Elapsed time (minutes, log scale)", color="#334155")
+    ax.set_xlabel("Elapsed time (minutes, log scale)", color=FIG_TEXT)
     ax.set_title(
         "Two clocks: technical processing and administrative forwarding",
         loc="left",
         fontsize=18,
         fontweight="bold",
-        color="#112E51",
+        color=FIG_PRIMARY,
         pad=12,
     )
-    ax.grid(axis="x", which="major", linestyle=":", color="#DDE3EA", linewidth=1.2)
+    ax.grid(axis="x", which="major", linestyle=":", color=FIG_BORDER, linewidth=1.2)
     ax.set_axisbelow(True)
     ax.spines[["top", "right"]].set_visible(False)
-    ax.spines[["left", "bottom"]].set_color("#DDE3EA")
-    ax.tick_params(colors="#64748B", labelsize=10)
+    ax.spines[["left", "bottom"]].set_color(FIG_BORDER)
+    ax.tick_params(colors=FIG_TEXT_SECONDARY, labelsize=10)
     for position, value, annotation in zip(
         positions, values_minutes, annotations, strict=True
     ):
@@ -469,8 +483,8 @@ def _runtime_figure(facts: BenchmarkFacts) -> bytes:
             va="center",
             ha="left",
             fontsize=10.5,
-            color="#112E51",
-            bbox={"boxstyle": "round,pad=0.25", "fc": "white", "ec": "#DDE3EA"},
+            color=FIG_PRIMARY,
+            bbox={"boxstyle": "round,pad=0.25", "fc": FIG_BACKGROUND, "ec": FIG_BORDER},
         )
     fig.text(
         0.01,
@@ -480,7 +494,7 @@ def _runtime_figure(facts: BenchmarkFacts) -> bytes:
         f"{facts.latency['failed_attempts']} failed. Administrative source: historical forwarded cases. "
         "Technical speed is not officer time saved.",
         fontsize=8.5,
-        color="#64748B",
+        color=FIG_TEXT_SECONDARY,
     )
     fig.tight_layout(rect=(0, 0.07, 1, 1))
     result = _figure_png(fig)
@@ -502,23 +516,23 @@ def _pii_figure(facts: BenchmarkFacts) -> bytes:
         pii["overall"]["overlap_recall"],
     ]
     fig, ax = plt.subplots(figsize=(12.5, 5.1))
-    bars = ax.bar(labels, [rate * 100 for rate in rates], color="#138782", width=0.54)
-    ax.axhline(80.56, color="#C4941A", linestyle="--", linewidth=2)
+    bars = ax.bar(labels, [rate * 100 for rate in rates], color=FIG_BLUE, width=0.54)
+    ax.axhline(80.56, color=FIG_ACCENT, linestyle="--", linewidth=2)
     ax.set_ylim(0, 100)
-    ax.set_ylabel("Typed overlap recall (%)", color="#334155")
+    ax.set_ylabel("Typed overlap recall (%)", color=FIG_TEXT)
     ax.set_title(
         "PII redaction development recall by entity",
         loc="left",
         fontsize=18,
         fontweight="bold",
-        color="#112E51",
+        color=FIG_PRIMARY,
         pad=12,
     )
-    ax.grid(axis="y", linestyle=":", color="#DDE3EA", linewidth=1.2)
+    ax.grid(axis="y", linestyle=":", color=FIG_BORDER, linewidth=1.2)
     ax.set_axisbelow(True)
     ax.spines[["top", "right"]].set_visible(False)
-    ax.spines[["left", "bottom"]].set_color("#DDE3EA")
-    ax.tick_params(colors="#64748B", labelsize=10)
+    ax.spines[["left", "bottom"]].set_color(FIG_BORDER)
+    ax.tick_params(colors=FIG_TEXT_SECONDARY, labelsize=10)
     for bar, rate in zip(bars, rates, strict=True):
         ax.text(
             bar.get_x() + bar.get_width() / 2,
@@ -528,15 +542,15 @@ def _pii_figure(facts: BenchmarkFacts) -> bytes:
             va="bottom",
             fontsize=11,
             fontweight="bold",
-            color="#112E51",
+            color=FIG_PRIMARY,
         )
     ax.text(
         4.35,
         83,
         "DSI reference 80.56%\n(historical; not a threshold)",
-        color="#A66F00",
+        color=FIG_ACCENT,
         fontsize=9.5,
-        bbox={"boxstyle": "round,pad=0.25", "fc": "#FFF7DF", "ec": "#E8C968"},
+        bbox={"boxstyle": "round,pad=0.25", "fc": FIG_CARD, "ec": FIG_BORDER},
     )
     fig.text(
         0.01,
@@ -545,7 +559,7 @@ def _pii_figure(facts: BenchmarkFacts) -> bytes:
         f"{pii['excluded_by_policy']} excluded by policy; all records in unknown language bucket. "
         f"Coverage-overlap recall {pii['coverage']['overlap_recall']:.1%}; precision is not adjudicated.",
         fontsize=8.5,
-        color="#64748B",
+        color=FIG_TEXT_SECONDARY,
     )
     fig.tight_layout(rect=(0, 0.07, 1, 1))
     result = _figure_png(fig)
@@ -577,21 +591,21 @@ def _routing_figure(facts: BenchmarkFacts) -> bytes:
         top1,
         width,
         label="Top 1",
-        color="#112E51",
+        color=FIG_PRIMARY,
     )
     top3_bars = quality_ax.bar(
         [position + width / 2 for position in positions],
         top3,
         width,
         label="Top 3",
-        color="#138782",
+        color=FIG_BLUE,
     )
     quality_ax.set_title(
         "Historical-destination agreement",
         loc="left",
         fontsize=15,
         fontweight="bold",
-        color="#112E51",
+        color=FIG_PRIMARY,
     )
     quality_ax.set_xticks(
         positions,
@@ -601,37 +615,37 @@ def _routing_figure(facts: BenchmarkFacts) -> bytes:
         ],
     )
     quality_ax.set_ylim(0, 100)
-    quality_ax.set_ylabel("Chronological holdout accuracy (%)", color="#334155")
+    quality_ax.set_ylabel("Chronological holdout accuracy (%)", color=FIG_TEXT)
     quality_ax.legend(frameon=False, loc="upper left", ncols=2)
-    quality_ax.grid(axis="y", linestyle=":", color="#DDE3EA", linewidth=1.2)
+    quality_ax.grid(axis="y", linestyle=":", color=FIG_BORDER, linewidth=1.2)
     quality_ax.set_axisbelow(True)
     for bars in (top1_bars, top3_bars):
         quality_ax.bar_label(
-            bars, fmt="%.1f%%", padding=3, color="#112E51", fontsize=10
+            bars, fmt="%.1f%%", padding=3, color=FIG_PRIMARY, fontsize=10
         )
 
     route_days = [48, 23, 9]
     route_labels = ["Route 4", "Route 2", "Step 3"]
-    route_colors = ["#112E51", "#138782", "#C4941A"]
+    route_colors = [FIG_PRIMARY, FIG_BLUE, FIG_ACCENT]
     route_bars = time_ax.barh(route_labels, route_days, color=route_colors, height=0.5)
     time_ax.invert_yaxis()
     time_ax.set_xlim(0, 55)
-    time_ax.set_xlabel("Median elapsed days", color="#334155")
+    time_ax.set_xlabel("Median elapsed days", color=FIG_TEXT)
     time_ax.set_title(
         "Route timing is descriptive",
         loc="left",
         fontsize=15,
         fontweight="bold",
-        color="#112E51",
+        color=FIG_PRIMARY,
     )
-    time_ax.grid(axis="x", linestyle=":", color="#DDE3EA", linewidth=1.2)
+    time_ax.grid(axis="x", linestyle=":", color=FIG_BORDER, linewidth=1.2)
     time_ax.set_axisbelow(True)
     time_ax.bar_label(route_bars, labels=["48 days", "23 days", "9 days"], padding=4)
 
     for axis in (quality_ax, time_ax):
         axis.spines[["top", "right"]].set_visible(False)
-        axis.spines[["left", "bottom"]].set_color("#DDE3EA")
-        axis.tick_params(colors="#64748B", labelsize=10)
+        axis.spines[["left", "bottom"]].set_color(FIG_BORDER)
+        axis.tick_params(colors=FIG_TEXT_SECONDARY, labelsize=10)
 
     fig.text(
         0.01,
@@ -640,7 +654,7 @@ def _routing_figure(facts: BenchmarkFacts) -> bytes:
         "historical destination, not adjudicated correct authority. Route-day contrasts "
         "are observational and are not estimates of time saved.",
         fontsize=8.5,
-        color="#64748B",
+        color=FIG_TEXT_SECONDARY,
     )
     fig.tight_layout(rect=(0, 0.08, 1, 1), w_pad=3.5)
     result = _figure_png(fig)
@@ -915,6 +929,22 @@ def patch_report(source: Path, destination: Path, *, benchmark_bundle: Path) -> 
     )
     document = Document(source)
     current = {paragraph.text: paragraph for paragraph in document.paragraphs}
+
+    def dynamic_source(old: str):
+        prefixes: tuple[str, ...] = ()
+        if old.startswith("Figure 2 — Time from filing"):
+            prefixes = ("Figure 2 — Two different clocks.",)
+        elif old.startswith("Timing the officer feels."):
+            prefixes = ("Technical timing from the versioned development bundle.",)
+        return next(
+            (
+                paragraph
+                for text, paragraph in current.items()
+                if any(text.startswith(prefix) for prefix in prefixes)
+            ),
+            None,
+        )
+
     missing = sorted(
         old
         for old, new in paragraph_replacements.items()
@@ -923,6 +953,7 @@ def patch_report(source: Path, destination: Path, *, benchmark_bundle: Path) -> 
         and not any(
             alternate in current for alternate in paragraph_alternates.get(old, ())
         )
+        and dynamic_source(old) is None
     )
     if missing:
         preview = "\n".join(f"- {text[:180]}" for text in missing)
@@ -943,6 +974,10 @@ def patch_report(source: Path, destination: Path, *, benchmark_bundle: Path) -> 
                 ):
                     current[alternate].paragraph_format.space_before = Pt(7)
                 break
+        else:
+            paragraph = dynamic_source(old)
+            if paragraph is not None:
+                _set_paragraph(paragraph, new)
 
     for (
         table_index,
@@ -988,13 +1023,13 @@ def patch_report(source: Path, destination: Path, *, benchmark_bundle: Path) -> 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", type=Path, default=DEFAULT_REPORT)
-    parser.add_argument("--output", type=Path)
+    parser.add_argument("--input", type=Path, default=DEFAULT_SOURCE)
+    parser.add_argument("--output", type=Path, default=DEFAULT_REPORT)
     parser.add_argument("--benchmark-bundle", type=Path, default=DEFAULT_BUNDLE)
     args = parser.parse_args()
     patch_report(
         args.input,
-        args.output or args.input,
+        args.output,
         benchmark_bundle=args.benchmark_bundle,
     )
     return 0

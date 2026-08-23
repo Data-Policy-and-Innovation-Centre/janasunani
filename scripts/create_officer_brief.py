@@ -16,6 +16,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor, Twips
+from dpic.branding import colors as brand_colors
 
 from janasunani.evaluation.value_add_benchmark_facts import (
     DEFAULT_BUNDLE,
@@ -25,15 +26,20 @@ from janasunani.evaluation.value_add_benchmark_facts import (
 )
 
 
-NAVY = "112E51"
-TEAL = "138782"
-GOLD = "C4941A"
-PALE_TEAL = "EAF7F6"
-PALE_GOLD = "FFF7DF"
-PALE_BLUE = "EDF3F9"
-MID_GREY = "526175"
-LIGHT_GREY = "EEF1F4"
-WHITE = "FFFFFF"
+def _word_color(value: str) -> str:
+    return value.removeprefix("#")
+
+
+NAVY = _word_color(brand_colors.PRIMARY)
+TEAL = _word_color(brand_colors.BLUE)
+GOLD = _word_color(brand_colors.ORANGE)
+PALE_TEAL = _word_color(brand_colors.CARD_FILL_ALT)
+PALE_GOLD = _word_color(brand_colors.CARD_FILL)
+PALE_BLUE = _word_color(brand_colors.LIGHT_GREYSTONE)
+ALT_FILL = _word_color(brand_colors.BACKGROUND)
+MID_GREY = _word_color(brand_colors.TEXT_BODY)
+LIGHT_GREY = _word_color(brand_colors.BORDER)
+WHITE = _word_color(brand_colors.WHITE)
 CONTENT_WIDTH_DXA = 10035
 TABLE_INDENT_DXA = 140
 
@@ -336,7 +342,7 @@ def _evidence_table(document: Document, facts: BenchmarkFacts) -> None:
     )
     for index, values in enumerate(rows):
         cells = table.add_row().cells
-        fill = PALE_BLUE if index % 2 == 0 else "F8FAFC"
+        fill = PALE_BLUE if index % 2 == 0 else ALT_FILL
         for cell, value in zip(cells, values, strict=True):
             _shade(cell, fill)
             _set_cell_text(cell, value, size=9.5)

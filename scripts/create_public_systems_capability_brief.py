@@ -14,6 +14,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Pt, RGBColor
 
 from create_officer_brief import (
+    ALT_FILL,
     GOLD,
     NAVY,
     PALE_BLUE,
@@ -123,7 +124,7 @@ def _value_table(document: Document) -> None:
     )
     for index, values in enumerate(rows):
         cells = table.add_row().cells
-        fill = PALE_BLUE if index % 2 == 0 else "F8FAFC"
+        fill = PALE_BLUE if index % 2 == 0 else ALT_FILL
         for cell, value in zip(cells, values, strict=True):
             _shade(cell, fill)
             _set_cell_text(cell, value, size=9.5)
@@ -149,7 +150,7 @@ def _approach_table(document: Document) -> None:
     )
     for index, values in enumerate(rows):
         cells = table.add_row().cells
-        fill = PALE_TEAL if index in {0, 4} else (PALE_BLUE if index % 2 else "F8FAFC")
+        fill = PALE_TEAL if index in {0, 4} else (PALE_BLUE if index % 2 else ALT_FILL)
         for cell, value in zip(cells, values, strict=True):
             _shade(cell, fill)
             _set_cell_text(cell, value, size=9.3)
