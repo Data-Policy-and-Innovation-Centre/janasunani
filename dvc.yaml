@@ -366,6 +366,7 @@ stages:
       - scripts/update_value_add_report.py
       - scripts/create_officer_brief.py
       - scripts/create_public_systems_capability_brief.py
+      - scripts/docx_archive.py
       - pyproject.toml
       - uv.lock
     outs:

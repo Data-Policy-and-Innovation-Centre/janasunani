@@ -1,5 +1,6 @@
 from pathlib import Path
 import sys
+import zipfile
 
 from docx import Document
 
@@ -11,6 +12,7 @@ if str(SCRIPTS) not in sys.path:
 
 import create_officer_brief as officer  # noqa: E402
 import create_public_systems_capability_brief as public  # noqa: E402
+from docx_archive import CANONICAL_ZIP_TIMESTAMP  # noqa: E402
 import update_value_add_report as report  # noqa: E402
 
 
@@ -134,3 +136,35 @@ def test_actual_word_generators_create_bundle_backed_outputs(tmp_path, monkeypat
 
     document = Document(report_path)
     assert len(document.inline_shapes) > 0
+
+
+def test_word_generators_produce_reproducible_archives(tmp_path, monkeypatch):
+    facts = benchmark_facts()
+    for module in (officer, public, report):
+        monkeypatch.setattr(module, "load_benchmark_facts", lambda _path: facts)
+
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+
+    outputs = []
+    for directory in (first, second):
+        officer_path = directory / "officer.docx"
+        public_path = directory / "public.docx"
+        report_path = directory / "report.docx"
+        officer.create_brief(officer_path, benchmark_bundle=Path("unused.json"))
+        public.create_brief(public_path, benchmark_bundle=Path("unused.json"))
+        report.patch_report(
+            report.DEFAULT_SOURCE,
+            report_path,
+            benchmark_bundle=Path("unused.json"),
+        )
+        outputs.append((officer_path, public_path, report_path))
+
+    for first_output, second_output in zip(*outputs, strict=True):
+        assert first_output.read_bytes() == second_output.read_bytes()
+        with zipfile.ZipFile(first_output) as archive:
+            assert {member.date_time for member in archive.infolist()} == {
+                CANONICAL_ZIP_TIMESTAMP
+            }

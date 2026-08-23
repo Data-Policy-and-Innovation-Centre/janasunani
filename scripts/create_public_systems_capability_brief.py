@@ -33,6 +33,7 @@ from create_officer_brief import (
     _shade,
     _title,
 )
+from docx_archive import canonicalize_docx_archive
 from janasunani.evaluation.value_add_benchmark_facts import (
     DEFAULT_BUNDLE,
     BenchmarkFacts,
@@ -316,6 +317,7 @@ def create_brief(destination: Path, *, benchmark_bundle: Path = DEFAULT_BUNDLE) 
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     document.save(destination)
+    canonicalize_docx_archive(destination)
 
 
 def main() -> int:

@@ -691,16 +691,20 @@ stages:
       size: 10346
     - path: scripts/create_officer_brief.py
       hash: md5
-      md5: 12c395a3db3b99a8d196543d064a8226
-      size: 27052
+      md5: f1c4dd89842eda5a900ad657cb82faf4
+      size: 27146
     - path: scripts/create_public_systems_capability_brief.py
       hash: md5
-      md5: 45efe2f3c51b2d24383bfdbb859ba175
-      size: 14900
+      md5: 31e7c91332ea9f22086fdf2e13ceac8f
+      size: 14994
+    - path: scripts/docx_archive.py
+      hash: md5
+      md5: e8aaf306065de9061ad41d0238c53527
+      size: 1698
     - path: scripts/update_value_add_report.py
       hash: md5
-      md5: 2117200ef56f5db72d3878594dfc667c
-      size: 62090
+      md5: fd4699f379266fd2a36e92fd00e796eb
+      size: 62186
     - path: uv.lock
       hash: md5
       md5: f895934178f603f5315683d02abc6449
@@ -708,13 +712,13 @@ stages:
     outs:
     - path: docs/value-add-report/Janasunani_2.0_IAS_Officer_Brief_August_2026.docx
       hash: md5
-      md5: a038929e31879bea6692a4ce1f0531b9
-      size: 43775
+      md5: 5ec41fc1686d8601344a3397beb5249d
+      size: 41322
     - path: docs/value-add-report/Janasunani_2.0_Public_Systems_Capability_Brief_August_2026.docx
       hash: md5
-      md5: 1296f970cbc2a27e8bb87bcfe22afe58
-      size: 43049
+      md5: 7c6bd390470b74ee0e3fd3a799df0569
+      size: 40592
     - path: docs/value-add-report/Janasunani_2.0_Value_Add_Report_August_2026.docx
       hash: md5
-      md5: c55d83af0164eed018023a4be32de55a
-      size: 645581
+      md5: 774e0058c710c6cc96eedd0f35765402
+      size: 641925

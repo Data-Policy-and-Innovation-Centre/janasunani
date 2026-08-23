@@ -22,6 +22,7 @@ from docx.oxml.ns import qn
 from docx.shared import Pt
 from dpic.branding import colors as brand_colors
 
+from docx_archive import canonicalize_docx_archive
 from janasunani.evaluation.value_add_benchmark_facts import (
     DEFAULT_BUNDLE,
     BenchmarkFacts,
@@ -1015,6 +1016,7 @@ def patch_report(source: Path, destination: Path, *, benchmark_bundle: Path) -> 
                 "word/media/image6.png": _routing_figure(facts),
             },
         )
+        canonicalize_docx_archive(temporary)
         os.replace(temporary, destination)
     except Exception:
         temporary.unlink(missing_ok=True)

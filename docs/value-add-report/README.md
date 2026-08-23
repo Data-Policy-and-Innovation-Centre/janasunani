@@ -193,7 +193,8 @@ All three generators fail closed if the bundle lacks the tracked real timing,
 selected actionability test, weak-label audit, PII scorecard, or both routing
 scorecards. They also refuse fake timing. Accuracy and speed claims therefore
 come from one bundle; impact remains an explicit missing section until its two
-required artifacts exist.
+required artifacts exist. Each generator also canonicalizes DOCX archive
+metadata, so identical inputs produce byte-identical DVC outputs.
 
 Render each output with the `documents` skill's `render_docx.py`. Set
 `DOCX_RENDERER` to the absolute path of that installed script, then run:
