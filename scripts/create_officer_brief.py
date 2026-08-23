@@ -20,6 +20,7 @@ from docx.shared import Cm, Pt, RGBColor, Twips
 from janasunani.evaluation.value_add_benchmark_facts import (
     DEFAULT_BUNDLE,
     BenchmarkFacts,
+    category_benchmark_summary,
     load_benchmark_facts,
 )
 
@@ -513,8 +514,7 @@ def create_brief(destination: Path, *, benchmark_bundle: Path = DEFAULT_BUNDLE) 
         f"ordinary complaints to review. Its checksummed binary artifact can serve "
         f"that advisory review decision, but does not assign five-class reasons and "
         f"is not release-eligible. Second, a separate chronological category model "
-        f"placed the recorded category in its top three for 90.89% of a viewed 2024 "
-        f"development test (n=3,160), with 46.55% top-1 and 36.49% macro-F1; this "
+        f"measured {category_benchmark_summary(facts.categorization)}; this "
         f"is historical-label agreement, not policy correctness. Third, the local "
         f"BART baseline retained {facts.summary['critical_fact_recall']['successes']}/"
         f"{facts.summary['critical_fact_recall']['n']} critical facts and produced "

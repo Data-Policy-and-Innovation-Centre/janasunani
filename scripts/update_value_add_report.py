@@ -24,6 +24,7 @@ from docx.shared import Pt
 from janasunani.evaluation.value_add_benchmark_facts import (
     DEFAULT_BUNDLE,
     BenchmarkFacts,
+    category_benchmark_summary,
     load_benchmark_facts,
 )
 
@@ -800,6 +801,7 @@ def _benchmark_replacements(
 
     routing_all = facts.routing_all
     routing_info = facts.routing_informative
+    category = facts.categorization
     paragraphs[routing_figure_key] = (
         "Figure 7 — Left: the 60.9/67.5/72.8% crosswalk bars are historical "
         "in-sample resubstitution, retained only as upper-bound context. The "
@@ -826,9 +828,9 @@ def _benchmark_replacements(
         "60.9/67.5/72.8% figures are in-sample."
     )
     cells[(24, 3, 1, 0)] = (
-        "Category historical-label agreement: 46.55% top-1 / 90.89% top-3 / "
-        "36.49% macro-F1 on a viewed 2024 chronological, exact-text-group-disjoint "
-        "development test (n=3,160). Not policy correctness or release evidence. "
+        "Category historical-label agreement: "
+        f"{category_benchmark_summary(category)}. "
+        "Not policy correctness or release evidence. "
         "Routing historical-destination agreement: "
         f"{routing_all['accuracy']:.2%} top-1 / "
         f"{routing_all['top_k_accuracy']['3']:.2%} top-3 overall "

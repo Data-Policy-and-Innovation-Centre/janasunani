@@ -4,7 +4,10 @@ import json
 
 import pytest
 
-from janasunani.evaluation.value_add_benchmark_facts import load_benchmark_facts
+from janasunani.evaluation.value_add_benchmark_facts import (
+    category_benchmark_summary,
+    load_benchmark_facts,
+)
 
 
 def _bundle() -> dict:
@@ -58,6 +61,20 @@ def test_loads_all_report_claims_from_one_bundle(tmp_path):
     assert facts.summary["n"] == 6
     assert facts.impact_available_required == 0
     assert facts.impact_required == 2
+
+
+def test_formats_category_claims_from_the_bundle_values():
+    category = {
+        "accuracy": 0.25,
+        "top_k_accuracy": {"3": 0.75},
+        "macro_f1": 0.5,
+        "n": 1234,
+    }
+
+    assert category_benchmark_summary(category) == (
+        "25.00% top-1 / 75.00% top-3 / 50.00% macro-F1 on a viewed 2024 "
+        "chronological, exact-text-group-disjoint development test (n=1,234)"
+    )
 
 
 def test_refuses_fake_latency(tmp_path):

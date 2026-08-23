@@ -41,6 +41,17 @@ class BenchmarkFacts:
         return int(self.section_status["impact"]["required"])
 
 
+def category_benchmark_summary(category: dict[str, Any]) -> str:
+    """Format the governed category metrics used by all report generators."""
+    return (
+        f"{category['accuracy']:.2%} top-1 / "
+        f"{category['top_k_accuracy']['3']:.2%} top-3 / "
+        f"{category['macro_f1']:.2%} macro-F1 on a viewed 2024 chronological, "
+        "exact-text-group-disjoint development test "
+        f"(n={category['n']:,})"
+    )
+
+
 def _artifact_payload(bundle: dict[str, Any], artifact_id: str) -> dict[str, Any]:
     matches = [row for row in bundle.get("artifacts", []) if row.get("id") == artifact_id]
     if len(matches) != 1:

@@ -35,6 +35,7 @@ from create_officer_brief import (
 from janasunani.evaluation.value_add_benchmark_facts import (
     DEFAULT_BUNDLE,
     BenchmarkFacts,
+    category_benchmark_summary,
     load_benchmark_facts,
 )
 
@@ -253,10 +254,9 @@ def create_brief(destination: Path, *, benchmark_bundle: Path = DEFAULT_BUNDLE) 
         f"{facts.actionability['confusion']['true_actionable'] + facts.actionability['confusion']['false_review']} "
         "ordinary complaints. Its checksummed binary artifact is serving-compatible "
         "for advisory review, but does not assign five-class reasons and is not "
-        "release-eligible. A separate 2024 chronological, exact-text-group-disjoint "
-        "category benchmark placed the historical label in its top three for 90.89% "
-        "of the viewed development test (n=3,160), with 46.55% top-1 and 36.49% "
-        "macro-F1. That is historical-label agreement, not policy correctness. "
+        "release-eligible. A separate category benchmark measured "
+        f"{category_benchmark_summary(facts.categorization)}. That is "
+        "historical-label agreement, not policy correctness. "
         f"A separate local-BART summary baseline retained "
         f"{facts.summary['critical_fact_recall']['successes']}/"
         f"{facts.summary['critical_fact_recall']['n']} critical facts and produced "
