@@ -3,8 +3,10 @@
 Codex in GitHub reports neither a check run nor a commit status, so there is
 nothing to mark required in branch protection. It leaves two signals instead:
 
-- If it has findings, it posts a review whose body carries
-  ``**Reviewed commit:** `<sha>` `` and one inline thread per finding.
+- If it has findings, GitHub records the reviewed commit in the review's
+  structured ``commit_id`` and Codex posts one inline thread per finding.
+  Older Codex review bodies also carried ``**Reviewed commit:** `<sha>` ``;
+  that text remains a compatibility fallback.
 - If it is clean, it posts nothing at all and reacts :+1:.
 
 This script reads both and decides whether the pull request satisfies the
@@ -51,6 +53,7 @@ API_ROOT = "https://api.github.com"
 CODEX_LOGINS = {"chatgpt-codex-connector", "chatgpt-codex-connector[bot]"}
 
 REVIEWED_COMMIT_RE = re.compile(r"Reviewed commit:\*\*\s*`([0-9a-f]{7,40})`")
+STRUCTURED_SHA_RE = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 
 # Out of review credits, Codex answers `@codex review` with a plain issue
 # comment and never looks at the diff. Without recognising it the check sits
@@ -174,10 +177,14 @@ def parse_timestamp(value: str) -> datetime:
 
 
 def reviewed_shas(reviews: Iterable[dict[str, Any]]) -> list[str]:
-    """Shas Codex says it reviewed, in the order the reviews were posted."""
+    """SHAs Codex reviewed, preferring GitHub's structured review field."""
     found: list[str] = []
     for review in reviews:
         if not is_codex((review.get("user") or {}).get("login")):
+            continue
+        commit_id = review.get("commit_id")
+        if isinstance(commit_id, str) and STRUCTURED_SHA_RE.fullmatch(commit_id):
+            found.append(commit_id)
             continue
         match = REVIEWED_COMMIT_RE.search(review.get("body") or "")
         if match:
