@@ -18,6 +18,14 @@ def _evidence(tmp_path):
                 "extract_schema_version": "v1",
                 "normalizer_version": "1.0",
                 "credits_available_for_new_calls": False,
+                "reproducibility": {
+                    "tracked_aggregate_only": True,
+                    "source_artifacts_tracked": False,
+                    "source_artifact_hashes_available": False,
+                    "derivation_command_recorded": False,
+                    "latency_distribution_available": False,
+                    "claim_limit": "Aggregate counts cannot reconstruct the source run.",
+                },
                 "reporting_rule": "Report aggregate coverage and divergence only.",
                 "runs": [
                     {
@@ -66,6 +74,10 @@ def test_cached_import_logs_aggregate_without_provider_call(tmp_path, monkeypatc
     )
     assert logged["extra_params"]["cost_denominator"] == "attempted_page"
     assert logged["extra_params"]["quality_claim_permitted"] == "false"
+    assert len(logged["extra_params"]["evidence_sha256"]) == 64
+    assert logged["extra_params"]["git_sha_role"] == "cached_evidence_import_code"
+    assert logged["extra_params"]["source_run_git_sha"] == "unavailable"
+    assert logged["extra_params"]["derivation_command_recorded"] == "false"
     assert logged["artifacts"]
 
 
@@ -116,6 +128,16 @@ def test_cached_import_rejects_unknown_schema(tmp_path):
     path.write_text(json.dumps(payload))
 
     with pytest.raises(ValueError, match="schema"):
+        sarvam_cached.load_evidence(path)
+
+
+def test_cached_import_requires_explicit_reproducibility_boundary(tmp_path):
+    path = _evidence(tmp_path)
+    payload = json.loads(path.read_text())
+    payload.pop("reproducibility")
+    path.write_text(json.dumps(payload))
+
+    with pytest.raises(ValueError, match="reproducibility"):
         sarvam_cached.load_evidence(path)
 
 
