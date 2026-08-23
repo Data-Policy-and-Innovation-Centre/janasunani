@@ -76,6 +76,14 @@ _COST_FIELDS = {
     "estimated_list_price_accepted_jobs_rupees",
     "estimated_list_price_completed_jobs_rupees",
 }
+_OCR_EVIDENCE_FIELDS = {
+    "normalized_exact_text_divergence",
+    "pytesseract_normalized_characters",
+    "sarvam_normalized_characters",
+    "sarvam_to_pytesseract_character_ratio",
+    "sarvam_longer_pages",
+    "pytesseract_longer_pages",
+}
 
 
 def _nonnegative_int(value: object, *, field: str) -> int:
@@ -188,6 +196,14 @@ def load_evidence(path: Path) -> Mapping[str, Any]:
             raise ValueError(f"cached Sarvam run {index} completed more jobs than accepted")
         if (
             accepted is not None
+            and job_failures is not None
+            and job_failures > accepted
+        ):
+            raise ValueError(
+                f"cached Sarvam run {index} has more job failures than accepted jobs"
+            )
+        if (
+            accepted is not None
             and completed is not None
             and job_failures is not None
             and completed + job_failures != accepted
@@ -217,16 +233,27 @@ def load_evidence(path: Path) -> Mapping[str, Any]:
             raise ValueError(
                 f"cached Sarvam run {index} completed arm jobs must sum to completed jobs"
             )
-        divergence = _finite_number(
-            run.get("normalized_exact_text_divergence"),
-            field=f"runs[{index}].normalized_exact_text_divergence",
-        )
-        if divergence > 1.0:
-            raise ValueError(f"cached Sarvam run {index} divergence must be in [0,1]")
-        _finite_number(
-            run.get("sarvam_to_pytesseract_character_ratio"),
-            field=f"runs[{index}].sarvam_to_pytesseract_character_ratio",
-        )
+        if run["arm"] in {"digitise", "both"}:
+            divergence = _finite_number(
+                run.get("normalized_exact_text_divergence"),
+                field=f"runs[{index}].normalized_exact_text_divergence",
+            )
+            if divergence > 1.0:
+                raise ValueError(
+                    f"cached Sarvam run {index} divergence must be in [0,1]"
+                )
+            _finite_number(
+                run.get("sarvam_to_pytesseract_character_ratio"),
+                field=f"runs[{index}].sarvam_to_pytesseract_character_ratio",
+            )
+        else:
+            unexpected_ocr_fields = _OCR_EVIDENCE_FIELDS.intersection(run)
+            if unexpected_ocr_fields:
+                raise ValueError(
+                    "cached Sarvam extract-only run "
+                    f"{index} cannot carry OCR evidence fields: "
+                    f"{sorted(unexpected_ocr_fields)}"
+                )
         for field in _COST_FIELDS:
             if field in run:
                 _finite_number(run[field], field=f"runs[{index}].{field}")
@@ -263,6 +290,7 @@ def import_evidence(
     reproducibility = payload["reproducibility"]
     imported: dict[str, str] = {}
     for run in payload["runs"]:
+        arm = str(run["arm"])
         attempted = int(run.get("pages_attempted", run.get("pages_submitted", 0)))
         scored = int(run["pages_paired_scored"])
         failures = int(run.get("provider_job_failures", run.get("provider_failures", 0)))
@@ -271,14 +299,15 @@ def import_evidence(
             "pages_attempted": float(attempted),
             "pages_paired_scored": float(scored),
             "paired_page_coverage": scored / attempted if attempted else 0.0,
-            "normalized_exact_text_divergence": float(
-                run["normalized_exact_text_divergence"]
-            ),
-            "sarvam_to_pytesseract_character_ratio": float(
-                run["sarvam_to_pytesseract_character_ratio"]
-            ),
             "provider_job_failures": float(failures),
         }
+        ocr_divergence_rate = None
+        if arm in {"digitise", "both"}:
+            ocr_divergence_rate = float(run["normalized_exact_text_divergence"])
+            metrics["normalized_exact_text_divergence"] = ocr_divergence_rate
+            metrics["sarvam_to_pytesseract_character_ratio"] = float(
+                run["sarvam_to_pytesseract_character_ratio"]
+            )
         if accepted is not None and int(accepted) > 0:
             metrics["provider_job_failure_rate"] = failures / int(accepted)
         cost = run.get("recorded_cost_rupees")
@@ -296,13 +325,13 @@ def import_evidence(
             )
             metrics["cost_total_rupees"] = float(cost)
         imported[str(run["run_id"])] = log_benchmark_run(
-            pipeline_variant="sarvam_both" if run["arm"] == "both" else f"sarvam_{run['arm']}",
-            sarvam_arm=str(run["arm"]),
+            pipeline_variant="sarvam_both" if arm == "both" else f"sarvam_{arm}",
+            sarvam_arm=arm,
             schema_version=str(payload["extract_schema_version"]),
             slice_id=str(payload["slice"]),
             ocr_engine="sarvam",
             sample_n=scored,
-            ocr_divergence_rate=float(run["normalized_exact_text_divergence"]),
+            ocr_divergence_rate=ocr_divergence_rate,
             extra_params={
                 "cached_evidence_run_id": str(run["run_id"]),
                 "evidence_status": str(run["status"]),

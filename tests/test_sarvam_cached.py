@@ -101,6 +101,54 @@ def test_cached_import_omits_failure_rate_without_accepted_job_denominator(
     assert "provider_job_failure_rate" not in calls[0]["extra_metrics"]
 
 
+def test_cached_import_rejects_failures_above_accepted_without_completed_count(
+    tmp_path,
+):
+    path = _evidence(tmp_path)
+    payload = json.loads(path.read_text())
+    payload["runs"][0]["accepted_jobs"] = 5
+    payload["runs"][0]["provider_job_failures"] = 7
+    path.write_text(json.dumps(payload))
+
+    with pytest.raises(ValueError, match="more job failures than accepted jobs"):
+        sarvam_cached.load_evidence(path)
+
+
+def test_cached_import_omits_ocr_metrics_for_extract_only_evidence(
+    tmp_path, monkeypatch
+):
+    path = _evidence(tmp_path)
+    payload = json.loads(path.read_text())
+    run = payload["runs"][0]
+    run["arm"] = "extract"
+    for field in sarvam_cached._OCR_EVIDENCE_FIELDS:
+        run.pop(field, None)
+    path.write_text(json.dumps(payload))
+    calls = []
+    monkeypatch.setattr(
+        sarvam_cached,
+        "log_benchmark_run",
+        lambda **kwargs: calls.append(kwargs) or "run",
+    )
+
+    sarvam_cached.import_evidence(path)
+
+    logged = calls[0]
+    assert logged["ocr_divergence_rate"] is None
+    assert "normalized_exact_text_divergence" not in logged["extra_metrics"]
+    assert "sarvam_to_pytesseract_character_ratio" not in logged["extra_metrics"]
+
+
+def test_cached_import_rejects_ocr_evidence_for_extract_only_run(tmp_path):
+    path = _evidence(tmp_path)
+    payload = json.loads(path.read_text())
+    payload["runs"][0]["arm"] = "extract"
+    path.write_text(json.dumps(payload))
+
+    with pytest.raises(ValueError, match="extract-only run.*OCR evidence fields"):
+        sarvam_cached.load_evidence(path)
+
+
 def test_estimated_cost_never_implies_actual_billing(tmp_path, monkeypatch):
     path = _evidence(tmp_path)
     payload = json.loads(path.read_text())
