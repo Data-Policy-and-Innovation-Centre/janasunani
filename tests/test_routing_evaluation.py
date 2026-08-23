@@ -7,6 +7,7 @@ import pytest
 from janasunani.evaluation.routing import (
     INCIDENCE_ARTIFACT_FILENAME,
     INCIDENCE_ARTIFACT_SCHEMA_VERSION,
+    INCIDENCE_OBJECTIVE,
     IncidenceRouter,
     RouteRecord,
     benchmark_incidence_router,
@@ -230,8 +231,19 @@ def test_benchmark_selects_on_validation_and_reports_honest_objective():
     )
     report = benchmark.report
 
-    assert report["objective"] == "historical_incidence_only"
+    assert report["objective"] == INCIDENCE_OBJECTIVE
     assert report["outcome_optimized"] is False
+    assert report["label_provenance"] == {
+        "source_table": "complaints",
+        "source_field": "dept",
+        "semantics": "unconfirmed_recorded_department_snapshot",
+        "source_owner_confirmation": "unavailable",
+        "not_equivalent_to": [
+            "joint_department_chain_assignment_intent",
+            "action_history_route_traversal",
+            "correct_authority",
+        ],
+    }
     assert report["live_feature_shape"] == "category+district"
     assert report["split_counts"] == {"train": 60, "validation": 12, "test": 12}
     assert report["selected_alpha"] in {1.0, 10.0, 100.0}
@@ -259,7 +271,7 @@ def test_benchmark_selects_on_validation_and_reports_honest_objective():
         for metrics in report["test_by_language"].values()
     )
     assert len(report["candidate_validation"]) == 3
-    assert "not where they resolve best" in report["limitations"][0]
+    assert "recorded department snapshot" in report["limitations"][0]
 
 
 def test_unknown_future_department_counts_as_failure_instead_of_disappearing():
@@ -316,8 +328,19 @@ def test_incidence_artifact_round_trip_is_aggregate_only_and_checksummed(tmp_pat
 
     assert artifact.name == INCIDENCE_ARTIFACT_FILENAME
     assert payload["schema_version"] == INCIDENCE_ARTIFACT_SCHEMA_VERSION
-    assert payload["objective"] == "historical_incidence_only"
+    assert payload["objective"] == INCIDENCE_OBJECTIVE
     assert payload["outcome_optimized"] is False
+    assert payload["label_provenance"] == {
+        "source_table": "complaints",
+        "source_field": "dept",
+        "semantics": "unconfirmed_recorded_department_snapshot",
+        "source_owner_confirmation": "unavailable",
+        "not_equivalent_to": [
+            "joint_department_chain_assignment_intent",
+            "action_history_route_traversal",
+            "correct_authority",
+        ],
+    }
     assert payload["privacy"] == {
         "contains_citizen_text_or_identifiers": False,
         "minimum_key_support": 3,
@@ -353,6 +376,20 @@ def test_incidence_artifact_rejects_checksum_and_schema_tampering(tmp_path):
     assert load_incidence_router(artifact) is None
 
     artifact = save_incidence_router(
+        IncidenceRouter(alpha=10.0).fit(training), tmp_path / "provenance"
+    )
+    payload = json.loads(artifact.read_text())
+    payload["label_provenance"]["semantics"] = "confirmed_initial_assignment"
+    unsigned = dict(payload)
+    unsigned.pop("checksum")
+    canonical = json.dumps(
+        unsigned, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    ).encode()
+    payload["checksum"] = "sha256:" + hashlib.sha256(canonical).hexdigest()
+    artifact.write_text(json.dumps(payload))
+    assert load_incidence_router(artifact) is None
+
+    artifact = save_incidence_router(
         IncidenceRouter(alpha=10.0).fit(training), tmp_path
     )
     payload = json.loads(artifact.read_text())
@@ -377,6 +414,7 @@ def test_benchmark_can_publish_an_explicit_serving_artifact(tmp_path):
     manifest = benchmark.report["serving_artifact"]
     assert manifest["outcome_optimized"] is False
     assert manifest["contains_citizen_text_or_identifiers"] is False
+    assert manifest["label_provenance"]["source_owner_confirmation"] == "unavailable"
     loaded = load_incidence_router(tmp_path / "release")
     assert loaded is not None
     assert loaded.predict_proba(

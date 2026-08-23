@@ -5,11 +5,14 @@ needs category, subcategory, district, department, and time; it never needs
 complaint text.  The SQL therefore names every selected column and turns the
 1.37M-row lake into weighted feature cells before Python sees it.
 
-The resulting benchmark measures historical incidence (where cases were
-sent), not the quality of the destination or the eventual outcome.  Years are
-held out chronologically: 2021--2023 train, 2024 validation, and 2025 test by
-default.  Because the current full lake has no full-corpus dedup-group join,
-the report says so explicitly rather than claiming duplicate-group isolation.
+The resulting benchmark measures agreement with the department snapshot
+recorded in ``complaints.dept``. The source-system owner is unavailable, so
+that field's lifecycle semantics remain unconfirmed: it must not be presented
+as the initial joint department-and-chain assignment or as the route traversed
+in action history. Years are held out chronologically: 2021--2023 train, 2024
+validation, and 2025 test by default. Because the current full lake has no
+full-corpus dedup-group join, the report says so explicitly rather than
+claiming duplicate-group isolation.
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ from janasunani.evaluation.routing import (
     RouteRecord,
     RoutingBenchmark,
     benchmark_incidence_router,
+    department_snapshot_provenance,
 )
 
 
@@ -173,6 +177,7 @@ def load_route_cells(
             "district",
             "dept",
         ],
+        "label_provenance": department_snapshot_provenance(),
         "split_years": {
             "train_from": train_from,
             "train_through": train_through,
@@ -212,6 +217,8 @@ def benchmark_historical_routing(
     benchmark.report["historical_data"] = data.diagnostics
     benchmark.report["limitations"].extend(
         [
+            "complaints.dept lifecycle semantics are unconfirmed because the source-system owner is unavailable",
+            "the recorded department snapshot is neither the joint department-and-chain assignment intent nor the action-history route traversal",
             "full-corpus dedup groups are unavailable, so leakage control is chronological but not campaign-grouped",
             "language is not present in structured complaints and is not inferred from raw grievance text",
         ]

@@ -1,11 +1,15 @@
-"""Leakage-safe evaluation for local incidence-based routing.
+"""Leakage-safe agreement with a recorded department snapshot.
 
-This evaluates where cases were historically sent.  It must not be described
-as outcome optimization: disposal time and citizen benefit are absent by
-construction because they are confounded by case difficulty and office
-selection.  The model here is a cheap empirical-Bayes backoff over the live
-features (category and district), with an optional secondary benchmark for
-subcategory when a future classifier supplies it.
+This evaluates the department label present in a structured source snapshot.
+For the historical lake benchmark that label is ``complaints.dept``, whose
+lifecycle semantics are unconfirmed while the source-system owner is
+unavailable. It is therefore neither the initial joint department-and-chain
+assignment intent nor the action-history route traversal. It must also not be
+described as outcome optimization: disposal time and citizen benefit are
+absent by construction because they are confounded by case difficulty and
+office selection. The model here is a cheap empirical-Bayes backoff over the
+live features (category and district), with an optional secondary benchmark
+for subcategory when a future classifier supplies it.
 """
 
 from __future__ import annotations
@@ -29,8 +33,9 @@ from janasunani.evaluation.classification import (
 )
 
 
-INCIDENCE_ARTIFACT_SCHEMA_VERSION = "routing-incidence-v2"
+INCIDENCE_ARTIFACT_SCHEMA_VERSION = "routing-incidence-v3"
 INCIDENCE_ARTIFACT_FILENAME = "routing_incidence.json"
+INCIDENCE_OBJECTIVE = "recorded_department_snapshot_agreement"
 INCIDENCE_ARTIFACT_MIN_SUPPORT = 3
 INCIDENCE_ARTIFACT_MAX_BYTES = 50 * 1024 * 1024
 INCIDENCE_SERVING_MIN_SUPPORT = 10
@@ -42,6 +47,7 @@ _ARTIFACT_TOP_LEVEL_KEYS = {
     "kind",
     "objective",
     "outcome_optimized",
+    "label_provenance",
     "parameters",
     "departments",
     "counts",
@@ -55,6 +61,21 @@ _TABLE_ROW_KEYS = {
     "subcategory": {"category", "subcategory", "counts"},
     "full": {"category", "subcategory", "district", "counts"},
 }
+
+def department_snapshot_provenance() -> dict[str, object]:
+    """Return the current, deliberately unconfirmed target-field contract."""
+
+    return {
+        "source_table": "complaints",
+        "source_field": "dept",
+        "semantics": "unconfirmed_recorded_department_snapshot",
+        "source_owner_confirmation": "unavailable",
+        "not_equivalent_to": [
+            "joint_department_chain_assignment_intent",
+            "action_history_route_traversal",
+            "correct_authority",
+        ],
+    }
 
 
 @dataclass(frozen=True)
@@ -427,8 +448,9 @@ def incidence_router_artifact(router: IncidenceRouter) -> dict[str, object]:
     payload: dict[str, object] = {
         "schema_version": INCIDENCE_ARTIFACT_SCHEMA_VERSION,
         "kind": "routing_incidence",
-        "objective": "historical_incidence_only",
+        "objective": INCIDENCE_OBJECTIVE,
         "outcome_optimized": False,
+        "label_provenance": department_snapshot_provenance(),
         "parameters": {
             "alpha": router.alpha,
             "use_subcategory": router.use_subcategory,
@@ -564,10 +586,12 @@ def _router_from_artifact(payload: object) -> IncidenceRouter:
         raise ValueError("unsupported incidence artifact schema")
     if payload["kind"] != "routing_incidence":
         raise ValueError("invalid incidence artifact kind")
-    if payload["objective"] != "historical_incidence_only":
+    if payload["objective"] != INCIDENCE_OBJECTIVE:
         raise ValueError("invalid incidence objective")
     if payload["outcome_optimized"] is not False:
         raise ValueError("incidence artifact must declare outcome_optimized=false")
+    if payload["label_provenance"] != department_snapshot_provenance():
+        raise ValueError("invalid incidence label provenance")
 
     checksum = payload["checksum"]
     if not isinstance(checksum, str) or not checksum.startswith("sha256:"):
@@ -933,8 +957,9 @@ def benchmark_incidence_router(
     )
     test_cases = sum(record.weight for record in test)
     report: dict[str, object] = {
-        "objective": "historical_incidence_only",
+        "objective": INCIDENCE_OBJECTIVE,
         "outcome_optimized": False,
+        "label_provenance": department_snapshot_provenance(),
         "live_feature_shape": (
             "category+subcategory+district"
             if use_subcategory
@@ -982,7 +1007,8 @@ def benchmark_incidence_router(
             for candidate_alpha, candidate_history_years, _, metrics, _ in candidates
         ],
         "limitations": [
-            "predicts where similar cases were sent, not where they resolve best",
+            "predicts a recorded department snapshot for similar cases, not initial assignment intent, action-history traversal, correct authority, or where cases resolve best",
+            "complaints.dept lifecycle semantics are unconfirmed because the source-system owner is unavailable",
             "chronological holdout measures drift but does not remove policy bias",
             "subcategory benchmark is non-live until the classifier supplies it",
             "weighted Wilson intervals are suppressed because aggregate route cells are not independent trials",
@@ -997,6 +1023,7 @@ def benchmark_incidence_router(
             "checksum": artifact_payload["checksum"],
             "contains_citizen_text_or_identifiers": False,
             "outcome_optimized": False,
+            "label_provenance": department_snapshot_provenance(),
         }
     return RoutingBenchmark(router=router, report=report)
 

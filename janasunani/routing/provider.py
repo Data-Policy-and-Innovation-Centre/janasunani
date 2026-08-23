@@ -41,8 +41,10 @@ ROUTER_DEFAULT = "crosswalk"
 #: reproduce the pre-#33 behaviour and to isolate the crosswalk in a comparison.
 ROUTER_RULES = "rules"
 
-#: Checksummed aggregate-only empirical-Bayes artifact. This predicts
-#: historical destination incidence, never disposal quality or citizen benefit.
+#: Checksummed aggregate-only empirical-Bayes artifact. This predicts the
+#: unconfirmed department snapshot recorded in complaints.dept, never initial
+#: assignment intent, action-history traversal, routing correctness, disposal
+#: quality, or citizen benefit.
 ROUTER_INCIDENCE = "incidence"
 
 ROUTING_INCIDENCE_ARTIFACT_NAME = "routing_incidence"
@@ -274,7 +276,9 @@ def router_status() -> tuple[str, bool, str]:
                 ROUTER_INCIDENCE,
                 True,
                 f"checksummed {INCIDENCE_ARTIFACT_SCHEMA_VERSION} artifact loaded "
-                "locally; objective is historical incidence, not outcome optimization",
+                "locally; objective is agreement with the unconfirmed "
+                "complaints.dept snapshot, not assignment intent, action-history "
+                "traversal, routing correctness, or outcome optimization",
             )
         except Exception as exc:
             return (

@@ -62,6 +62,17 @@ def test_loader_aggregates_cases_and_holds_out_years(tmp_path):
     assert {record.observed_on.year for record in data.records} == {2023, 2024, 2025}
     assert data.diagnostics["dedup_group_isolation"] == "unavailable_full_corpus"
     assert data.diagnostics["excluded_cases"]["outside_split_years"] == 1
+    assert data.diagnostics["label_provenance"] == {
+        "source_table": "complaints",
+        "source_field": "dept",
+        "semantics": "unconfirmed_recorded_department_snapshot",
+        "source_owner_confirmation": "unavailable",
+        "not_equivalent_to": [
+            "joint_department_chain_assignment_intent",
+            "action_history_route_traversal",
+            "correct_authority",
+        ],
+    }
 
 
 def test_informative_scope_excludes_general_but_reports_it(tmp_path):
