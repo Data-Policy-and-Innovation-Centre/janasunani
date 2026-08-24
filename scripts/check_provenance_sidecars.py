@@ -196,30 +196,6 @@ def _check_closed_vocabulary(
     return []
 
 
-def _check_metadata_phrase(
-    path: str,
-    value: Any,
-    *,
-    anchors: set[str],
-) -> list[str]:
-    """Validate legacy prose as bounded, semantically anchored metadata."""
-
-    if not isinstance(value, str) or not 1 <= len(value) <= MAX_STRING:
-        return [f"{path} must use its closed metadata phrase format"]
-    if re.fullmatch(r"[A-Za-z0-9\s,;:._()/\-]+", value) is None:
-        return [f"{path} has invalid metadata characters; value withheld"]
-    words = re.findall(r"[A-Za-z0-9]+", value)
-    normalized = {word.casefold() for word in words}
-    if not 1 <= len(words) <= 24 or len(normalized & anchors) < 2:
-        return [f"{path} lacks its required metadata anchors; value withheld"]
-    if any(word.isdigit() and len(word) > 3 for word in words):
-        return [f"{path} contains a disallowed numeric shape; value withheld"]
-    titlecase_words = [word for word in words if word.istitle()]
-    if len(titlecase_words) > 1:
-        return [f"{path} contains disallowed name-like text; value withheld"]
-    return []
-
-
 def _check_pii_rederived(payload: dict[str, Any]) -> list[str]:
     problems = _check_exact_keys("PII re-derived sidecar", payload, ALLOWED_TOP)
     if problems:
@@ -924,10 +900,10 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
     if isinstance(sample, dict):
         problems += _check_nonnegative_int("sample.records", sample.get("records"))
         problems += _check_sha256("sample.sha256", sample.get("sha256"))
-        problems += _check_metadata_phrase(
+        problems += _check_closed_vocabulary(
             "sample.sampling",
             sample.get("sampling"),
-            anchors={
+            allowed_words={
                 "fixed",
                 "quotas",
                 "records",
@@ -966,10 +942,22 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
             sample.get("tracking_mode"),
             allowed_words={"direct", "dvc", "input", "tracked"},
         )
-        problems += _check_metadata_phrase(
+        problems += _check_closed_vocabulary(
             "sample.tracking_reason",
             sample.get("tracking_reason"),
-            anchors={"dvc", "git", "private", "sample", "salt", "tracked", "untracked"},
+            allowed_words={
+                "dvc",
+                "git",
+                "in",
+                "is",
+                "not",
+                "private",
+                "sample",
+                "salt",
+                "tracked",
+                "untracked",
+                "versioned",
+            },
         )
         split_counts = sample.get("split_counts")
         problems += _check_exact_keys(
@@ -992,26 +980,34 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
         "actionability frontier direct_inputs", inputs, allowed_inputs
     )
     if isinstance(inputs, dict):
-        for position, details in enumerate(inputs.values()):
+        allowed_input_roles = {
+            "judge_a.jsonl": {
+                "model output",
+                "primary judge model response",
+            },
+            "judge_b.jsonl": {
+                "model output",
+                "second independent judge model response",
+            },
+            "resolver.jsonl": {
+                "model output",
+                "third model adjudication output",
+                "third resolver model response",
+            },
+            "resolver_backup.jsonl": {
+                "backup resolver model response",
+                "model output",
+            },
+        }
+        for position, (filename, details) in enumerate(inputs.items()):
             problems += _check_exact_keys(
                 f"direct_inputs[{position}]", details, {"role", "sha256"}
             )
             if isinstance(details, dict):
-                problems += _check_metadata_phrase(
+                problems += _check_closed_string(
                     f"direct_inputs[{position}].role",
                     details.get("role"),
-                    anchors={
-                        "adjudication",
-                        "audit",
-                        "backup",
-                        "input",
-                        "judge",
-                        "model",
-                        "output",
-                        "resolver",
-                        "response",
-                        "third",
-                    },
+                    allowed=allowed_input_roles.get(filename, set()),
                 )
                 problems += _check_sha256(
                     f"direct_inputs[{position}].sha256", details.get("sha256")
@@ -1123,10 +1119,10 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
                 historical.get(key),
                 allowed_words=filename_words,
             )
-        problems += _check_metadata_phrase(
+        problems += _check_closed_vocabulary(
             "historical_gold.status",
             historical.get("status"),
-            anchors={
+            allowed_words={
                 "audit",
                 "benchmark",
                 "development",
@@ -1180,10 +1176,10 @@ def _check_sarvam_snapshots(payload: dict[str, Any]) -> list[str]:
     problems = _check_exact_keys("Sarvam sidecar", payload, allowed)
     if problems:
         return problems
-    problems += _check_metadata_phrase(
+    problems += _check_closed_vocabulary(
         "claim_status",
         payload.get("claim_status"),
-        anchors={
+        allowed_words={
             "accuracy",
             "aggregate",
             "audit",
@@ -1191,6 +1187,7 @@ def _check_sarvam_snapshots(payload: dict[str, Any]) -> list[str]:
             "coverage",
             "divergence",
             "evidence",
+            "not",
             "ocr",
             "provider",
             "source",
@@ -1236,28 +1233,30 @@ def _check_sarvam_snapshots(payload: dict[str, Any]) -> list[str]:
         "role",
         "sha256",
     }
-    role_anchors = {
-        "aggregate",
-        "artifact",
-        "audit",
-        "database",
-        "human",
-        "interrupted",
-        "machine",
-        "readable",
-        "run",
-        "scorecard",
-        "snapshot",
-        "source",
-        "sqlite",
-        "validation",
+    artifact_roles = {
+        "interrupted_300_page_audit.sqlite": {
+            "interrupted audit database source snapshot",
+            "interrupted run audit database",
+            "SQLite audit database",
+        },
+        "validation_5_page_audit.sqlite": {
+            "SQLite audit database",
+            "validation audit database source snapshot",
+            "validation run audit database",
+        },
+        "validation_5_page_scorecard.json": {
+            "machine-readable aggregate scorecard",
+        },
+        "validation_5_page_scorecard.md": {
+            "human-readable aggregate scorecard",
+        },
     }
     if not isinstance(artifacts, dict):
         problems.append("Sarvam artifacts must be an object")
     else:
         if set(artifacts) - allowed_artifacts:
             problems.append("Sarvam artifacts includes an unknown filename")
-        for artifact_position, details in enumerate(artifacts.values()):
+        for artifact_position, (filename, details) in enumerate(artifacts.items()):
             if not isinstance(details, dict):
                 problems.append(
                     f"Sarvam artifact {artifact_position} must be an object"
@@ -1270,10 +1269,10 @@ def _check_sarvam_snapshots(payload: dict[str, Any]) -> list[str]:
             problems += _check_sha256(
                 f"artifacts[{artifact_position}].sha256", details.get("sha256")
             )
-            problems += _check_metadata_phrase(
+            problems += _check_closed_string(
                 f"artifacts[{artifact_position}].role",
                 details.get("role"),
-                anchors=role_anchors,
+                allowed=artifact_roles.get(filename, set()),
             )
             for key in {
                 "audit_events",

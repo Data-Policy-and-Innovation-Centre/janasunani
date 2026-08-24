@@ -400,20 +400,6 @@ def test_allowlisted_list_rejects_empty_required_metadata():
 
 
 @pytest.mark.parametrize(
-    "value",
-    [
-        "Ramesh Chandra Sahoo sample split",
-        "sample split phone 9876543210",
-        "unrelated lowercase prose",
-    ],
-)
-def test_legacy_metadata_phrase_rejects_name_phone_and_unanchored_text(value):
-    assert check._check_metadata_phrase(
-        "metadata", value, anchors={"sample", "split"}
-    )
-
-
-@pytest.mark.parametrize(
     "schema",
     ["categorization-benchmark-sample-v1", "summary-development-provenance/v1"],
 )
@@ -539,6 +525,23 @@ def test_actionability_frontier_rejects_free_text_scalars_without_echoing(mutate
     assert all(CITIZEN_TEXT not in problem for problem in problems)
 
 
+@pytest.mark.parametrize(
+    "role",
+    [
+        "ramesh sahoo lives at 42 lane third input",
+        "primary judge model response extra",
+    ],
+)
+def test_actionability_frontier_roles_require_closed_values(role):
+    payload = _frontier_payload()
+    payload["direct_inputs"]["judge_a.jsonl"]["role"] = role
+
+    problems = check.check_payload(payload)
+
+    assert problems
+    assert all(role not in problem for problem in problems)
+
+
 def test_actionability_frontier_rejects_unexpected_nested_fields_without_echoing():
     payload = _frontier_payload()
     payload["privacy"][CITIZEN_TEXT] = CITIZEN_TEXT
@@ -620,6 +623,23 @@ def test_sarvam_sidecar_rejects_free_text_scalars_without_echoing(mutate):
 
     assert problems
     assert all(CITIZEN_TEXT not in problem for problem in problems)
+
+
+@pytest.mark.parametrize(
+    "role",
+    [
+        "ramesh sahoo lives at 42 lane human readable",
+        "machine-readable aggregate scorecard extra",
+    ],
+)
+def test_sarvam_artifact_roles_require_closed_values(role):
+    payload = _sarvam_payload()
+    payload["artifacts"]["validation_5_page_scorecard.json"]["role"] = role
+
+    problems = check.check_payload(payload)
+
+    assert problems
+    assert all(role not in problem for problem in problems)
 
 
 def test_sarvam_sidecar_rejects_free_text_limitations_without_echoing():
