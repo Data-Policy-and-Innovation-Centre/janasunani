@@ -159,6 +159,11 @@ def _concrete_identifier(value: object, *, model: str, field: str) -> str:
 
 
 def _validate_local_spec(name: str, config: Mapping[str, Any]) -> None:
+    provider = config.get("provider", "local")
+    if not isinstance(provider, str) or not provider.strip():
+        raise ReleaseManifestError(
+            f"local model {name!r} provider must be a non-empty string"
+        )
     expected = config.get("artifact_sha256")
     if not isinstance(expected, str) or _SHA256.fullmatch(expected) is None:
         raise ReleaseManifestError(
@@ -172,7 +177,11 @@ def _validate_local_spec(name: str, config: Mapping[str, Any]) -> None:
     _concrete_identifier(
         config.get("registry_name") or name, model=name, field="registry_name"
     )
-    trust_tier = config.get("trust_tier") or "local"
+    trust_tier = config.get("trust_tier", "local")
+    if not isinstance(trust_tier, str) or not trust_tier.strip():
+        raise ReleaseManifestError(
+            f"local model {name!r} trust_tier must be a non-empty string"
+        )
     if trust_tier not in {"local", "experimental"}:
         raise ReleaseManifestError(
             f"local model {name!r} has invalid trust_tier {trust_tier!r}"
@@ -260,8 +269,8 @@ def _materialize_registry_model(
         )
     return ModelRelease(
         name=name,
-        provider=str(config.get("provider") or "local"),
-        trust_tier=str(config.get("trust_tier") or "local"),
+        provider=config.get("provider", "local"),
+        trust_tier=config.get("trust_tier", "local"),
         version=str(version.version),
         artifact_path=f"artifacts/{name}",
         artifact_sha256=digest,

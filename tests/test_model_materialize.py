@@ -128,6 +128,23 @@ def test_materialize_requires_approved_digest_before_registry_access(tmp_path):
     assert client.calls == []
 
 
+@pytest.mark.parametrize("field", ["provider", "trust_tier"])
+@pytest.mark.parametrize("value", [["local"], {"kind": "local"}, 7, "", "  "])
+def test_materialize_rejects_non_string_local_identity_before_registry_access(
+    tmp_path, field, value
+):
+    spec = _spec()
+    spec["models"]["actionability"][field] = value
+    client = FakeClient()
+
+    with pytest.raises(ReleaseManifestError, match=f"{field} must be a non-empty string"):
+        materialize_release(
+            spec=spec, release_root=tmp_path, client=client, downloader=_downloader
+        )
+
+    assert client.calls == []
+
+
 def test_materialize_rejects_model_path_traversal_before_any_write(tmp_path):
     spec = _spec()
     model = spec["models"].pop("actionability")
