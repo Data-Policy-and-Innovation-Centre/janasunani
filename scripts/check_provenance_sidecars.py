@@ -295,9 +295,9 @@ def _check_actionability_sample(payload: dict[str, Any]) -> list[str]:
         "schema_version",
         "selected_fields",
     }
-    problems: list[str] = []
-    if set(payload) - allowed:
-        problems.append("actionability sidecar has unknown top-level metadata keys")
+    problems = _check_exact_keys("actionability sidecar", payload, allowed)
+    if problems:
+        return problems
     fingerprint = payload.get("dataset_fingerprint")
     if not isinstance(fingerprint, str) or not _SHA256_RE.fullmatch(fingerprint):
         problems.append("actionability dataset_fingerprint is not a SHA-256 digest")
@@ -328,13 +328,30 @@ def _check_actionability_sample(payload: dict[str, Any]) -> list[str]:
     if not isinstance(parameters, dict):
         problems.append("actionability parameters must be an object")
     else:
-        for position, (key, value) in enumerate(parameters.items()):
-            if key not in allowed_parameters:
-                problems.append(
-                    f"actionability parameter {position} is not allowlisted"
-                )
-                continue
-            problems += _check_scalar(f"parameters[{position}]", value, MAX_STRING)
+        problems += _check_exact_keys(
+            "actionability parameters", parameters, allowed_parameters
+        )
+        for key in {
+            "per_weak_stratum_split",
+            "shaped_pii_excluded",
+            "unlabeled_per_split",
+        }:
+            problems += _check_nonnegative_int(
+                f"parameters.{key}", parameters.get(key)
+            )
+        fixed_parameters = {
+            "adjudicator_blinding": {"sampling strata are opaque s1-s5"},
+            "seed": {"actionability-gold-v1"},
+            "split_policy": {
+                "chronological_2021_2023_train_2024_validation_2025_test",
+                "single_snapshot_hash_60_20_20_development_only",
+            },
+            "ticket_identifier": {"salted_sha256_not_reversible"},
+        }
+        for key, allowed_values in fixed_parameters.items():
+            problems += _check_closed_string(
+                f"parameters.{key}", parameters.get(key), allowed=allowed_values
+            )
     records = payload.get("records")
     if isinstance(records, bool) or not isinstance(records, int) or records < 0:
         problems.append("actionability records must be a nonnegative integer")
@@ -375,9 +392,26 @@ def _check_actionability_sample(payload: dict[str, Any]) -> list[str]:
             "sample_design.production_prevalence_representative",
             sample_design.get("production_prevalence_representative"),
         )
-        for key in sample_design_keys - {"production_prevalence_representative"}:
-            problems += _check_scalar(
-                f"sample_design.{key}", sample_design.get(key), MAX_STRING
+        if sample_design.get("production_prevalence_representative") is not False:
+            problems.append(
+                "sample_design.production_prevalence_representative must be False"
+            )
+        fixed_design = {
+            "sampling_scheme": {"fixed quotas across opaque sampling strata"},
+            "metric_interpretation": {
+                "composition-specific development metrics",
+                (
+                    "accuracy, precision, PPV, and review workload measured on this "
+                    "sample are composition-specific and are not production prevalence"
+                ),
+            },
+            "intended_use": {"development model comparison and error analysis"},
+        }
+        for key, allowed_values in fixed_design.items():
+            problems += _check_closed_string(
+                f"sample_design.{key}",
+                sample_design.get(key),
+                allowed=allowed_values,
             )
     return problems
 
@@ -475,8 +509,21 @@ def _check_categorization_sample(payload: dict[str, Any]) -> list[str]:
         "year",
     }:
         problems += _check_nonnegative_int(key, payload[key])
-    for key in {"group_policy", "label_interpretation", "split_policy"}:
-        problems += _check_scalar(key, payload[key], MAX_STRING)
+    fixed_metadata = {
+        "group_policy": {
+            "one earliest row per exact normalized-redacted-text group"
+        },
+        "label_interpretation": {
+            "historical administrative agreement, not policy correctness"
+        },
+        "split_policy": {
+            "chronological_months_1_6_train_7_9_validation_10_12_test"
+        },
+    }
+    for key, allowed_values in fixed_metadata.items():
+        problems += _check_closed_string(
+            key, payload[key], allowed=allowed_values
+        )
 
     eligible = payload["eligible_categories"]
     excluded = payload["excluded_categories"]
@@ -506,11 +553,20 @@ def _check_categorization_sample(payload: dict[str, Any]) -> list[str]:
     }
     problems += _check_exact_keys("categorization privacy", privacy, privacy_keys)
     if isinstance(privacy, dict):
-        problems += _check_scalar(
-            "privacy.source_column", privacy.get("source_column"), MAX_STRING
+        problems += _check_closed_string(
+            "privacy.source_column",
+            privacy.get("source_column"),
+            allowed={"grievance_redactions.grievance_redacted"},
         )
-        for key in privacy_keys - {"source_column"}:
+        expected_privacy = {
+            "narrative_output_private_dvc_only": True,
+            "raw_grievance_read": False,
+            "ticket_identifiers_salted": True,
+        }
+        for key, expected in expected_privacy.items():
             problems += _check_bool(f"privacy.{key}", privacy.get(key))
+            if privacy.get(key) is not expected:
+                problems.append(f"privacy.{key} must be {expected}")
 
     split_counts = payload["split_counts"]
     if (
@@ -748,7 +804,11 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
     if problems:
         return problems
 
-    problems += _check_scalar("claim_status", payload["claim_status"], MAX_STRING)
+    problems += _check_closed_string(
+        "claim_status",
+        payload["claim_status"],
+        allowed={"development evidence only"},
+    )
 
     privacy = payload["privacy"]
     privacy_keys = {
@@ -762,8 +822,23 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
         "actionability frontier privacy", privacy, privacy_keys
     )
     if isinstance(privacy, dict):
-        for position, value in enumerate(privacy.values()):
-            problems += _check_scalar(f"privacy[{position}]", value, MAX_STRING)
+        fixed_privacy = {
+            "source": "PII-redacted sample",
+            "storage": "private DVC remote",
+        }
+        for key, expected in fixed_privacy.items():
+            problems += _check_closed_string(
+                f"privacy.{key}", privacy.get(key), allowed={expected}
+            )
+        expected_privacy_booleans = {
+            "contains_redacted_narratives": True,
+            "git_contains_row_level_bytes": False,
+            "residual_pii_risk": True,
+        }
+        for key, expected in expected_privacy_booleans.items():
+            problems += _check_bool(f"privacy.{key}", privacy.get(key))
+            if privacy.get(key) is not expected:
+                problems.append(f"privacy.{key} must be {expected}")
 
     sample = payload["sample"]
     sample_keys = {
@@ -779,8 +854,16 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
     if isinstance(sample, dict):
         problems += _check_nonnegative_int("sample.records", sample.get("records"))
         problems += _check_sha256("sample.sha256", sample.get("sha256"))
-        for key in {"sampling", "split_policy", "tracking_mode", "tracking_reason"}:
-            problems += _check_scalar(f"sample.{key}", sample.get(key), MAX_STRING)
+        fixed_sample = {
+            "sampling": "fixed sample",
+            "split_policy": "fixed hash split",
+            "tracking_mode": "direct DVC input",
+            "tracking_reason": "private salt is not versioned",
+        }
+        for key, expected in fixed_sample.items():
+            problems += _check_closed_string(
+                f"sample.{key}", sample.get(key), allowed={expected}
+            )
         split_counts = sample.get("split_counts")
         problems += _check_exact_keys(
             "actionability frontier split_counts",
@@ -807,8 +890,10 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
                 f"direct_inputs[{position}]", details, {"role", "sha256"}
             )
             if isinstance(details, dict):
-                problems += _check_scalar(
-                    f"direct_inputs[{position}].role", details.get("role"), MAX_STRING
+                problems += _check_closed_string(
+                    f"direct_inputs[{position}].role",
+                    details.get("role"),
+                    allowed={"model output"},
                 )
                 problems += _check_sha256(
                     f"direct_inputs[{position}].sha256", details.get("sha256")
@@ -863,8 +948,10 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
                 f"canonical_gold.{key}", canonical.get(key)
             )
         problems += _check_sha256("canonical_gold.sha256", canonical.get("sha256"))
-        problems += _check_scalar(
-            "canonical_gold.policy", canonical.get("policy"), MAX_STRING
+        problems += _check_closed_string(
+            "canonical_gold.policy",
+            canonical.get("policy"),
+            allowed={"exclude uncertain rows"},
         )
         labels = canonical.get("label_counts")
         allowed_labels = {
@@ -887,9 +974,14 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
         "actionability frontier historical_gold", historical, historical_keys
     )
     if isinstance(historical, dict):
-        for key in {"artifact", "manifest", "status"}:
-            problems += _check_scalar(
-                f"historical_gold.{key}", historical.get(key), MAX_STRING
+        fixed_historical = {
+            "artifact": "historical.jsonl",
+            "manifest": "historical.manifest.json",
+            "status": "audit only",
+        }
+        for key, expected in fixed_historical.items():
+            problems += _check_closed_string(
+                f"historical_gold.{key}", historical.get(key), allowed={expected}
             )
         problems += _check_nonnegative_int(
             "historical_gold.records", historical.get("records")
@@ -926,10 +1018,14 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
 
 def _check_sarvam_snapshots(payload: dict[str, Any]) -> list[str]:
     allowed = {"artifacts", "claim_status", "limitations", "privacy", "schema_version"}
-    problems: list[str] = []
-    if set(payload) - allowed:
-        problems.append("Sarvam sidecar has unknown top-level metadata keys")
-    problems += _check_scalar("claim_status", payload.get("claim_status"), MAX_STRING)
+    problems = _check_exact_keys("Sarvam sidecar", payload, allowed)
+    if problems:
+        return problems
+    problems += _check_closed_string(
+        "claim_status",
+        payload.get("claim_status"),
+        allowed={"cached provider evidence; not OCR accuracy"},
+    )
     privacy = payload.get("privacy")
     allowed_privacy = {
         "contains_operational_ticket_and_document_identifiers",
@@ -940,10 +1036,21 @@ def _check_sarvam_snapshots(payload: dict[str, Any]) -> list[str]:
     if not isinstance(privacy, dict):
         problems.append("Sarvam privacy must be an object")
     else:
-        if set(privacy) - allowed_privacy:
-            problems.append("Sarvam privacy has unknown metadata keys")
-        for position, value in enumerate(privacy.values()):
-            problems += _check_scalar(f"privacy[{position}]", value, MAX_STRING)
+        problems += _check_exact_keys("Sarvam privacy", privacy, allowed_privacy)
+        expected_privacy = {
+            "contains_operational_ticket_and_document_identifiers": True,
+            "contains_provider_response_metadata": True,
+            "git_contains_row_level_bytes": False,
+        }
+        for key, expected in expected_privacy.items():
+            problems += _check_bool(f"privacy.{key}", privacy.get(key))
+            if privacy.get(key) is not expected:
+                problems.append(f"privacy.{key} must be {expected}")
+        problems += _check_closed_string(
+            "privacy.storage",
+            privacy.get("storage"),
+            allowed={"private DVC remote"},
+        )
     artifacts = payload.get("artifacts")
     allowed_artifacts = {
         "interrupted_300_page_audit.sqlite",
@@ -957,6 +1064,12 @@ def _check_sarvam_snapshots(payload: dict[str, Any]) -> list[str]:
         "distinct_tickets",
         "role",
         "sha256",
+    }
+    allowed_roles = {
+        "interrupted provider audit snapshot",
+        "validation provider audit snapshot",
+        "machine-readable aggregate scorecard",
+        "human-readable aggregate scorecard",
     }
     if not isinstance(artifacts, dict):
         problems.append("Sarvam artifacts must be an object")
@@ -973,18 +1086,21 @@ def _check_sarvam_snapshots(payload: dict[str, Any]) -> list[str]:
                 problems.append(
                     f"Sarvam artifact {artifact_position} has unknown metadata keys"
                 )
-            digest = details.get("sha256")
-            if not isinstance(digest, str) or not _SHA256_RE.fullmatch(digest):
-                problems.append(
-                    f"Sarvam artifact {artifact_position} has no valid SHA-256"
-                )
-            for field_position, (key, value) in enumerate(details.items()):
-                if key == "sha256":
-                    continue
-                problems += _check_scalar(
-                    f"artifacts[{artifact_position}][{field_position}]",
-                    value,
-                    MAX_STRING,
+            problems += _check_sha256(
+                f"artifacts[{artifact_position}].sha256", details.get("sha256")
+            )
+            problems += _check_closed_string(
+                f"artifacts[{artifact_position}].role",
+                details.get("role"),
+                allowed=allowed_roles,
+            )
+            for key in {
+                "audit_events",
+                "distinct_documents",
+                "distinct_tickets",
+            } & details.keys():
+                problems += _check_nonnegative_int(
+                    f"artifacts[{artifact_position}].{key}", details.get(key)
                 )
     problems += _check_allowlisted_list(
         "limitations",

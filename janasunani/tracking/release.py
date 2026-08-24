@@ -139,10 +139,13 @@ class ModelRelease:
                 f"model {name!r} has unknown fields: {sorted(unknown)}"
             )
         required = ("provider", "trust_tier", "version")
-        missing = [field for field in required if not payload.get(field)]
-        if missing:
-            raise ReleaseManifestError(f"model {name!r} is missing {missing}")
-        trust_tier = str(payload["trust_tier"])
+        for field in required:
+            value = payload.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise ReleaseManifestError(
+                    f"model {name!r} {field} must be a non-empty string"
+                )
+        trust_tier = payload["trust_tier"]
         if trust_tier not in _TRUST_TIERS:
             raise ReleaseManifestError(
                 f"model {name!r} has unsupported trust_tier {trust_tier!r}"

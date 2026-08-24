@@ -175,6 +175,29 @@ def test_hosted_model_requires_a_nonempty_string_endpoint(endpoint):
         ReleaseManifest.from_dict(payload)
 
 
+@pytest.mark.parametrize("field", ["provider", "trust_tier", "version"])
+@pytest.mark.parametrize("value", [["not-a-string"], {"key": "value"}, 7, "", "  "])
+def test_model_identity_fields_require_nonempty_strings(field, value):
+    payload = {
+        "schema_version": "janasunani.release/v1",
+        "release_id": "release-1",
+        "created_at": "2026-08-10T10:00:00Z",
+        "git_sha": "a" * 40,
+        "models": {
+            "sarvam_digitise": {
+                "provider": "sarvam",
+                "trust_tier": "authorized_hosted",
+                "version": "observed-model-id",
+                "endpoint": "sarvam-digitise",
+            }
+        },
+    }
+    payload["models"]["sarvam_digitise"][field] = value
+
+    with pytest.raises(ReleaseManifestError, match=f"{field} must be a non-empty string"):
+        ReleaseManifest.from_dict(payload)
+
+
 def test_manifest_rejects_malformed_artifact_digest():
     payload = {
         "schema_version": "janasunani.release/v1",

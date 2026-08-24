@@ -118,8 +118,8 @@ def test_unknown_schema_is_rejected():
     ]
 
 
-def test_actionability_sample_sidecar_is_metadata_only():
-    payload = {
+def _actionability_payload():
+    return {
         "schema_version": "actionability-adjudication-sample-v1",
         "dataset_fingerprint": "sha256:" + "a" * 64,
         "counts": {"train/s1": 5, "validation/s5": 40, "test/s3": 5},
@@ -131,12 +131,12 @@ def test_actionability_sample_sidecar_is_metadata_only():
             "office",
         ],
         "parameters": {
-            "adjudicator_blinding": "opaque strata",
+            "adjudicator_blinding": "sampling strata are opaque s1-s5",
             "per_weak_stratum_split": 5,
-            "seed": "fixed-seed",
+            "seed": "actionability-gold-v1",
             "shaped_pii_excluded": 47,
-            "split_policy": "fixed hash split",
-            "ticket_identifier": "salted sha256",
+            "split_policy": "single_snapshot_hash_60_20_20_development_only",
+            "ticket_identifier": "salted_sha256_not_reversible",
             "unlabeled_per_split": 40,
         },
         "sample_design": {
@@ -154,7 +154,30 @@ def test_actionability_sample_sidecar_is_metadata_only():
             "opaque sampling stratum",
         ],
     }
-    assert check.check_payload(payload) == []
+
+
+def test_actionability_sample_sidecar_is_metadata_only():
+    assert check.check_payload(_actionability_payload()) == []
+
+
+@pytest.mark.parametrize(
+    ("section", "field"),
+    [
+        ("parameters", "seed"),
+        ("parameters", "split_policy"),
+        ("sample_design", "intended_use"),
+    ],
+)
+def test_actionability_sample_rejects_free_text_scalars_without_echoing(
+    section, field
+):
+    payload = _actionability_payload()
+    payload[section][field] = CITIZEN_TEXT
+
+    problems = check.check_payload(payload)
+
+    assert problems
+    assert all(CITIZEN_TEXT not in problem for problem in problems)
 
 
 @pytest.mark.parametrize("field", ["forbidden_fields", "selected_fields"])
@@ -195,10 +218,12 @@ def _categorization_payload():
         "dataset_fingerprint": "sha256:" + "a" * 64,
         "records": 1,
         "year": 2024,
-        "split_policy": "chronological fixed split",
-        "group_policy": "one row per exact-text group",
+        "split_policy": "chronological_months_1_6_train_7_9_validation_10_12_test",
+        "group_policy": "one earliest row per exact normalized-redacted-text group",
         "min_support_per_split": 1,
-        "label_interpretation": "historical agreement only",
+        "label_interpretation": (
+            "historical administrative agreement, not policy correctness"
+        ),
         "privacy": {
             "source_column": "grievance_redactions.grievance_redacted",
             "raw_grievance_read": False,
@@ -218,6 +243,23 @@ def _categorization_payload():
 
 def test_categorization_sample_sidecar_is_metadata_only():
     assert check.check_payload(_categorization_payload()) == []
+
+
+@pytest.mark.parametrize(
+    ("section", "field"),
+    [(None, "split_policy"), ("privacy", "source_column")],
+)
+def test_categorization_sidecar_rejects_free_text_scalars_without_echoing(
+    section, field
+):
+    payload = _categorization_payload()
+    target = payload if section is None else payload[section]
+    target[field] = CITIZEN_TEXT
+
+    problems = check.check_payload(payload)
+
+    assert problems
+    assert all(CITIZEN_TEXT not in problem for problem in problems)
 
 
 def test_categorization_sidecar_rejects_malformed_counts_without_crashing():
@@ -448,6 +490,41 @@ def test_actionability_frontier_sidecar_is_metadata_only():
     assert check.check_payload(_frontier_payload()) == []
 
 
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda payload: payload.__setitem__("claim_status", CITIZEN_TEXT),
+        lambda payload: payload["privacy"].__setitem__("source", CITIZEN_TEXT),
+        lambda payload: payload["sample"].__setitem__("sampling", CITIZEN_TEXT),
+        lambda payload: payload["direct_inputs"]["judge_a.jsonl"].__setitem__(
+            "role", CITIZEN_TEXT
+        ),
+        lambda payload: payload["canonical_reproducible_gold"].__setitem__(
+            "policy", CITIZEN_TEXT
+        ),
+        lambda payload: payload["preserved_historical_gold"].__setitem__(
+            "status", CITIZEN_TEXT
+        ),
+    ],
+    ids=[
+        "claim-status",
+        "privacy-source",
+        "sampling",
+        "direct-input-role",
+        "canonical-policy",
+        "historical-status",
+    ],
+)
+def test_actionability_frontier_rejects_free_text_scalars_without_echoing(mutate):
+    payload = _frontier_payload()
+    mutate(payload)
+
+    problems = check.check_payload(payload)
+
+    assert problems
+    assert all(CITIZEN_TEXT not in problem for problem in problems)
+
+
 def test_actionability_frontier_rejects_unexpected_nested_fields_without_echoing():
     payload = _frontier_payload()
     payload["privacy"][CITIZEN_TEXT] = CITIZEN_TEXT
@@ -481,8 +558,8 @@ def test_actionability_frontier_rejects_free_text_lists_without_echoing(
     assert all(CITIZEN_TEXT not in problem for problem in problems)
 
 
-def test_sarvam_source_snapshot_sidecar_is_metadata_only():
-    payload = {
+def _sarvam_payload():
+    return {
         "schema_version": "janasunani.sarvam-source-snapshots/v1",
         "claim_status": "cached provider evidence; not OCR accuracy",
         "privacy": {
@@ -504,27 +581,36 @@ def test_sarvam_source_snapshot_sidecar_is_metadata_only():
             "Latency distributions and actual provider billing records were not recovered.",
         ],
     }
-    assert check.check_payload(payload) == []
+
+
+def test_sarvam_source_snapshot_sidecar_is_metadata_only():
+    assert check.check_payload(_sarvam_payload()) == []
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda payload: payload.__setitem__("claim_status", CITIZEN_TEXT),
+        lambda payload: payload["privacy"].__setitem__("storage", CITIZEN_TEXT),
+        lambda payload: payload["artifacts"][
+            "validation_5_page_scorecard.json"
+        ].__setitem__("role", CITIZEN_TEXT),
+    ],
+    ids=["claim-status", "privacy-storage", "artifact-role"],
+)
+def test_sarvam_sidecar_rejects_free_text_scalars_without_echoing(mutate):
+    payload = _sarvam_payload()
+    mutate(payload)
+
+    problems = check.check_payload(payload)
+
+    assert problems
+    assert all(CITIZEN_TEXT not in problem for problem in problems)
 
 
 def test_sarvam_sidecar_rejects_free_text_limitations_without_echoing():
-    payload = {
-        "schema_version": "janasunani.sarvam-source-snapshots/v1",
-        "claim_status": "cached provider evidence; not OCR accuracy",
-        "privacy": {
-            "contains_operational_ticket_and_document_identifiers": True,
-            "contains_provider_response_metadata": True,
-            "git_contains_row_level_bytes": False,
-            "storage": "private DVC remote",
-        },
-        "artifacts": {
-            "validation_5_page_scorecard.json": {
-                "sha256": "a" * 64,
-                "role": "machine-readable aggregate scorecard",
-            }
-        },
-        "limitations": [CITIZEN_TEXT],
-    }
+    payload = _sarvam_payload()
+    payload["limitations"] = [CITIZEN_TEXT]
 
     problems = check.check_payload(payload)
 
