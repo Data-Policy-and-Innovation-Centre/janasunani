@@ -1,36 +1,65 @@
 """
-Janasunani 2.0 — Timing and Quality.
+Janasunani 2.0 — a seven-slide technical briefing.
 
-Builds a 13-slide technical briefing by CLONING slide archetypes out of the
-GAPG 18 August 2026 reference deck, so type, colour, geometry and the footer
-lockup are the reference file's own shapes rather than a reconstruction.
+Built by CLONING slide archetypes out of the GAPG 18 August 2026 reference deck,
+so type, colour, geometry and the footer lockup are that file's own shapes rather
+than a reconstruction.
 
 Archetypes reused (by reference slide number):
   S1  title
   S2  three numbered items + right-hand note + bottom line
   S3  two grouped bullet lists + bottom maroon line
-  S6  three label/description rows with a maroon tick
-  S7  left prose + two big-number cards on the right
+  S6  three label/description rows (stripped, used as a blank shell)
   S9  three label + proportional bar + number rows
   S13 closing
 
 Reference slides 4, 8 (portal screenshots) and 10 (native chart) are NOT used:
 the screenshots carry citizen PII and the chart has no equivalent here.
 
+Two slides are authored rather than cloned, because the reference deck contains
+neither a diagram nor a table:
+  slide 3  architecture.svg, embedded as true vector with a PNG fallback
+  slide 4  a native table styled to the reference palette
+
 Every figure traces to an artifact; sources live in the speaker notes.
+
+Writing rules for slide copy: no em-dash parentheticals, no filler intensifiers
+("clearly", "effectively", "genuinely"), no "not X but Y" scaffolding. One claim
+per line. Say the number, then what it means.
 """
 
 import copy
+import pathlib
+
 from pptx import Presentation
-from pptx.enum.text import MSO_ANCHOR
+from pptx.dml.color import RGBColor
+from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+from pptx.opc.constants import RELATIONSHIP_TYPE as RT
+from pptx.opc.package import Part
+from pptx.opc.packuri import PackURI
+from pptx.oxml import parse_xml
+from pptx.oxml.ns import nsdecls, qn
 from pptx.text.text import _Paragraph
-from pptx.util import Inches
+from pptx.util import Inches, Pt
 
 REF = "reference.pptx"
 OUT = "Janasunani_2.0_Timing_and_Quality.pptx"
+SVG = "architecture.svg"
+PNG = "architecture.png"
 
 # Reference archetype indices (0-based into prs.slides)
-A_TITLE, A_NUM3, A_TWOGROUP, A_ROWS3, A_BIG2, A_BARS3, A_CLOSING = 0, 1, 2, 5, 6, 8, 12
+A_TITLE, A_NUM3, A_TWOGROUP, A_ROWS3, A_BARS3, A_CLOSING = 0, 1, 2, 5, 8, 12
+
+# Palette, read off the reference deck's own shapes.
+MAROON = "7A1F2B"
+DARK = "1E1F24"
+BODY = "44464D"
+SUBTLE = "6C6E76"
+FILL = "F2F2F2"
+WHITE = "FFFFFF"
+
+SVG_EXT_URI = "{96DAC541-7B7A-43D3-8B79-37D633B846F1}"
+SVG_NS = "http://schemas.microsoft.com/office/drawing/2016/SVG/main"
 
 
 # ── cloning ───────────────────────────────────────────────────────────────────
@@ -50,6 +79,20 @@ def clone(prs, src_idx):
         new.shapes._spTree.append(copy.deepcopy(shp._element))
     if new.notes_slide.notes_text_frame is None and NOTES_PLACEHOLDER is not None:
         new.notes_slide.shapes._spTree.append(copy.deepcopy(NOTES_PLACEHOLDER))
+    return new
+
+
+def clone_shell(prs, src_idx, keep):
+    """Clone an archetype and strip it back to eyebrow, title and footers.
+
+    Used for the two authored slides. Keeping the reference's own heading and
+    footer shapes means an authored slide still lines up with a cloned one to
+    the pixel.
+    """
+    new = clone(prs, src_idx)
+    for i, shp in enumerate(list(new.shapes)):
+        if i not in keep:
+            shp._element.getparent().remove(shp._element)
     return new
 
 
@@ -86,15 +129,133 @@ def S(slide):
 
 
 def top_anchor(shape, height_in):
-    """Pin a text box to the top of a fixed band.
-
-    The reference deck centre-anchors its left-hand prose box, which is fine for
-    the two short lines it originally held but pushes longer copy downward into
-    the box below it. Anchoring to the top and capping the height keeps the
-    growth direction predictable.
-    """
+    """Pin a text box to the top of a fixed band."""
     shape.text_frame.vertical_anchor = MSO_ANCHOR.TOP
     shape.height = Inches(height_in)
+
+
+def textbox(slide, text, *, x, y, w, h, size, color, bold=False, italic=False,
+            font="Calibri", align=PP_ALIGN.LEFT):
+    """A plain text box in the reference deck's idiom."""
+    box = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
+    tf = box.text_frame
+    tf.word_wrap = True
+    tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
+    p = tf.paragraphs[0]
+    p.alignment = align
+    run = p.add_run()
+    run.text = text
+    run.font.name = font
+    run.font.size = Pt(size)
+    run.font.bold = bold
+    run.font.italic = italic
+    run.font.color.rgb = RGBColor.from_string(color)
+    return box
+
+
+# ── the SVG diagram ───────────────────────────────────────────────────────────
+def add_vector_picture(slide, png_path, svg_path, *, x, y, w, h):
+    """Place a picture that PowerPoint renders as vector.
+
+    PowerPoint 2016+ stores an SVG as a normal picture whose blip carries an
+    `asvg:svgBlip` extension pointing at the SVG part; the raster blip is the
+    fallback for anything that cannot render SVG. python-pptx has no API for
+    this, so add the PNG normally and then attach the SVG part by hand.
+
+    The fallback matters here: this machine has neither Calibri nor Cambria, so
+    the PNG is rasterised against Carlito/Caladea. PowerPoint resolves the real
+    faces from the SVG and the diagram matches the rest of the deck.
+    """
+    pic = slide.shapes.add_picture(
+        png_path, Inches(x), Inches(y), Inches(w), Inches(h)
+    )
+    package = slide.part.package
+    partname = PackURI(f"/ppt/media/{pathlib.Path(svg_path).name}")
+    svg_part = Part(
+        partname, "image/svg+xml", package, pathlib.Path(svg_path).read_bytes()
+    )
+    r_id = slide.part.relate_to(svg_part, RT.IMAGE)
+    blip = pic._element.blipFill.find(qn("a:blip"))
+    blip.append(
+        parse_xml(
+            f'<a:extLst {nsdecls("a", "r")}>'
+            f'<a:ext uri="{SVG_EXT_URI}">'
+            f'<asvg:svgBlip xmlns:asvg="{SVG_NS}" r:embed="{r_id}"/>'
+            f"</a:ext></a:extLst>"
+        )
+    )
+    return pic
+
+
+def _set_cell_borders(cell, color):
+    """Pin every cell edge to a hairline.
+
+    python-pptx exposes no border API, and with the themed table style removed
+    each renderer picks its own default. Setting the lines explicitly keeps
+    PowerPoint and LibreOffice in agreement.
+    """
+    tc_pr = cell._tc.get_or_add_tcPr()
+    for edge in ("a:lnL", "a:lnR", "a:lnT", "a:lnB"):
+        for existing in tc_pr.findall(qn(edge)):
+            tc_pr.remove(existing)
+        ln = parse_xml(
+            f'<{edge} {nsdecls("a")} w="6350" cap="flat" cmpd="sng" algn="ctr">'
+            f'<a:solidFill><a:srgbClr val="{color}"/></a:solidFill>'
+            f"</{edge}>"
+        )
+        tc_pr.append(ln)
+
+
+# ── the stage table ───────────────────────────────────────────────────────────
+def add_table(slide, rows, *, x, y, w, col_w, row_h, header_h):
+    """A table styled to the reference palette.
+
+    python-pptx attaches a themed table style with banding and blue accents.
+    Strip it and set every fill explicitly, so the table reads as the flat
+    blocks the rest of the deck uses.
+    """
+    total_h = header_h + row_h * (len(rows) - 1)
+    gf = slide.shapes.add_table(
+        len(rows), len(col_w), Inches(x), Inches(y), Inches(w), Inches(total_h)
+    )
+    table = gf.table
+    table.first_row = False
+    table.horz_banding = False
+
+    tbl_pr = table._tbl.tblPr
+    for style_id in tbl_pr.findall(qn("a:tableStyleId")):
+        tbl_pr.remove(style_id)
+
+    for i, cw in enumerate(col_w):
+        table.columns[i].width = Inches(cw)
+    table.rows[0].height = Inches(header_h)
+    for r in range(1, len(rows)):
+        table.rows[r].height = Inches(row_h)
+
+    for r, row in enumerate(rows):
+        header = r == 0
+        bg = MAROON if header else (WHITE if r % 2 else FILL)
+        for c, text in enumerate(row):
+            cell = table.cell(r, c)
+            cell.fill.solid()
+            cell.fill.fore_color.rgb = RGBColor.from_string(bg)
+            cell.vertical_anchor = MSO_ANCHOR.MIDDLE
+            cell.margin_left = Inches(0.14)
+            cell.margin_right = Inches(0.10)
+            cell.margin_top = cell.margin_bottom = Inches(0.04)
+            tf = cell.text_frame
+            tf.word_wrap = True
+            p = tf.paragraphs[0]
+            run = p.add_run()
+            run.text = text
+            run.font.name = "Calibri"
+            run.font.size = Pt(13 if header else 15)
+            run.font.bold = header or c == 0
+            run.font.color.rgb = RGBColor.from_string(
+                WHITE if header else (DARK if c == 0 else BODY)
+            )
+            _set_cell_borders(cell, MAROON if header else "DDDDDD")
+    return table
 
 
 # ── deck ──────────────────────────────────────────────────────────────────────
@@ -113,7 +274,7 @@ s = clone(prs, A_TITLE)
 sh = S(s)
 set_text(sh[0], "TECHNICAL BRIEFING")
 set_text(sh[1], "Janasunani 2.0")
-set_text(sh[2], "What the system does, measured on two axes: timing and quality")
+set_text(sh[2], "How it works, how fast it runs, and how good it is")
 set_text(sh[4], "Data, Policy and Innovation Centre")
 set_text(sh[5], "24 August 2026")
 
@@ -122,7 +283,7 @@ s = clone(prs, A_BARS3)
 sh = S(s)
 set_text(sh[0], "THE RECORD")
 set_text(sh[1], "1.37 million grievances, one question asked of them")
-set_text(sh[2], "A continuous, dated, geocoded record of what is going wrong across thirty districts.")
+set_text(sh[2], "A dated, geocoded record of what is going wrong across thirty districts.")
 rows = [
     (sh[3], sh[4], sh[5], "Complaints filed", "1,371,288", 1.0),
     (sh[6], sh[7], sh[8], "Closed with a remark", "1,209,144", 1_209_144 / 1_371_288),
@@ -148,289 +309,191 @@ s.notes_slide.notes_text_frame.text = (
     "an island."
 )
 
-# ══ 3 · How we measure ════════════════════════════════════════════════════════
-s = clone(prs, A_ROWS3)
+# ══ 3 · Architecture ══════════════════════════════════════════════════════════
+# Keep only eyebrow, title and the two footer texts from the S6 archetype.
+s = clone_shell(prs, A_ROWS3, keep={0, 1, 11, 12})
 sh = S(s)
-set_text(sh[0], "HOW WE MEASURE")
-set_text(sh[1], "Two axes, and both halves of each")
-set_text(sh[3], "Measured")
-set_text(sh[4], "From the records, or a timed run on real code paths. Reported with n, and an interval wherever it is a rate.")
-set_text(sh[6], "Estimated")
-set_text(sh[7], "Model output with an interval and a stated estimand. Never promoted to a fact.")
-set_text(sh[9], "Open")
-set_text(sh[10], "The number does not exist. We say so, rather than substitute a proxy or a plausible round figure.")
+set_text(sh[0], "HOW IT WORKS")
+set_text(sh[1], "One grievance, or all of them at once")
+add_vector_picture(s, PNG, SVG, x=0.7, y=2.08, w=11.9, h=11.9 * 450 / 1280)
+textbox(
+    s,
+    "The live path sees one grievance. Only the batch path knows that 55,544 filings "
+    "are 10,963 distinct problems.",
+    x=0.7, y=6.42, w=11.9, h=0.42, size=17, color=MAROON, bold=True,
+)
 s.notes_slide.notes_text_frame.text = (
-    "The three-label scheme is the evidence-chip primitive carried over from the 17 August deck.\n\n"
-    "Governing rule, from janasunani/evaluation/__init__.py: pipeline.pii_eval is a GATE and can "
-    "fail a release; everything in evaluation/ REPORTS, and a bad result is an answer, not a "
-    "failure.\n\n"
-    "Two slides in this deck do nothing but list the open items: slide 7 for timing, slide 11 for "
-    "quality. Do not cut them for time. A timing and quality briefing showing only the good half "
-    "of each axis is exactly what this room is trained to distrust.\n\n"
-    "If asked how the intervals are computed: an audit of evaluation/stats.py (PR #237) found a "
-    "fixed z=1.96 used for every confidence level and a missing small-cluster correction. Both "
-    "were fixed, and every clustered interval in this deck is 4 to 10% wider as a result."
+    "The asymmetry is the whole slide. The live path processes one grievance and can never "
+    "know it duplicates another. Only the batch path compares records against each other.\n\n"
+    "Duplicate matching is genuinely unavailable live, not merely unbuilt. DuplicateReview "
+    "defaults to `not_indexed` with the reason 'the live submission path is not connected to a "
+    "completed index'; serving/triage.py states 'duplicate matching remains slice-scoped and "
+    "unavailable live'; docs/ARCHITECTURE.md records 'per-request live matching is not wired'. "
+    "Do not imply a per-request duplicate check exists.\n\n"
+    "Dedup figures, docs/PERFORMANCE.md section 4, Sambalpur 2024: 55,544 filings, 10,963 "
+    "distinct problems, 8,560 distinct signatories, ~57 min on 2 vCPU, 16,138,623 comparison "
+    "pairs. The decomposition is the argument for the index: group GOV2024999640 is 26,203 "
+    "filings from ONE signatory, while DM2024854026 is 1,291 filings from 1,155. On filing "
+    "counts alone those two are indistinguishable.\n\n"
+    "Materialisation ~26 s at full scale, via olap/materialize.py using DuckDB.\n\n"
+    "The freshness gap is by design: GET /grievance/{id} reads the transactional store and is "
+    "instant; GET /history and /supervisor read the Parquet lake and lag until the next "
+    "re-materialisation. Analytics never touch the transactional store.\n\n"
+    "The diagram is architecture.svg in this directory, embedded as vector with a PNG "
+    "fallback. Edit the SVG, re-run rsvg-convert, re-run this script."
 )
 
-# ══ 4 · Timing, end to end ════════════════════════════════════════════════════
-s = clone(prs, A_BIG2)
+# ══ 4 · Every stage ═══════════════════════════════════════════════════════════
+s = clone_shell(prs, A_ROWS3, keep={0, 1, 11, 12})
 sh = S(s)
-set_text(sh[1], "TIMING · END TO END")
-set_text(sh[2], "Seconds, not minutes")
-top_anchor(sh[3], 1.85)
-set_text(sh[3],
-         "A typed grievance completes in a tenth of a second. A scanned document, including "
-         "reading the text off the page, takes under fourteen seconds. Ninety of ninety timed "
-         "attempts completed with no failures.")
-set_text(sh[4], "Today the same first pass is self-reported at 10 to 15 minutes, and has never been timed.")
-set_text(sh[6], "0.13 s")
-set_text(sh[7], "median, typed grievance (n = 40)")
-set_text(sh[10], "13.7 s")
-set_text(sh[11], "median, scanned document (n = 20)")
+set_text(sh[0], "EVERY STAGE")
+set_text(sh[1], "How fast, and how good")
+add_table(
+    s,
+    [
+        ["Stage", "How fast", "How good"],
+        ["Read the page", "5.8 s", "not measured"],
+        ["Hide personal details", "0.06 s", "78% of marked items found"],
+        ["Flag for officer review", "under 0.01 s", "caught 13 of 13"],
+        ["Sort into a category", "0.8 s", "right one in the top three, 91%"],
+        ["Draft a summary", "6.6 s", "8 of 26 usable as they stand"],
+        ["Suggest a department", "under 0.01 s", "right one in the top three, 80%"],
+    ],
+    x=0.7, y=2.02, w=11.9, col_w=[4.0, 2.5, 5.4], row_h=0.46, header_h=0.40,
+)
+textbox(
+    s,
+    "0.13 s typed end to end     ·     13.7 s scanned end to end     ·     "
+    "0 of 55,544 records kept a phone number, Aadhaar or PAN",
+    x=0.7, y=5.62, w=11.9, h=0.34, size=15, color=DARK,
+)
+textbox(
+    s,
+    "Reading the page and drafting the summary are 94% of the time. Everything else is close to free.",
+    x=0.7, y=6.18, w=11.9, h=0.42, size=17, color=MAROON, bold=True,
+)
+textbox(
+    s,
+    "Speeds are means on a scanned document, n=20. Quality figures come from held-out test "
+    "sets. Sample sizes vary by stage and are in the notes.",
+    x=0.7, y=6.66, w=11.9, h=0.32, size=12, color=SUBTLE, italic=True,
+)
 s.notes_slide.notes_text_frame.text = (
-    "Source: outputs/benchmark/latency.json, run 2026-08-10T23:14:58Z at git sha 24ab193, with "
-    "is_fake_timing false. 30 synthetic grievances (20 typed, 10 PDF) x 3 repeats, first "
-    "discarded. Host is an arm64 laptop, 10 logical cores, Python 3.13.\n\n"
-    "Means: 0.109 s typed (clustered SE 0.0115), 13.244 s PDF (SE 0.425). p95: 0.150 s and "
-    "15.26 s. Processor startup 6.47 s, one-off.\n\n"
-    "Live API from docs/PERFORMANCE.md section 1, baseline 2026-08-07 at ca58f31: warm POST "
-    "median 4.44 s over n=8, first call after boot 9.5 s, cold start to health 19.4 s.\n\n"
-    "DO NOT cite the latency section of outputs/benchmark/table2.md. It was generated 3h38m "
-    "before latency.json and wrongly says no harness output exists."
+    "SPEEDS. outputs/benchmark/latency.json, run 2026-08-10T23:14:58Z at git sha 24ab193, "
+    "is_fake_timing false. Document path, n=20 over 10 clusters. Means: OCR 5.833, summarise "
+    "6.550, categorise 0.778, redact 0.055, detect PII 0.021, route 0.00048, triage 0.00026. "
+    "Summarise plus OCR is 12.383 s of the 13.244 s mean run, 93.5%. End to end: typed p50 "
+    "0.133 s (n=40), PDF p50 13.661 s (n=20). Live API warm POST median 4.44 s (n=8), cold "
+    "start 19.4 s. Measured on an arm64 laptop, not the deployment box.\n\n"
+    "Four stages (format classifier, page type, pii, spam) were never separately instrumented "
+    "and carry n=0. They are omitted rather than shown as zero.\n\n"
+    "QUALITY, with intervals.\n"
+    "Redaction: overlap recall 0.779, coverage 0.783, exact 0.550 on 480 hand-marked gold "
+    "spans across 89 pages and 50 documents. Per entity: Aadhaar 0.857 (n=7), phone 0.828 "
+    "(n=29), name 0.777 (n=404), email 0.750 (n=40). Corpus scan: 0 of 55,544.\n"
+    "Triage: n=57 held-out, accuracy 94.74% (85.63-98.19), review recall 13/13 = 100% "
+    "(77.19-100), false-flag rate 3/44 = 6.82% (2.35-18.23). TF-IDF word+char beat a frozen "
+    "MuRIL probe 13/13 against 9/13.\n"
+    "Category: top-3 90.89%, top-1 46.55%, n=3,160, chronological 2024 split, "
+    "exact-text-group-disjoint, macro-F1 36.5%, ECE 26.4%.\n"
+    "Summary: critical-fact recall 65.48% over 84 facts, 8 of 26 usable unedited, residual PII "
+    "in output 4/26 = 15.38%. One judge, not an officer. All four coherent Odia cases were "
+    "skipped by an English-only gate.\n"
+    "Department: top-3 79.68% / top-1 54.96% on informative categories (n=142,181); 69.04% / "
+    "45.14% across all eligible (n=208,267). Untouched 2025 test year. This measures agreement "
+    "with where cases were historically sent, not jurisdictional correctness.\n\n"
+    "WITHDRAWN, do not use: the in-sample crosswalk figures 60.9 / 67.5 / 72.8; PII coverage "
+    "49.6% and name 0.44; MuRIL 71.04% as a current number.\n\n"
+    "If asked about routing time savings: an estimated 11 to 23 day gain held on validation "
+    "2024 and failed on the untouched 2025 test year at -2.35 days against a standard error of "
+    "3.50. It was withdrawn on 23 August, commits 879c24c and 365e3b4, and four artifacts are "
+    "archived as do-not-cite. The direct and doubly-robust estimators disagree by 33 days on "
+    "the test year, which is the diagnosis: no overlap to estimate on."
 )
 
-# ══ 5 · Where the time goes ═══════════════════════════════════════════════════
-s = clone(prs, A_BARS3)
-sh = S(s)
-set_text(sh[0], "TIMING · PER STAGE")
-set_text(sh[1], "Two stages are 94% of the wall clock")
-set_text(sh[2], "Mean seconds per scanned document, by pipeline stage.")
-stages = [
-    (sh[3], sh[4], sh[5], "Summarise", "6.55 s", 6.550 / 6.550),
-    (sh[6], sh[7], sh[8], "Extract text", "5.83 s", 5.833 / 6.550),
-    (sh[9], sh[10], sh[11], "Everything else", "0.86 s", 0.861 / 6.550),
-]
-for label_sh, bar_sh, num_sh, label, num, frac in stages:
-    set_text(label_sh, label)
-    set_text(num_sh, num)
-    bar_sh.width = Inches(max(1.35, 8.0 * frac))
-    num_sh.width = Inches(max(1.05, 8.0 * frac) - 0.3)
-set_text(sh[15], "Categorise, redact, detect, route and triage combined")
-set_text(sh[12], "Everything after text extraction is effectively free. Routing and triage cost under a thousandth of a second.")
-s.notes_slide.notes_text_frame.text = (
-    "Source: outputs/benchmark/latency.json, document path, n=20 over 10 clusters.\n\n"
-    "Full per-stage means: summarise 6.550, OCR 5.833, categorise 0.778, redact 0.055, detect "
-    "PII 0.021, detect language 0.006, route 0.00048, triage 0.00026. Summarise plus OCR is "
-    "12.383 s of the 13.244 s mean run, 93.5%.\n\n"
-    "'Everything else' is 0.861 s, the sum of the remaining six instrumented stages.\n\n"
-    "Four stages (format classifier, page type, pii, spam) were never separately instrumented and "
-    "carry n=0. They are omitted rather than shown as zero. On the typed path summarise is a "
-    "no-op at 5e-06 s.\n\n"
-    "Implication if asked: optimisation effort belongs in the summariser and the OCR engine. "
-    "Nowhere else on this list is worth touching."
-)
-
-# ══ 6 · At corpus scale ═══════════════════════════════════════════════════════
-s = clone(prs, A_ROWS3)
-sh = S(s)
-set_text(sh[0], "TIMING · AT SCALE")
-set_text(sh[1], "Batch work is minutes, not days")
-set_text(sh[3], "Deduplication")
-set_text(sh[4], "55,544 filings indexed in about 57 minutes on two virtual cores, across 16.1 million comparison pairs.")
-set_text(sh[6], "Materialisation")
-set_text(sh[7], "The full corpus rebuilt for analysis in about 26 seconds: 1.37 million complaints, 6.5 million action rows.")
-set_text(sh[9], "History query")
-set_text(sh[10], "A median 0.13 seconds to page twenty records out of 1,371,288.")
-s.notes_slide.notes_text_frame.text = (
-    "Sources: docs/PERFORMANCE.md sections 1 and 4. Measured against production Postgres on the "
-    "deployment box, not the laptop used for slide 4.\n\n"
-    "Dedup ran over the frozen demo slice, Sambalpur 2024. Provenance complete: 55,544 of 55,544 "
-    "on both the group and signature tables. 310 large buckets.\n\n"
-    "Materialisation via janasunani/olap/materialize.py using DuckDB. History reads the Parquet "
-    "lake, never the transactional store; a live submission therefore appears in history only "
-    "after the next re-materialisation, and that freshness gap is by design.\n\n"
-    "Cost, if asked: marginal cost per call is zero. Open weights on hardware we control. A "
-    "commercial vision API is Rs 0.50 to 1.50 per page; roughly Rs 8,050 to push 1.37M subjects "
-    "through a 105B model. Source janasunani/evaluation/pricing.py, verified 2026-08-07."
-)
-
-# ══ 7 · What we cannot claim on timing ════════════════════════════════════════
+# ══ 5 · The limits ════════════════════════════════════════════════════════════
 s = clone(prs, A_NUM3)
 sh = S(s)
-set_text(sh[0], "TIMING · THE GAPS")
-set_text(sh[1], "What we cannot claim about time")
-set_text(sh[3], "13.7 seconds is machine time, not officer time.")
-set_text(sh[5], "Measured on a laptop, not the deployment box, and not a measure of officer effort.")
-set_text(sh[8], "The 10 to 15 minute baseline is self-reported.")
-set_text(sh[10], "No timed officer study exists. Every speed-up ratio inherits that uncertainty.")
-set_text(sh[13], "No release timing harness has been run.")
-set_text(sh[15], "The publication gate reads speed 0 of 1. All of the above is development evidence.")
-set_text(sh[16], "201,000 to 302,000 officer-hours sits in the resolved record. That is a denominator, not a saving.")
+set_text(sh[0], "THE LIMITS")
+set_text(sh[1], "What we cannot measure")
+set_text(sh[3], "We cannot say how accurately it reads a page.")
+set_text(sh[5], "Nobody has hand-typed a set of pages to check against. No system can be scored, ours or anyone else's.")
+set_text(sh[8], "We cannot say how often redaction hides too much.")
+set_text(sh[10], "We marked what should be hidden. We never marked what should not, so a miss and an over-redaction look the same.")
+set_text(sh[13], "We cannot say it saves officer time.")
+set_text(sh[15], "The 10 to 15 minute baseline is self-reported and was never timed. No trial has been run.")
+set_text(sh[16], "Every figure in this deck was produced by us, on our own data. None of it has been checked by an officer.")
 s.notes_slide.notes_text_frame.text = (
-    "Do not cut this slide for time.\n\n"
-    "The officer-hours range covers the registration time embedded in 1,209,144 resolved cases. "
-    "It is the size of the prize, not anything realised. It must never be presented as a benefit.\n\n"
-    "A fourth gap, if asked: routing step timing. The figure that previously sat on this slide in "
-    "the 18 August deck, 11 to 23 days lost between routing steps, was WITHDRAWN on 23 August "
-    "(commits 879c24c, 365e3b4). See slide 12. A descriptive replacement measuring elapsed time "
-    "between recorded handling steps is under recomputation and is deliberately not previewed "
-    "here. Do not reintroduce any day-saving number."
+    "Do not cut this slide for time. It is the one that makes the rest credible.\n\n"
+    "1. OCR ground truth was never commissioned and has no owner, issue #53. It cannot be "
+    "produced by an agent, because it is the answer key an agent would be scored against.\n\n"
+    "2. 824 predicted spans against 480 marked. The recogniser over-fires, and the gold set "
+    "cannot separate a missed label from an over-redaction. Filed as open.\n\n"
+    "3. The officer-hours figure that circulates, 201,000 to 302,000 across 1,209,144 resolved "
+    "cases, is a denominator and not a saving. It is the size of the prize, not anything "
+    "realised.\n\n"
+    "Two more we do not claim, if asked: no gain from duplicate detection beyond the 37,299 "
+    "repeats officers already confirmed, and no accuracy result for the outside option on "
+    "slide 6.\n\n"
+    "If someone asks why so little is claimed: because the alternative is claiming things we "
+    "cannot defend, and this deck has to survive the room checking it."
 )
 
-# ══ 8 · Redaction ═════════════════════════════════════════════════════════════
-s = clone(prs, A_BIG2)
-sh = S(s)
-set_text(sh[1], "QUALITY · REDACTION")
-set_text(sh[2], "Nothing shaped like an identifier survives")
-top_anchor(sh[3], 1.85)
-set_text(sh[3],
-         "Against 480 hand-marked spans across 89 pages, redaction finds 78% of personal "
-         "details, 86% of Aadhaar numbers and 83% of phone numbers. The population scan on the "
-         "right covers every record in the slice, not a sample.")
-set_text(sh[4], "It over-fires: 824 predicted spans against 480 marked. There is no precision figure.")
-set_text(sh[6], "0 of 55,544")
-set_text(sh[7], "records retaining a shaped identifier after redaction")
-set_text(sh[10], "0.78")
-set_text(sh[11], "recall on the hand-marked gold set (n = 480)")
-s.notes_slide.notes_text_frame.text = (
-    "Sources: outputs/evaluation/pii_release.json (re-measured 2026-08-10) and docs/FINDINGS.md.\n\n"
-    "Overall typed overlap recall 0.7792, coverage 0.7833, exact 0.5500. Per entity, overlap: "
-    "Aadhaar 0.857 (n=7), phone 0.828 (n=29), name 0.777 (n=404), email 0.750 (n=40). Names are "
-    "404 of 480 spans so they set the headline; name exact recall is only 0.507.\n\n"
-    "Gold set: 529 hand-corrected spans, 480 scored after excluding 49 government email addresses "
-    "by policy. 50 documents, 89 pages.\n\n"
-    "Stack: Presidio in-process, custom Indian recognisers (mobile/Aadhaar/PAN), spaCy NER, an "
-    "Indian-surname gazetteer and an ALL-CAPS recogniser.\n\n"
-    "WITHDRAWN, do not use: the 49.6% coverage figure and the 0.44 name figure. Both predate the "
-    "ALL-CAPS and gazetteer fixes.\n\n"
-    "The gate currently FAILS: janasunani-evaluate-pii exits 1 because 0.7833 < 0.8056. That "
-    "0.8056 is the DSI reference constant wired as a threshold by mistake, issue #239. It was "
-    "filed rather than relaxed on the eve of a demo."
-)
-
-# ══ 9 · Shortlists ════════════════════════════════════════════════════════════
-s = clone(prs, A_BARS3)
-sh = S(s)
-set_text(sh[0], "QUALITY · RANKING")
-set_text(sh[1], "Shortlists, not decisions")
-set_text(sh[2], "Share of cases where the correct answer is in the model's top three.")
-ranked = [
-    (sh[3], sh[4], sh[5], "Category", "90.9%", 0.909),
-    (sh[6], sh[7], sh[8], "Department, clear cases", "79.7%", 0.797),
-    (sh[9], sh[10], sh[11], "Department, all cases", "69.0%", 0.690),
-]
-for label_sh, bar_sh, num_sh, label, num, frac in ranked:
-    set_text(label_sh, label)
-    set_text(num_sh, num)
-    bar_sh.width = Inches(max(1.35, 8.0 * frac))
-    num_sh.width = Inches(max(1.05, 8.0 * frac) - 0.3)
-set_text(sh[15], "Held-out test cases: 3,160 for category, 142,181 and 208,267 for department, all from an untouched 2025")
-set_text(sh[12], "Forty departments to three. A separate claim, that routing saved 11 to 23 days, was withdrawn.")
-s.notes_slide.notes_text_frame.text = (
-    "Sources: outputs/evaluation/categorization_historical_v1.json and "
-    "outputs/evaluation/routing_historical_{informative,all}.json.\n\n"
-    "TOP-1, if asked, and say it unprompted if the room is quantitative: category 46.6%, "
-    "department 55.0% clear / 45.1% all. Neither model can name the single right answer and "
-    "neither is asked to. Macro-F1 is weak: 36.5% category, 25.2% / 19.8% department, with about "
-    "a dozen departments at F1 zero.\n\n"
-    "Category split: chronological 2024, exact-text-group-disjoint, 18 categories, ECE 26.4%, "
-    "release_eligible false.\n\n"
-    "Department split: train 2021-23, validate 2024, final refit on train+validation, test on an "
-    "untouched 2025. alpha=100, one-year history window. Intervals suppressed as not "
-    "cluster-robust for weighted route cells.\n\n"
-    "CRITICAL CAVEAT: this measures agreement with where cases were historically sent, NOT "
-    "jurisdictional correctness. A correct-authority adjudication does not exist and is one of "
-    "the eight publication blockers.\n\n"
-    "WITHDRAWN, do not use: the in-sample crosswalk figures 60.9 / 67.5 / 72.8%. They are "
-    "resubstitution and are not comparable held-out results.\n\n"
-    "Subcategory would give 86.5% top-3, but it is not reliably supplied at live intake, so it is "
-    "an upper bound and not a live number.\n\n"
-    "THE WITHDRAWN ROUTING-OUTCOME CLAIM, if asked. The claim held on validation 2024 (augmented +26.77 days, SE "
-    "4.04) and collapsed on the untouched 2025 test year (-2.35, SE 3.50). Three separable "
-    "causes:\n"
-    "(a) The population was selected on a post-treatment variable. The old 'correct' label was "
-    "read off the closing remark, which routing can itself affect. Robustness rung R0 gives a "
-    "delta RMSE of +0.0305 (SE 0.0138, t=2.21); rung R1, changing nothing but the population, "
-    "gives +0.0002 (SE 0.0059, t=0.04). A 125x collapse. The old restriction discarded 63% of "
-    "cases and kept the ones selected on outcome.\n"
-    "(b) Overlap collapsed on the test year: match rate 0.536 to 0.156, median propensity 0.412 "
-    "to 0.108. For 84% of test cases the recommended route essentially never occurred in that "
-    "cell. The direct estimator extrapolates anyway and returns its largest figure ever, 30.53 "
-    "days; the doubly-robust estimator returns -2.35. A 33-day gap between estimators is the "
-    "diagnosis.\n"
-    "(c) Censoring tripled: 0.031 train, 0.092 validation, 0.344 test. A third of 2025 cases were "
-    "still open at the snapshot.\n\n"
-    "Also worth saying: '11 to 23' was never a confidence interval. It was two estimators "
-    "disagreeing by a factor of two on identical data, which was the warning sign from the start.\n\n"
-    "ITEM 4: an audit of evaluation/stats.py found a fixed z=1.96 used for every confidence level "
-    "and a missing small-cluster t correction. Both fixed; every clustered interval in the repo "
-    "widened 4 to 10%.\n\n"
-    "Sources: outputs/experiments/routing_outcome/{robustness,ope_val_ridge,ope_test_ridge,"
-    "outputs/experiments/routing_outcome/{robustness,ope_val_ridge,ope_test_ridge,censoring}.json; "
-    "commits 879c24c and 365e3b4; docs/experiments/superseded/README.md."
-)
-
-# ══ 10 · Triage and drafting ══════════════════════════════════════════════════
+# ══ 6 · Sarvam ════════════════════════════════════════════════════════════════
 s = clone(prs, A_TWOGROUP)
 sh = S(s)
-set_text(sh[0], "QUALITY · THE TWO ENDS")
-set_text(sh[1], "Triage works. Drafting does not.")
-set_text(sh[2], "Catching what cannot be acted on — our strongest result")
-set_text(sh[4], "All 13 cases needing officer review were caught, out of 57 held-out cases.")
-set_text(sh[6], "Only 3 of 44 ordinary complaints were wrongly sent for review.")
-set_text(sh[12], "A plain word-counting method beat a large multilingual model, 13 of 13 against 9 of 13.")
-set_text(sh[7], "Drafting a summary — our weakest")
-set_text(sh[14], "8 of 26 summaries were usable without an edit.")
-set_text(sh[16], "15% carried personal details back into the summary text.")
-set_text(sh[8], "Both were measured the same way. That is why we can tell them apart.")
+set_text(sh[0], "AN OUTSIDE OPTION")
+set_text(sh[1], "It does more. We have not shown it does better.")
+set_text(sh[2], "What it does")
+set_text(sh[4], "One call at ₹1.50 a page returns the text, a category, a one-line summary and the district.")
+set_text(sh[6], "It reads 22 Indian languages including Odia. Ours reads English.")
+set_text(sh[12], "It reads handwriting. Ours does not.")
+set_text(sh[7], "What we established")
+set_text(sh[14], "On all 61 pages we compared, the two systems produced different text.")
+set_text(sh[16], "We have no accuracy result. Nobody made a hand-typed answer key.")
+set_text(sh[8], "Using it sends citizen documents outside our control.")
 s.notes_slide.notes_text_frame.text = (
-    "Sources: models/actionability/benchmark.json and outputs/evaluation/summary_development_v1.json.\n\n"
-    "TRIAGE, n=57 held-out: accuracy 94.74% (95% Wilson 85.63-98.19), review recall 13/13 = 100% "
-    "(77.19-100), actionable-review rate 3/44 = 6.82% (2.35-18.23), F1 89.66%, ROC-AUC 99.13%. "
-    "Selected model is TF-IDF word+char at threshold 0.435. The frozen MuRIL probe got 9/13 "
-    "recall and 85.96% accuracy. The cheap method won, and that is the procurement point.\n\n"
-    "Gold set: 180 PII-redacted cases labelled in two independent contexts plus a resolver, 174 "
-    "canonical after excluding 6 uncertain judgments. Raw agreement 99.44%, Cohen's kappa 0.985.\n\n"
-    "Fifty-seven cases is a small test. Say so. The intervals are wide and they are on the slide "
-    "in the notes for a reason.\n\n"
-    "DRAFTING, n=26 scored: critical-fact recall 65.48% (54.83-74.76) over 84 facts, usable "
-    "unedited 8/26 = 30.77% (16.50-49.99), residual PII in output 4/26 = 15.38% (6.15-33.53). "
-    "Zero unsupported claims and zero contradictions, but the upper bound on each is 12.87%. "
-    "Mean usefulness 1.5 against the DSI reference of 1.9. One judge, not an officer.\n\n"
-    "The English-only gate skipped all 4 coherent Odia cases, a 100% miss on that slice. The "
-    "summary_release artifact is missing and is one of the eight publication blockers.\n\n"
-    "Local BART, bart-large-cnn rev 37f520fa."
+    "The provider is Sarvam. Two endpoints, billed separately: digitise at ₹0.50 a page "
+    "returns text and layout; extract at ₹1.00 a page returns schema-driven fields. Both is "
+    "₹1.50. Source: janasunani/evaluation/pricing.py, checked against the Sarvam dashboard "
+    "2026-08-07. Our local pipeline is ₹0.00 a page.\n\n"
+    "THE FOUR EXTRACT FIELDS, which is the 'does more' claim: grievance_category, summary, "
+    "district, grievance_text. That is our OCR, categoriser and summariser in one call. "
+    "janasunani/evaluation/sarvam_grievance_schema.py, schema v1, pinned so a later edit "
+    "cannot silently move a headline number. docs/DELIVERY.md:163: 'our pipeline has no "
+    "equivalent'.\n\n"
+    "LANGUAGE. Sarvam Vision lists all 22 scheduled languages plus English, Odia among them. "
+    "There is also a separate transliteration API for romanized Odia (od-IN), which we do not "
+    "solve at all today. Our own summariser skipped all four coherent Odia cases through an "
+    "English-only gate, and non-English text is downgraded to Uncategorized.\n\n"
+    "WHAT WE ACTUALLY RAN. Two runs, docs/evidence/sarvam_cached_benchmark.json. A 5-page "
+    "validation (₹7.50) and a 300-page run that died at 65 pages on credit exhaustion, 3 HTTP "
+    "402s, 7 job failures. 61 pages paired and scored in total.\n\n"
+    "WHAT WE FOUND. Normalised exact-text divergence 1.000 on both runs: the two systems "
+    "differed on every single page. Sarvam returns more characters, ratio 1.2433 then 1.3345. "
+    "Neither fact is an accuracy result. Divergence says they disagree, never who is right.\n\n"
+    "WHY THERE IS NO ACCURACY NUMBER. Category accuracy was the declared primary outcome and "
+    "came back null: the sample carried no gold labels. Separately, a schema bug returned HTTP "
+    "400 on every extract submission until 2026-08-09, so the one arm holding real ground "
+    "truth produced nothing. Every test mocked the transport, so no test could see the 400.\n\n"
+    "NOT MEASURED, do not claim: OCR accuracy, category accuracy, summary quality, latency "
+    "(stated in four places), actual billed cost (every rupee figure is list price), observed "
+    "language split, handwritten versus printed split.\n\n"
+    "GOVERNANCE. Trust tier authorized-external. Authorisation is a GoO-Sarvam MoU with "
+    "sign-off from the Additional Chief Secretary, Electronics & IT, accepted 2026-08-07, on "
+    "the basis that no state statute currently governs the transfer. All three provider "
+    "controls remain UNVERIFIED: retention terms, encryption in transit, encryption at rest. "
+    "Authorisation and verification are recorded separately on purpose. One module may make "
+    "the call, janasunani/egress/, every attempt is audit-logged, and a kill switch falls back "
+    "to local pytesseract.\n\n"
+    "COST AT SCALE, projected list price: ₹48,000 to digitise the 96,469-page English corpus, "
+    "₹145,000 for both endpoints, ₹8,050 to push 1.37M subjects through the 105B text model. "
+    "At 10 requests a minute, which does not rise with the plan tier, the full corpus is "
+    "roughly ten days of continuous calling. It is a measurement instrument, not a backfill "
+    "path. Do not quote ₹700; that was priced on the withdrawn 30B model."
 )
 
-# ══ 11 · What we cannot claim on quality ══════════════════════════════════════
-s = clone(prs, A_NUM3)
-sh = S(s)
-set_text(sh[0], "QUALITY · THE GAPS")
-set_text(sh[1], "What we cannot claim about quality")
-set_text(sh[3], "There is no precision figure for redaction.")
-set_text(sh[5], "824 predicted spans against 480 marked. We cannot separate a miss from an over-redaction.")
-set_text(sh[8], "There is no accuracy figure for text extraction.")
-set_text(sh[10], "No hand-transcribed ground truth was ever produced, so no system can be scored.")
-set_text(sh[13], "We claim no gain from duplicate detection.")
-set_text(sh[15], "The index collapses 55,544 filings to 10,963 problems. Nobody has checked whether those merges are right.")
-set_text(sh[16], "Nothing here is release-eligible. Every figure in this deck is development evidence.")
-s.notes_slide.notes_text_frame.text = (
-    "Sources: outputs/evaluation/pii_release.json, docs/PERFORMANCE.md section 6, "
-    "outputs/findings/confirmed_duplicates.md, outputs/benchmark/full_benchmark.json.\n\n"
-    "37,299 = 21,117 'already taken up' plus 16,182 'duplicate copy', re-run 8 August. NOTE: "
-    "outputs/findings/duplicate_recall.md still holds a buggy 18,432 from a template-matching "
-    "defect, and 34,671 and 39,937 are older superseded totals. Do not read those files.\n\n"
-    "On text extraction: a commercial vision model returns 1.3345x as many characters as ours on "
-    "56 paired pages. Neither fact says which is right. The accuracy row was dropped from the "
-    "delivery table because no owner was ever named for a hand-transcription sample, issue #53.\n\n"
-    "The eight publication blockers: pipeline_latency_release, pii_officer_release, "
-    "actionability_officer_release, categorization_release, summary_release, "
-    "routing_correct_authority_release, pilot_operational_effects, pilot_citizen_outcomes.\n\n"
-    "If pushed on why so little is claimed: because the alternative is claiming things we cannot "
-    "defend, and this deck has to survive the room checking it."
-)
-
-# ══ 12 · Closing ══════════════════════════════════════════════════════════════
+# ══ 7 · Closing ═══════════════════════════════════════════════════════════════
 s = clone(prs, A_CLOSING)
 s.notes_slide.notes_text_frame.text = (
     "Close on the limits, not a summary.\n\n"
@@ -443,11 +506,13 @@ s.notes_slide.notes_text_frame.text = (
 # ── drop the original reference slides, keep the built ones in order ──────────
 sldIdLst = prs.slides._sldIdLst
 for sldId in list(sldIdLst)[:n_original]:
-    rId = sldId.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id")
+    rId = sldId.get(
+        "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+    )
     prs.part.drop_rel(rId)
     sldIdLst.remove(sldId)
 
-prs.core_properties.title = "Janasunani 2.0 — Timing and Quality"
+prs.core_properties.title = "Janasunani 2.0 — technical briefing"
 prs.core_properties.author = "Data, Policy and Innovation Centre"
 prs.save(OUT)
 print(f"Wrote {OUT} with {len(prs.slides._sldIdLst)} slides")
