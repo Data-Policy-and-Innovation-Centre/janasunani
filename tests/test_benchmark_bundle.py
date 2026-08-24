@@ -178,6 +178,15 @@ def test_metric_map_fields_require_an_exact_metric_vocabulary() -> None:
         build_bundle(config, root=Path("."))  # type: ignore[arg-type]
 
     artifact["metric_map_required_metrics"] = {
+        "metrics.per_class": ["precision"]
+    }
+    artifact["metric_map_labels"] = {
+        "metrics.per_class": ["class-a", "class-a"]
+    }
+    with pytest.raises(ValueError, match="metric_map_labels must define"):
+        build_bundle(config, root=Path("."))  # type: ignore[arg-type]
+
+    artifact["metric_map_required_metrics"] = {
         "metrics.per_class": ["precision", "precision"]
     }
     with pytest.raises(ValueError, match="metric_map_required_metrics must define"):
@@ -328,6 +337,53 @@ def test_required_field_schema_distinguishes_boolean_from_integer(tmp_path: Path
     )
     assert build_bundle(config, root=tmp_path)["publication_ready"] is False  # type: ignore[arg-type]
 
+@pytest.mark.parametrize(
+    ("responses", "satisfaction_n", "response_rate"),
+    [(10, 1, 1.0), (1, 2, 0.1), (1, 1, 0.0)],
+)
+def test_citizen_outcomes_reconciles_response_counts(
+    tmp_path: Path, responses: int, satisfaction_n: int, response_rate: float
+) -> None:
+    config = _config()
+    pilot = config["artifacts"][2]  # type: ignore[index]
+    pilot["schema_version"] = "janasunani.pilot-citizen-outcomes/v1"
+    pilot["required_fields"] = {
+        "invitations": "positive_integer",
+        "responses": "positive_integer",
+        "effects.satisfaction.n": "positive_integer",
+        "effects.response_rate": "unit_interval",
+    }
+    results = tmp_path / "results"
+    results.mkdir()
+    for name in ("latency", "quality"):
+        (results / f"{name}.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": f"test-{name}/v1",
+                    "publication_ready": True,
+                    "metrics": {"n": 1},
+                }
+            )
+            + "\n"
+        )
+    (results / "pilot.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "janasunani.pilot-citizen-outcomes/v1",
+                "publication_ready": True,
+                "invitations": 1,
+                "responses": responses,
+                "effects": {
+                    "satisfaction": {"n": satisfaction_n},
+                    "response_rate": response_rate,
+                },
+            }
+        )
+        + "\n"
+    )
+
+    assert build_bundle(config, root=tmp_path)["publication_ready"] is False  # type: ignore[arg-type]
+
 
 @pytest.mark.parametrize("placeholder", [float("inf"), float("-inf"), float("nan")])
 def test_required_numeric_field_rejects_nonfinite_values(
@@ -406,6 +462,16 @@ def test_structured_metric_and_count_maps_validate_entries(tmp_path: Path) -> No
     (results / "quality.json").write_text(
         '{"schema_version":"test-quality/v1","publication_ready":true,'
         '"metrics":{"per_class":{"class-a":{"support":1,"placeholder":0}}},'
+        '"failures":{"by_class":{"class-a":0}}}\n'
+    )
+    assert build_bundle(config, root=tmp_path)["publication_ready"] is False  # type: ignore[arg-type]
+
+    for artifact in config["artifacts"]:  # type: ignore[union-attr]
+        artifact["metric_map_labels"] = {"metrics.per_class": ["class-a"]}
+    (results / "quality.json").write_text(
+        '{"schema_version":"test-quality/v1","publication_ready":true,'
+        '"metrics":{"per_class":{"placeholder":'
+        '{"support":1,"precision":0.5,"recall":1.0}}},'
         '"failures":{"by_class":{"class-a":0}}}\n'
     )
     assert build_bundle(config, root=tmp_path)["publication_ready"] is False  # type: ignore[arg-type]

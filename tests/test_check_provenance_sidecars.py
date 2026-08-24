@@ -717,8 +717,7 @@ class TestValueRules:
 
     @pytest.mark.parametrize("value", [123, None, True, 1.5, ["a" * 32]])
     def test_a_non_string_checksum_is_rejected(self, value):
-        # _check_scalar accepts every non-string scalar, so a checksum rule that
-        # only applies to strings leaves the field a reviewer trusts unguarded.
+        # A trusted checksum field must reject every non-string value.
         assert check.check_payload(dict(VALID, source_gold_md5=value))
 
     def test_a_digest_with_a_trailing_newline_is_rejected(self):
@@ -754,6 +753,20 @@ class TestFileLevelChecks:
 
         problems = check.check_file(path)
 
+        assert problems
+        assert all(CITIZEN_TEXT not in problem for problem in problems)
+
+    def test_legacy_root_sidecar_uses_closed_pii_schema(self, tmp_path):
+        path = tmp_path / "data" / "external" / "provenance.json"
+        path.parent.mkdir(parents=True)
+        payload = {key: value for key, value in VALID.items() if key != "schema_version"}
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+        assert check.check_file(path) == []
+
+        payload["note"] = CITIZEN_TEXT
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        problems = check.check_file(path)
         assert problems
         assert all(CITIZEN_TEXT not in problem for problem in problems)
 

@@ -67,9 +67,6 @@ ENTITY_LABELS = {"NAME", "PHONE", "EMAIL", "AADHAAR", "PAN"}
 
 MAX_BYTES = 16 * 1024
 MAX_STRING = 200
-# "note" is the one deliberately long field: a fixed caveat written by the
-# script, never derived from a record.
-MAX_NOTE = 1000
 
 _MD5_RE = re.compile(r"^[0-9a-f]{32}$")
 _SHA256_RE = re.compile(r"^(sha256:)?[0-9a-f]{64}$")
@@ -101,6 +98,9 @@ _PII_NOTE = (
     "Cannot prove the human pass happened, cannot detect an edited text, cannot "
     "detect pages dropped from the drafted sample. See "
     "scripts/rederive_pii_draft.py."
+)
+_PII_LEGACY_NOTE = (
+    "Analyzer output on the gold's own text, NOT the original bootstrap draft."
 )
 
 _ADMIN_CATEGORIES = {
@@ -139,16 +139,6 @@ _ADMIN_CATEGORIES = {
     "Water Supply",
     "Women Issues",
 }
-
-
-def _check_scalar(path: str, value: Any, limit: int) -> list[str]:
-    if value is None or isinstance(value, bool) or isinstance(value, (int, float)):
-        return []
-    if not isinstance(value, str):
-        return [f"{path} is {type(value).__name__}, expected a scalar"]
-    if len(value) > limit:
-        return [f"{path} is {len(value)} chars, over the {limit}-char cap"]
-    return []
 
 
 def _check_counter(key: str, value: Any) -> list[str]:
@@ -241,7 +231,9 @@ def _check_pii_rederived(payload: dict[str, Any]) -> list[str]:
     problems += _check_closed_string(
         "kind", payload["kind"], allowed={"rederived_draft"}
     )
-    problems += _check_closed_string("note", payload["note"], allowed={_PII_NOTE})
+    problems += _check_closed_string(
+        "note", payload["note"], allowed={_PII_NOTE, _PII_LEGACY_NOTE}
+    )
     problems += _check_closed_string(
         "created_utc", payload["created_utc"], pattern=_UTC_TIMESTAMP_RE
     )
@@ -1322,50 +1314,7 @@ def check_payload(payload: Any) -> list[str]:
         return _check_sarvam_snapshots(payload)
     if schema == _SUMMARY_SCHEMA:
         return _check_summary_development(payload)
-    if schema is not None and schema != _PII_REDERIVED_SCHEMA:
-        return ["unrecognized provenance schema_version"]
-
-    problems: list[str] = []
-    for key, value in payload.items():
-        if key not in ALLOWED_TOP:
-            # The key itself is untrusted, so it is located, not quoted.
-            problems.append(
-                f"unknown top-level key at position {list(payload).index(key)} "
-                f"(expected a subset of {sorted(ALLOWED_TOP)}); name withheld"
-            )
-            continue
-
-        if key in COUNTER_OBJECTS:
-            problems += _check_counter(key, value)
-            continue
-
-        if key in ALLOWED_NESTED:
-            if not isinstance(value, dict):
-                problems.append(f"'{key}' must be an object")
-                continue
-            for sub, sub_value in value.items():
-                if sub not in ALLOWED_NESTED[key]:
-                    problems.append(
-                        f"unknown key in '{key}' at position {list(value).index(sub)} "
-                        f"(expected a subset of {sorted(ALLOWED_NESTED[key])}); name withheld"
-                    )
-                    continue
-                problems += _check_scalar(f"{key}.{sub}", sub_value, MAX_STRING)
-            continue
-
-        # Negated as a whole, not guarded by isinstance: a non-string checksum
-        # (123, null, true) would otherwise skip this rule and be waved through
-        # by _check_scalar, which accepts every non-string scalar. fullmatch,
-        # not match, because `$` also matches before a trailing newline.
-        if key == "source_gold_md5" and not (
-            isinstance(value, str) and _MD5_RE.fullmatch(value)
-        ):
-            problems.append("'source_gold_md5' is not a 32-character hex digest")
-            continue
-
-        problems += _check_scalar(key, value, MAX_NOTE if key == "note" else MAX_STRING)
-
-    return problems
+    return ["unrecognized provenance schema_version"]
 
 
 def check_file(path: Path) -> list[str]:
@@ -1382,7 +1331,11 @@ def check_file(path: Path) -> list[str]:
             continue
         relative = parts[index + 2 :]
         is_legacy_root = relative == ("provenance.json",)
-        if not is_legacy_root and (
+        if is_legacy_root and isinstance(payload, dict) and "schema_version" not in payload:
+            return _check_pii_rederived(
+                {"schema_version": _PII_REDERIVED_SCHEMA, **payload}
+            )
+        if (
             not isinstance(payload, dict)
             or payload.get("schema_version") not in _RECOGNIZED_SCHEMAS
         ):

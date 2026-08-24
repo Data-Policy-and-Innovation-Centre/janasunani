@@ -68,10 +68,17 @@ def _is_finite_number(value: object) -> TypeGuard[int | float]:
     return not isinstance(value, float) or math.isfinite(value)
 
 
-def _is_metric_map(value: object, *, metric_keys: frozenset[str]) -> bool:
+def _is_metric_map(
+    value: object,
+    *,
+    metric_keys: frozenset[str],
+    label_keys: frozenset[str] = frozenset(),
+) -> bool:
     """Validate label -> support plus an exact bounded metric vocabulary."""
 
     if not isinstance(value, dict) or not value or not metric_keys:
+        return False
+    if label_keys and set(value) != label_keys:
         return False
     for label, row in value.items():
         if not isinstance(label, str) or not label.strip() or not isinstance(row, dict):
@@ -116,6 +123,7 @@ def _matches_field_schema(
     schema: str,
     *,
     metric_keys: frozenset[str] = frozenset(),
+    label_keys: frozenset[str] = frozenset(),
 ) -> bool:
     value = _lookup(payload, dotted_path)
     if schema == "array":
@@ -125,7 +133,9 @@ def _matches_field_schema(
     if schema == "finite_number":
         return _is_finite_number(value)
     if schema == "metric_map":
-        return _is_metric_map(value, metric_keys=metric_keys)
+        return _is_metric_map(
+            value, metric_keys=metric_keys, label_keys=label_keys
+        )
     if schema == "nonempty_array":
         return isinstance(value, list) and bool(value)
     if schema == "nonempty_count_map":
@@ -159,6 +169,28 @@ def _matches_field_schema(
 
 def _schema_relation_errors(payload: object, schema_version: object) -> list[str]:
     """Validate cross-field invariants that scalar schemas cannot express."""
+
+    if schema_version == "janasunani.pilot-citizen-outcomes/v1":
+        invitations = _lookup(payload, "invitations")
+        responses = _lookup(payload, "responses")
+        satisfaction_n = _lookup(payload, "effects.satisfaction.n")
+        response_rate = _lookup(payload, "effects.response_rate")
+        counts = (invitations, responses, satisfaction_n)
+        if not all(
+            isinstance(value, int) and not isinstance(value, bool) and value >= 0
+            for value in counts
+        ) or not _is_finite_number(response_rate):
+            return []
+        errors: list[str] = []
+        if responses > invitations:
+            errors.append("responses must not exceed invitations")
+        if satisfaction_n > responses:
+            errors.append("effects.satisfaction.n must not exceed responses")
+        if invitations > 0 and not math.isclose(
+            response_rate, responses / invitations, rel_tol=1e-9, abs_tol=1e-12
+        ):
+            errors.append("effects.response_rate must equal responses divided by invitations")
+        return errors
 
     if schema_version != "janasunani.pipeline-latency/v1":
         return []
@@ -246,6 +278,22 @@ def _validate_config(config: object) -> dict[str, Any]:
             raise ValueError(
                 f"{artifact_id}: metric_map_required_metrics must define unique non-empty "
                 "metric names for every metric_map field"
+            )
+        metric_map_labels = artifact.get("metric_map_labels", {})
+        if (
+            not isinstance(metric_map_labels, dict)
+            or not set(metric_map_labels).issubset(metric_map_fields)
+            or not all(
+                isinstance(labels, list)
+                and bool(labels)
+                and all(isinstance(label, str) and bool(label.strip()) for label in labels)
+                and len(labels) == len(set(labels))
+                for labels in metric_map_labels.values()
+            )
+        ):
+            raise ValueError(
+                f"{artifact_id}: metric_map_labels must define unique non-empty "
+                "labels for metric_map fields"
             )
         expected_schema = artifact.get("schema_version")
         if expected_schema is not None and (
@@ -358,6 +406,9 @@ def build_bundle(config: dict[str, Any], *, root: Path) -> dict[str, Any]:
                         spec.get("metric_map_required_metrics", {}).get(
                             dotted_path, []
                         )
+                    ),
+                    label_keys=frozenset(
+                        spec.get("metric_map_labels", {}).get(dotted_path, [])
                     ),
                 )
             )
