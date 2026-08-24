@@ -190,6 +190,8 @@ def test_triage_provider_outage_is_nonblocking_and_explicit():
     assert "password" not in (result.triage.duplicate_review.reason or "")
     assert result.triage.spam.decision == "abstained"
     assert result.triage.spam.reason_code == "advisory_provider_unavailable"
+    assert result.triage.spam.spam_score is None
+    assert result.triage.spam.spam_reason is None
 
 
 def test_pdf_preserves_all_ocr_but_gates_models_to_class_one_pages():

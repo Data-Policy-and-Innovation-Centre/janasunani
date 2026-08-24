@@ -103,8 +103,6 @@ def unavailable_triage() -> TriageResult:
         spam=SpamReview(
             decision="abstained",
             reason_code="advisory_provider_unavailable",
-            spam_score=0.0,
-            spam_reason="clean",
             method="unavailable",
         ),
     )

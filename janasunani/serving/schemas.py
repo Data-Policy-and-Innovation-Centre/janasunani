@@ -237,6 +237,17 @@ class SpamReview(BaseModel):
         legacy_decision = value.get("decision")
         if legacy_decision not in {"flagged", "not_scored", "abstained"}:
             return value
+        if (
+            legacy_decision == "abstained"
+            and value.get("reason_code") == "advisory_provider_unavailable"
+        ):
+            # The old unavailable fallback incorrectly serialized a zero score
+            # and ``clean`` reason. Persisted responses must remain readable,
+            # but neither value is evidence that screening ran.
+            normalized = dict(value)
+            normalized.pop("spam_score", None)
+            normalized.pop("spam_reason", None)
+            return normalized
         if legacy_decision == "abstained" and "reason_code" in value:
             # New contract: abstained with any valid reason_code keeps its score
             return value

@@ -232,6 +232,19 @@ def test_bounded_spam_review_rejects_boolean_score_and_conflicting_reason():
         SpamReview(**{**base, "spam_reason": "length_too_short"})
 
 
+def test_unavailable_spam_review_discards_legacy_fabricated_clean_score():
+    review = SpamReview(
+        decision="abstained",
+        reason_code="advisory_provider_unavailable",
+        spam_score=0.0,
+        spam_reason="clean",
+        method="unavailable",
+    )
+
+    assert review.spam_score is None
+    assert review.spam_reason is None
+
+
 def test_unwired_live_triage_is_explicitly_abstained_pending_validation():
     triage = TriageResult()
     dumped = triage.model_dump(mode="json")
