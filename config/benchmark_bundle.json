@@ -88,6 +88,10 @@
         "failures.reviewed": "positive_integer",
         "failures.by_class": "nonempty_count_map"
       },
+      "metric_map_required_metrics": {
+        "metrics.per_class": ["precision", "recall", "f1"],
+        "subgroups.results": ["accuracy", "macro_f1", "coverage", "abstention_rate"]
+      },
       "missing_reason": "needs a frozen officer-confirmed five-class release set"
     },
     {
@@ -139,6 +143,10 @@
         "failures.reviewed": "positive_integer",
         "failures.by_class": "nonempty_count_map"
       },
+      "metric_map_required_metrics": {
+        "metrics.per_class": ["precision", "recall", "f1"],
+        "subgroups.results": ["accuracy", "macro_f1", "coverage", "abstention_rate"]
+      },
       "missing_reason": "needs a governed production-domain categorization release set"
     },
     {
@@ -181,6 +189,15 @@
         "failures.reviewed": "positive_integer",
         "failures.by_class": "nonempty_count_map"
       },
+      "metric_map_required_metrics": {
+        "subgroups.results": [
+          "critical_fact_recall",
+          "unsupported_fact_rate",
+          "contradiction_rate",
+          "pii_leak_rate",
+          "usefulness_rate"
+        ]
+      },
       "missing_reason": "needs paired human summary judgments"
     },
     {
@@ -222,6 +239,10 @@
         "subgroups.results": "metric_map",
         "failures.reviewed": "positive_integer",
         "failures.by_class": "nonempty_count_map"
+      },
+      "metric_map_required_metrics": {
+        "metrics.per_entity": ["precision", "recall", "f1"],
+        "subgroups.results": ["precision", "recall", "f1"]
       },
       "missing_reason": "current PII evidence lacks a complete precision and supported-language release scorecard"
     },
@@ -273,6 +294,10 @@
         "subgroups.results": "metric_map",
         "failures.reviewed": "positive_integer",
         "failures.by_class": "nonempty_count_map"
+      },
+      "metric_map_required_metrics": {
+        "metrics.per_authority": ["top1_accuracy", "top3_accuracy", "coverage", "abstention_rate"],
+        "subgroups.results": ["top1_accuracy", "top3_accuracy", "coverage", "abstention_rate"]
       },
       "missing_reason": "historical destination agreement is not correct-authority adjudication"
     },

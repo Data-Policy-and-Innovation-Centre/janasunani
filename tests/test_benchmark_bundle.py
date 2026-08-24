@@ -169,6 +169,21 @@ def test_required_field_schema_names_are_closed() -> None:
         build_bundle(config, root=Path("."))  # type: ignore[arg-type]
 
 
+def test_metric_map_fields_require_an_exact_metric_vocabulary() -> None:
+    config = _config()
+    artifact = config["artifacts"][0]  # type: ignore[index]
+    artifact["required_fields"] = {"metrics.per_class": "metric_map"}
+
+    with pytest.raises(ValueError, match="metric_map_required_metrics must define"):
+        build_bundle(config, root=Path("."))  # type: ignore[arg-type]
+
+    artifact["metric_map_required_metrics"] = {
+        "metrics.per_class": ["precision", "precision"]
+    }
+    with pytest.raises(ValueError, match="metric_map_required_metrics must define"):
+        build_bundle(config, root=Path("."))  # type: ignore[arg-type]
+
+
 def test_schema_mismatch_blocks_required_artifact(tmp_path: Path) -> None:
     results = tmp_path / "results"
     results.mkdir()
@@ -368,6 +383,9 @@ def test_structured_metric_and_count_maps_validate_entries(tmp_path: Path) -> No
             "metrics.per_class": "metric_map",
             "failures.by_class": "nonempty_count_map",
         }
+        artifact["metric_map_required_metrics"] = {
+            "metrics.per_class": ["precision", "recall"]
+        }
     results = tmp_path / "results"
     results.mkdir()
     for name in ("latency", "quality", "pilot"):
@@ -387,8 +405,8 @@ def test_structured_metric_and_count_maps_validate_entries(tmp_path: Path) -> No
 
     (results / "quality.json").write_text(
         '{"schema_version":"test-quality/v1","publication_ready":true,'
-        '"metrics":{"per_class":{"placeholder":false}},'
-        '"failures":{"by_class":{"placeholder":false}}}\n'
+        '"metrics":{"per_class":{"class-a":{"support":1,"placeholder":0}}},'
+        '"failures":{"by_class":{"class-a":0}}}\n'
     )
     assert build_bundle(config, root=tmp_path)["publication_ready"] is False  # type: ignore[arg-type]
 

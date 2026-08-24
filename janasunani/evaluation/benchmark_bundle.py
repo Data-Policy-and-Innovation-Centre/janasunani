@@ -68,10 +68,10 @@ def _is_finite_number(value: object) -> TypeGuard[int | float]:
     return not isinstance(value, float) or math.isfinite(value)
 
 
-def _is_metric_map(value: object) -> bool:
-    """Validate label -> support plus bounded metric objects."""
+def _is_metric_map(value: object, *, metric_keys: frozenset[str]) -> bool:
+    """Validate label -> support plus an exact bounded metric vocabulary."""
 
-    if not isinstance(value, dict) or not value:
+    if not isinstance(value, dict) or not value or not metric_keys:
         return False
     for label, row in value.items():
         if not isinstance(label, str) or not label.strip() or not isinstance(row, dict):
@@ -83,9 +83,11 @@ def _is_metric_map(value: object) -> bool:
             or support <= 0
         ):
             return False
-        metrics = [metric for key, metric in row.items() if key != "support"]
-        if not metrics or not all(
-            _is_finite_number(metric) and 0 <= metric <= 1 for metric in metrics
+        if set(row) != {"support", *metric_keys}:
+            return False
+        if not all(
+            _is_finite_number(row[key]) and 0 <= row[key] <= 1
+            for key in metric_keys
         ):
             return False
     return True
@@ -108,7 +110,13 @@ def _is_nonempty_count_map(value: object) -> bool:
     )
 
 
-def _matches_field_schema(payload: object, dotted_path: str, schema: str) -> bool:
+def _matches_field_schema(
+    payload: object,
+    dotted_path: str,
+    schema: str,
+    *,
+    metric_keys: frozenset[str] = frozenset(),
+) -> bool:
     value = _lookup(payload, dotted_path)
     if schema == "array":
         return isinstance(value, list)
@@ -117,7 +125,7 @@ def _matches_field_schema(payload: object, dotted_path: str, schema: str) -> boo
     if schema == "finite_number":
         return _is_finite_number(value)
     if schema == "metric_map":
-        return _is_metric_map(value)
+        return _is_metric_map(value, metric_keys=metric_keys)
     if schema == "nonempty_array":
         return isinstance(value, list) and bool(value)
     if schema == "nonempty_count_map":
@@ -216,6 +224,28 @@ def _validate_config(config: object) -> dict[str, Any]:
         ):
             raise ValueError(
                 f"{artifact_id}: required_fields must map dotted paths to supported schemas"
+            )
+        metric_map_fields = {
+            field for field, schema in required_fields.items() if schema == "metric_map"
+        }
+        metric_map_required_metrics = artifact.get("metric_map_required_metrics", {})
+        if (
+            not isinstance(metric_map_required_metrics, dict)
+            or set(metric_map_required_metrics) != metric_map_fields
+            or not all(
+                isinstance(metrics, list)
+                and bool(metrics)
+                and all(
+                    isinstance(metric, str) and bool(metric.strip())
+                    for metric in metrics
+                )
+                and len(metrics) == len(set(metrics))
+                for metrics in metric_map_required_metrics.values()
+            )
+        ):
+            raise ValueError(
+                f"{artifact_id}: metric_map_required_metrics must define unique non-empty "
+                "metric names for every metric_map field"
             )
         expected_schema = artifact.get("schema_version")
         if expected_schema is not None and (
@@ -320,7 +350,16 @@ def build_bundle(config: dict[str, Any], *, root: Path) -> dict[str, Any]:
             mismatches.extend(
                 f"{dotted_path} must satisfy required schema {schema!r}"
                 for dotted_path, schema in spec.get("required_fields", {}).items()
-                if not _matches_field_schema(payload, dotted_path, schema)
+                if not _matches_field_schema(
+                    payload,
+                    dotted_path,
+                    schema,
+                    metric_keys=frozenset(
+                        spec.get("metric_map_required_metrics", {}).get(
+                            dotted_path, []
+                        )
+                    ),
+                )
             )
             mismatches.extend(_schema_relation_errors(payload, expected_schema))
             record["status"] = "incomplete" if mismatches else "available"
