@@ -595,8 +595,8 @@ developmental held-out evidence rather than a release gate.
 | **Overall accuracy** | 86% | **95%** |
 :::
 
-On 57 cases. The method now doing the work in our categoriser is also the simple
-one. [measured]{.chip .chip-measured}
+On 57 cases. This is a development actionability result, not a replacement for
+the separate production categoriser. [measured]{.chip .chip-measured}
 
 ::: {.lead}
 We are not saying simple always wins. We are saying nobody can tell you which wins on Odisha's grievances without testing both on Odisha's grievances.
