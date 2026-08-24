@@ -20,7 +20,7 @@ import pytest
 from janasunani.analytics import marts
 
 # ---------------------------------------------------------------------------
-# Fixture: five tickets, one behaviour each.
+# Fixture: five identified tickets plus one row without a ticket identifier.
 #
 # T1: normal multi-step ticket.
 #     forwarded_delegated (1/1) -> reported_back (1/5) -> disposed_no_claim (1/8)
@@ -52,10 +52,12 @@ _ACTIONS = [
     (9, "T4", datetime(2024, 2, 1), "Officer B", "ATR Received", _ATR),
     (10, "T5", datetime(2024, 3, 10), "Officer A", "Forwarded", _FORWARDED),
     (11, "T5", datetime(2024, 3, 1), "Officer B", "ATR Received", _ATR),
+    (12, None, datetime(2024, 4, 1), "Officer C", "Forwarded", _FORWARDED),
 ]
 
 _COMPLAINTS = [
-    (f"T{i}", datetime(2024, 1, 1), None, None, "Water", "Puri", "RWSS") for i in range(1, 6)
+    (f"T{i}", datetime(2024, 1, 1), None, None, "Water", "Puri", "RWSS")
+    for i in range(1, 6)
 ]
 
 
@@ -95,7 +97,9 @@ def lake(tmp_path):
 
 
 def _open(lake_dir):
-    return marts.open_lake("action_type", "handoff", lake_dir=lake_dir, tables=("action_history",))
+    return marts.open_lake(
+        "action_type", "handoff", lake_dir=lake_dir, tables=("action_history",)
+    )
 
 
 # --- the mart loader ---------------------------------------------------------
@@ -175,6 +179,21 @@ def test_null_date_is_dropped_and_counted_not_given_insertion_order(lake):
     assert t3_gap == 6
 
 
+def test_null_ticket_is_dropped_and_counted_without_manufacturing_gaps(lake):
+    con = _open(lake)
+    try:
+        dropped = con.execute(
+            "SELECT dropped_missing_ticket_rows FROM handoff_dropped_missing_ticket"
+        ).fetchone()[0]
+        missing_ticket_intervals = con.execute(
+            "SELECT count(*) FROM handoff_intervals WHERE ticket_no IS NULL"
+        ).fetchone()[0]
+    finally:
+        con.close()
+    assert dropped == 1
+    assert missing_ticket_intervals == 0
+
+
 def test_tie_on_same_date_breaks_deterministically_by_id(lake):
     con = _open(lake)
     try:
@@ -237,14 +256,16 @@ def test_coverage_summary_reconciles_counts(lake):
     con = _open(lake)
     try:
         row = con.execute(
-            "SELECT action_rows_total, dropped_undated_rows, emitted_intervals, "
+            "SELECT action_rows_total, dropped_missing_ticket_rows, "
+            "dropped_undated_rows, emitted_intervals, "
             "invalid_order_intervals, trailing_open_intervals, tickets_with_intervals "
             "FROM handoff_coverage_summary"
         ).fetchone()
     finally:
         con.close()
-    total, dropped, emitted, invalid, trailing, tickets = row
+    total, dropped_missing_ticket, dropped, emitted, invalid, trailing, tickets = row
     assert total == len(_ACTIONS)
+    assert dropped_missing_ticket == 1
     assert dropped == 1
     assert emitted == 5
     assert invalid == 1  # T5
@@ -287,12 +308,18 @@ def test_per_ticket_reducer_scalars(lake):
     assert "T2" not in rows
 
 
-# --- dedup-sensitivity bound --------------------------------------------------
+# --- dedup-sensitivity comparison --------------------------------------------
+
+
+def test_dedup_filter_is_portable_to_postgresql_integer_flags():
+    sql = marts.mart_sql("handoff")
+    assert "NOT to_is_known_template" not in sql
+    assert "to_is_known_template = 0" in sql
 
 
 def test_dedup_sensitivity_compares_templated_and_non_templated_populations(lake):
     """Every fixture remark is a known template, so excluding templated `to`
-    events should empty the second population -- demonstrating the bound
+    events should empty the second population -- demonstrating the comparison
     actually removes what it claims to."""
     con = _open(lake)
     try:
@@ -344,7 +371,8 @@ def test_gap_by_from_type_excludes_invalid_order(lake):
     con = _open(lake)
     try:
         rows = {
-            r[0]: r[1] for r in con.execute(
+            r[0]: r[1]
+            for r in con.execute(
                 "SELECT from_action_type, intervals FROM handoff_gap_by_from_type"
             ).fetchall()
         }
@@ -384,7 +412,9 @@ def test_no_complaints_columns_read_and_no_free_text_in_reportable_views(tmp_pat
             "handoff_dedup_sensitivity",
             "handoff_coverage_summary",
         ):
-            cols = [c.lower() for c in con.execute(f"SELECT * FROM {view}").pl().columns]
+            cols = [
+                c.lower() for c in con.execute(f"SELECT * FROM {view}").pl().columns
+            ]
             assert "action_taken_remark" not in cols
             assert "remark" not in cols
     finally:

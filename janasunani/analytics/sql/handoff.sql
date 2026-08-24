@@ -19,12 +19,12 @@
 --   1. De facto handling, not the routing decision. This measures the
 --      realised event stream, not the assigned route.
 --   2. Not causal, not a saving. No counterfactual is computed.
---   3. Dedup collapse (see §6 below): gap COUNTS are a LOWER bound (some
---      genuinely distinct hand-offs collapsed into one recorded row), gap
---      DURATIONS are an UPPER bound (a collapsed row's gap spans what were
---      possibly two or more shorter real gaps).
---   4. Undated rows are dropped; `handoff_coverage_summary.dropped_undated_rows`
---      reports how many.
+--   3. Dedup collapse (see §6 below): some genuinely distinct hand-offs may
+--      have collapsed into one recorded row. That data loss can move counts
+--      and duration quantiles in either direction. The sensitivity table
+--      compares a more-exposed subpopulation; it is not a bound or correction.
+--   4. Rows without a ticket identifier or usable date are dropped and
+--      reported separately in `handoff_coverage_summary`.
 --   5. Inverted timestamps are bucketed `invalid`, not clamped or silently
 --      reordered; `handoff_coverage_summary.invalid_order_intervals` reports
 --      how many.
@@ -89,16 +89,25 @@ SELECT
     LEAD(t.action_taken_date) OVER w AS next_action_taken_date,
     ROW_NUMBER()              OVER w AS step_index
 FROM action_history_typed t
-WHERE t.action_taken_date IS NOT NULL
+WHERE t.ticket_no IS NOT NULL
+  AND t.action_taken_date IS NOT NULL
 WINDOW w AS (PARTITION BY t.ticket_no ORDER BY t.action_taken_date, t.id);
 
 -- ---------------------------------------------------------------------------
--- 2. Count of rows dropped for a NULL date. Reported, never silently absorbed.
+-- 2. Counts of rows dropped before ordering. The categories are disjoint so
+--    the coverage summary can be reconciled: missing-ticket rows are counted
+--    first, then undated rows among records with a ticket identifier.
 -- ---------------------------------------------------------------------------
+CREATE OR REPLACE VIEW handoff_dropped_missing_ticket AS
+SELECT COUNT(*) AS dropped_missing_ticket_rows
+FROM action_history_typed
+WHERE ticket_no IS NULL;
+
 CREATE OR REPLACE VIEW handoff_dropped_undated AS
 SELECT COUNT(*) AS dropped_undated_rows
 FROM action_history_typed
-WHERE action_taken_date IS NULL;
+WHERE ticket_no IS NOT NULL
+  AND action_taken_date IS NULL;
 
 -- ---------------------------------------------------------------------------
 -- 3. Closed intervals: one row per consecutive pair of recorded events on the
@@ -146,7 +155,8 @@ SELECT
     ticket_no,
     EXTRACT(YEAR FROM MIN(action_taken_date)) AS ticket_creation_year_proxy
 FROM action_history_typed
-WHERE action_taken_date IS NOT NULL
+WHERE ticket_no IS NOT NULL
+  AND action_taken_date IS NOT NULL
 GROUP BY ticket_no;
 
 -- ---------------------------------------------------------------------------
@@ -210,17 +220,16 @@ FROM per_ticket;
 -- collapsed rows are gone, not merely hidden, so "recompute with the
 -- collapse-prone rows restored" is not something this mart can do.
 --
--- What it CAN do: bound the distortion by comparing the population most
--- exposed to this mechanism against the population that is not. A row whose
+-- What it CAN do: compare a population exposed to this mechanism against a
+-- less-exposed proxy population. A row whose
 -- remark matched a known high-frequency template (`to_is_known_template`) is
 -- exactly the kind of reused, byte-identical string this index collapses --
 -- two officers typing free text are very unlikely to collide, but two
 -- officers picking the same dropdown entry under the same status collide
 -- constantly. Comparing "all intervals" against "excluding templated `to`
--- events" shows how much the headline would move if every collapse-exposed
--- interval were removed outright -- an upper bound on how much the true
--- (uncollapsed) picture could differ from what is reported, not a corrected
--- estimate of it.
+-- events" shows how the headline changes when those rows are removed. This
+-- is a subpopulation sensitivity check, not a bound or corrected estimate:
+-- the missing rows are unavailable and their effect can have either direction.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE VIEW handoff_dedup_sensitivity AS
 SELECT
@@ -239,7 +248,7 @@ SELECT
     PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY gap_days) AS q1_gap_days,
     PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY gap_days) AS q3_gap_days
 FROM handoff_intervals
-WHERE NOT is_invalid_order AND NOT to_is_known_template;
+WHERE NOT is_invalid_order AND to_is_known_template = 0;
 
 -- ---------------------------------------------------------------------------
 -- 7. Coverage / data-quality summary. One row. Read this before quoting
@@ -248,6 +257,8 @@ WHERE NOT is_invalid_order AND NOT to_is_known_template;
 CREATE OR REPLACE VIEW handoff_coverage_summary AS
 SELECT
     (SELECT COUNT(*) FROM action_history_typed)                     AS action_rows_total,
+    (SELECT dropped_missing_ticket_rows
+       FROM handoff_dropped_missing_ticket)                         AS dropped_missing_ticket_rows,
     (SELECT dropped_undated_rows FROM handoff_dropped_undated)      AS dropped_undated_rows,
     (SELECT COUNT(*) FROM handoff_intervals)                        AS emitted_intervals,
     (SELECT COUNT(*) FROM handoff_intervals WHERE is_invalid_order) AS invalid_order_intervals,

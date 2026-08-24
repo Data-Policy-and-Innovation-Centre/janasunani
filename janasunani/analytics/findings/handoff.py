@@ -25,10 +25,10 @@ Caveats every render carries, spelled out in full in ``DESCRIPTIVE_CAVEAT``:
 
 1. De facto handling, not the routing decision.
 2. Not causal, not a saving. No counterfactual is computed.
-3. Dedup collapse: gap counts are a LOWER bound, gap durations an UPPER
-   bound (``handoff_dedup_sensitivity`` bounds this; it cannot correct it,
-   because the collapsed rows are gone, not hidden -- see the mart header).
-4. Undated rows dropped, count reported (``dropped_undated_rows``).
+3. Dedup collapse can move counts and duration quantiles in either direction.
+   ``handoff_dedup_sensitivity`` compares subpopulations; it is not a bound or
+   correction because the collapsed rows are gone (see the mart header).
+4. Rows missing a ticket identifier or date are dropped and counted separately.
 5. Inverted timestamps bucketed ``invalid``, count reported
    (``invalid_order_intervals``).
 6. Hops cannot be labelled by role: ``action_taken_by`` is free text, never
@@ -84,11 +84,11 @@ DESCRIPTIVE_CAVEAT = (
     "enquiry, statutory waiting periods, and citizen response, so it is not "
     "idle time. `action_taken_by` is free text with no link to a role table, "
     "so hops cannot be labelled by who handled them, and this mart does not "
-    "stratify by department. Gap counts are a lower bound and gap durations "
-    "an upper bound: `action_history_uniq` collapses two genuinely distinct "
+    "stratify by department. `action_history_uniq` can collapse genuinely distinct "
     "hand-offs sharing the same officer, status and templated remark into one "
-    "recorded row, and the dropped row is gone, not merely hidden -- see "
-    "`handoff_dedup_sensitivity` for how far that could move the numbers."
+    "recorded row. The dropped row is gone, so its effect can have either "
+    "direction; `handoff_dedup_sensitivity` compares subpopulations and is "
+    "not a bound or correction."
 )
 
 # Below this, the ladder of coverage checks should be treated as evidence the
@@ -168,10 +168,12 @@ def render_markdown(tables: dict[str, pl.DataFrame]) -> str:
         "",
         "### Coverage",
         "",
-        "| Action rows | Dropped (undated) | Emitted intervals | Invalid order | Trailing open |",
-        "|---:|---:|---:|---:|---:|",
+        "| Action rows | Dropped (missing ticket) | Dropped (undated) | Emitted intervals | Invalid order | Trailing open |",
+        "|---:|---:|---:|---:|---:|---:|",
         (
-            f"| {_n(cov['action_rows_total'])} | {_n(cov['dropped_undated_rows'])} | "
+            f"| {_n(cov['action_rows_total'])} | "
+            f"{_n(cov['dropped_missing_ticket_rows'])} | "
+            f"{_n(cov['dropped_undated_rows'])} | "
             f"{_n(cov['emitted_intervals'])} | {_n(cov['invalid_order_intervals'])} | "
             f"{_n(cov['trailing_open_intervals'])} |"
         ),
@@ -210,16 +212,16 @@ def render_markdown(tables: dict[str, pl.DataFrame]) -> str:
 
     lines += [
         "",
-        "### Dedup-sensitivity bound",
+        "### Dedup-sensitivity comparison",
         "",
         (
             "`action_history_uniq` excludes `action_taken_date` from its key, "
             "so two genuinely distinct hand-offs sharing the same officer, "
             "status and templated remark collapse into one recorded row at "
             "insert time -- the dropped row is gone, not hidden, so this "
-            "cannot be corrected, only bounded: how far would the median move "
+            "cannot be corrected. As a sensitivity check, how does the median move "
             "if every interval closed by a known-template action were removed "
-            "outright?"
+            "outright? This compares subpopulations; it is not a bound."
         ),
         "",
         "| Population | Intervals | Median (days) | Q1 | Q3 |",
@@ -267,7 +269,7 @@ def main() -> None:
         description=(
             "Elapsed time between recorded handling steps: median/IQR gap "
             "by opening action, forwarded/delegated-opened gaps by ticket "
-            "year, and the dedup-sensitivity bound. Descriptive only, phase 1."
+            "year, and the dedup-sensitivity comparison. Descriptive only, phase 1."
         )
     )
     parser.add_argument(

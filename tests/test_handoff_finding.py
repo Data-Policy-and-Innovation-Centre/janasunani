@@ -34,9 +34,11 @@ _ACTIONS = [
     (9, "T4", datetime(2024, 2, 1), "Officer B", "ATR Received", _ATR),
     (10, "T5", datetime(2024, 3, 10), "Officer A", "Forwarded", _FORWARDED),
     (11, "T5", datetime(2024, 3, 1), "Officer B", "ATR Received", _ATR),
+    (12, None, datetime(2024, 4, 1), "Officer C", "Forwarded", _FORWARDED),
 ]
 _COMPLAINTS = [
-    (f"T{i}", datetime(2024, 1, 1), None, None, "Water", "Puri", "RWSS") for i in range(1, 6)
+    (f"T{i}", datetime(2024, 1, 1), None, None, "Water", "Puri", "RWSS")
+    for i in range(1, 6)
 ]
 
 
@@ -105,6 +107,7 @@ def test_compute_never_surfaces_citizen_text_even_when_the_lake_carries_it(tmp_p
 
 def test_coverage_reports_dropped_and_invalid_counts(lake):
     row = handoff.compute(lake)["handoff_coverage_summary"].row(0, named=True)
+    assert row["dropped_missing_ticket_rows"] == 1
     assert row["dropped_undated_rows"] == 1
     assert row["invalid_order_intervals"] == 1
     assert row["emitted_intervals"] == 5
@@ -124,7 +127,13 @@ def test_data_quality_check_silent_when_clean(tmp_path):
         (2, "C1", datetime(2024, 1, 5), "Officer B", "ATR Received", _ATR),
     ]
     tables = handoff.compute(
-        _write_lake(tmp_path, actions=clean, complaints=[("C1", datetime(2024, 1, 1), None, None, "Water", "Puri", "RWSS")])
+        _write_lake(
+            tmp_path,
+            actions=clean,
+            complaints=[
+                ("C1", datetime(2024, 1, 1), None, None, "Water", "Puri", "RWSS")
+            ],
+        )
     )
     assert handoff.check_data_quality(tables) is None
 
@@ -133,8 +142,12 @@ def test_invalid_order_share_pct_handles_empty_corpus(tmp_path):
     tables = handoff.compute(
         _write_lake(
             tmp_path,
-            actions=[(1, "Z1", datetime(2024, 1, 1), "Officer A", "Forwarded", _FORWARDED)],
-            complaints=[("Z1", datetime(2024, 1, 1), None, None, "Water", "Puri", "RWSS")],
+            actions=[
+                (1, "Z1", datetime(2024, 1, 1), "Officer A", "Forwarded", _FORWARDED)
+            ],
+            complaints=[
+                ("Z1", datetime(2024, 1, 1), None, None, "Water", "Puri", "RWSS")
+            ],
         )
     )
     assert handoff.invalid_order_share_pct(tables) is None
@@ -168,10 +181,12 @@ def test_forwarded_delegated_by_year_proxy(lake):
     ]
 
 
-def test_dedup_sensitivity_bounds_the_templated_population(lake):
+def test_dedup_sensitivity_compares_the_templated_population(lake):
     rows = {
         r["population"]: r["intervals"]
-        for r in handoff.compute(lake)["handoff_dedup_sensitivity"].iter_rows(named=True)
+        for r in handoff.compute(lake)["handoff_dedup_sensitivity"].iter_rows(
+            named=True
+        )
     }
     assert rows["all_intervals"] == 4
     assert rows["excluding_templated_to_events"] == 0
@@ -199,14 +214,15 @@ def test_markdown_states_every_required_caveat(lake):
     assert "not idle time" in md
     assert "free text with no link to a role table" in md
     assert "does not stratify by department" in md
-    assert "lower bound" in md and "upper bound" in md
+    assert "effect can have either direction" in md
+    assert "not a bound or correction" in md
     assert "Insight, phase 1" in md
 
 
 def test_markdown_reports_coverage_and_dedup_tables(lake):
     md = handoff.render_markdown(handoff.compute(lake))
     assert "### Coverage" in md
-    assert "### Dedup-sensitivity bound" in md
+    assert "### Dedup-sensitivity comparison" in md
     assert "excluding_templated_to_events" in md
     assert "ticket-creation-year proxy" in md.lower()
 
@@ -220,15 +236,21 @@ def test_write_emits_tables_markdown_and_the_handed_over_sql(lake, tmp_path):
 
     for view in handoff.FINDING_VIEWS:
         assert written[view].exists()
-    assert written["markdown"].read_text().startswith(
-        "## Elapsed time between recorded handling steps"
+    assert (
+        written["markdown"]
+        .read_text()
+        .startswith("## Elapsed time between recorded handling steps")
     )
     assert "action_type.sql first" in written["sql"].read_text()
     assert handoff.sql_text() in written["sql"].read_text()
 
     # Per-ticket intermediates never become an output file.
     names = {p.name for p in out.iterdir()}
-    assert not {n for n in names if n.startswith(("handoff_intervals", "handoff_ordered", "handoff_ticket"))}
+    assert not {
+        n
+        for n in names
+        if n.startswith(("handoff_intervals", "handoff_ordered", "handoff_ticket"))
+    }
 
 
 # --- the CLI ---------------------------------------------------------------------
@@ -244,7 +266,9 @@ def test_cli_print_sql_never_touches_the_lake(tmp_path, monkeypatch, capsys):
 def test_cli_writes_findings(lake, tmp_path, monkeypatch):
     out = tmp_path / "out"
     monkeypatch.setattr(
-        sys, "argv", ["janasunani-handoff-finding", "--lake-dir", str(lake), "--out-dir", str(out)]
+        sys,
+        "argv",
+        ["janasunani-handoff-finding", "--lake-dir", str(lake), "--out-dir", str(out)],
     )
     handoff.main()
     assert (out / "handoff_finding.md").exists()
