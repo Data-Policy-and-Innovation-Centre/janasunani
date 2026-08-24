@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -69,6 +70,7 @@ def _matches_field_schema(payload: object, dotted_path: str, schema: str) -> boo
         return (
             isinstance(value, (int, float))
             and not isinstance(value, bool)
+            and math.isfinite(value)
             and value >= 0
         )
     if schema == "object":
@@ -79,6 +81,7 @@ def _matches_field_schema(payload: object, dotted_path: str, schema: str) -> boo
         return (
             isinstance(value, (int, float))
             and not isinstance(value, bool)
+            and math.isfinite(value)
             and value > 0
         )
     raise AssertionError(f"unvalidated required-field schema: {schema}")

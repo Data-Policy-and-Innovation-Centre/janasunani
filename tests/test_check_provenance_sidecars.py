@@ -339,6 +339,14 @@ def test_summary_sidecar_rejects_free_text_scalars_without_echoing(field_path):
     assert all(CITIZEN_TEXT not in problem for problem in problems)
 
 
+@pytest.mark.parametrize("revision", ["summarizer", "bart-large-cnn", "a1b2c3d"])
+def test_summary_sidecar_accepts_closed_model_revisions(revision):
+    payload = _summary_payload()
+    payload["model"]["revision"] = revision
+
+    assert check.check_payload(payload) == []
+
+
 def test_allowlisted_list_rejects_non_string_items_without_crashing():
     assert check._check_allowlisted_list("metadata", [{}], allowed={"fixed"})
 

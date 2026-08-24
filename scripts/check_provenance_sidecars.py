@@ -79,7 +79,7 @@ _UTC_TIMESTAMP_RE = re.compile(
 _GIT_REVISION_RE = re.compile(r"^(?:[0-9a-f]{7,40}(?:-dirty)?|unknown)$")
 _VERSION_RE = re.compile(r"^(?:unknown|\d{1,4}\.\d{1,4}(?:\.\d{1,4})?[A-Za-z0-9.+-]*)$")
 _SUMMARY_MODEL_REVISION_RE = re.compile(
-    r"^(?=.{1,80}$)(?=.*[A-Za-z])[A-Za-z0-9._-]+$"
+    r"^(?:summarizer|bart-large-cnn|[0-9a-f]{7,64})$"
 )
 _ACTIONABILITY_SCHEMA = "actionability-adjudication-sample-v1"
 _ACTIONABILITY_FRONTIER_SCHEMA = "janasunani.actionability-frontier-artifacts/v1"

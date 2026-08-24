@@ -259,6 +259,29 @@ def test_required_field_schema_distinguishes_boolean_from_integer(tmp_path: Path
     assert build_bundle(config, root=tmp_path)["publication_ready"] is False  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("placeholder", [float("inf"), float("-inf"), float("nan")])
+def test_required_numeric_field_rejects_nonfinite_values(
+    tmp_path: Path, placeholder: float
+) -> None:
+    config = _config()
+    config["artifacts"][1]["required_fields"] = {  # type: ignore[index]
+        "metrics.seconds": "nonnegative_number"
+    }
+    results = tmp_path / "results"
+    results.mkdir()
+    for name in ("latency", "quality", "pilot"):
+        payload = {
+            "schema_version": f"test-{name}/v1",
+            "publication_ready": True,
+            "metrics": {"seconds": 0.0},
+        }
+        if name == "quality":
+            payload["metrics"]["seconds"] = placeholder
+        (results / f"{name}.json").write_text(json.dumps(payload) + "\n")
+
+    assert build_bundle(config, root=tmp_path)["publication_ready"] is False  # type: ignore[arg-type]
+
+
 def test_rejects_paths_outside_root(tmp_path: Path) -> None:
     config = _config()
     config["artifacts"][0]["path"] = "../latency.json"  # type: ignore[index]
