@@ -442,7 +442,7 @@ s.notes_slide.notes_text_frame.text = (
 # ══ 6 · Sarvam ════════════════════════════════════════════════════════════════
 s = clone(prs, A_TWOGROUP)
 sh = S(s)
-set_text(sh[0], "AN OUTSIDE OPTION")
+set_text(sh[0], "THE OUTSIDE OPTION: SARVAM")
 set_text(sh[1], "It does more. We have not shown it does better.")
 set_text(sh[2], "What it does")
 set_text(sh[4], "One call at ₹1.50 a page returns the text, a category, a one-line summary and the district.")
@@ -450,8 +450,8 @@ set_text(sh[6], "It reads 22 Indian languages including Odia. Ours reads English
 set_text(sh[12], "It reads handwriting. Ours does not.")
 set_text(sh[7], "What we established")
 set_text(sh[14], "On all 61 pages we compared, the two systems produced different text.")
-set_text(sh[16], "We have no accuracy result. Nobody made a hand-typed answer key.")
-set_text(sh[8], "Using it sends citizen documents outside our control.")
+set_text(sh[16], "The category and summary it returned were never graded against anything.")
+set_text(sh[8], "Different is not better. Using it also sends citizen documents outside our control.")
 s.notes_slide.notes_text_frame.text = (
     "The provider is Sarvam. Two endpoints, billed separately: digitise at ₹0.50 a page "
     "returns text and layout; extract at ₹1.00 a page returns schema-driven fields. Both is "
@@ -469,13 +469,25 @@ s.notes_slide.notes_text_frame.text = (
     "WHAT WE ACTUALLY RAN. Two runs, docs/evidence/sarvam_cached_benchmark.json. A 5-page "
     "validation (₹7.50) and a 300-page run that died at 65 pages on credit exhaustion, 3 HTTP "
     "402s, 7 job failures. 61 pages paired and scored in total.\n\n"
-    "WHAT WE FOUND. Normalised exact-text divergence 1.000 on both runs: the two systems "
-    "differed on every single page. Sarvam returns more characters, ratio 1.2433 then 1.3345. "
-    "Neither fact is an accuracy result. Divergence says they disagree, never who is right.\n\n"
-    "WHY THERE IS NO ACCURACY NUMBER. Category accuracy was the declared primary outcome and "
-    "came back null: the sample carried no gold labels. Separately, a schema bug returned HTTP "
-    "400 on every extract submission until 2026-08-09, so the one arm holding real ground "
-    "truth produced nothing. Every test mocked the transport, so no test could see the 400.\n\n"
+    "WHAT WE FOUND, AND WHAT IT COVERS. Normalised exact-text divergence 1.000 on both runs: "
+    "the two systems differed on every page. Sarvam returns more characters, ratio 1.2433 then "
+    "1.3345. That figure is TRANSCRIPTION ONLY. It compares OCR text and says nothing about "
+    "the category or summary fields. Divergence says they disagree, never who is right.\n\n"
+    "THE EXTRACT FIELDS WERE NEVER GRADED. Sarvam did return them: 61 extract jobs completed "
+    "in the 300-page run. Nothing was compared against them.\n\n"
+    "  Category was the DECLARED PRIMARY OUTCOME and came back null. Reason, verbatim from "
+    "outputs/sarvam_validation/sarvam_scorecard.md: 'Not measured — no gold labels "
+    "(gold_category) in sample; run with --join-metadata from the lake slice.' This is the "
+    "cheap gap. The recorded category already sits in our own database; the sample was simply "
+    "not joined to it. Unlike OCR, no new ground truth has to be created.\n\n"
+    "  Summary was only ever scoped as divergence against BART with no gold referee, and "
+    "summary_divergence is the same function as divergence_rate under another name "
+    "(sarvam_scorecard.py:234). Even fully run it could only have said the two summaries "
+    "differ, never which was better. It was not run: no paired sarvam_summary / "
+    "pipeline_summary in the sample.\n\n"
+    "  A schema bug returned HTTP 400 on every extract submission until 2026-08-09, which is "
+    "why the 5-page validation run has no extract output at all. Every test mocked the "
+    "transport, so no test could see the 400.\n\n"
     "NOT MEASURED, do not claim: OCR accuracy, category accuracy, summary quality, latency "
     "(stated in four places), actual billed cost (every rupee figure is list price), observed "
     "language split, handwritten versus printed split.\n\n"
