@@ -118,6 +118,32 @@ stages:
       - outputs/findings/misrouting_baseline.csv
       - outputs/findings/misrouting_baseline.md
 
+  handoff-finding:
+    desc: >-
+      Elapsed time between recorded handling steps (phase 1, descriptive
+      only): median/IQR gap by opening action type, forwarded/delegated-
+      opened gaps by ticket-creation-year proxy, and the dedup-sensitivity
+      comparison. Reads action_history only (via action_type.sql's
+      action_history_typed) -- no complaints, no dept_id/vchAllEscUser
+      chain, no counterfactual. Not the withdrawn routing-savings claim.
+    cmd: uv run --frozen janasunani-handoff-finding
+    deps:
+      - data/interim/action_history.parquet
+      - janasunani/analytics/findings/handoff.py
+      - janasunani/analytics/marts.py
+      - janasunani/analytics/sql/action_type.sql
+      - janasunani/analytics/sql/handoff.sql
+      - janasunani/olap/lake.py
+      - pyproject.toml
+      - uv.lock
+    outs:
+      - outputs/findings/handoff_coverage_summary.csv
+      - outputs/findings/handoff_gap_by_from_type.csv
+      - outputs/findings/handoff_forwarded_delegated_by_year.csv
+      - outputs/findings/handoff_dedup_sensitivity.csv
+      - outputs/findings/handoff_finding.md
+      - outputs/findings/handoff_finding.sql
+
   actionability-adjudication-prepare:
     desc: >-
       Reconcile the two directly tracked frontier judgments into confident

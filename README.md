@@ -114,6 +114,8 @@ lake.read("complaints")       # whole table as a Polars DataFrame
 ```bash
 uv run janasunani-closure-finding              # → outputs/findings/
 uv run janasunani-closure-finding --print-sql  # the view definitions, for handover
+uv run janasunani-handoff-finding              # elapsed time between recorded steps
+uv run janasunani-handoff-finding --print-sql  # install action_type.sql first for SQL handover
 ```
 
 Governed SQL marts plus the findings built on them, with the caveats each number

@@ -19,6 +19,7 @@ way that means anything, by running the mart over a fixture lake in `tests/`.
 |---|---|
 | `closure` | The disposal ladder, each resolved complaint's rung and trajectory, and the closure finding's aggregate views (#76). |
 | `action_type` | The 7-class action-type lookup over high-frequency `action_taken_remark` templates, built **per status** (#75). |
+| `handoff` | Descriptive elapsed time between recorded handling steps, with aggregate coverage and sensitivity tables. |
 
 ### `action_type`: what the officer did (#75)
 
@@ -106,6 +107,19 @@ Two house rules, enforced by tests rather than by convention:
   already contained and nobody had queried; a *capability* is something no
   existing dashboard could produce. Presenting the first as the second is the
   failure mode (ROADMAP §5.3).
+
+### `handoff`: elapsed time between recorded steps
+
+```bash
+uv run janasunani-handoff-finding                 # aggregate findings -> outputs/findings
+uv run janasunani-handoff-finding --print-sql     # SQL handover; install action_type.sql first
+```
+
+This phase-1 mart describes **completed gaps in the recorded event stream**;
+it is not a routing-time estimate, delay, idle time, or saving claim. Its
+coverage table separately counts rows without a ticket identifier or timestamp,
+and its dedup sensitivity table is an unknown-direction subpopulation comparison
+-- never a bound or correction. The rendered finding carries the fuller caveats.
 
 ### `closure`: how cases are closed (#76)
 
