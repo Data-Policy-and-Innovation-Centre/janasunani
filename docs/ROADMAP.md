@@ -89,7 +89,7 @@ The only place phase status is recorded.
 | 13 | II | **Pipeline completion**: PII gold set, Presidio tuning, end-to-end run *(a)* | 🔄 *(gold set underway, #15)* |
 | 14 | II | **Spam & duplicate detection** *(b)* | 🔄 *(55,544/55,544 indexed into 10,963 groups; bounded low-signal regression and binary actionability development scorer measured; officer gold and a release gate remain)* |
 | 15 | II | **Structured analytics I**: metrics layer, dashboards, spikes *(c)* — metric-registry slice: governed total-filings definition and protected grouped releases; cluster/citizen metrics remain unavailable pending dedup lake artifacts | 🔄 |
-| 16 | II | **A/B instrumentation + retrospective impact evidence** *(d)* | ⬜ |
+| 16 | II | **A/B instrumentation + retrospective impact evidence** *(d)* | 🔄 *(draft design and developmental routing-outcome diagnostics built; assignment, exposure, shadow execution, locked power inputs and a governed pilot remain unbuilt)* |
 | 17 | II | **Sarvam benchmark + provider registry + egress control** *(e)* | 🔄 *(cached provider evidence and governed local release wiring built; no hand-transcribed OCR accuracy set and no new paid calls)* |
 | 18 | III | Evaluation harness & operational safety (RBAC, restore, observability) | ⬜ |
 | 19 | III | Model & pipeline platform (one recipe, release manifest, API v1) | 🔄 *(immutable local release/materialization slice built; no reviewed production manifest, shared recipe or API-v1 policy yet)* |
@@ -110,6 +110,12 @@ Anchor facts:
   (n=208,267); informative-category top-1 is 54.96% (n=142,181). The older
   60.9/67.5/72.8% values are in-sample resubstitution. None of these establishes
   correct authority or a better outcome.
+- A separate research-only routing-outcome analysis now distinguishes intended
+  assignment from realised handling and reports validation/test diagnostics.
+  Its positive validation contrast does not replicate under augmented
+  estimation in 2025; assignment-field provenance, intake-time actionability
+  and congestion remain unresolved. It establishes no routing gain, deployable
+  threshold, causal impact or recommendation.
 - A privacy-screened, frontier-adjudicated actionability development set supports
   a local binary advisory candidate at 94.74% accuracy and 100% non-actionable
   review recall on a viewed 57-case test. It has no defensible `out_of_scope`

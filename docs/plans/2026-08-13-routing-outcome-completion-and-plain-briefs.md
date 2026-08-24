@@ -5,6 +5,16 @@
 **Date:** 2026-08-13
 **Supersedes:** [2026-08-11-routing-disposal-optimization.md](2026-08-11-routing-disposal-optimization.md)
 
+> **Update, 23 August 2026:** This is a historical implementation plan, not the
+> current evidence record. Subsequent workflow review established that the
+> assigning officer jointly chooses a department and complete workflow template,
+> then names the authorities occupying its nodes. `vchAllEscUser` is a stored
+> serialization of those named nodes, not the literal workflow menu. The current
+> complaint snapshot does not prove that either assignment field is immutable,
+> and action history cannot reconstruct overwritten values because it contains
+> no department-and-chain snapshots. See the design of record and
+> `docs/experiments/routing-outcome-evidence-2026-08-19.json`.
+
 ## Context
 
 `muse/routing-experiments` carries a 2,195-line design of record
@@ -28,11 +38,14 @@ recorded answers, plus Annex B, a screen-by-screen capture of the live portal
 taken on 11 August. It is the only document in the repository that describes
 what officers actually do, and it does three things to this plan.
 
-It **corroborates** the design. The treatment variable the .tex constructs from
-`vchAllEscUser` turns out to be a literal dropdown: Figures B.9-B.11 show
-roughly fifty hardcoded routing chains in one unsearchable flat list, with no
-default and no district or category logic. Q2.6 confirms it: the workflows are
-"preset irrespective of the department, category, district."
+It **corroborates** that routing is an assignment-time decision, while requiring
+a richer treatment definition. Figures B.9-B.11 show roughly fifty preset
+workflow templates in one unsearchable flat list for the CMGC login. The officer
+selects a department and complete workflow template jointly, then names the
+authorities occupying its nodes. `vchAllEscUser` stores those named-node choices;
+it is not itself the literal dropdown. Q2.6 says the displayed workflows are
+"preset irrespective of the department, category, district," with the
+office-specific caveat recorded below.
 
 It **contradicts** part of the current framing. Q2.2 records that handwritten
 Odia is *not* time-consuming for natively fluent officers, which is not what
@@ -79,12 +92,16 @@ mistake available in this document. When citing it, say which of the three
 things a given line is.
 
 **And a scope limit on all of Annex B.** Every screen was captured from one
-login, in the CM Grievance Cell. So the closure dropdown (B.14), the discard
-reasons (B.16), the ~50 workflow chains (B.9-B.11), the revert modal (B.17), the
-*(Suggested by AI)* department label (B.8) and the whole reporting surface
-(B.18-B.21) are verified for **that office only**. What a PRDW or Collector
-login shows is unknown. Q2.6 carries the same caveat in the respondent's own
-words: "Could vary by office though, since this was just the CMGC."
+login, in the CM Grievance Cell. A later operational clarification confirms
+that an officer opening a registered but unassigned complaint in other offices
+sees a similar assignment form. That generalises the assignment transaction's
+structure, not its exact options: the ~50 workflow chains (B.9-B.11), the
+*(Suggested by AI)* department label (B.8), named-authority menus, and other
+controls remain directly verified for **CMGC only**. The closure dropdown
+(B.14), discard reasons (B.16), revert modal (B.17), and reporting surface
+(B.18-B.21) also remain CMGC-only evidence. Q2.6 carries the menu caveat in the
+respondent's own words: "Could vary by office though, since this was just the
+CMGC."
 
 This matters for magnitude, not just phrasing. By intake office the corpus is
 Collector 693,691, Departments 280,305, Office of Chief Minister 217,253, Chief
@@ -193,24 +210,23 @@ silently edit it. Build the extension as a routing-outcome-local map that import
 (empirical frequency, plus Figure B.16 where it corroborates), and note in the PR
 body that upstreaming into `discards.py` is a separate governed change.
 
-### A0b. How far does the fifty-chain dropdown generalise?
+### A0b. How far does the workflow menu generalise?
 
-The other Annex B claim carrying real weight is that routing is chosen from ~50
-hardcoded chains in one flat list with no district or category logic (B.9-B.11,
-Q2.6). Scoped to CMGC that is an observation; asserted system-wide it is the
-premise of the deployability argument in §6.3.
+The assignment-form structure is now operationally confirmed beyond CMGC. The
+remaining Annex B claim carrying real weight is that the menu itself contains
+~50 hardcoded chains in one flat list with no district or category logic
+(B.9-B.11, Q2.6). Scoped to CMGC that is an observation; asserted system-wide
+it is the premise of the deployability argument in §6.3.
 
-It is checkable, cheaply, with machinery that already exists. `e0_flow_census.py`
-computes the observed role-template distribution over the whole corpus — 1,318
-templates, 1,047 category-district cells. So:
+`e0_flow_census.py` can describe which role templates were realised in the
+corpus, but realised assignments do not identify the menu that each assigning
+office was offered. Stratification by intake office is additionally not a
+substitute for the responsible assigning office. The census therefore measures
+empirical support only; it cannot establish that the CMGC menu generalises.
 
-- Stratify the observed templates by intake office and by entry role.
-- Ask what share of non-CMGC volume falls inside the ~50 captured chains.
-
-A high share is evidence the dropdown is global and the flat-list description
-generalises. A low share means other logins offer something different, the
-fifty-chain framing is CMGC-only, and §2.4 says so. Either answer is publishable
-and the question should not be left open when it costs one query.
+Generalisation requires either source-system workflow configuration versioned by
+office and date, or direct verification from other assigning-office logins. Until
+then, the ~50-template flat-list description remains CMGC-only evidence.
 
 ### A1. `outcome.py` — the three-state outcome (gap 1, "highest priority")
 
@@ -329,6 +345,14 @@ is not free. The honest treatment is probably as a *proxy for private judgement
 in the sensitivity analysis* rather than a covariate in the main design. Resolve
 it in §2.2 and §8 with an argument; do not just append a column.
 
+The same workflow record shows named authorities selected for every workflow
+node and an **Assign Another ATA** control. The role-template policy therefore
+coarsens a richer assignment transaction. Verify how named-node choices are
+stored and whether **Assign Another ATA** adds a simultaneous destination,
+replaces the first assignment, or starts a separate transaction. If it creates
+parallel assignments, the current single-pair treatment is incomplete; do not
+bury that question inside the resolution-time covariate decision.
+
 ### A7. Tests
 
 Extend [tests/test_routing_outcome_experiments.py](tests/test_routing_outcome_experiments.py),
@@ -363,15 +387,15 @@ Then edit the .tex:
   confirmed missing, "as reported" stops being a free-text puzzle and becomes a
   dropdown truncation, and the ~84% coverage estimate rises. Cite Figure B.14 as
   the source without reproducing it.
-- **§2.4 (Treatment)** — add the dropdown, scoped honestly. Roughly fifty
-  hardcoded chains in one unsearchable flat list, no default, no district or
-  category logic, **as captured in the CM Grievance Cell** (Figures B.9-B.11;
-  Q2.6, which carries the same caveat). Report A0b's generalisation share
-  immediately beside it. This is corroboration that the flow is the real decision
-  variable, and it makes §6.3's deployable policy concrete — the intervention is
-  reordering and defaulting that dropdown — but the strength of that argument
-  scales with how much non-CMGC volume A0b finds inside the captured set. Do not
-  state it more broadly than A0b supports.
+- **§2.4 (Treatment)** — describe the assignment transaction, scoped honestly.
+  The department and complete workflow template are jointly selected; named
+  authorities instantiate the nodes. Roughly fifty preset workflows appear in
+  one unsearchable flat list **as captured in the CM Grievance Cell** (Figures
+  B.9-B.11; Q2.6 carries the same caveat). `vchAllEscUser` is the resulting
+  named-node serialization, not the menu itself. Do not claim the offered menu
+  generalises without source configuration or another assigning-office login,
+  and do not interpret current snapshot fields as immutable initial assignments
+  until source-system evidence establishes that provenance.
 - **§2.2 and §8** — the written-judgement covariate question from A6.
 - **§2.5** — the physical-channel measurement lag from A2.
 - **Table 5 (corpus)** — three-state counts replace the binary `C=1` column;
@@ -662,8 +686,10 @@ stop exactly that conflation.
 12. Every number reconciles against `docs/QUALITY_BENCHMARKS.md`, and every
     officer or citizen outcome against `docs/IMPACT_METRICS.md`.
 13. Every claim sourced from Annex B is scoped to the CM Grievance Cell in its
-    own sentence, or carries A0b's generalisation share. Grep the three Markdown
-    sources for the Annex B claims and check each one.
+    own sentence, carries A0b's generalisation share, or is limited to the
+    cross-office assignment-form structure covered by the later operational
+    clarification. Grep the three Markdown sources for the Annex B claims and
+    check each one.
 14. Grep all three Markdown sources and the rendered `.docx` for Annex B figure
     references, screenshot paths and any citizen identifier. Nothing from the
     field record's screens may appear.

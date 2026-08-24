@@ -12,6 +12,7 @@ Stage order:
 
     dataset.py            build the mart, label C, cap T, write splits
     e0_flow_census.py     E0/E1 census and descriptive audit
+    provenance.py         audit assignment timing against transfer history
     train.py              fit mu (days | correct) and pi (P(correct))
     ope.py --split val    off-policy evaluation of the flow policy
 

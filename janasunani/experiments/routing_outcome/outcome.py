@@ -1,26 +1,31 @@
-"""Three-state outcome: S (actionable) and C (action taken).
+"""Closure-derived actionability proxy and action-taken outcome.
 
-Definition 2.5 of `docs/experiments/routing-outcome-model.tex`. `S` is a
-property of the grievance and does not vary with the flow, so it may be
-conditioned on. `C` is moved by routing, so it is an outcome to be constrained
-and never a conditioning event. The binary `correct` label in `dataset.py`
+The causal target in `docs/experiments/routing-outcome-model.tex` conditions on
+latent intake-time actionability, ``S*``. This module cannot observe ``S*``:
+it constructs the post-resolution proxy ``S_tilde`` from the closing remark.
+The mart keeps the historical column name ``S`` for artifact compatibility,
+but that column always means ``S_tilde``. It must not be described as a
+pre-treatment variable or used to claim identification of the ``S*=1`` target.
+
+``C`` is also read from the closing remark and is an outcome to constrain,
+never a conditioning event. The binary ``correct`` label in `dataset.py`
 collapses the two and scores the correct closure of a duplicate as a failure.
 
 WHAT DECIDES A TEMPLATE'S BUCKET
 --------------------------------
-Not the wording. The wording is ambiguous in exactly the cases that matter, so
-the assignment rests on two structural facts measured over all 1,209,144
-resolved grievances (13 Aug 2026 census, `scripts/` reconnaissance in the PR):
+For intrinsically non-actionable cases, the wording and administrative meaning
+must establish that no admissible route could act. Handoff count and duration
+are post-treatment diagnostics; they cannot turn a routing-dependent closure
+into an intake-time label. The 13 Aug 2026 census over 1,209,144 resolved
+grievances found the following profiles:
 
     bucket        chain length   median days
     discards        1.01-1.17         1-6
     handled         2.18-2.90        42-138
 
-The separation is total; nothing high-volume sits between. A case that passed
-through one officer and closed in two days was screened out. A case that passed
-through two or three and closed in seventy was worked. Every assignment below
-that is not a literal ladder template was checked against that profile, and the
-profile is recorded beside it.
+The separation is useful descriptive evidence about handling, but it does not
+identify intrinsic actionability. Templates that say only that the current
+cell cannot act, or refer the grievance to another authority, remain unknown.
 
 WHAT THE FIELD RECORD DID AND DID NOT SETTLE
 --------------------------------------------
@@ -40,7 +45,7 @@ seven intake offices, 12.68% of Collector closures and 19.66% of Chief
 Secretary's. It is system-wide, and it profiles as handled (chain 2.18, median
 78 days -- the longest median of any high-volume template). So the case was
 worked; whether substantive action followed is precisely what the remark
-declines to say. It is `S=1` with `C` unknown, which is a fourth bucket the
+declines to say. It is `S_tilde=1` with `C` unknown, which is a fourth bucket the
 binary label has nowhere to put.
 """
 
@@ -51,9 +56,11 @@ from typing import Literal
 
 from janasunani.analytics.findings.discards import TEMPLATES as DISCARD_TEMPLATES
 
-#: `S=0`: no action was available to any officer. `S=1,C=1`: substantive action.
-#: `S=1,C=0`: actionable, none taken. `S=1,C=?`: worked, outcome not recorded.
-#: `unknown`: free text; `S` undetermined and the row is excluded from both.
+#: These names predate the actionability audit. Here ``S`` means the
+#: closure-derived proxy ``S_tilde``, never latent intake-time ``S*``.
+#: ``s0``: the closure establishes intrinsic non-actionability. ``s1_c1``:
+#: substantive action. ``s1_c0``: no action claimed. ``s1_c_unknown``: worked,
+#: outcome not recorded. ``unknown``: the proxy is undetermined.
 Bucket = Literal["s0", "s1_c1", "s1_c0", "s1_c_unknown", "unknown"]
 
 
@@ -104,8 +111,13 @@ LADDER: dict[str, Assignment] = {
 #: classifier the duplicate signal belongs to the dedup task. That exclusion is
 #: right there and wrong here: a duplicate is the canonical `S=0` case, and
 #: §2.3.2 leads with it. The divergence is deliberate.
-#: Every family in that module is `S=0`; the mapping is applied in
-#: `_assignments()` rather than restated here.
+#: Most families in that module establish ``S_tilde=0``. The explicitly
+#: routing-dependent family below does not: inability of the current cell to
+#: act is evidence of possible misrouting, not evidence that no admissible
+#: department-and-chain could act.
+ROUTING_DEPENDENT_DISCARD_FAMILIES = frozenset(
+    {"outside_grievance_cell_purview"}
+)
 
 #: Templates absent from the governed families, added here on measured
 #: frequency. Sources are the 13 Aug census; Figure B.16 corroborates the first
@@ -123,10 +135,6 @@ LOCAL_S0_TEMPLATES: dict[str, Assignment] = {
     "advised to go through the due recruitment process": Assignment(
         "s0", "census n=1,432", "chain 1.07, median 2d -- redirected to a separate process"
     ),
-    "you are requested to send your grievance/petition directly to vigilance organisation"
-    " for redressal of your grievance": Assignment(
-        "s0", "census n=1,300", "chain 1.00, median 2d -- outside this cell's jurisdiction"
-    ),
     # Below the 1,000 floor, and included only because Figure B.16 shows both as
     # entries in the discard dropdown. This is the field record doing the one job
     # it can do here: corroborating a template the census already found, rather
@@ -140,7 +148,7 @@ LOCAL_S0_TEMPLATES: dict[str, Assignment] = {
 }
 
 #: Off-ladder templates that profile as *handled* rather than screened out, so
-#: they are `S=1`. The rung they belong on is a separate question and the
+#: they are `S_tilde=1`. The rung they belong on is a separate question and the
 #: remark does not always answer it.
 LOCAL_S1_TEMPLATES: dict[str, Assignment] = {
     "resolved": Assignment(
@@ -174,6 +182,13 @@ PMAY_SURVEY_NOTICE = (
 #: excluded from both the `S` conditioning set and the `C` constraint, and their
 #: share is reported.
 DEFERRED_TEMPLATES: dict[str, Assignment] = {
+    "you are requested to send your grievance/petition directly to vigilance organisation"
+    " for redressal of your grievance": Assignment(
+        "unknown",
+        "census n=1,300",
+        "chain 1.00, median 2d -- referral to another authority is "
+        "routing-dependent; it does not establish that no admissible route could act",
+    ),
     "advised to place the grievance for house before the collector in joint hearing of"
     " grievances on monday": Assignment(
         "unknown",
@@ -201,7 +216,15 @@ def _assignments() -> dict[str, Assignment]:
     merged: dict[str, Assignment] = dict(LADDER)
     for family, templates in DISCARD_TEMPLATES.items():
         for template in templates:
-            merged[template] = Assignment("s0", f"discards.py:{family}")
+            if family in ROUTING_DEPENDENT_DISCARD_FAMILIES:
+                merged[template] = Assignment(
+                    "unknown",
+                    f"discards.py:{family}",
+                    "routing-dependent closure; current-cell incapacity is not "
+                    "intrinsic non-actionability",
+                )
+            else:
+                merged[template] = Assignment("s0", f"discards.py:{family}")
     merged.update(LOCAL_S0_TEMPLATES)
     merged.update(LOCAL_S1_TEMPLATES)
     merged.update(DEFERRED_TEMPLATES)
@@ -239,7 +262,7 @@ def sql_case(column: str = "normalized_remark", alias: str = "s_bucket") -> str:
 
 
 def bucket_to_s_c(bucket: Bucket) -> tuple[int | None, int | None]:
-    """`(S, C)` for a bucket. `None` means not determined, never zero."""
+    """``(S_tilde, C)`` for a bucket; ``None`` means undetermined."""
     return {
         "s0": (0, None),
         "s1_c1": (1, 1),

@@ -1,4 +1,4 @@
-"""Eligible flow sets and the greedy policy delta(x) = argmin mu_a(x).
+"""Eligible joint-action sets and the greedy policy delta(x) = argmin mu_a(x).
 
 What the Aug 11 run actually did, despite the name: for each
 `category x district` cell it picked the eligible template with the smallest
@@ -32,7 +32,7 @@ TOP_K = 3
 
 @dataclass(frozen=True)
 class EligibleSets:
-    """Per-cell candidate templates, ranked by training frequency."""
+    """Per-cell joint actions, ranked by training frequency."""
 
     by_cell: dict[str, tuple[str, ...]]
     top_k: int = TOP_K
@@ -44,14 +44,14 @@ class EligibleSets:
         df: pd.DataFrame,
         *,
         cell_col: str = "cell",
-        flow_col: str = "flow_template",
+        action_col: str = "action_template",
         top_k: int = TOP_K,
         min_support: int = MIN_SUPPORT,
     ) -> "EligibleSets":
         by_cell: dict[str, tuple[str, ...]] = {}
-        usable = df[df[flow_col].notna()]
+        usable = df[df[action_col].notna()]
         for cell, group in usable.groupby(cell_col):
-            counts = group[flow_col].value_counts()
+            counts = group[action_col].value_counts()
             supported = counts[counts >= min_support]
             if supported.empty:
                 continue
@@ -62,11 +62,16 @@ class EligibleSets:
         return self.by_cell.get(cell, ())
 
     @property
+    def supported_cells(self) -> frozenset[str]:
+        """Cells where the support-restricted action set is nonempty."""
+        return frozenset(self.by_cell)
+
+    @property
     def universe(self) -> tuple[str, ...]:
         seen: dict[str, None] = {}
-        for flows in self.by_cell.values():
-            for flow in flows:
-                seen[flow] = None
+        for actions in self.by_cell.values():
+            for action in actions:
+                seen[action] = None
         return tuple(seen)
 
 
@@ -74,10 +79,25 @@ class EligibleSets:
 class PolicyScores:
     """Row-wise policy choice and the predicted outcomes behind it."""
 
-    flow: pd.Series  # chosen template
-    mu: pd.Series  # predicted days under the chosen template
-    pi: pd.Series | None  # predicted P(correct) under the chosen template
-    n_eligible: pd.Series  # candidates actually evaluated
+    action: pd.Series  # chosen department-chain pair
+    mu: pd.Series  # predicted days under the chosen action
+    pi: pd.Series | None  # predicted P(correct) under the chosen action
+    n_eligible: pd.Series  # candidates meeting the floor
+    fallback: pd.Series  # no candidate met the floor; highest-pi flow used
+
+
+def require_finite_predictions(
+    values: np.ndarray, *, quantity: str, action: str
+) -> np.ndarray:
+    """Fail closed instead of letting ``nanmean`` change the target population."""
+    array = np.asarray(values, dtype=float)
+    bad = ~np.isfinite(array)
+    if bad.any():
+        raise ValueError(
+            f"non-finite {quantity} predictions for action {action!r}: "
+            f"{int(bad.sum())} of {len(array)} rows"
+        )
+    return array
 
 
 def score_policy(
@@ -90,16 +110,19 @@ def score_policy(
     pi_model=None,
     tau: float = 0.0,
     cell_col: str = "cell",
-    observed_flow_col: str = "flow_template",
-    observed_mu: pd.Series | None = None,
     smearing=None,
     strata: pd.Series | None = None,
 ) -> PolicyScores:
-    """Evaluate mu (and pi) at every eligible flow; return the row-wise argmin.
+    """Evaluate mu (and pi) at every eligible action; return the row-wise argmin.
 
-    Rows whose cell has no eligible template, or whose every candidate fails the
-    correctness floor, fall back to the observed flow and `observed_mu`. `tau`
-    is the regulator's floor: speed may not be bought with `bare` disposals.
+    Every row must have a nonempty candidate set; callers restrict the target
+    population to supported cells before scoring. If no candidate meets the
+    correctness floor, the total rule chooses the candidate with the highest
+    predicted correctness (ties follow the candidate order). Its predicted
+    duration and correctness are retained. The fallback depends only on the
+    row's pre-treatment inputs and fitted nuisance functions, never its observed
+    treatment. `tau` is the regulator's floor: speed may not be bought with
+    `bare` disposals.
 
     `smearing` retransforms the log-scale prediction to days. Without it the
     bare `expm1` returns something closer to a conditional median (Def. 5.3),
@@ -109,57 +132,99 @@ def score_policy(
     """
     universe = eligible.universe
     if not universe:
-        raise ValueError("no eligible templates; check MIN_SUPPORT and the training cells")
-
-    # One prediction pass per candidate template over the whole frame. Cheaper
-    # and far less error-prone than per-row feature surgery.
-    mu_by_flow: dict[str, np.ndarray] = {}
-    pi_by_flow: dict[str, np.ndarray] = {}
-    for flow in universe:
-        X = encoder.transform(df, flow=flow)[features]
-        predicted = mu_model.predict(X)
-        mu_by_flow[flow] = (
-            np.expm1(predicted)
-            if smearing is None
-            else smearing.apply(predicted, strata=strata)
-        )
-        if pi_model is not None:
-            pi_by_flow[flow] = pi_model.predict_proba(X)[:, 1]
+        raise ValueError("no eligible actions; check MIN_SUPPORT and the training cells")
+    if not 0 <= tau <= 1:
+        raise ValueError("correctness floor tau must lie in [0, 1]")
+    if pi_model is None and tau > 0:
+        raise ValueError("a positive correctness floor requires pi_model")
 
     allowed = pd.Series([eligible.candidates(c) for c in df[cell_col]], index=df.index)
+    positions_by_action: dict[str, list[int]] = {action: [] for action in universe}
+    for position, (index, candidates) in enumerate(allowed.items()):
+        if not candidates:
+            raise ValueError(
+                f"row {index!r} has no supported policy candidates; "
+                "restrict evaluation to EligibleSets.supported_cells"
+            )
+        for action in candidates:
+            positions_by_action[action].append(position)
 
-    best_flow: list[object] = []
+    # Score a flow only on rows whose cell admits it. A flow may be supported
+    # in only a handful of cells; evaluating every flow on the whole frame makes
+    # the unrestricted arm needlessly quadratic in rows x global templates.
+    mu_by_action: dict[str, np.ndarray] = {}
+    pi_by_action: dict[str, np.ndarray] = {}
+    for action in universe:
+        positions = np.asarray(positions_by_action[action], dtype=int)
+        if not len(positions):
+            continue
+        rows = df.iloc[positions]
+        X = encoder.transform(rows, action=action)[features]
+        predicted = require_finite_predictions(
+            mu_model.predict(X), quantity="log-duration", action=action
+        )
+        row_strata = strata.iloc[positions] if strata is not None else None
+        mu_days = (
+            np.expm1(predicted)
+            if smearing is None
+            else smearing.apply(predicted, strata=row_strata)
+        )
+        action_mu = np.full(len(df), np.nan)
+        action_mu[positions] = require_finite_predictions(
+            mu_days, quantity="duration", action=action
+        )
+        mu_by_action[action] = action_mu
+        if pi_model is not None:
+            pi = require_finite_predictions(
+                pi_model.predict_proba(X)[:, 1], quantity="correctness", action=action
+            )
+            if ((pi < 0) | (pi > 1)).any():
+                raise ValueError(
+                    f"correctness predictions outside [0, 1] for action {action!r}"
+                )
+            action_pi = np.full(len(df), np.nan)
+            action_pi[positions] = pi
+            pi_by_action[action] = action_pi
+
+    best_action: list[object] = []
     best_mu: list[float] = []
     best_pi: list[float] = []
     n_eligible: list[int] = []
-
-    observed_flow = df[observed_flow_col]
-    fallback_mu = (
-        observed_mu if observed_mu is not None else pd.Series(np.nan, index=df.index)
-    )
+    used_fallback: list[bool] = []
 
     for position, (index, candidates) in enumerate(allowed.items()):
         chosen, chosen_mu, chosen_pi = None, np.inf, np.nan
         evaluated = 0
-        for flow in candidates:
-            if pi_model is not None and pi_by_flow[flow][position] < tau:
+        for action in candidates:
+            if pi_model is not None and pi_by_action[action][position] < tau:
                 continue
             evaluated += 1
-            value = mu_by_flow[flow][position]
+            value = mu_by_action[action][position]
             if value < chosen_mu:
-                chosen, chosen_mu = flow, float(value)
-                chosen_pi = float(pi_by_flow[flow][position]) if pi_model is not None else np.nan
+                chosen, chosen_mu = action, float(value)
+                chosen_pi = (
+                    float(pi_by_action[action][position])
+                    if pi_model is not None
+                    else np.nan
+                )
         if chosen is None:
-            chosen = observed_flow.iat[position]
-            chosen_mu = float(fallback_mu.iat[position])
-        best_flow.append(chosen)
+            # Total pre-treatment fallback from the same admissible set. The
+            # fixed candidate order resolves ties reproducibly.
+            chosen = max(candidates, key=lambda action: pi_by_action[action][position])
+            chosen_mu = float(mu_by_action[chosen][position])
+            chosen_pi = float(pi_by_action[chosen][position])
+            used_fallback.append(True)
+        else:
+            used_fallback.append(False)
+        best_action.append(chosen)
         best_mu.append(chosen_mu)
         best_pi.append(chosen_pi)
         n_eligible.append(evaluated)
 
     return PolicyScores(
-        flow=pd.Series(best_flow, index=df.index),
+        action=pd.Series(best_action, index=df.index),
         mu=pd.Series(best_mu, index=df.index),
         pi=pd.Series(best_pi, index=df.index) if pi_model is not None else None,
         n_eligible=pd.Series(n_eligible, index=df.index),
+        fallback=pd.Series(used_fallback, index=df.index, dtype=bool),
     )

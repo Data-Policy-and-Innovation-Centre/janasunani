@@ -277,6 +277,15 @@
       "tracked_input": true
     },
     {
+      "id": "routing_outcome_development",
+      "section": "impact",
+      "path": "docs/experiments/routing-outcome-evidence-2026-08-19.json",
+      "producer": "routing-outcome dataset, nuisance-fit, OPE, frontier, provenance, and robustness runners",
+      "claim": "developmental observational routing-outcome diagnostics over a closure-derived proxy; not causal impact or pilot evidence",
+      "required_for_publication": false,
+      "tracked_input": true
+    },
+    {
       "id": "routing_correct_authority_release",
       "section": "accuracy",
       "path": "outputs/evaluation/routing_correct_authority_release.json",
