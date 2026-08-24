@@ -1,3 +1,4 @@
+import hashlib
 import json
 
 import pytest
@@ -7,6 +8,7 @@ from janasunani.evaluation.categorization import (
     benchmark_hashing_classifier,
     load_jsonl,
     select_abstention_threshold,
+    validate_provenance,
     validate_records,
 )
 from janasunani.evaluation.classification import ScoredExample
@@ -40,6 +42,67 @@ PHRASES = {
 }
 
 
+def write_manifest_and_provenance(tmp_path):
+    dataset_path = tmp_path / "categorization.jsonl"
+    rendered = "".join(
+        json.dumps(
+            {
+                "item_id": f"item-{split}",
+                "group_id": f"group-{split}",
+                "redacted_text": f"redacted {split} text",
+                "category": "Water Supply",
+                "split": split,
+                "language": "English",
+                "source_kind": "typed",
+            },
+            sort_keys=True,
+        )
+        + "\n"
+        for split in ("train", "validation", "test")
+    )
+    dataset_path.write_text(rendered, encoding="utf-8")
+    provenance_path = tmp_path / "categorization.provenance.json"
+    payload = {
+        "schema_version": "categorization-benchmark-sample-v1",
+        "dataset_fingerprint": f"sha256:{hashlib.sha256(rendered.encode()).hexdigest()}",
+        "records": 3,
+        "split_policy": "chronological_months_1_6_train_7_9_validation_10_12_test",
+        "group_policy": "one earliest row per exact normalized-redacted-text group",
+    }
+    provenance_path.write_text(json.dumps(payload), encoding="utf-8")
+    return dataset_path, provenance_path, payload
+
+
+def test_provenance_binds_manifest_and_sampling_contract(tmp_path):
+    dataset_path, provenance_path, _ = write_manifest_and_provenance(tmp_path)
+
+    validated = validate_provenance(
+        dataset_path, provenance_path, load_jsonl(dataset_path)
+    )
+
+    assert validated["schema_version"] == "categorization-benchmark-sample-v1"
+    assert validated["provenance_sha256"].startswith("sha256:")
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("schema_version", "categorization-benchmark-sample-v2"),
+        ("dataset_fingerprint", "sha256:" + "0" * 64),
+        ("records", 4),
+        ("split_policy", "random_split"),
+        ("group_policy", "row_level"),
+    ],
+)
+def test_provenance_rejects_manifest_or_policy_mismatch(tmp_path, field, replacement):
+    dataset_path, provenance_path, payload = write_manifest_and_provenance(tmp_path)
+    payload[field] = replacement
+    provenance_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=field):
+        validate_provenance(dataset_path, provenance_path, load_jsonl(dataset_path))
+
+
 def test_private_jsonl_loader_rejects_raw_and_identity_fields(tmp_path):
     path = tmp_path / "categorization.jsonl"
     payload = {
@@ -53,7 +116,9 @@ def test_private_jsonl_loader_rejects_raw_and_identity_fields(tmp_path):
     }
     rows = []
     for split in ("train", "validation", "test"):
-        row = dict(payload, item_id=f"item-{split}", group_id=f"group-{split}", split=split)
+        row = dict(
+            payload, item_id=f"item-{split}", group_id=f"group-{split}", split=split
+        )
         rows.append(json.dumps(row))
     path.write_text("\n".join(rows) + "\n", encoding="utf-8")
 

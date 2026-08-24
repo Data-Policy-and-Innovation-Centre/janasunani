@@ -30,6 +30,9 @@ from janasunani.evaluation.classification import (
 MODEL_FAMILY = "hashing-word-char-sgd"
 MODEL_VERSION = "categorizer-hashing-v1"
 REPORT_VERSION = "janasunani.categorization-scorecard/v1"
+PROVENANCE_SCHEMA_VERSION = "categorization-benchmark-sample-v1"
+EXPECTED_SPLIT_POLICY = "chronological_months_1_6_train_7_9_validation_10_12_test"
+EXPECTED_GROUP_POLICY = "one earliest row per exact normalized-redacted-text group"
 _REQUIRED_FIELDS = {
     "item_id",
     "group_id",
@@ -65,7 +68,9 @@ def load_jsonl(path: Path) -> list[CategorizationRecord]:
     """Load the strict redacted-only private benchmark manifest."""
 
     records: list[CategorizationRecord] = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for line_number, line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), 1
+    ):
         if not line.strip():
             continue
         payload = json.loads(line)
@@ -87,6 +92,48 @@ def load_jsonl(path: Path) -> list[CategorizationRecord]:
         records.append(CategorizationRecord(**payload))
     validate_records(records)
     return records
+
+
+def validate_provenance(
+    dataset_path: Path,
+    provenance_path: Path,
+    records: Sequence[CategorizationRecord],
+) -> dict[str, str]:
+    """Bind an evaluated manifest to its declared sampling contract."""
+
+    try:
+        payload = json.loads(provenance_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise ValueError(f"cannot read categorization provenance: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("categorization provenance must be an object")
+
+    expected_fingerprint = (
+        f"sha256:{hashlib.sha256(dataset_path.read_bytes()).hexdigest()}"
+    )
+    required = {
+        "schema_version": PROVENANCE_SCHEMA_VERSION,
+        "dataset_fingerprint": expected_fingerprint,
+        "records": len(records),
+        "split_policy": EXPECTED_SPLIT_POLICY,
+        "group_policy": EXPECTED_GROUP_POLICY,
+    }
+    for field, expected in required.items():
+        observed = payload.get(field)
+        if type(observed) is not type(expected) or observed != expected:
+            raise ValueError(
+                f"categorization provenance {field} mismatch: "
+                f"expected {expected!r}, observed {observed!r}"
+            )
+
+    return {
+        "schema_version": PROVENANCE_SCHEMA_VERSION,
+        "provenance_sha256": (
+            f"sha256:{hashlib.sha256(provenance_path.read_bytes()).hexdigest()}"
+        ),
+        "split_policy": EXPECTED_SPLIT_POLICY,
+        "group_policy": EXPECTED_GROUP_POLICY,
+    }
 
 
 def validate_records(records: Sequence[CategorizationRecord]) -> None:
@@ -329,8 +376,7 @@ def benchmark_hashing_classifier(
         "validation": validation_metrics,
         "validation_selective": validation_selective,
         "selective_constraints_met": (
-            float(validation_selective["selective_accuracy"])
-            >= min_selective_accuracy
+            float(validation_selective["selective_accuracy"]) >= min_selective_accuracy
             and float(validation_selective["coverage"]) >= min_coverage
         ),
         "test": test_metrics,
@@ -378,14 +424,19 @@ def benchmark_hashing_classifier(
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", type=Path, required=True)
+    parser.add_argument("--provenance", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--alpha-values", type=float, nargs="+", default=[1e-6, 1e-5, 1e-4, 1e-3])
+    parser.add_argument(
+        "--alpha-values", type=float, nargs="+", default=[1e-6, 1e-5, 1e-4, 1e-3]
+    )
     parser.add_argument("--n-features", type=int, default=2**18)
     parser.add_argument("--min-selective-accuracy", type=float, default=0.8)
     parser.add_argument("--min-coverage", type=float, default=0.5)
     args = parser.parse_args(argv)
+    records = load_jsonl(args.dataset)
+    provenance = validate_provenance(args.dataset, args.provenance, records)
     benchmark = benchmark_hashing_classifier(
-        load_jsonl(args.dataset),
+        records,
         alpha_values=args.alpha_values,
         n_features=args.n_features,
         min_selective_accuracy=args.min_selective_accuracy,
@@ -395,12 +446,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     report = {
         "report_version": REPORT_VERSION,
         "dataset_sha256": f"sha256:{digest}",
+        "dataset_provenance": provenance,
         "label_interpretation": "historical administrative agreement, not policy correctness",
         "release_eligible": False,
         **benchmark.report,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    args.output.write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     print(
         json.dumps(
             {

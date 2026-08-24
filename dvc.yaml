@@ -240,6 +240,7 @@ stages:
     cmd: >-
       uv run --frozen --extra pipeline-core python -m janasunani.evaluation.categorization
       --dataset data/external/categorization_historical_v1/benchmark.jsonl
+      --provenance data/external/categorization_historical_v1/benchmark.provenance.json
       --output outputs/evaluation/categorization_historical_v1.json
       --min-selective-accuracy 0.8
       --min-coverage 0.5

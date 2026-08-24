@@ -19,6 +19,12 @@ from pathlib import Path
 import re
 from typing import Iterable, Sequence
 
+from janasunani.evaluation.categorization import (
+    EXPECTED_GROUP_POLICY,
+    EXPECTED_SPLIT_POLICY,
+    PROVENANCE_SCHEMA_VERSION,
+)
+
 
 _SHAPED_PII = re.compile(
     r"(?<!\d)(?:[6-9]\d{9}|\d{12})(?!\d)"
@@ -103,7 +109,10 @@ def prepare_records(
     eligible_categories = sorted(
         category
         for category, counts in support.items()
-        if all(counts[split] >= min_support_per_split for split in ("train", "validation", "test"))
+        if all(
+            counts[split] >= min_support_per_split
+            for split in ("train", "validation", "test")
+        )
     )
     eligible = set(eligible_categories)
     selected = [row for row in candidates if row["category"] in eligible]
@@ -116,12 +125,16 @@ def prepare_records(
         "eligible_categories": eligible_categories,
         "excluded_categories": sorted(set(support) - eligible),
         "split_counts": dict(sorted(Counter(row["split"] for row in selected).items())),
-        "category_counts": dict(sorted(Counter(row["category"] for row in selected).items())),
+        "category_counts": dict(
+            sorted(Counter(row["category"] for row in selected).items())
+        ),
     }
     return selected, evidence
 
 
-async def _load_rows(env_file: Path, *, year: int) -> list[tuple[str, datetime, str, str]]:
+async def _load_rows(
+    env_file: Path, *, year: int
+) -> list[tuple[str, datetime, str, str]]:
     from dotenv import dotenv_values
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import create_async_engine
@@ -190,12 +203,12 @@ def build_sample(
     output.write_text(rendered, encoding="utf-8")
     output.chmod(0o600)
     payload = {
-        "schema_version": "categorization-benchmark-sample-v1",
+        "schema_version": PROVENANCE_SCHEMA_VERSION,
         "dataset_fingerprint": f"sha256:{hashlib.sha256(rendered.encode()).hexdigest()}",
         "records": len(records),
         "year": year,
-        "split_policy": "chronological_months_1_6_train_7_9_validation_10_12_test",
-        "group_policy": "one earliest row per exact normalized-redacted-text group",
+        "split_policy": EXPECTED_SPLIT_POLICY,
+        "group_policy": EXPECTED_GROUP_POLICY,
         "min_support_per_split": min_support_per_split,
         "label_interpretation": "historical administrative agreement, not policy correctness",
         "privacy": {

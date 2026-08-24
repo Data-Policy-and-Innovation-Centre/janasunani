@@ -610,7 +610,8 @@ stages:
   categorization-historical-benchmark:
     cmd: uv run --frozen --extra pipeline-core python -m
       janasunani.evaluation.categorization --dataset
-      data/external/categorization_historical_v1/benchmark.jsonl --output
+      data/external/categorization_historical_v1/benchmark.jsonl --provenance
+      data/external/categorization_historical_v1/benchmark.provenance.json --output
       outputs/evaluation/categorization_historical_v1.json
       --min-selective-accuracy 0.8 --min-coverage 0.5
     deps:
@@ -624,8 +625,8 @@ stages:
       size: 2098
     - path: janasunani/evaluation/categorization.py
       hash: md5
-      md5: 46349627c3f5efc76931cd944d3f3a55
-      size: 14022
+      md5: e94c0797d9db958ce9c166937bdf832f
+      size: 16535
     - path: pyproject.toml
       hash: md5
       md5: 7650a32a2ab1519840a182edfcf10a50
