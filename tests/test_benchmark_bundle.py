@@ -316,6 +316,38 @@ def test_required_numeric_field_handles_arbitrary_size_integer(tmp_path: Path) -
     assert bundle["publication_ready"] is False
 
 
+def test_structured_metric_and_count_maps_validate_entries(tmp_path: Path) -> None:
+    config = _config()
+    for artifact in config["artifacts"]:  # type: ignore[union-attr]
+        artifact["required_fields"] = {
+            "metrics.per_class": "metric_map",
+            "failures.by_class": "nonempty_count_map",
+        }
+    results = tmp_path / "results"
+    results.mkdir()
+    for name in ("latency", "quality", "pilot"):
+        payload = {
+            "schema_version": f"test-{name}/v1",
+            "publication_ready": True,
+            "metrics": {
+                "per_class": {
+                    "class-a": {"support": 2, "precision": 0.5, "recall": 1.0}
+                }
+            },
+            "failures": {"by_class": {"class-a": 0}},
+        }
+        (results / f"{name}.json").write_text(json.dumps(payload) + "\n")
+
+    assert build_bundle(config, root=tmp_path)["publication_ready"] is True  # type: ignore[arg-type]
+
+    (results / "quality.json").write_text(
+        '{"schema_version":"test-quality/v1","publication_ready":true,'
+        '"metrics":{"per_class":{"placeholder":false}},'
+        '"failures":{"by_class":{"placeholder":false}}}\n'
+    )
+    assert build_bundle(config, root=tmp_path)["publication_ready"] is False  # type: ignore[arg-type]
+
+
 def _assign_dotted(payload: dict[str, object], path: str, value: object) -> None:
     parts = path.split(".")
     target = payload
@@ -335,8 +367,14 @@ def _minimum_value_for_schema(schema: str) -> object:
         return 0
     if schema == "boolean":
         return False
-    if schema in {"array", "nonempty_array", "nonempty_string_array"}:
+    if schema == "array":
         return []
+    if schema == "nonempty_array":
+        return [False]
+    if schema == "nonempty_string_array":
+        return ["placeholder"]
+    if schema in {"metric_map", "nonempty_count_map"}:
+        return {"placeholder": False}
     if schema in {"object", "nonempty_object"}:
         return {"placeholder": False}
     if schema == "sha256":
@@ -379,6 +417,45 @@ def test_production_contract_rejects_outer_container_placeholders(tmp_path: Path
         artifact["status"] == "incomplete"
         for artifact in bundle["artifacts"]
         if artifact["required_for_publication"]
+    )
+
+
+def test_production_contract_rejects_nested_map_placeholders(tmp_path: Path) -> None:
+    config = json.loads(
+        (Path(__file__).parents[1] / "config" / "benchmark_bundle.json").read_text()
+    )
+    required = [
+        artifact
+        for artifact in config["artifacts"]
+        if artifact["required_for_publication"]
+    ]
+    for artifact in required:
+        payload: dict[str, object] = {
+            "schema_version": artifact["schema_version"],
+            "publication_ready": True,
+        }
+        for dotted_path, schema in artifact["required_fields"].items():
+            _assign_dotted(payload, dotted_path, _minimum_value_for_schema(schema))
+        for dotted_path, expected in artifact["required_values"].items():
+            _assign_dotted(payload, dotted_path, expected)
+        path = tmp_path / artifact["path"]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload) + "\n")
+
+    bundle = build_bundle(config, root=tmp_path)
+
+    assert bundle["publication_ready"] is False
+    structured_map_ids = {
+        artifact["id"]
+        for artifact in required
+        if {"metric_map", "nonempty_count_map"}
+        & set(artifact["required_fields"].values())
+    }
+    assert structured_map_ids
+    assert all(
+        artifact["status"] == "incomplete"
+        for artifact in bundle["artifacts"]
+        if artifact["id"] in structured_map_ids
     )
 
 

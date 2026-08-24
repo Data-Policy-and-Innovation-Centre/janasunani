@@ -22,7 +22,9 @@ REQUIRED_FIELD_SCHEMAS = {
     "array",
     "boolean",
     "finite_number",
+    "metric_map",
     "nonempty_array",
+    "nonempty_count_map",
     "nonempty_object",
     "nonempty_string",
     "nonempty_string_array",
@@ -66,6 +68,46 @@ def _is_finite_number(value: object) -> TypeGuard[int | float]:
     return not isinstance(value, float) or math.isfinite(value)
 
 
+def _is_metric_map(value: object) -> bool:
+    """Validate label -> support plus bounded metric objects."""
+
+    if not isinstance(value, dict) or not value:
+        return False
+    for label, row in value.items():
+        if not isinstance(label, str) or not label.strip() or not isinstance(row, dict):
+            return False
+        support = row.get("support")
+        if (
+            not isinstance(support, int)
+            or isinstance(support, bool)
+            or support <= 0
+        ):
+            return False
+        metrics = [metric for key, metric in row.items() if key != "support"]
+        if not metrics or not all(
+            _is_finite_number(metric) and 0 <= metric <= 1 for metric in metrics
+        ):
+            return False
+    return True
+
+
+def _is_nonempty_count_map(value: object) -> bool:
+    """Validate a nonempty aggregate label -> count object."""
+
+    return (
+        isinstance(value, dict)
+        and bool(value)
+        and all(
+            isinstance(label, str)
+            and bool(label.strip())
+            and isinstance(count, int)
+            and not isinstance(count, bool)
+            and count >= 0
+            for label, count in value.items()
+        )
+    )
+
+
 def _matches_field_schema(payload: object, dotted_path: str, schema: str) -> bool:
     value = _lookup(payload, dotted_path)
     if schema == "array":
@@ -74,8 +116,12 @@ def _matches_field_schema(payload: object, dotted_path: str, schema: str) -> boo
         return isinstance(value, bool)
     if schema == "finite_number":
         return _is_finite_number(value)
+    if schema == "metric_map":
+        return _is_metric_map(value)
     if schema == "nonempty_array":
         return isinstance(value, list) and bool(value)
+    if schema == "nonempty_count_map":
+        return _is_nonempty_count_map(value)
     if schema == "nonempty_object":
         return isinstance(value, dict) and bool(value)
     if schema == "nonempty_string":

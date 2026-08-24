@@ -75,11 +75,11 @@
         "metrics.macro_f1": "unit_interval",
         "metrics.coverage": "unit_interval",
         "metrics.abstention_rate": "unit_interval",
-        "metrics.per_class": "nonempty_object",
+        "metrics.per_class": "metric_map",
         "subgroups.dimension_names": "nonempty_string_array",
-        "subgroups.results": "nonempty_object",
+        "subgroups.results": "metric_map",
         "failures.reviewed": "positive_integer",
-        "failures.by_class": "nonempty_object"
+        "failures.by_class": "nonempty_count_map"
       },
       "missing_reason": "needs a frozen officer-confirmed five-class release set"
     },
@@ -123,11 +123,11 @@
         "metrics.macro_f1": "unit_interval",
         "metrics.coverage": "unit_interval",
         "metrics.abstention_rate": "unit_interval",
-        "metrics.per_class": "nonempty_object",
+        "metrics.per_class": "metric_map",
         "subgroups.dimension_names": "nonempty_string_array",
-        "subgroups.results": "nonempty_object",
+        "subgroups.results": "metric_map",
         "failures.reviewed": "positive_integer",
-        "failures.by_class": "nonempty_object"
+        "failures.by_class": "nonempty_count_map"
       },
       "missing_reason": "needs a governed production-domain categorization release set"
     },
@@ -165,9 +165,9 @@
         "metrics.pii_leak_rate": "unit_interval",
         "metrics.usefulness_rate": "unit_interval",
         "subgroups.dimension_names": "nonempty_string_array",
-        "subgroups.results": "nonempty_object",
+        "subgroups.results": "metric_map",
         "failures.reviewed": "positive_integer",
-        "failures.by_class": "nonempty_object"
+        "failures.by_class": "nonempty_count_map"
       },
       "missing_reason": "needs paired human summary judgments"
     },
@@ -203,11 +203,11 @@
         "metrics.precision": "unit_interval",
         "metrics.recall": "unit_interval",
         "metrics.f1": "unit_interval",
-        "metrics.per_entity": "nonempty_object",
+        "metrics.per_entity": "metric_map",
         "subgroups.dimension_names": "nonempty_string_array",
-        "subgroups.results": "nonempty_object",
+        "subgroups.results": "metric_map",
         "failures.reviewed": "positive_integer",
-        "failures.by_class": "nonempty_object"
+        "failures.by_class": "nonempty_count_map"
       },
       "missing_reason": "current PII evidence lacks a complete precision and supported-language release scorecard"
     },
@@ -251,11 +251,11 @@
         "metrics.top3_accuracy": "unit_interval",
         "metrics.coverage": "unit_interval",
         "metrics.abstention_rate": "unit_interval",
-        "metrics.per_authority": "nonempty_object",
+        "metrics.per_authority": "metric_map",
         "subgroups.dimension_names": "nonempty_string_array",
-        "subgroups.results": "nonempty_object",
+        "subgroups.results": "metric_map",
         "failures.reviewed": "positive_integer",
-        "failures.by_class": "nonempty_object"
+        "failures.by_class": "nonempty_count_map"
       },
       "missing_reason": "historical destination agreement is not correct-authority adjudication"
     },
@@ -304,7 +304,7 @@
         "effects.resolution_90d.ci_high": "finite_number",
         "effects.resolution_90d.n": "positive_integer",
         "missingness.total": "nonnegative_integer",
-        "missingness.by_reason": "nonempty_object",
+        "missingness.by_reason": "nonempty_count_map",
         "censoring.method": "nonempty_string",
         "censoring.censored": "nonnegative_integer"
       },
@@ -337,7 +337,7 @@
         "effects.satisfaction.n": "positive_integer",
         "effects.response_rate": "unit_interval",
         "missingness.total": "nonnegative_integer",
-        "missingness.by_reason": "nonempty_object"
+        "missingness.by_reason": "nonempty_count_map"
       },
       "missing_reason": "needs an approved fixed-horizon satisfaction workflow and response data"
     }
