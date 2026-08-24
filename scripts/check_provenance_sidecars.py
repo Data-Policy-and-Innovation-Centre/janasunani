@@ -187,6 +187,25 @@ def _check_closed_string(
     return []
 
 
+def _check_closed_vocabulary(
+    path: str,
+    value: Any,
+    *,
+    allowed_words: set[str],
+) -> list[str]:
+    """Allow bounded metadata prose made only from a field-specific vocabulary."""
+
+    if not isinstance(value, str) or not value or len(value) > MAX_STRING:
+        return [f"{path} must use its closed metadata vocabulary"]
+    words = re.findall(r"[A-Za-z0-9]+", value)
+    if not words or any(word.casefold() not in allowed_words for word in words):
+        return [f"{path} is not in its closed metadata vocabulary; value withheld"]
+    remainder = re.sub(r"[A-Za-z0-9]+", "", value)
+    if re.fullmatch(r"[\s,;:._()/\-]*", remainder) is None:
+        return [f"{path} has invalid metadata punctuation; value withheld"]
+    return []
+
+
 def _check_pii_rederived(payload: dict[str, Any]) -> list[str]:
     problems = _check_exact_keys("PII re-derived sidecar", payload, ALLOWED_TOP)
     if problems:
@@ -804,10 +823,34 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
     if problems:
         return problems
 
-    problems += _check_closed_string(
+    problems += _check_closed_vocabulary(
         "claim_status",
         payload["claim_status"],
-        allowed={"development evidence only"},
+        allowed_words={
+            "180",
+            "a",
+            "audit",
+            "benchmark",
+            "canonical",
+            "development",
+            "evidence",
+            "for",
+            "gate",
+            "historical",
+            "is",
+            "it",
+            "not",
+            "confirmed",
+            "officer",
+            "only",
+            "or",
+            "preserved",
+            "release",
+            "reproducible",
+            "row",
+            "the",
+            "truth",
+        },
     )
 
     privacy = payload["privacy"]
@@ -822,14 +865,16 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
         "actionability frontier privacy", privacy, privacy_keys
     )
     if isinstance(privacy, dict):
-        fixed_privacy = {
-            "source": "PII-redacted sample",
-            "storage": "private DVC remote",
-        }
-        for key, expected in fixed_privacy.items():
-            problems += _check_closed_string(
-                f"privacy.{key}", privacy.get(key), allowed={expected}
-            )
+        problems += _check_closed_vocabulary(
+            "privacy.source",
+            privacy.get("source"),
+            allowed_words={"controlled", "dpic", "pii", "redacted", "sample"},
+        )
+        problems += _check_closed_string(
+            "privacy.storage",
+            privacy.get("storage"),
+            allowed={"private DVC remote"},
+        )
         expected_privacy_booleans = {
             "contains_redacted_narratives": True,
             "git_contains_row_level_bytes": False,
@@ -854,15 +899,76 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
     if isinstance(sample, dict):
         problems += _check_nonnegative_int("sample.records", sample.get("records"))
         problems += _check_sha256("sample.sha256", sample.get("sha256"))
-        fixed_sample = {
-            "sampling": "fixed sample",
-            "split_policy": "fixed hash split",
-            "tracking_mode": "direct DVC input",
-            "tracking_reason": "private salt is not versioned",
+        sample_vocabularies = {
+            "sampling": {
+                "180",
+                "40",
+                "5",
+                "across",
+                "administrative",
+                "development",
+                "each",
+                "enriched",
+                "fixed",
+                "four",
+                "from",
+                "opaque",
+                "of",
+                "plus",
+                "previously",
+                "quotas",
+                "records",
+                "row",
+                "sample",
+                "sampling",
+                "split",
+                "aware",
+                "strata",
+                "unlabeled",
+                "label",
+                "weak",
+                "within",
+            },
+            "split_policy": {
+                "20",
+                "2021",
+                "2023",
+                "2024",
+                "2025",
+                "60",
+                "chronological",
+                "development",
+                "only",
+                "fixed",
+                "hash",
+                "not",
+                "single",
+                "snapshot",
+                "split",
+                "test",
+                "train",
+                "validation",
+            },
+            "tracking_mode": {"direct", "dvc", "input", "tracked"},
+            "tracking_reason": {
+                "because",
+                "depends",
+                "intentionally",
+                "is",
+                "not",
+                "on",
+                "private",
+                "sample",
+                "salt",
+                "the",
+                "tracked",
+                "untracked",
+                "versioned",
+            },
         }
-        for key, expected in fixed_sample.items():
-            problems += _check_closed_string(
-                f"sample.{key}", sample.get(key), allowed={expected}
+        for key, vocabulary in sample_vocabularies.items():
+            problems += _check_closed_vocabulary(
+                f"sample.{key}", sample.get(key), allowed_words=vocabulary
             )
         split_counts = sample.get("split_counts")
         problems += _check_exact_keys(
@@ -890,10 +996,27 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
                 f"direct_inputs[{position}]", details, {"role", "sha256"}
             )
             if isinstance(details, dict):
-                problems += _check_closed_string(
+                problems += _check_closed_vocabulary(
                     f"direct_inputs[{position}].role",
                     details.get("role"),
-                    allowed={"model output"},
+                    allowed_words={
+                        "adjudication",
+                        "backup",
+                        "codex",
+                        "context",
+                        "first",
+                        "frontier",
+                        "hosted",
+                        "independent",
+                        "judge",
+                        "model",
+                        "openai",
+                        "output",
+                        "primary",
+                        "resolver",
+                        "second",
+                        "separate",
+                    },
                 )
                 problems += _check_sha256(
                     f"direct_inputs[{position}].sha256", details.get("sha256")
@@ -948,10 +1071,21 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
                 f"canonical_gold.{key}", canonical.get(key)
             )
         problems += _check_sha256("canonical_gold.sha256", canonical.get("sha256"))
-        problems += _check_closed_string(
+        problems += _check_closed_vocabulary(
             "canonical_gold.policy",
             canonical.get("policy"),
-            allowed={"exclude uncertain rows"},
+            allowed_words={
+                "all",
+                "every",
+                "exclude",
+                "judgment",
+                "judgments",
+                "marked",
+                "resolver",
+                "row",
+                "rows",
+                "uncertain",
+            },
         )
         labels = canonical.get("label_counts")
         allowed_labels = {
@@ -974,15 +1108,42 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
         "actionability frontier historical_gold", historical, historical_keys
     )
     if isinstance(historical, dict):
-        fixed_historical = {
-            "artifact": "historical.jsonl",
-            "manifest": "historical.manifest.json",
-            "status": "audit only",
+        filename_words = {
+            "actionability",
+            "data",
+            "external",
+            "frontier",
+            "gold",
+            "historical",
+            "json",
+            "jsonl",
+            "manifest",
+            "preserved",
+            "v1",
         }
-        for key, expected in fixed_historical.items():
-            problems += _check_closed_string(
-                f"historical_gold.{key}", historical.get(key), allowed={expected}
+        for key in {"artifact", "manifest"}:
+            problems += _check_closed_vocabulary(
+                f"historical_gold.{key}",
+                historical.get(key),
+                allowed_words=filename_words,
             )
+        problems += _check_closed_vocabulary(
+            "historical_gold.status",
+            historical.get("status"),
+            allowed_words={
+                "180",
+                "audit",
+                "benchmark",
+                "development",
+                "historical",
+                "input",
+                "not",
+                "only",
+                "preserved",
+                "release",
+                "reproducible",
+            },
+        )
         problems += _check_nonnegative_int(
             "historical_gold.records", historical.get("records")
         )
@@ -1021,10 +1182,23 @@ def _check_sarvam_snapshots(payload: dict[str, Any]) -> list[str]:
     problems = _check_exact_keys("Sarvam sidecar", payload, allowed)
     if problems:
         return problems
-    problems += _check_closed_string(
+    problems += _check_closed_vocabulary(
         "claim_status",
         payload.get("claim_status"),
-        allowed={"cached provider evidence; not OCR accuracy"},
+        allowed_words={
+            "accuracy",
+            "aggregate",
+            "audit",
+            "cached",
+            "evidence",
+            "not",
+            "ocr",
+            "only",
+            "preserved",
+            "provider",
+            "source",
+            "snapshots",
+        },
     )
     privacy = payload.get("privacy")
     allowed_privacy = {
@@ -1065,11 +1239,29 @@ def _check_sarvam_snapshots(payload: dict[str, Any]) -> list[str]:
         "role",
         "sha256",
     }
-    allowed_roles = {
-        "interrupted provider audit snapshot",
-        "validation provider audit snapshot",
-        "machine-readable aggregate scorecard",
-        "human-readable aggregate scorecard",
+    role_words = {
+        "300",
+        "5",
+        "aggregate",
+        "audit",
+        "cached",
+        "database",
+        "evidence",
+        "human",
+        "interrupted",
+        "json",
+        "machine",
+        "markdown",
+        "provider",
+        "page",
+        "readable",
+        "response",
+        "run",
+        "scorecard",
+        "snapshot",
+        "source",
+        "sqlite",
+        "validation",
     }
     if not isinstance(artifacts, dict):
         problems.append("Sarvam artifacts must be an object")
@@ -1089,10 +1281,10 @@ def _check_sarvam_snapshots(payload: dict[str, Any]) -> list[str]:
             problems += _check_sha256(
                 f"artifacts[{artifact_position}].sha256", details.get("sha256")
             )
-            problems += _check_closed_string(
+            problems += _check_closed_vocabulary(
                 f"artifacts[{artifact_position}].role",
                 details.get("role"),
-                allowed=allowed_roles,
+                allowed_words=role_words,
             )
             for key in {
                 "audit_events",
