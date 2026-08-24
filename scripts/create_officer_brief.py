@@ -242,7 +242,7 @@ records can support a developmental comparison, not a routing recommendation.
 | Did the 2024 analysis favour alternative assignments? | Yes. The augmented estimates were {val_gbm['delta_aipw']:.1f} to {val_ridge['delta_aipw']:.1f} days lower on {val['support']['n_evaluated']:,} common-support cases |
 | Did that result repeat in 2025? | No. The same estimates were {test_ridge['delta_aipw']:.1f} and {test_gbm['delta_aipw']:.1f} days on {test['support']['n_evaluated']:,} cases, both statistically compatible with no gain |
 | Has today's routing been shown to be slower? | No. The direct and augmented methods disagree, and the later-period augmented result does not reproduce the gain |
-| Can we recommend acting on it today? | No. No routing gain or correctness-constrained threshold has been established |
+| Can we recommend acting on it today? | No. No routing gain is established, and the prior correctness frontier is withdrawn pending a corrected labelled-row rerun (#284) |
 
 Three limitations prevent a stronger interpretation. First, actionability is
 currently inferred from closing remarks, so the analysed population is selected

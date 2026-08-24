@@ -66,9 +66,10 @@ it.
 affect. The fresh joint-action ladder reproduces a `+0.0305` validation RMSE
 increment (evaluation SE `0.0138`) among selected correct completers, but it
 collapses to `+0.0002` (SE `0.0059`) after moving to closure-proxy actionable
-cases. The restricted-outcome and IPCW rungs are identical because every row
-with an observed positive closure proxy is already resolved. That identity is a
-limitation of the proxy population, not evidence that censoring is irrelevant.
+cases. Those first three as-run rungs remain a developmental diagnostic. The
+weighted R3 validation risk and bootstrap had dropped the IPCW magnitudes; that
+rung is withdrawn pending regeneration with the corrected code (#291). The
+historical R2/R3 equality must not be interpreted.
 
 **Temporal evaluation.** Durations are restricted at a 365-day horizon. The
 policy comparison is limited to declared common support and reports direct and
@@ -83,7 +84,8 @@ augmented estimators separately.
 
 **Status: no routing gain established.** The positive validation contrast does
 not replicate under the augmented estimator in the untouched 2025 period.
-Direct and augmented frontier estimates are non-monotone or disagree, so no
+The prior correctness frontier was normalized on the wrong population and is
+withdrawn pending regeneration with the corrected code (#284), so no
 correctness-constrained `tau*` is published. Congestion remains absent from the
 conditioning set. These are developmental observational diagnostics, not causal
 impact, a saving, or a recommendation.

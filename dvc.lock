@@ -425,8 +425,8 @@ stages:
       size: 3730
     - path: docs/experiments/routing-outcome-evidence-2026-08-19.json
       hash: md5
-      md5: e21745d4d98d93f8f315fdf551261fdd
-      size: 6476
+      md5: c38394f1fa45287b3d81d951d6b2b245
+      size: 6784
     - path: janasunani/evaluation/benchmark_bundle.py
       hash: md5
       md5: 3fcc66632c13e070beb22bf8ed73bc30
@@ -474,11 +474,11 @@ stages:
     outs:
     - path: outputs/benchmark/full_benchmark.json
       hash: md5
-      md5: 73692bed0cb6f33cd6e5ea6d97199ed6
-      size: 563883
+      md5: 5017696a1686fa93aadfdb1bb1087e64
+      size: 564160
     - path: outputs/benchmark/full_benchmark.md
       hash: md5
-      md5: db21e300fa67773ff5156ab578141266
+      md5: 740cd11fc3654a9c2c43d52835c5578f
       size: 3296
   pii-development-scorecard:
     cmd: uv run --frozen --extra pii python -m

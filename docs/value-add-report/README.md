@@ -76,9 +76,9 @@ The report's headline figures were re-checked against the code on 10 August
 | Local BART summary baseline, enriched n=30: 65.48% critical-fact recall; 8/26 usable without edit; 4/26 residual-PII cases | ✅ single-judge development only | `dvc repro --single-item summary-development-benchmark` |
 | CPU development timing: 90/90 attempts, 0 failures; warm text mean 0.109 s (n=40), PDF mean 13.244 s (n=20); overall p50/p90/p95 0.139/14.348/14.883 s | ✅ | `dvc pull outputs/benchmark/latency.json.dvc`; bundle ID above |
 | Full benchmark publication gate | ❌ speed 0/1, accuracy 0/5, impact 0/2 required artifacts | `dvc repro --single-item full-benchmark-bundle` |
-| Routing outcome: joint-action ablation Δ falls from +0.0305 (SE 0.0138) in selected correct completers to +0.0002 (SE 0.0059) in closure-proxy actionable cases | ✅ developmental diagnostic | `python -m janasunani.experiments.routing_outcome.robustness --exercise ladder --fit-draws 0` |
+| Routing outcome: joint-action ablation Δ falls from +0.0305 (SE 0.0138) in selected correct completers to +0.0002 (SE 0.0059) in closure-proxy actionable cases | ⚠️ R0-R2 developmental diagnostic; weighted R3 withdrawn pending corrected rerun (#291) | `python -m janasunani.experiments.routing_outcome.robustness --exercise ladder --fit-draws 0` |
 | Routing outcome: validation 2024 augmented top-three Δ = 26.77 ridge / 12.40 boosting; test 2025 = −2.35 / 0.15 days | ✅ no temporal replication | `python -m janasunani.experiments.routing_outcome.ope --split {val,test} --tau 0 --top-k 3` |
-| Routing outcome: correctness-constrained `tau*` | ❌ unresolved estimator disagreement; not published | `python -m janasunani.experiments.routing_outcome.ope --split val --mu ridge --top-k 3 --sweep-tau` |
+| Routing outcome: correctness-constrained `tau*` | ❌ prior frontier withdrawn pending labelled-population rerun (#284); not published | `python -m janasunani.experiments.routing_outcome.ope --split val --mu ridge --top-k 3 --sweep-tau` |
 
 The report was **ahead of** `DELIVERY.md`, `DEMO_SCRIPT.md` and `PERFORMANCE.md` on the PII
 figure: those three still carried 49.6%, which was measured six hours before the ALL-CAPS
@@ -137,8 +137,9 @@ to match this report, not the other way round.
 - **The routing outcome work does not support a recommendation.** It is
   research-only, no serving provider reads it, and the
   positive validation contrast does not replicate under augmented estimation
-  in the untouched 2025 period. Direct and augmented frontier estimates are
-  non-monotone or disagree, so no correctness-constrained `tau*` is published.
+  in the untouched 2025 period. The prior correctness frontier used the wrong
+  normalization population and is withdrawn pending a corrected rerun (#284),
+  so no correctness-constrained `tau*` is published.
   The treatment is the jointly selected department and complete intended chain,
   but the current snapshot does not prove those fields preserve the immutable
   initial assignment. `S_tilde` is inferred from closing remarks rather than

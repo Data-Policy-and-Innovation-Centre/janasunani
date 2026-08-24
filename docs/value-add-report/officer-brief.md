@@ -130,7 +130,7 @@ records can support a developmental comparison, not a routing recommendation.
 | Did the 2024 analysis favour alternative assignments? | Yes. The augmented estimates were 12.4 to 26.8 days lower on 450,567 common-support cases |
 | Did that result repeat in 2025? | No. The same estimates were -2.3 and 0.1 days on 113,535 cases, both statistically compatible with no gain |
 | Has today's routing been shown to be slower? | No. The direct and augmented methods disagree, and the later-period augmented result does not reproduce the gain |
-| Can we recommend acting on it today? | No. No routing gain or correctness-constrained threshold has been established |
+| Can we recommend acting on it today? | No. No routing gain is established, and the prior correctness frontier is withdrawn pending a corrected labelled-row rerun (#284) |
 
 Three limitations prevent a stronger interpretation. First, actionability is
 currently inferred from closing remarks, so the analysed population is selected
@@ -228,4 +228,4 @@ Everything above was measured on historical records, or on test filings on a
 laptop. None of it was measured in a live office, which is what the second
 decision would change.
 
-*Source: figures come from benchmark bundle 0f74815cb1291ba1. Every definition, denominator and limitation is in the value-add report, which is the full evidence record, and in docs/QUALITY_BENCHMARKS.md.*
+*Source: figures come from benchmark bundle f64a999f47bf3240. Every definition, denominator and limitation is in the value-add report, which is the full evidence record, and in docs/QUALITY_BENCHMARKS.md.*

@@ -15,7 +15,12 @@
       "python -m janasunani.experiments.routing_outcome.ope --split test --mu {ridge,gbm} --tau 0 --top-k 3",
       "python -m janasunani.experiments.routing_outcome.robustness --exercise ladder --fit-draws 0"
     ],
-    "assignment_field_provenance": "unresolved: current dept_id and vchAllEscUser snapshots are not proven immutable; action history has no route snapshots"
+    "assignment_field_provenance": "unresolved: current dept_id and vchAllEscUser snapshots are not proven immutable; action history has no route snapshots",
+    "regeneration_required": true,
+    "known_invalidations": [
+      "issue #284: correctness scores were normalized before restricting to labelled rows; code fixed after this aggregate was generated",
+      "issue #291: the R3 validation risk and bootstrap dropped IPCW magnitudes; code fixed after this aggregate was generated"
+    ]
   },
   "fit": {
     "rmse_log1p_restricted_duration": {
@@ -71,7 +76,7 @@
         "delta_evaluation_se": 0.0058606636
       }
     },
-    "interpretation": "The apparent action signal is confined to the post-treatment-selected correct-completer population. It collapses when the population changes to closure-proxy actionable cases. R1-R3 are identical because S_tilde is derived from closure records, so every classified S_tilde==1 row is already observed resolved; this diagnostic population contains no censored cases for restriction or IPCW to change."
+    "interpretation": "The apparent action signal collapses when the population changes from selected correct completers to closure-proxy actionable cases. R0-R2 remain the historical as-run diagnostic. The R3 validation risk and bootstrap omitted IPCW magnitudes and are withdrawn pending regeneration with the corrected code (issue #291); the as-run R2/R3 equality must not be interpreted."
   },
   "validation_2024": {
     "support": {"n_before": 454232, "n_evaluated": 450567, "n_excluded": 3665, "n_cells": 651},

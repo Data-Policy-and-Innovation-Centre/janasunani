@@ -143,9 +143,11 @@ the joint department-and-chain assignment reduces validation prediction error by
 0.0305 among cases selected as correct
 completers, but only 0.0002
 among closure-proxy actionable completers. The restricted and weighted rungs are
-identical to the latter because the closure-derived proxy is observed only after
-resolution. That is a post-treatment selection and measurement warning, not an
-estimate of what an intake-time constraint would do.
+identical in the historical aggregate because the closure-derived proxy is
+observed only after resolution. The weighted rung is withdrawn pending a rerun:
+its validation risk dropped the IPCW magnitudes before the post-review fix
+(#291). The remaining collapse is a post-treatment selection and measurement
+warning, not an estimate of what an intake-time constraint would do.
 
 **Table 3. What the corrected analysis supports**
 
@@ -153,7 +155,7 @@ estimate of what an intake-time constraint would do.
 |---|---|
 | What did the 2024 comparison show? | Augmented estimates favoured alternative assignments by 12.4 to 26.8 days on 450,567 common-support cases |
 | Did the result repeat in 2025? | No. The same estimates were -2.3 and 0.1 days on 113,535 cases, compatible with no gain |
-| Is historical routing shown to be time-optimal? | No conclusion. Direct and augmented estimates disagree, and no correctness-constrained threshold is resolved |
+| Is historical routing shown to be time-optimal? | No conclusion. Direct and augmented duration estimates disagree; the prior correctness frontier is withdrawn pending a corrected labelled-row rerun (#284) |
 | Is this a recommendation? | No. Assignment provenance, intake-time actionability and a governed pilot remain missing |
 
 *Note: the treatment is the jointly selected department and complete intended chain. The available snapshot does not prove those fields preserve the initial assignment, and actionability is inferred from closure rather than intake.*
@@ -191,4 +193,4 @@ Nor do we claim the Janasunani figures transfer. A different corpus, language
 mix, taxonomy and set of officers will produce different numbers, and the first
 job of a new engagement is to find out what they are.
 
-*Source: benchmark-backed figures come from development bundle 0f74815cb1291ba1, publication_ready=false. Definitions and reproduction limits are in the long report and docs/QUALITY_BENCHMARKS.md.*
+*Source: benchmark-backed figures come from development bundle f64a999f47bf3240, publication_ready=false. Definitions and reproduction limits are in the long report and docs/QUALITY_BENCHMARKS.md.*

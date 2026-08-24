@@ -1563,19 +1563,12 @@ evaluation population. This is direct evidence of functional-form and overlap
 sensitivity, not a menu from which to select the favourable estimate. The unrestricted policy
 cannot support a routing claim.
 
-The correctness constraint remains unresolved at $\tau=0$. Historical correctness is 0.3867 on
-378,069 labelled rows. For the ridge top-three rule, DM gives 0.3616, below the floor, while the
-augmented score gives 0.4135, above it. Boosting gives the same qualitative disagreement,
-0.3680 versus 0.4862. Reporting only the augmented value would choose the estimator that gives
-the convenient answer.
-
-The corrected total-rule sweep preserves all 450,567 rows and keeps its two estimators separate.
-The fitted direct duration and correctness curves are nondecreasing, as
-Proposition~\ref{prop:mono} predicts. Their AIPW corrections are not: augmented correctness is
-0.4135 at $\tau=0$, falls to 0.3085 at $\tau=0.2$, and returns to 0.3869 at $\tau=0.3$.
-Consequently the smallest feasible point is $\tau=0.3$ by DM but $\tau=0$ by AIPW. At the DM
-candidate, 247,363 rows use the highest-correctness fallback; duration is 85.72 days by DM and
-78.64 by AIPW, while correctness is 0.3995 and 0.3869. There is no resolved $\tau^\star$.
+A post-review audit found that the correctness score was self-normalised on the full evaluation
+array before being restricted to rows with observed $C$. That changes the correction denominator,
+while the direct value was also averaged on a different population. The implementation now slices
+all score inputs to labelled rows first, but the aggregate has not been regenerated. The previous
+correctness values and frontier are therefore withdrawn, not reinterpreted; there is no published
+$\tau^\star$ (issue~\#284).
 
 \emph{The 2025 test period does not replicate the validation gain.} Its common-support population
 has 113,535 rows, with 2,037 excluded. Historical IPCW restricted duration is 49.74 days. For
@@ -1632,7 +1625,7 @@ Restricted mean and censoring weights (Def.~\ref{def:rmst}, Thm.~\ref{thm:ipcw})
 Smearing (\S\ref{sec:smear}) & Built, per stratum.\\
 Cross-fitting (\S\ref{sec:crossfit}) & Supplied by the chronological split: nuisances are fitted on 2021--23 and evaluated on 2024--25, so evaluation rows are out of period rather than merely out of fold.\\
 Sample splitting for the rule (\S\ref{sec:policy}) & Built as an option; the winner's curse is priced rather than assumed away.\\
-$\tau$ calibration (Cor.~\ref{cor:feasible}) & Built with a total highest-correctness fallback, finite-prediction checks, and a common support-restricted population. \emph{Does not resolve}: the direct and augmented estimators disagree about whether the constraint binds (\S\ref{sec:ev-provisional}).\\
+$\tau$ calibration (Cor.~\ref{cor:feasible}) & Code corrected to score one labelled population. \emph{Not recomputed}: the prior frontier is withdrawn pending a rerun (\S\ref{sec:ev-provisional}, issue~\#284).\\
 \midrule
 $\Sstar$ from pre-treatment inputs & \notbuilt. \emph{Highest priority.} The legacy \code{S} column is $\Sproxy$, read from closure-time information. A case still open past the horizon is dropped although $\min(T,L)$ is known.\\
 Adjudication of the remaining closing remarks & \notbuilt. Some resolved closures leave $\Sproxy$ undetermined and others leave $C$ undetermined; routing-dependent referrals now remain unknown by design.\\

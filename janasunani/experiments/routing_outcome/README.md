@@ -134,11 +134,12 @@ descriptive contrast; the boosted versions are 23.90 and 12.40 days. The
 unrestricted augmented contrast is unstable: 28.58 days with ridge but 0.50
 with boosting, with ESS only 3–4% of `n`.
 
-The correctness constraint is also unresolved. Historical correctness is
-0.3867; for the ridge top-three rule the direct estimate is 0.3616 while the
-augmented estimate is 0.4135. The fitted direct frontier is monotone and first
-feasible at τ=0.30; the finite-sample AIPW frontier is not monotone and first
-appears feasible at τ=0. There is therefore no resolved `tau_star`.
+The correctness frontier is withdrawn pending regeneration. A post-review
+audit found that its augmented score was normalized on all evaluation rows
+before being restricted to rows with an observed correctness label, while the
+direct value used the full population. The code now scores one labelled
+population, but the corrected aggregate has not been recomputed (#284). There
+is therefore no published `tau_star`.
 
 The untouched 2025 period does not replicate the validation gain. The
 top-three ridge AIPW contrast is −2.35 days (SE 3.50, ESS/`n` 0.073), while

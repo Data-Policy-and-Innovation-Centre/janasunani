@@ -174,10 +174,11 @@ def _eval_bootstrap_se(
     pred_noflow: np.ndarray,
     clusters: np.ndarray,
     *,
+    weights: np.ndarray | None = None,
     n_boot: int = N_EVAL_BOOT,
     seed: int = SEED,
 ) -> float:
-    """SD of `delta` when whole validation clusters are resampled, models fixed."""
+    """SD of weighted `delta` under a fixed-model cluster bootstrap."""
     rng = np.random.default_rng(seed)
     unique, inverse = np.unique(clusters, return_inverse=True)
     by_cluster = [np.flatnonzero(inverse == i) for i in range(len(unique))]
@@ -185,11 +186,18 @@ def _eval_bootstrap_se(
         return float("nan")
     se_flow = (y - pred_flow) ** 2
     se_noflow = (y - pred_noflow) ** 2
+    risk_weight = (
+        np.ones_like(y, dtype=float)
+        if weights is None
+        else np.asarray(weights, dtype=float)
+    )
     deltas = np.empty(n_boot)
     for b in range(n_boot):
         drawn = rng.integers(0, len(by_cluster), size=len(by_cluster))
         idx = np.concatenate([by_cluster[d] for d in drawn])
-        deltas[b] = np.sqrt(se_noflow[idx].mean()) - np.sqrt(se_flow[idx].mean())
+        noflow_risk = np.average(se_noflow[idx], weights=risk_weight[idx])
+        flow_risk = np.average(se_flow[idx], weights=risk_weight[idx])
+        deltas[b] = np.sqrt(noflow_risk) - np.sqrt(flow_risk)
     return float(deltas.std(ddof=1))
 
 
@@ -225,6 +233,7 @@ def run_ablation(
     x_val_nf = encoder.transform(val, include_action=False)[keep_noflow][val_rows]
     yt, wt = y_train[fit_rows], w_train[fit_rows]
     yv = y_val[val_rows].to_numpy()
+    wv = w_val[val_rows]
     clusters = val["cluster"].to_numpy()[val_rows]
 
     flow_model = _build_model(model, 0, keep)
@@ -234,15 +243,17 @@ def run_ablation(
 
     pred_flow = flow_model.predict(x_val)
     pred_noflow = noflow_model.predict(x_val_nf)
-    rmse_flow = _rmse(yv, pred_flow)
-    rmse_noflow = _rmse(yv, pred_noflow)
+    rmse_flow = _rmse(yv, pred_flow, wv)
+    rmse_noflow = _rmse(yv, pred_noflow, wv)
 
     result = AblationResult(
         name=name,
         rmse_flow=rmse_flow,
         rmse_noflow=rmse_noflow,
         delta=rmse_noflow - rmse_flow,
-        delta_eval_se=_eval_bootstrap_se(yv, pred_flow, pred_noflow, clusters),
+        delta_eval_se=_eval_bootstrap_se(
+            yv, pred_flow, pred_noflow, clusters, weights=wv
+        ),
         n_train=int(fit_rows.sum()),
         n_val=int(val_rows.sum()),
         dropped_covariates=drop_covariates,

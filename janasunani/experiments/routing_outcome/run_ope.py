@@ -264,31 +264,35 @@ def _correctness_value(
     axis where speed is not the outcome.
     """
     labelled = evaluation["C"].notna().to_numpy()
+    labelled_evaluation = evaluation.loc[labelled]
+    action_col = f"{name}_action"
+    pi_col = f"{name}_pi"
     matched = (
-        (evaluation[f"{name}_action"] == evaluation["action_template"])
-        & evaluation["action_template"].notna()
+        (labelled_evaluation[action_col] == labelled_evaluation["action_template"])
+        & labelled_evaluation["action_template"].notna()
     ).to_numpy()
-    e_policy = propensity.score(evaluation["cell"], evaluation[f"{name}_action"]).to_numpy()
+    e_policy = propensity.score(
+        labelled_evaluation["cell"], labelled_evaluation[action_col]
+    ).to_numpy()
 
     scores = dr_scores(
-        outcome=evaluation["C"].fillna(0).to_numpy(dtype=float),
-        mu_observed=evaluation["pi_observed"].to_numpy(dtype=float),
-        mu_policy=evaluation[f"{name}_pi"].to_numpy(dtype=float),
-        matched=(matched & labelled),
+        outcome=labelled_evaluation["C"].to_numpy(dtype=float),
+        mu_observed=labelled_evaluation["pi_observed"].to_numpy(dtype=float),
+        mu_policy=labelled_evaluation[pi_col].to_numpy(dtype=float),
+        matched=matched,
         propensity=e_policy,
     )
-    direct = evaluation[f"{name}_pi"].to_numpy(dtype=float)
-    evaluated_scores = scores[labelled]
+    direct = labelled_evaluation[pi_col].to_numpy(dtype=float)
     if not np.isfinite(direct).all():
         raise ValueError(f"{name} policy has non-finite predicted correctness")
-    if not np.isfinite(evaluated_scores).all():
+    if not np.isfinite(scores).all():
         raise ValueError(f"{name} policy has non-finite augmented correctness scores")
     return {
         "v_direct": float(direct.mean()),
-        "v_dr": float(evaluated_scores.mean()),
+        "v_dr": float(scores.mean()),
         "n_labelled": int(labelled.sum()),
-        "mean_eligible": float(n_eligible.mean()),
-        "n_fallback": int(fallback.sum()),
+        "mean_eligible": float(n_eligible.loc[labelled_evaluation.index].mean()),
+        "n_fallback": int(fallback.loc[labelled_evaluation.index].sum()),
     }
 
 

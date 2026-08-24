@@ -28,7 +28,7 @@ version of the same claim — it is a different and unsupported one.
 | Cached provider evidence | Paid calls already made, no new spend | Coverage, failures, cost and measured divergence only |
 
 **Nothing in this report is at release-gate status.** The bundle behind it is
-`0f74815cb1291ba1`, `publication_ready=false`,
+`f64a999f47bf3240`, `publication_ready=false`,
 with 0 of 2 required impact
 artifacts available.
 
@@ -232,14 +232,16 @@ department-and-chain assignment appear to predict duration when it does not.
 | Cases selected as correct completers | 166,628 | +0.0305 | 0.0138 |
 | Closure-proxy actionable completers | 454,232 | +0.0002 | 0.0059 |
 | Closure-proxy actionable, restricted outcome | 454,232 | +0.0002 | 0.0059 |
-| Closure-proxy actionable, restricted outcome with IPCW | 454,232 | +0.0002 | 0.0059 |
+| Closure-proxy actionable, restricted outcome with IPCW | rerun required | — | — |
 
 *Note: positive means lower prediction error after adding the joint action. The SE resamples district-year validation clusters with fitted models held fixed; no fit-bootstrap uncertainty was run.*
 
 Correcting the population collapses the effect. The last three rows are
-identical because the closure-derived proxy is observed only for resolved cases;
-there are no censored proxy-positive rows for restriction or IPCW to change.
-That is a measurement limitation, not evidence that censoring is harmless.
+identical in the historical aggregate because the closure-derived proxy is
+observed only for resolved cases. A post-review audit found that the weighted
+R3 validation risk and bootstrap had dropped the IPCW magnitudes. That rung is
+withdrawn pending a corrected rerun (#291); the as-run equality must not be
+interpreted.
 
 <!-- pagebreak -->
 
@@ -271,7 +273,7 @@ historical assignment.
 | Question | Answer |
 |---|---|
 | Has historical routing been shown to be slower? | No. Direct estimates favour the candidate rule, but the augmented 2025 estimates are −2.35 and 0.15 days |
-| Does a correctness-constrained threshold exist? | **Unresolved.** Direct and augmented frontier estimates are non-monotone or disagree; no `τ*` is published |
+| Does a correctness-constrained threshold exist? | **Not recomputed.** The prior frontier used the wrong normalization population and is withdrawn pending a corrected labelled-row rerun (#284); no `τ*` is published |
 | Is this a recommendation? | No. No causal routing gain has been established |
 
 The positive validation result does not survive the later-period augmented
@@ -359,4 +361,4 @@ routing scorecard or routing-outcome aggregate, so no figure here can outlive
 the evidence behind it. The routing-outcome evidence is reproduced by the
 commands in `docs/QUALITY_BENCHMARKS.md`.
 
-*Source: bundle 0f74815cb1291ba1, publication_ready=false.*
+*Source: bundle f64a999f47bf3240, publication_ready=false.*

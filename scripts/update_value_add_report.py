@@ -297,14 +297,16 @@ department-and-chain assignment appear to predict duration when it does not.
 | Cases selected as correct completers | {robustness['R0_binary_completers']['n_validation']:,} | {robustness['R0_binary_completers']['delta']:+.4f} | {robustness['R0_binary_completers']['delta_evaluation_se']:.4f} |
 | Closure-proxy actionable completers | {robustness['R1_proxy_actionable_completers']['n_validation']:,} | {robustness['R1_proxy_actionable_completers']['delta']:+.4f} | {robustness['R1_proxy_actionable_completers']['delta_evaluation_se']:.4f} |
 | Closure-proxy actionable, restricted outcome | {robustness['R2_proxy_actionable_restricted']['n_validation']:,} | {robustness['R2_proxy_actionable_restricted']['delta']:+.4f} | {robustness['R2_proxy_actionable_restricted']['delta_evaluation_se']:.4f} |
-| Closure-proxy actionable, restricted outcome with IPCW | {robustness['R3_proxy_actionable_restricted_ipcw']['n_validation']:,} | {robustness['R3_proxy_actionable_restricted_ipcw']['delta']:+.4f} | {robustness['R3_proxy_actionable_restricted_ipcw']['delta_evaluation_se']:.4f} |
+| Closure-proxy actionable, restricted outcome with IPCW | rerun required | — | — |
 
 *Note: positive means lower prediction error after adding the joint action. The SE resamples district-year validation clusters with fitted models held fixed; no fit-bootstrap uncertainty was run.*
 
 Correcting the population collapses the effect. The last three rows are
-identical because the closure-derived proxy is observed only for resolved cases;
-there are no censored proxy-positive rows for restriction or IPCW to change.
-That is a measurement limitation, not evidence that censoring is harmless.
+identical in the historical aggregate because the closure-derived proxy is
+observed only for resolved cases. A post-review audit found that the weighted
+R3 validation risk and bootstrap had dropped the IPCW magnitudes. That rung is
+withdrawn pending a corrected rerun (#291); the as-run equality must not be
+interpreted.
 
 <!-- pagebreak -->
 
@@ -336,7 +338,7 @@ historical assignment.
 | Question | Answer |
 |---|---|
 | Has historical routing been shown to be slower? | No. Direct estimates favour the candidate rule, but the augmented 2025 estimates are −2.35 and 0.15 days |
-| Does a correctness-constrained threshold exist? | **Unresolved.** Direct and augmented frontier estimates are non-monotone or disagree; no `τ*` is published |
+| Does a correctness-constrained threshold exist? | **Not recomputed.** The prior frontier used the wrong normalization population and is withdrawn pending a corrected labelled-row rerun (#284); no `τ*` is published |
 | Is this a recommendation? | No. No causal routing gain has been established |
 
 The positive validation result does not survive the later-period augmented

@@ -22,6 +22,7 @@ from janasunani.experiments.routing_outcome import (
     outcome,
     provenance,
     robustness,
+    run_ope,
     smear,
     tau,
 )
@@ -565,6 +566,37 @@ def test_self_normalisation_bounds_a_single_low_propensity_match():
     assert normalised < raw
 
 
+def test_correctness_value_normalises_and_reports_only_labelled_rows():
+    evaluation = pd.DataFrame(
+        {
+            "C": [1.0, 0.0, np.nan],
+            "cell": ["c", "c", "c"],
+            "action_template": ["a", "b", "a"],
+            "candidate_action": ["a", "b", "a"],
+            "pi_observed": [0.25, 0.25, 0.0],
+            "candidate_pi": [0.5, 0.5, 0.9],
+        }
+    )
+    propensity = EmpiricalSharePropensity(
+        by_cell={"c": {"a": 0.5, "b": 0.5}},
+        marginal={"a": 0.5, "b": 0.5},
+    )
+
+    result = run_ope._correctness_value(
+        evaluation,
+        name="candidate",
+        propensity=propensity,
+        n_eligible=pd.Series([1, 2, 99]),
+        fallback=pd.Series([False, True, True]),
+    )
+
+    assert result["v_direct"] == pytest.approx(0.5)
+    assert result["v_dr"] == pytest.approx(0.75)
+    assert result["n_labelled"] == 2
+    assert result["mean_eligible"] == pytest.approx(1.5)
+    assert result["n_fallback"] == 1
+
+
 def test_historical_value_separates_the_two_estimators():
     """The stochastic baseline retains like-with-like outcome/model routes."""
     df = pd.DataFrame({"outcome": [10.0, 30.0], "mu": [15.0, 15.0]})
@@ -610,6 +642,30 @@ def test_cluster_bootstrap_se_is_deterministic_and_needs_two_clusters():
     clusters = np.repeat(np.arange(4), 100)
     assert cluster_bootstrap_se(scores, clusters) == cluster_bootstrap_se(scores, clusters)
     assert np.isnan(cluster_bootstrap_se(scores, np.zeros(400)))
+
+
+def test_robustness_validation_risk_retains_ipcw_magnitudes():
+    y = np.array([0.0, 0.0, 10.0, 10.0])
+    pred_flow = np.zeros(4)
+    pred_noflow = np.array([2.0, 2.0, 8.0, 8.0])
+    clusters = np.array(["a", "b", "c", "d"])
+    weights = np.array([10.0, 10.0, 1.0, 1.0])
+
+    unweighted_delta = robustness._rmse(y, pred_noflow) - robustness._rmse(
+        y, pred_flow
+    )
+    weighted_delta = robustness._rmse(y, pred_noflow, weights) - robustness._rmse(
+        y, pred_flow, weights
+    )
+    unweighted_se = robustness._eval_bootstrap_se(
+        y, pred_flow, pred_noflow, clusters, n_boot=200
+    )
+    weighted_se = robustness._eval_bootstrap_se(
+        y, pred_flow, pred_noflow, clusters, weights=weights, n_boot=200
+    )
+
+    assert weighted_delta != pytest.approx(unweighted_delta)
+    assert weighted_se != pytest.approx(unweighted_se)
 
 
 # --------------------------------------------------------------------------

@@ -202,9 +202,11 @@ the joint department-and-chain assignment reduces validation prediction error by
 {robustness['R0_binary_completers']['delta']:.4f} among cases selected as correct
 completers, but only {robustness['R1_proxy_actionable_completers']['delta']:.4f}
 among closure-proxy actionable completers. The restricted and weighted rungs are
-identical to the latter because the closure-derived proxy is observed only after
-resolution. That is a post-treatment selection and measurement warning, not an
-estimate of what an intake-time constraint would do.
+identical in the historical aggregate because the closure-derived proxy is
+observed only after resolution. The weighted rung is withdrawn pending a rerun:
+its validation risk dropped the IPCW magnitudes before the post-review fix
+(#291). The remaining collapse is a post-treatment selection and measurement
+warning, not an estimate of what an intake-time constraint would do.
 
 **Table 3. What the corrected analysis supports**
 
@@ -212,7 +214,7 @@ estimate of what an intake-time constraint would do.
 |---|---|
 | What did the 2024 comparison show? | Augmented estimates favoured alternative assignments by {val_gbm['delta_aipw']:.1f} to {val_ridge['delta_aipw']:.1f} days on {val['support']['n_evaluated']:,} common-support cases |
 | Did the result repeat in 2025? | No. The same estimates were {test_ridge['delta_aipw']:.1f} and {test_gbm['delta_aipw']:.1f} days on {test['support']['n_evaluated']:,} cases, compatible with no gain |
-| Is historical routing shown to be time-optimal? | No conclusion. Direct and augmented estimates disagree, and no correctness-constrained threshold is resolved |
+| Is historical routing shown to be time-optimal? | No conclusion. Direct and augmented duration estimates disagree; the prior correctness frontier is withdrawn pending a corrected labelled-row rerun (#284) |
 | Is this a recommendation? | No. Assignment provenance, intake-time actionability and a governed pilot remain missing |
 
 *Note: the treatment is the jointly selected department and complete intended chain. The available snapshot does not prove those fields preserve the initial assignment, and actionability is inferred from closure rather than intake.*
