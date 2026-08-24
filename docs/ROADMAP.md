@@ -1142,8 +1142,8 @@ practical as statistical.
 - **Counterfactual agreement study.** Run the pipeline over a historical sample.
   Compare AI category and route against the eventual human ones. Estimate how often
   the AI would have avoided a transfer.
-- **Time-motion estimate.** Model latency against observed human handling intervals
-  in `action_history`.
+- **Descriptive recorded-step intervals.** Report elapsed time between completed
+  `action_history` steps, with no delay, saving, or counterfactual claim.
 
 **The caveat belongs on the slide, not in a footnote.** The agreement study is
 suggestive, not causal. The models were trained on those same human labels, so
