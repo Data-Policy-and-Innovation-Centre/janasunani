@@ -73,6 +73,11 @@ MAX_NOTE = 1000
 
 _MD5_RE = re.compile(r"^[0-9a-f]{32}$")
 _SHA256_RE = re.compile(r"^(sha256:)?[0-9a-f]{64}$")
+_UTC_TIMESTAMP_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|\+00:00)$"
+)
+_GIT_REVISION_RE = re.compile(r"^(?:[0-9a-f]{7,40}(?:-dirty)?|unknown)$")
+_VERSION_RE = re.compile(r"^(?:unknown|\d{1,4}\.\d{1,4}(?:\.\d{1,4})?[A-Za-z0-9.+-]*)$")
 _ACTIONABILITY_SCHEMA = "actionability-adjudication-sample-v1"
 _ACTIONABILITY_FRONTIER_SCHEMA = "janasunani.actionability-frontier-artifacts/v1"
 _CATEGORIZATION_SCHEMA = "categorization-benchmark-sample-v1"
@@ -87,6 +92,13 @@ _RECOGNIZED_SCHEMAS = {
     _SARVAM_SCHEMA,
     _SUMMARY_SCHEMA,
 }
+
+_PII_NOTE = (
+    "Analyzer output on the gold's own text, NOT the original bootstrap draft. "
+    "Cannot prove the human pass happened, cannot detect an edited text, cannot "
+    "detect pages dropped from the drafted sample. See "
+    "scripts/rederive_pii_draft.py."
+)
 
 _ADMIN_CATEGORIES = {
     "Accident",
@@ -154,6 +166,95 @@ def _check_counter(key: str, value: Any) -> list[str]:
     return problems
 
 
+def _check_closed_string(
+    path: str,
+    value: Any,
+    *,
+    allowed: set[str] | None = None,
+    pattern: re.Pattern[str] | None = None,
+) -> list[str]:
+    """Validate a scalar against a closed vocabulary or non-prose format."""
+
+    if not isinstance(value, str):
+        return [f"{path} must be a string in its closed metadata format"]
+    if allowed is not None and value not in allowed:
+        return [f"{path} is not an allowlisted metadata value; value withheld"]
+    if pattern is not None and pattern.fullmatch(value) is None:
+        return [f"{path} does not match its closed metadata format; value withheld"]
+    return []
+
+
+def _check_pii_rederived(payload: dict[str, Any]) -> list[str]:
+    problems = _check_exact_keys("PII re-derived sidecar", payload, ALLOWED_TOP)
+    if problems:
+        return problems
+
+    problems += _check_closed_string(
+        "schema_version", payload["schema_version"], allowed={_PII_REDERIVED_SCHEMA}
+    )
+    problems += _check_closed_string(
+        "kind", payload["kind"], allowed={"rederived_draft"}
+    )
+    problems += _check_closed_string("note", payload["note"], allowed={_PII_NOTE})
+    problems += _check_closed_string(
+        "created_utc", payload["created_utc"], pattern=_UTC_TIMESTAMP_RE
+    )
+    problems += _check_closed_string(
+        "out", payload["out"], allowed={"pii_draft_n50.jsonl"}
+    )
+    problems += _check_closed_string(
+        "source_gold",
+        payload["source_gold"],
+        allowed={"pii_gold_draft_n50.jsonl"},
+    )
+    if not (
+        isinstance(payload["source_gold_md5"], str)
+        and _MD5_RE.fullmatch(payload["source_gold_md5"])
+    ):
+        problems.append("source_gold_md5 is not a 32-character hex digest")
+    for key in {"records", "spans"}:
+        problems += _check_nonnegative_int(key, payload[key])
+    problems += _check_counter("spans_by_entity", payload["spans_by_entity"])
+    counts = payload["spans_by_entity"]
+    if isinstance(counts, dict) and all(
+        isinstance(value, int) and not isinstance(value, bool)
+        for value in counts.values()
+    ):
+        if sum(counts.values()) != payload["spans"]:
+            problems.append("spans must equal the spans_by_entity total")
+
+    analyzer = payload["analyzer"]
+    problems += _check_exact_keys("PII analyzer", analyzer, ALLOWED_NESTED["analyzer"])
+    if isinstance(analyzer, dict):
+        problems += _check_closed_string(
+            "analyzer.git_commit", analyzer.get("git_commit"), pattern=_GIT_REVISION_RE
+        )
+        for key in {"presidio_analyzer", "spacy", "en_core_web_sm"}:
+            problems += _check_closed_string(
+                f"analyzer.{key}", analyzer.get(key), pattern=_VERSION_RE
+            )
+
+    environment = payload["environment"]
+    problems += _check_exact_keys(
+        "PII environment", environment, ALLOWED_NESTED["environment"]
+    )
+    if isinstance(environment, dict):
+        problems += _check_closed_string(
+            "environment.python", environment.get("python"), pattern=_VERSION_RE
+        )
+        problems += _check_closed_string(
+            "environment.system",
+            environment.get("system"),
+            allowed={"Darwin", "Linux", "Windows"},
+        )
+        problems += _check_closed_string(
+            "environment.machine",
+            environment.get("machine"),
+            allowed={"AMD64", "aarch64", "arm64", "x86_64"},
+        )
+    return problems
+
+
 def _check_allowlisted_list(
     key: str,
     value: Any,
@@ -169,7 +270,9 @@ def _check_allowlisted_list(
         problems.append(f"{key} must not be empty")
     for position, item in enumerate(value):
         if not isinstance(item, str) or item not in allowed:
-            problems.append(f"{key} entry {position} is not allowlisted; value withheld")
+            problems.append(
+                f"{key} entry {position} is not allowlisted; value withheld"
+            )
     hashable_items = [item for item in value if isinstance(item, str)]
     if len(hashable_items) != len(set(hashable_items)):
         problems.append(f"{key} must not contain duplicates")
@@ -202,9 +305,13 @@ def _check_actionability_sample(payload: dict[str, Any]) -> list[str]:
         key_pattern = re.compile(r"^(train|validation|test)/s[1-5]$")
         for position, (key, value) in enumerate(counts.items()):
             if not isinstance(key, str) or not key_pattern.fullmatch(key):
-                problems.append(f"actionability counts key {position} is not an allowed split/stratum")
+                problems.append(
+                    f"actionability counts key {position} is not an allowed split/stratum"
+                )
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-                problems.append(f"actionability counts value {position} must be a nonnegative integer")
+                problems.append(
+                    f"actionability counts value {position} must be a nonnegative integer"
+                )
     parameters = payload.get("parameters")
     allowed_parameters = {
         "adjudicator_blinding",
@@ -220,7 +327,9 @@ def _check_actionability_sample(payload: dict[str, Any]) -> list[str]:
     else:
         for position, (key, value) in enumerate(parameters.items()):
             if key not in allowed_parameters:
-                problems.append(f"actionability parameter {position} is not allowlisted")
+                problems.append(
+                    f"actionability parameter {position} is not allowlisted"
+                )
                 continue
             problems += _check_scalar(f"parameters[{position}]", value, MAX_STRING)
     records = payload.get("records")
@@ -370,13 +479,19 @@ def _check_categorization_sample(payload: dict[str, Any]) -> list[str]:
     excluded = payload["excluded_categories"]
     problems += _check_category_list("eligible_categories", eligible)
     problems += _check_category_list("excluded_categories", excluded)
-    if isinstance(eligible, list) and isinstance(excluded, list) and set(eligible) & set(excluded):
+    if (
+        isinstance(eligible, list)
+        and isinstance(excluded, list)
+        and set(eligible) & set(excluded)
+    ):
         problems.append("eligible and excluded categories must be disjoint")
     problems += _check_count_map(
         "category_counts", payload["category_counts"], allowed_keys=_ADMIN_CATEGORIES
     )
     problems += _check_count_map(
-        "split_counts", payload["split_counts"], allowed_keys={"train", "validation", "test"}
+        "split_counts",
+        payload["split_counts"],
+        allowed_keys={"train", "validation", "test"},
     )
 
     privacy = payload["privacy"]
@@ -388,14 +503,19 @@ def _check_categorization_sample(payload: dict[str, Any]) -> list[str]:
     }
     problems += _check_exact_keys("categorization privacy", privacy, privacy_keys)
     if isinstance(privacy, dict):
-        problems += _check_scalar("privacy.source_column", privacy.get("source_column"), MAX_STRING)
+        problems += _check_scalar(
+            "privacy.source_column", privacy.get("source_column"), MAX_STRING
+        )
         for key in privacy_keys - {"source_column"}:
             problems += _check_bool(f"privacy.{key}", privacy.get(key))
 
     split_counts = payload["split_counts"]
     if (
         isinstance(split_counts, dict)
-        and all(isinstance(value, int) and not isinstance(value, bool) for value in split_counts.values())
+        and all(
+            isinstance(value, int) and not isinstance(value, bool)
+            for value in split_counts.values()
+        )
         and sum(split_counts.values()) != payload["records"]
     ):
         problems.append("split counts must sum to records")
@@ -458,7 +578,9 @@ def _check_summary_development(payload: dict[str, Any]) -> list[str]:
         "rubric_sha256",
         "structured_judgments_only_in_governed_artifacts",
     }
-    problems += _check_exact_keys("summary adjudication", adjudication, adjudication_keys)
+    problems += _check_exact_keys(
+        "summary adjudication", adjudication, adjudication_keys
+    )
     if isinstance(adjudication, dict):
         for key in {
             "independent_judges",
@@ -467,7 +589,9 @@ def _check_summary_development(payload: dict[str, Any]) -> list[str]:
             "structured_judgments_only_in_governed_artifacts",
         }:
             problems += _check_bool(f"adjudication.{key}", adjudication.get(key))
-        problems += _check_sha256("adjudication.rubric_sha256", adjudication.get("rubric_sha256"))
+        problems += _check_sha256(
+            "adjudication.rubric_sha256", adjudication.get("rubric_sha256")
+        )
         for key in adjudication_keys - {
             "independent_judges",
             "officer_validated",
@@ -475,14 +599,18 @@ def _check_summary_development(payload: dict[str, Any]) -> list[str]:
             "rubric_sha256",
             "structured_judgments_only_in_governed_artifacts",
         }:
-            problems += _check_scalar(f"adjudication.{key}", adjudication.get(key), MAX_STRING)
+            problems += _check_scalar(
+                f"adjudication.{key}", adjudication.get(key), MAX_STRING
+            )
 
     environment = payload["environment"]
     environment_keys = {"device", "python", "torch", "transformers"}
     problems += _check_exact_keys("summary environment", environment, environment_keys)
     if isinstance(environment, dict):
         for key in environment_keys:
-            problems += _check_scalar(f"environment.{key}", environment.get(key), MAX_STRING)
+            problems += _check_scalar(
+                f"environment.{key}", environment.get(key), MAX_STRING
+            )
 
     model = payload["model"]
     model_keys = {
@@ -499,7 +627,12 @@ def _check_summary_development(payload: dict[str, Any]) -> list[str]:
     if isinstance(model, dict):
         problems += _check_bool("model.local_files_only", model.get("local_files_only"))
         problems += _check_sha256("model.weights_sha256", model.get("weights_sha256"))
-        for key in {"max_input_tokens", "max_output_tokens", "min_output_tokens", "num_beams"}:
+        for key in {
+            "max_input_tokens",
+            "max_output_tokens",
+            "min_output_tokens",
+            "num_beams",
+        }:
             problems += _check_nonnegative_int(f"model.{key}", model.get(key))
         for key in {"family", "revision"}:
             problems += _check_scalar(f"model.{key}", model.get(key), MAX_STRING)
@@ -520,7 +653,9 @@ def _check_summary_development(payload: dict[str, Any]) -> list[str]:
             "selection.not_prevalence_representative",
             selection.get("not_prevalence_representative"),
         )
-        problems += _check_scalar("selection.policy", selection.get("policy"), MAX_STRING)
+        problems += _check_scalar(
+            "selection.policy", selection.get("policy"), MAX_STRING
+        )
         problems += _check_sha256(
             "selection.private_review_sha256", selection.get("private_review_sha256")
         )
@@ -537,8 +672,14 @@ def _check_summary_development(payload: dict[str, Any]) -> list[str]:
             selection.get("cohort_counts"),
             allowed_keys=cohort_keys,
         )
-        if all(isinstance(selection.get(key), int) for key in {"generated", "sample_size", "skipped"}):
-            if selection["generated"] + selection["skipped"] != selection["sample_size"]:
+        if all(
+            isinstance(selection.get(key), int)
+            for key in {"generated", "sample_size", "skipped"}
+        ):
+            if (
+                selection["generated"] + selection["skipped"]
+                != selection["sample_size"]
+            ):
                 problems.append("generated and skipped must sum to sample_size")
 
     source = payload["source"]
@@ -580,7 +721,9 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
         "source",
         "storage",
     }
-    problems += _check_exact_keys("actionability frontier privacy", privacy, privacy_keys)
+    problems += _check_exact_keys(
+        "actionability frontier privacy", privacy, privacy_keys
+    )
     if isinstance(privacy, dict):
         for position, value in enumerate(privacy.values()):
             problems += _check_scalar(f"privacy[{position}]", value, MAX_STRING)
@@ -603,21 +746,36 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
             problems += _check_scalar(f"sample.{key}", sample.get(key), MAX_STRING)
         split_counts = sample.get("split_counts")
         problems += _check_exact_keys(
-            "actionability frontier split_counts", split_counts, {"train", "validation", "test"}
+            "actionability frontier split_counts",
+            split_counts,
+            {"train", "validation", "test"},
         )
         if isinstance(split_counts, dict):
             for position, value in enumerate(split_counts.values()):
                 problems += _check_nonnegative_int(f"split_counts[{position}]", value)
 
     inputs = payload["direct_inputs"]
-    allowed_inputs = {"judge_a.jsonl", "judge_b.jsonl", "resolver.jsonl", "resolver_backup.jsonl"}
-    problems += _check_exact_keys("actionability frontier direct_inputs", inputs, allowed_inputs)
+    allowed_inputs = {
+        "judge_a.jsonl",
+        "judge_b.jsonl",
+        "resolver.jsonl",
+        "resolver_backup.jsonl",
+    }
+    problems += _check_exact_keys(
+        "actionability frontier direct_inputs", inputs, allowed_inputs
+    )
     if isinstance(inputs, dict):
         for position, details in enumerate(inputs.values()):
-            problems += _check_exact_keys(f"direct_inputs[{position}]", details, {"role", "sha256"})
+            problems += _check_exact_keys(
+                f"direct_inputs[{position}]", details, {"role", "sha256"}
+            )
             if isinstance(details, dict):
-                problems += _check_scalar(f"direct_inputs[{position}].role", details.get("role"), MAX_STRING)
-                problems += _check_sha256(f"direct_inputs[{position}].sha256", details.get("sha256"))
+                problems += _check_scalar(
+                    f"direct_inputs[{position}].role", details.get("role"), MAX_STRING
+                )
+                problems += _check_sha256(
+                    f"direct_inputs[{position}].sha256", details.get("sha256")
+                )
 
     stages = payload["deterministic_stages"]
     allowed_stages = {
@@ -625,7 +783,9 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
         "actionability-adjudication-finalize",
         "actionability-local-candidate-benchmark",
     }
-    problems += _check_exact_keys("actionability frontier deterministic_stages", stages, allowed_stages)
+    problems += _check_exact_keys(
+        "actionability frontier deterministic_stages", stages, allowed_stages
+    )
     if isinstance(stages, dict):
         expected_outputs = {
             "actionability-adjudication-prepare": {
@@ -650,27 +810,53 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
                 )
 
     canonical = payload["canonical_reproducible_gold"]
-    canonical_keys = {"excluded_uncertain_resolver_rows", "label_counts", "policy", "records", "sha256"}
-    problems += _check_exact_keys("actionability frontier canonical_gold", canonical, canonical_keys)
+    canonical_keys = {
+        "excluded_uncertain_resolver_rows",
+        "label_counts",
+        "policy",
+        "records",
+        "sha256",
+    }
+    problems += _check_exact_keys(
+        "actionability frontier canonical_gold", canonical, canonical_keys
+    )
     if isinstance(canonical, dict):
         for key in {"records", "excluded_uncertain_resolver_rows"}:
-            problems += _check_nonnegative_int(f"canonical_gold.{key}", canonical.get(key))
+            problems += _check_nonnegative_int(
+                f"canonical_gold.{key}", canonical.get(key)
+            )
         problems += _check_sha256("canonical_gold.sha256", canonical.get("sha256"))
-        problems += _check_scalar("canonical_gold.policy", canonical.get("policy"), MAX_STRING)
+        problems += _check_scalar(
+            "canonical_gold.policy", canonical.get("policy"), MAX_STRING
+        )
         labels = canonical.get("label_counts")
-        allowed_labels = {"actionable", "underspecified", "irrelevant", "policy_blocked", "out_of_scope"}
-        problems += _check_exact_keys("actionability frontier label_counts", labels, allowed_labels)
+        allowed_labels = {
+            "actionable",
+            "underspecified",
+            "irrelevant",
+            "policy_blocked",
+            "out_of_scope",
+        }
+        problems += _check_exact_keys(
+            "actionability frontier label_counts", labels, allowed_labels
+        )
         if isinstance(labels, dict):
             for position, value in enumerate(labels.values()):
                 problems += _check_nonnegative_int(f"label_counts[{position}]", value)
 
     historical = payload["preserved_historical_gold"]
     historical_keys = {"artifact", "manifest", "records", "sha256", "status"}
-    problems += _check_exact_keys("actionability frontier historical_gold", historical, historical_keys)
+    problems += _check_exact_keys(
+        "actionability frontier historical_gold", historical, historical_keys
+    )
     if isinstance(historical, dict):
         for key in {"artifact", "manifest", "status"}:
-            problems += _check_scalar(f"historical_gold.{key}", historical.get(key), MAX_STRING)
-        problems += _check_nonnegative_int("historical_gold.records", historical.get("records"))
+            problems += _check_scalar(
+                f"historical_gold.{key}", historical.get(key), MAX_STRING
+            )
+        problems += _check_nonnegative_int(
+            "historical_gold.records", historical.get("records")
+        )
         problems += _check_sha256("historical_gold.sha256", historical.get("sha256"))
 
     reports = payload["preserved_nonreproducible_reports"]
@@ -680,7 +866,9 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
         "historical_candidates_high_catch.json",
         "historical_candidates_muril_minilm_high_catch.json",
     }
-    problems += _check_exact_keys("actionability frontier preserved_reports", reports, allowed_reports)
+    problems += _check_exact_keys(
+        "actionability frontier preserved_reports", reports, allowed_reports
+    )
     if isinstance(reports, dict):
         for position, digest in enumerate(reports.values()):
             problems += _check_sha256(f"preserved_reports[{position}]", digest)
@@ -740,18 +928,26 @@ def _check_sarvam_snapshots(payload: dict[str, Any]) -> list[str]:
             problems.append("Sarvam artifacts includes an unknown filename")
         for artifact_position, details in enumerate(artifacts.values()):
             if not isinstance(details, dict):
-                problems.append(f"Sarvam artifact {artifact_position} must be an object")
+                problems.append(
+                    f"Sarvam artifact {artifact_position} must be an object"
+                )
                 continue
             if set(details) - allowed_artifact_fields:
-                problems.append(f"Sarvam artifact {artifact_position} has unknown metadata keys")
+                problems.append(
+                    f"Sarvam artifact {artifact_position} has unknown metadata keys"
+                )
             digest = details.get("sha256")
             if not isinstance(digest, str) or not _SHA256_RE.fullmatch(digest):
-                problems.append(f"Sarvam artifact {artifact_position} has no valid SHA-256")
+                problems.append(
+                    f"Sarvam artifact {artifact_position} has no valid SHA-256"
+                )
             for field_position, (key, value) in enumerate(details.items()):
                 if key == "sha256":
                     continue
                 problems += _check_scalar(
-                    f"artifacts[{artifact_position}][{field_position}]", value, MAX_STRING
+                    f"artifacts[{artifact_position}][{field_position}]",
+                    value,
+                    MAX_STRING,
                 )
     problems += _check_allowlisted_list(
         "limitations",
@@ -779,9 +975,7 @@ def check_payload(payload: Any) -> list[str]:
     if schema == _CATEGORIZATION_SCHEMA:
         return _check_categorization_sample(payload)
     if schema == _PII_REDERIVED_SCHEMA:
-        problems = _check_exact_keys("PII re-derived sidecar", payload, ALLOWED_TOP)
-        if problems:
-            return problems
+        return _check_pii_rederived(payload)
     if schema == _SARVAM_SCHEMA:
         return _check_sarvam_snapshots(payload)
     if schema == _SUMMARY_SCHEMA:
@@ -850,7 +1044,9 @@ def check_file(path: Path) -> list[str]:
             not isinstance(payload, dict)
             or payload.get("schema_version") not in _RECOGNIZED_SCHEMAS
         ):
-            return ["nested provenance sidecar must declare a recognized schema_version"]
+            return [
+                "nested provenance sidecar must declare a recognized schema_version"
+            ]
         break
     return check_payload(payload)
 
@@ -877,7 +1073,9 @@ def main() -> int:
         print("Rejected values are withheld on purpose: these logs are public.")
         return 1
 
-    print(f"Checked {len(args.paths)} provenance sidecar(s) against the metadata schema.")
+    print(
+        f"Checked {len(args.paths)} provenance sidecar(s) against the metadata schema."
+    )
     return 0
 
 

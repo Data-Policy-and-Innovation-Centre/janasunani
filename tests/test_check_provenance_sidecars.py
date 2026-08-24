@@ -34,7 +34,12 @@ verify = _load("verify_pii_gold")
 VALID = {
     "schema_version": "janasunani.pii-rederived-draft-provenance/v1",
     "kind": "rederived_draft",
-    "note": "Analyzer output on the gold's own text, NOT the original bootstrap draft.",
+    "note": (
+        "Analyzer output on the gold's own text, NOT the original bootstrap draft. "
+        "Cannot prove the human pass happened, cannot detect an edited text, cannot "
+        "detect pages dropped from the drafted sample. See "
+        "scripts/rederive_pii_draft.py."
+    ),
     "created_utc": "2026-08-07T09:00:00+00:00",
     "out": "pii_draft_n50.jsonl",
     "source_gold": "pii_gold_draft_n50.jsonl",
@@ -63,6 +68,39 @@ def sidecar(tmp_path: Path, payload: dict, name: str = "x.provenance.json") -> P
 
 def test_the_real_shape_passes():
     assert check.check_payload(VALID) == []
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["kind", "note", "created_utc", "out", "source_gold"],
+)
+def test_pii_sidecar_rejects_free_text_scalar_values_without_echoing(field):
+    payload = dict(VALID, **{field: CITIZEN_TEXT})
+
+    problems = check.check_payload(payload)
+
+    assert problems
+    assert all(CITIZEN_TEXT not in problem for problem in problems)
+
+
+@pytest.mark.parametrize(
+    ("section", "field"),
+    [
+        ("analyzer", "git_commit"),
+        ("analyzer", "presidio_analyzer"),
+        ("environment", "python"),
+        ("environment", "system"),
+        ("environment", "machine"),
+    ],
+)
+def test_pii_sidecar_rejects_free_text_nested_scalars_without_echoing(section, field):
+    payload = dict(VALID)
+    payload[section] = dict(payload[section], **{field: CITIZEN_TEXT})
+
+    problems = check.check_payload(payload)
+
+    assert problems
+    assert all(CITIZEN_TEXT not in problem for problem in problems)
 
 
 def test_pii_schema_requires_the_complete_allowlisted_shape():
@@ -315,7 +353,12 @@ def _frontier_payload():
         },
         "direct_inputs": {
             name: {"role": "model output", "sha256": "b" * 64}
-            for name in ["judge_a.jsonl", "judge_b.jsonl", "resolver.jsonl", "resolver_backup.jsonl"]
+            for name in [
+                "judge_a.jsonl",
+                "judge_b.jsonl",
+                "resolver.jsonl",
+                "resolver_backup.jsonl",
+            ]
         },
         "deterministic_stages": {
             "actionability-adjudication-prepare": [
@@ -392,7 +435,9 @@ def test_actionability_frontier_rejects_unexpected_nested_fields_without_echoing
         },
     ],
 )
-def test_actionability_frontier_rejects_free_text_lists_without_echoing(payload_factory):
+def test_actionability_frontier_rejects_free_text_lists_without_echoing(
+    payload_factory,
+):
     problems = check.check_payload(payload_factory())
 
     assert problems
@@ -489,7 +534,7 @@ class TestCounterKeysAreConstrained:
         assert check.check_payload(dict(VALID, spans_by_entity={"NAME": True}))
 
     def test_canonical_labels_pass(self):
-        payload = dict(VALID, spans_by_entity={"NAME": 1, "PAN": 2})
+        payload = dict(VALID, spans=3, spans_by_entity={"NAME": 1, "PAN": 2})
         assert check.check_payload(payload) == []
 
     def test_label_set_matches_the_verifier(self):
@@ -519,14 +564,16 @@ class TestValueRules:
     def test_prose_over_the_cap_is_rejected(self):
         assert check.check_payload(dict(VALID, source_gold="x" * 500))
 
-    def test_note_may_be_longer_than_other_scalars(self):
-        assert check.check_payload(dict(VALID, note="x" * 500)) == []
+    def test_note_is_the_fixed_generator_caveat(self):
+        assert check.check_payload(dict(VALID, note="x" * 500))
 
     def test_note_still_has_a_ceiling(self):
         assert check.check_payload(dict(VALID, note="x" * 2000))
 
     def test_a_list_of_records_is_rejected(self):
-        assert check.check_payload(dict(VALID, records=[{"id": "a", "text": CITIZEN_TEXT}]))
+        assert check.check_payload(
+            dict(VALID, records=[{"id": "a", "text": CITIZEN_TEXT}])
+        )
 
     def test_a_non_digest_checksum_is_rejected(self):
         assert check.check_payload(dict(VALID, source_gold_md5=CITIZEN_TEXT))
@@ -561,7 +608,9 @@ class TestFileLevelChecks:
     def test_valid_file_passes(self, tmp_path):
         assert check.check_file(sidecar(tmp_path, VALID)) == []
 
-    def test_nested_sidecar_requires_a_recognized_schema_without_echoing(self, tmp_path):
+    def test_nested_sidecar_requires_a_recognized_schema_without_echoing(
+        self, tmp_path
+    ):
         path = tmp_path / "data" / "external" / "candidate" / "provenance.json"
         path.parent.mkdir(parents=True)
         path.write_text(json.dumps({"note": CITIZEN_TEXT}), encoding="utf-8")
@@ -589,7 +638,9 @@ class TestCLI:
         payload = dict(VALID, spans_by_entity={CITIZEN_TEXT: 1})
         assert self._run(monkeypatch, sidecar(tmp_path, payload)) == 1
 
-    def test_bad_sidecar_output_withholds_the_value(self, tmp_path, monkeypatch, capsys):
+    def test_bad_sidecar_output_withholds_the_value(
+        self, tmp_path, monkeypatch, capsys
+    ):
         payload = dict(VALID, spans_by_entity={CITIZEN_TEXT: 1})
         self._run(monkeypatch, sidecar(tmp_path, payload))
         assert CITIZEN_TEXT not in capsys.readouterr().out

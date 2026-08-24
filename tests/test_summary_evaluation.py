@@ -1,11 +1,15 @@
+import hashlib
 import json
+from pathlib import Path
 
 import pytest
+import yaml
 
 from janasunani.evaluation.summary import (
     SummaryJudgment,
     build_scorecard,
     load_judgments,
+    validate_provenance,
 )
 
 
@@ -47,6 +51,94 @@ def skipped(item_id, *, should_skip=True, language="unknown", source="typed"):
         usable_without_edit=None,
         edit_seconds=None,
     )
+
+
+def write_provenance_contract(tmp_path, judgments_path, rows):
+    provenance = tmp_path / "provenance.json"
+    generated_n = sum(not row.skipped for row in rows)
+    payload = {
+        "schema_version": "summary-development-provenance/v1",
+        "evidence_status": "single-frontier-judge-development-only",
+        "publication_ready": False,
+        "source": {"redacted_only": True, "split": "test", "sha256": "a" * 64},
+        "selection": {
+            "sample_size": len(rows),
+            "generated": generated_n,
+            "skipped": len(rows) - generated_n,
+            "not_prevalence_representative": True,
+            "private_review_sha256": "b" * 64,
+        },
+        "model": {"local_files_only": True, "weights_sha256": "c" * 64},
+        "adjudication": {
+            "structured_judgments_only_in_governed_artifacts": True,
+            "officer_validated": False,
+        },
+    }
+    provenance.write_text(json.dumps(payload), encoding="utf-8")
+    binding = tmp_path / "binding.json"
+    binding.write_text(
+        json.dumps(
+            {
+                "schema_version": "janasunani.summary-benchmark-binding/v1",
+                "dataset_id": "summary-bart-development-v1",
+                "judgments_md5": hashlib.md5(
+                    judgments_path.read_bytes(), usedforsecurity=False
+                ).hexdigest(),
+                "provenance_md5": hashlib.md5(
+                    provenance.read_bytes(), usedforsecurity=False
+                ).hexdigest(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    return provenance, binding
+
+
+def test_provenance_contract_binds_judgments_and_review_metadata(tmp_path):
+    rows = [generated("a"), skipped("b")]
+    judgments = tmp_path / "judgments.jsonl"
+    judgments.write_text(
+        "".join(json.dumps(row.__dict__) + "\n" for row in rows), encoding="utf-8"
+    )
+    provenance, binding = write_provenance_contract(tmp_path, judgments, rows)
+
+    validate_provenance(
+        judgments,
+        provenance,
+        binding,
+        rows,
+        dataset_id="summary-bart-development-v1",
+    )
+
+    judgments.write_text(judgments.read_text() + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="judgments fingerprint"):
+        validate_provenance(
+            judgments,
+            provenance,
+            binding,
+            rows,
+            dataset_id="summary-bart-development-v1",
+        )
+
+
+def test_dvc_stage_consumes_the_summary_provenance_binding():
+    root = Path(__file__).resolve().parents[1]
+    pipeline = yaml.safe_load((root / "dvc.yaml").read_text(encoding="utf-8"))
+    lock = yaml.safe_load((root / "dvc.lock").read_text(encoding="utf-8"))
+
+    for document in (pipeline, lock):
+        stage = document["stages"]["summary-development-benchmark"]
+        command = stage["cmd"]
+        dependencies = {
+            dependency if isinstance(dependency, str) else dependency["path"]
+            for dependency in stage["deps"]
+        }
+        assert (
+            "--provenance data/external/summary_development_v1/provenance.json"
+            in command
+        )
+        assert "--binding config/summary_benchmark_binding.json" in command
+        assert "config/summary_benchmark_binding.json" in dependencies
 
 
 def test_scorecard_covers_factuality_usefulness_editing_and_abstention():
@@ -119,9 +211,7 @@ def test_loader_is_strict_and_rejects_duplicate_items(tmp_path):
 
 def test_skipped_rows_cannot_hide_generated_output_findings():
     with pytest.raises(ValueError, match="skipped summary"):
-        SummaryJudgment(
-            **(skipped("x").__dict__ | {"unsupported_claims": 1})
-        )
+        SummaryJudgment(**(skipped("x").__dict__ | {"unsupported_claims": 1}))
 
 
 @pytest.mark.parametrize(

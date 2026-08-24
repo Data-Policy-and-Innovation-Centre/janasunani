@@ -308,7 +308,8 @@ stages:
   actionability-local-candidate-benchmark:
     cmd: uv run --frozen --extra categorizer python
       scripts/benchmark_actionability_candidates.py --gold
-      data/external/actionability_frontier_v1/gold.jsonl --output
+      data/external/actionability_frontier_v1/gold.jsonl --manifest
+      data/external/actionability_frontier_v1/gold.manifest.json --output
       outputs/evaluation/actionability_candidates_muril_high_catch.json
       --artifact-dir models/actionability --multilingual-encoder
       muril_local=models/categorizer --min-review-precision 0.6
@@ -318,6 +319,10 @@ stages:
       hash: md5
       md5: 359a39bc0030391dd774a5e0078c7132
       size: 212025
+    - path: data/external/actionability_frontier_v1/gold.manifest.json
+      hash: md5
+      md5: b57c5c7bc4d015a3f84fe5dfc4e909fd
+      size: 2462
     - path: janasunani/evaluation/actionability.py
       hash: md5
       md5: 988d2469936623e2b8b08886bf31100a
@@ -345,8 +350,8 @@ stages:
       size: 10265
     - path: scripts/benchmark_actionability_candidates.py
       hash: md5
-      md5: 4f08f5707597a3937e4c6b5378908462
-      size: 11422
+      md5: d983021f5ed1219c103eb0f6dd94ee1e
+      size: 15529
     - path: uv.lock
       hash: md5
       md5: f895934178f603f5315683d02abc6449
@@ -642,10 +647,16 @@ stages:
       size: 68115
   summary-development-benchmark:
     cmd: uv run --frozen python -m janasunani.evaluation.summary --judgments
-      data/external/summary_development_v1/judgments.jsonl --dataset-id
+      data/external/summary_development_v1/judgments.jsonl --provenance
+      data/external/summary_development_v1/provenance.json --binding
+      config/summary_benchmark_binding.json --dataset-id
       summary-bart-development-v1 --output
       outputs/evaluation/summary_development_v1.json
     deps:
+    - path: config/summary_benchmark_binding.json
+      hash: md5
+      md5: 5f32e52c0070d7c0e704c9544939f302
+      size: 224
     - path: data/external/summary_development_v1/judgments.jsonl
       hash: md5
       md5: a7a5cc55690de816e55266d9a9c5e2ed
@@ -660,8 +671,8 @@ stages:
       size: 26269
     - path: janasunani/evaluation/summary.py
       hash: md5
-      md5: 4cd7e62e74562c07457a04cf9114ddd6
-      size: 9808
+      md5: b03bd223292b9891144bbd3de73b6257
+      size: 15253
     - path: pyproject.toml
       hash: md5
       md5: 7650a32a2ab1519840a182edfcf10a50

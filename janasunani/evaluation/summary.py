@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -23,14 +24,33 @@ from janasunani.evaluation.stats import wilson_interval
 
 SCHEMA_VERSION = "janasunani.summary-judgments/v1"
 REPORT_VERSION = "janasunani.summary-scorecard/v1"
+BINDING_VERSION = "janasunani.summary-benchmark-binding/v1"
+PROVENANCE_VERSION = "summary-development-provenance/v1"
 _FORBIDDEN_FIELDS = {
-    "grievance", "raw_text", "redacted_text", "source_text", "summary",
-    "candidate_summary", "reference_summary", "ticket_no", "officer_id",
+    "grievance",
+    "raw_text",
+    "redacted_text",
+    "source_text",
+    "summary",
+    "candidate_summary",
+    "reference_summary",
+    "ticket_no",
+    "officer_id",
 }
 _REQUIRED_FIELDS = {
-    "item_id", "group_id", "language", "source_type", "should_skip", "skipped",
-    "critical_facts_total", "critical_facts_present", "unsupported_claims",
-    "contradictions", "pii_leak", "usefulness", "usable_without_edit",
+    "item_id",
+    "group_id",
+    "language",
+    "source_type",
+    "should_skip",
+    "skipped",
+    "critical_facts_total",
+    "critical_facts_present",
+    "unsupported_claims",
+    "contradictions",
+    "pii_leak",
+    "usefulness",
+    "usable_without_edit",
     "edit_seconds",
 }
 
@@ -81,12 +101,20 @@ class SummaryJudgment:
                     int(self.pii_leak),
                 )
             ):
-                raise ValueError("a skipped summary cannot carry generated-output findings")
+                raise ValueError(
+                    "a skipped summary cannot carry generated-output findings"
+                )
             if any(
                 value is not None
-                for value in (self.usefulness, self.usable_without_edit, self.edit_seconds)
+                for value in (
+                    self.usefulness,
+                    self.usable_without_edit,
+                    self.edit_seconds,
+                )
             ):
-                raise ValueError("a skipped summary cannot carry usefulness/edit judgments")
+                raise ValueError(
+                    "a skipped summary cannot carry usefulness/edit judgments"
+                )
         else:
             if (
                 self.usefulness is None
@@ -104,12 +132,16 @@ class SummaryJudgment:
                 or not math.isfinite(self.edit_seconds)
                 or self.edit_seconds < 0
             ):
-                raise ValueError("generated summaries require non-negative edit_seconds")
+                raise ValueError(
+                    "generated summaries require non-negative edit_seconds"
+                )
 
 
 def load_judgments(path: Path) -> list[SummaryJudgment]:
     judgments: list[SummaryJudgment] = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for line_number, line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), 1
+    ):
         if not line.strip():
             continue
         try:
@@ -134,6 +166,95 @@ def load_judgments(path: Path) -> list[SummaryJudgment]:
         judgments.append(SummaryJudgment(**payload))
     _validate_collection(judgments)
     return judgments
+
+
+def _md5(path: Path) -> str:
+    digest = hashlib.md5(usedforsecurity=False)
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def validate_provenance(
+    judgments_path: Path,
+    provenance_path: Path,
+    binding_path: Path,
+    judgments: Sequence[SummaryJudgment],
+    *,
+    dataset_id: str,
+) -> None:
+    """Bind structured judgments to the recorded generation/review provenance."""
+
+    try:
+        binding = json.loads(binding_path.read_text(encoding="utf-8"))
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise ValueError(f"cannot read summary provenance contract: {exc}") from exc
+    if not isinstance(binding, dict) or set(binding) != {
+        "schema_version",
+        "dataset_id",
+        "judgments_md5",
+        "provenance_md5",
+    }:
+        raise ValueError("summary benchmark binding has an unexpected shape")
+    if binding.get("schema_version") != BINDING_VERSION:
+        raise ValueError("summary benchmark binding version mismatch")
+    if binding.get("dataset_id") != dataset_id:
+        raise ValueError("summary benchmark binding dataset_id mismatch")
+    if binding.get("judgments_md5") != _md5(judgments_path):
+        raise ValueError("summary judgments fingerprint mismatch")
+    if binding.get("provenance_md5") != _md5(provenance_path):
+        raise ValueError("summary provenance fingerprint mismatch")
+    if (
+        not isinstance(provenance, dict)
+        or provenance.get("schema_version") != PROVENANCE_VERSION
+    ):
+        raise ValueError("summary provenance version mismatch")
+    if provenance.get("evidence_status") != "single-frontier-judge-development-only":
+        raise ValueError("summary provenance evidence status mismatch")
+    if provenance.get("publication_ready") is not False:
+        raise ValueError("summary development provenance cannot be publication-ready")
+
+    source = provenance.get("source")
+    if not isinstance(source, dict) or source.get("redacted_only") is not True:
+        raise ValueError("summary provenance does not require a redacted source")
+    if source.get("split") != "test":
+        raise ValueError("summary provenance split mismatch")
+    if not isinstance(source.get("sha256"), str) or len(source["sha256"]) != 64:
+        raise ValueError("summary provenance has no source fingerprint")
+
+    selection = provenance.get("selection")
+    generated = sum(not row.skipped for row in judgments)
+    if not isinstance(selection, dict) or selection.get("sample_size") != len(
+        judgments
+    ):
+        raise ValueError("summary provenance sample size mismatch")
+    if selection.get("generated") != generated or selection.get("skipped") != (
+        len(judgments) - generated
+    ):
+        raise ValueError("summary provenance generated/skipped counts mismatch")
+    if selection.get("not_prevalence_representative") is not True:
+        raise ValueError("summary provenance sample-design caveat is missing")
+    review_sha256 = selection.get("private_review_sha256")
+    if not isinstance(review_sha256, str) or len(review_sha256) != 64:
+        raise ValueError("summary provenance has no private-review fingerprint")
+
+    model = provenance.get("model")
+    if not isinstance(model, dict) or model.get("local_files_only") is not True:
+        raise ValueError("summary provenance does not pin a local model")
+    weights_sha256 = model.get("weights_sha256")
+    if not isinstance(weights_sha256, str) or len(weights_sha256) != 64:
+        raise ValueError("summary provenance has no model-weights fingerprint")
+    adjudication = provenance.get("adjudication")
+    if not isinstance(adjudication, dict):
+        raise ValueError("summary adjudication provenance is missing")
+    if adjudication.get("structured_judgments_only_in_governed_artifacts") is not True:
+        raise ValueError("summary provenance does not require structured judgments")
+    if adjudication.get("officer_validated") is not False:
+        raise ValueError(
+            "summary development judgments cannot claim officer validation"
+        )
 
 
 def _validate_collection(judgments: Sequence[SummaryJudgment]) -> None:
@@ -165,8 +286,12 @@ def _metrics(judgments: Sequence[SummaryJudgment]) -> dict[str, Any]:
     missed_summaries = sum(not row.should_skip and row.skipped for row in judgments)
     facts_total = sum(row.critical_facts_total for row in generated)
     facts_present = sum(row.critical_facts_present for row in generated)
-    edit_seconds = [float(row.edit_seconds) for row in generated if row.edit_seconds is not None]
-    usefulness = [int(row.usefulness) for row in generated if row.usefulness is not None]
+    edit_seconds = [
+        float(row.edit_seconds) for row in generated if row.edit_seconds is not None
+    ]
+    usefulness = [
+        int(row.usefulness) for row in generated if row.usefulness is not None
+    ]
     return {
         "n": len(judgments),
         "generated_n": len(generated),
@@ -178,7 +303,9 @@ def _metrics(judgments: Sequence[SummaryJudgment]) -> dict[str, Any]:
         "contradiction_case_rate": _rate(
             sum(row.contradictions > 0 for row in generated), len(generated)
         ),
-        "pii_leak_case_rate": _rate(sum(row.pii_leak for row in generated), len(generated)),
+        "pii_leak_case_rate": _rate(
+            sum(row.pii_leak for row in generated), len(generated)
+        ),
         "usable_without_edit_rate": _rate(
             sum(row.usable_without_edit is True for row in generated), len(generated)
         ),
@@ -234,10 +361,20 @@ def build_scorecard(
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--judgments", type=Path, required=True)
+    parser.add_argument("--provenance", type=Path, required=True)
+    parser.add_argument("--binding", type=Path, required=True)
     parser.add_argument("--dataset-id", required=True)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
-    report = build_scorecard(load_judgments(args.judgments), dataset_id=args.dataset_id)
+    judgments = load_judgments(args.judgments)
+    validate_provenance(
+        args.judgments,
+        args.provenance,
+        args.binding,
+        judgments,
+        dataset_id=args.dataset_id,
+    )
+    report = build_scorecard(judgments, dataset_id=args.dataset_id)
     encoded = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

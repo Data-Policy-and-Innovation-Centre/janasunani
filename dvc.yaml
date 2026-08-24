@@ -188,6 +188,7 @@ stages:
       uv run --frozen --extra categorizer python
       scripts/benchmark_actionability_candidates.py
       --gold data/external/actionability_frontier_v1/gold.jsonl
+      --manifest data/external/actionability_frontier_v1/gold.manifest.json
       --output outputs/evaluation/actionability_candidates_muril_high_catch.json
       --artifact-dir models/actionability
       --multilingual-encoder muril_local=models/categorizer
@@ -196,6 +197,7 @@ stages:
       --overwrite
     deps:
       - data/external/actionability_frontier_v1/gold.jsonl
+      - data/external/actionability_frontier_v1/gold.manifest.json
       - models/categorizer
       - janasunani/evaluation/actionability.py
       - janasunani/evaluation/classification.py
@@ -263,9 +265,12 @@ stages:
     cmd: >-
       uv run --frozen python -m janasunani.evaluation.summary
       --judgments data/external/summary_development_v1/judgments.jsonl
+      --provenance data/external/summary_development_v1/provenance.json
+      --binding config/summary_benchmark_binding.json
       --dataset-id summary-bart-development-v1
       --output outputs/evaluation/summary_development_v1.json
     deps:
+      - config/summary_benchmark_binding.json
       - data/external/summary_development_v1/judgments.jsonl
       - data/external/summary_development_v1/provenance.json
       - janasunani/evaluation/stats.py
