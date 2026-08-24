@@ -58,6 +58,27 @@ SUBTLE = "6C6E76"
 FILL = "F2F2F2"
 WHITE = "FFFFFF"
 
+# ── Sarvam head-to-head, filled in when the benchmark run lands ───────────────
+# Category is per GRIEVANCE, not per page. A document spans several pages and
+# carries one officer-recorded category, so `n` counts documents. Getting this
+# wrong inflates n by roughly the pages-per-document ratio.
+#
+# Leave as None and the slide is skipped. The deck always builds, and it never
+# ships a placeholder number.
+#
+#   n         documents graded
+#   pipeline  our categoriser's agreement with the officer's recorded label
+#   sarvam    Sarvam Extract's agreement with the same label
+#   baseline  always guessing the single biggest category
+#   title     the assertion these numbers actually support
+#   closing   the line under the bars
+SARVAM_HEAD_TO_HEAD = None
+# Example once measured:
+# SARVAM_HEAD_TO_HEAD = {
+#     "n": 212, "pipeline": 0.0, "sarvam": 0.0, "baseline": 0.0,
+#     "title": "", "closing": "", "notes": "",
+# }
+
 SVG_EXT_URI = "{96DAC541-7B7A-43D3-8B79-37D633B846F1}"
 SVG_NS = "http://schemas.microsoft.com/office/drawing/2016/SVG/main"
 
@@ -585,7 +606,37 @@ s.notes_slide.notes_text_frame.text = (
     "path. Do not quote ₹700; that was priced on the withdrawn 30B model."
 )
 
-# ══ 8 · Closing ═══════════════════════════════════════════════════════════════
+# ══ 8 · Category head to head (only when measured) ════════════════════════════
+if SARVAM_HEAD_TO_HEAD:
+    hh = SARVAM_HEAD_TO_HEAD
+    s = clone(prs, A_BARS3)
+    sh = S(s)
+    set_text(sh[0], "CATEGORY, HEAD TO HEAD")
+    set_text(sh[1], hh["title"])
+    set_text(
+        sh[2],
+        "Share of grievances where the category matches the one the officer recorded.",
+    )
+    top = max(hh["pipeline"], hh["sarvam"], hh["baseline"]) or 1.0
+    bars = [
+        (sh[3], sh[4], sh[5], "Our pipeline", hh["pipeline"]),
+        (sh[6], sh[7], sh[8], "Sarvam", hh["sarvam"]),
+        (sh[9], sh[10], sh[11], "Always guess the biggest", hh["baseline"]),
+    ]
+    for label_sh, bar_sh, num_sh, label, value in bars:
+        set_text(label_sh, label)
+        set_text(num_sh, f"{value * 100:.1f}%")
+        width = max(1.35, 8.0 * (value / top))
+        bar_sh.width = Inches(width)
+        num_sh.width = Inches(width - 0.3)
+    set_text(
+        sh[15],
+        f"n = {hh['n']:,} grievances from Sambalpur 2024. Both engines read the same documents.",
+    )
+    set_text(sh[12], hh["closing"])
+    s.notes_slide.notes_text_frame.text = hh.get("notes", "")
+
+# ══ 9 · Closing ═══════════════════════════════════════════════════════════════
 s = clone(prs, A_CLOSING)
 s.notes_slide.notes_text_frame.text = (
     "Close on the limits, not a summary.\n\n"
