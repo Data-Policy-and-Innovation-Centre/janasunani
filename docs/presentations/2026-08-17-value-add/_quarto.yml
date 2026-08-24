@@ -1,0 +1,31 @@
+# Quarto project for the 17 August 2026 value-add deck.
+#
+#   quarto render        -> slides.html   (single self-contained file, shareable)
+#
+# This project is a SCRIPT, not a built deck. `slides.qmd` carries every slide,
+# every speaker note and a `.visual` placeholder wherever a figure goes. It
+# renders today, with dashed placeholder boxes where the figures will be. Drop a
+# real asset into assets/, replace the placeholder with `![](assets/<file>)`, and
+# the slide is finished. See assets/README.md for the checklist.
+#
+# Format options live HERE rather than in the document front matter, because
+# document YAML overrides project profiles in Quarto and cannot be flipped later.
+
+project:
+  render:
+    - slides.qmd
+
+format:
+  revealjs:
+    theme: [default, custom.scss]
+    title-slide-attributes:
+      data-background-color: "#FAF9F5"
+    transition: fade
+    transition-speed: fast
+    slide-number: c/t
+    incremental: true
+    menu: true
+    width: 1280
+    height: 720
+    footer: "DPIC · Janasunani 2.0 · 17 August 2026 · Internal draft"
+    embed-resources: true

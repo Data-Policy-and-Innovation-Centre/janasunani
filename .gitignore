@@ -276,6 +276,12 @@ mlruns/
 # Generated Word docs (management/technical briefs rendered from docs/*.md)
 docs/*.docx
 
+# Rendered slide decks. The .qmd script is the source of truth, exactly as the
+# Markdown is for docs/*.docx above; `make deck` regenerates these.
+docs/presentations/*/slides.html
+docs/presentations/*/slides_files/
+docs/presentations/*/.quarto/
+
 # Agent worktrees (created by the harness; never part of the tree)
 .claude/wt/
 .claude/worktrees/

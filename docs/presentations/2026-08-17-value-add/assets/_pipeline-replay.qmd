@@ -1,0 +1,231 @@
+```{=html}
+<!--
+  PIPELINE REPLAY. Included by slides.qmd via {{< include >}}.
+
+  This is a REPLAY, not live inference. Every stage duration is the real measured
+  p50 from `pipeline_latency_development` in the benchmark bundle, so the clock
+  is honest and the shape of the bar is the finding. The OUTPUTS are canned and
+  synthetic -- no model runs, nothing is fetched, and the petition is written for
+  this slide. The label on the component says so and it must stay.
+
+  TWO PATHS, one component. Switching to "Typed complaint" drops OCR and the
+  summary and the whole run finishes in 0.13s against 13.66s -- about 100x, and
+  the entire difference is those two stages. That contrast is the argument for
+  the toggle existing: it is far stronger shown than stated.
+
+  ODIA. Chromium renders Odia natively on macOS, verified, so the script is used
+  directly with no embedded font. The romanization sits underneath anyway, so
+  the meaning survives on a machine whose font stack lacks Odia and the audience
+  gets both readings regardless.
+
+  No build step, no library, no network. It has to survive a room with no wifi.
+-->
+<div class="replay fb-host" id="replay">
+  <div class="fb"><img src="assets/fallback/replay.png" alt="The pipeline replay, run to completion: reading the page and drafting the summary are 92% of 13.66 seconds"></div>
+
+  <div class="replay-bar">
+    <div class="replay-seg2" id="replay-path">
+      <button data-path="doc" class="active">Scanned petition</button>
+      <button data-path="txt">Typed complaint</button>
+    </div>
+    <div class="replay-controls">
+      <button id="replay-go" class="replay-btn">Run</button>
+      <button id="replay-speed" class="replay-btn replay-btn-quiet" data-mult="1">1&times;</button>
+      <span class="replay-clock" id="replay-clock">0.0s</span>
+    </div>
+  </div>
+
+  <div class="replay-stage">
+    <div class="replay-in" id="replay-in">
+      <div class="replay-in-h" id="replay-in-h">Scan &middot; 2 pages</div>
+      <div class="replay-in-body">
+        <p class="replay-od">ଝରପଡ଼ା ରେ ପାଣି ଯୋଗାଣ ନିୟମିତ ନାହିଁ</p>
+        <p class="replay-rom">Jharpada re pani jogana niyamita nahin</p>
+        <p class="replay-gloss">&ldquo;Water supply in Jharpada is not regular&rdquo;</p>
+      </div>
+    </div>
+    <div class="replay-feed" id="replay-feed">&rarr;</div>
+    <div class="replay-track" id="replay-track"></div>
+  </div>
+
+  <div class="replay-out">
+    <div class="replay-card" data-out="redact">
+      <span class="replay-card-h">Redacted text</span>
+      <span class="replay-card-b">&ldquo;… water supply to <em>[NAME]</em>&rsquo;s ward
+      irregular three weeks. Contact <em>[PHONE]</em> …&rdquo;</span>
+    </div>
+    <div class="replay-card" data-out="categorize">
+      <span class="replay-card-h">Category shortlist</span>
+      <span class="replay-card-b"><b>Infrastructure</b> · Social Welfare · General</span>
+    </div>
+    <div class="replay-card" data-out="route">
+      <span class="replay-card-h">Route shortlist</span>
+      <span class="replay-card-b"><b>Collector → BDO</b> · Collector → EE, RWSS</span>
+    </div>
+    <div class="replay-card" data-out="summarize">
+      <span class="replay-card-h">Draft summary</span>
+      <span class="replay-card-b">Irregular piped water supply affecting one ward
+      for three weeks. Requests restoration.</span>
+    </div>
+  </div>
+
+  <div class="replay-note" id="replay-note"></div>
+</div>
+
+<script>
+(function () {
+  // Measured p50 seconds from pipeline_latency_development. `heavy` marks the
+  // two stages worth engineering; `mid` is small but not invisible and still
+  // deserves a label, because leaving the category model unlabelled makes it
+  // look free.
+  var DOC = [
+    { k: "ocr",        label: "Read the page",        s: 6.000, heavy: true },
+    { k: "language",   label: "Detect language",      s: 0.006 },
+    { k: "pii",        label: "Find personal detail", s: 0.021 },
+    { k: "redact",     label: "Redact",               s: 0.053 },
+    { k: "triage",     label: "Flag for review",      s: 0.001 },
+    { k: "categorize", label: "Suggest category",     s: 0.749, mid: true },
+    { k: "route",      label: "Suggest route",        s: 0.001 },
+    { k: "summarize",  label: "Draft summary",        s: 6.590, heavy: true }
+  ];
+  // Typed path: there is no page to read, and the fixture did not exercise
+  // summarisation. Neither absence is a claim that typed complaints are never
+  // summarised -- it is what this benchmark run measured, and the note says so.
+  var TXT = [
+    { k: "language",   label: "Detect language",      s: 0.004 },
+    { k: "pii",        label: "Find personal detail", s: 0.009 },
+    { k: "redact",     label: "Redact",               s: 0.010, mid: true },
+    { k: "triage",     label: "Flag for review",      s: 0.001 },
+    { k: "categorize", label: "Suggest category",     s: 0.113, heavy: true },
+    { k: "route",      label: "Suggest route",        s: 0.001 }
+  ];
+  var NOTE = {
+    doc: "Replay at measured speed &middot; scanned path, e2e p50 <b>13.66s</b>, n=20. " +
+         "Reading the page and drafting the summary are 92% of it.",
+    txt: "Replay at measured speed &middot; typed path, e2e p50 <b>0.13s</b>, n=40 &mdash; " +
+         "about <b>100&times;</b> faster. No page to read, and the fixture ran no summary; " +
+         "the whole remaining cost is the category model."
+  };
+  var IN_H = { doc: "Scan &middot; 2 pages", txt: "Typed into the portal" };
+
+  var root = document.getElementById("replay");
+  if (!root) return;
+  var track = document.getElementById("replay-track");
+  var clock = document.getElementById("replay-clock");
+  var go = document.getElementById("replay-go");
+  var speed = document.getElementById("replay-speed");
+  var note = document.getElementById("replay-note");
+  var inbox = document.getElementById("replay-in");
+  var inh = document.getElementById("replay-in-h");
+  var path = "doc", stages = DOC, total = 0, timer = null;
+
+  function build() {
+    stages = path === "doc" ? DOC : TXT;
+    total = stages.reduce(function (a, x) { return a + x.s; }, 0);
+
+    // The two paths share a time axis, so the typed bar is visibly a sliver of
+    // the scanned one -- that contrast IS the point of the toggle. A literal 1%
+    // would be unreadable, so it floors at 13%, and the note carries the true
+    // ratio in words. Setting this explicitly rather than letting flex-grow
+    // values summing below 1 do it by accident, which is what happened first
+    // and would break the moment someone edited a stage time.
+    var DOC_TOTAL = DOC.reduce(function (a, x) { return a + x.s; }, 0);
+    var frac = Math.max(total / DOC_TOTAL, 0.13);
+    track.style.width = (100 * frac).toFixed(1) + "%";
+    // Too narrow to letter. A clipped "S…" reads as a rendering fault rather
+    // than as "this stage is too small to label", so drop the text and let the
+    // note carry it.
+    track.classList.toggle("replay-track-narrow", frac < 0.4);
+    track.innerHTML = "";
+    stages.forEach(function (st) {
+      var seg = document.createElement("div");
+      seg.className = "replay-seg" + (st.heavy ? " replay-seg-heavy" : st.mid ? " replay-seg-mid" : "");
+      seg.style.flexGrow = String(st.s);
+      seg.dataset.k = st.k;
+      seg.innerHTML = '<span class="replay-fill"></span>' +
+                      '<span class="replay-lab">' + st.label + "</span>" +
+                      '<span class="replay-dur">' +
+                      (st.s >= 0.05 ? st.s.toFixed(st.s < 1 ? 2 : 1) + "s" : "&lt;0.05s") + "</span>";
+      track.appendChild(seg);
+    });
+    inbox.className = "replay-in replay-in-" + path;
+    inh.innerHTML = IN_H[path];
+    note.innerHTML = NOTE[path] +
+      " Stage durations are recorded p50s; the outputs are canned and the petition is synthetic. No model is running.";
+    reset();
+  }
+
+  function reset() {
+    if (timer) { cancelAnimationFrame(timer); timer = null; }
+    root.querySelectorAll(".replay-seg").forEach(function (e) { e.classList.remove("on", "done"); });
+    root.querySelectorAll(".replay-card").forEach(function (e) { e.classList.remove("on"); });
+    root.querySelectorAll(".replay-fill").forEach(function (e) { e.style.width = "0%"; });
+    root.classList.remove("running");
+    clock.textContent = "0.0s";
+  }
+
+  function run() {
+    reset();
+    root.classList.add("running");
+    var mult = parseFloat(speed.dataset.mult);
+    var t0 = performance.now();
+    function frame(now) {
+      var elapsed = ((now - t0) / 1000) * mult;
+      clock.textContent = Math.min(elapsed, total).toFixed(2) + "s";
+      var acc = 0;
+      stages.forEach(function (st) {
+        var seg = track.querySelector('[data-k="' + st.k + '"]');
+        if (!seg) return;
+        var fill = seg.querySelector(".replay-fill");
+        var into = elapsed - acc;
+        if (into <= 0) { fill.style.width = "0%"; }
+        else if (into >= st.s) {
+          fill.style.width = "100%";
+          seg.classList.add("done"); seg.classList.remove("on");
+          var card = root.querySelector('[data-out="' + st.k + '"]');
+          if (card) card.classList.add("on");
+        } else {
+          fill.style.width = (100 * into / st.s).toFixed(1) + "%";
+          seg.classList.add("on");
+        }
+        acc += st.s;
+      });
+      if (elapsed < total) { timer = requestAnimationFrame(frame); }
+      else {
+        clock.textContent = total.toFixed(2) + "s";
+        // Cards whose stage does not exist on this path stay dark, so the
+        // typed run visibly produces no summary rather than silently implying
+        // one appeared.
+        timer = null;
+      }
+    }
+    timer = requestAnimationFrame(frame);
+  }
+
+  go.addEventListener("click", run);
+  speed.addEventListener("click", function () {
+    var seq = { "1": "4", "4": "0.1", "0.1": "1" };
+    var next = seq[speed.dataset.mult] || "1";
+    speed.dataset.mult = next;
+    speed.innerHTML = (next === "0.1" ? "slow" : next + "&times;");
+  });
+  document.getElementById("replay-path").addEventListener("click", function (ev) {
+    var b = ev.target.closest("button");
+    if (!b) return;
+    path = b.dataset.path;
+    this.querySelectorAll("button").forEach(function (x) { x.classList.remove("active"); });
+    b.classList.add("active");
+    build();
+  });
+
+  if (window.Reveal && Reveal.on) {
+    Reveal.on("slidechanged", function (e) {
+      if (e.currentSlide && e.currentSlide.contains(root)) reset();
+    });
+  }
+
+  build();
+  root.classList.add("live");
+})();
+</script>
+```

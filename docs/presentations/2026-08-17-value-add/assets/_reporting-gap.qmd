@@ -1,0 +1,68 @@
+```{=html}
+<!--
+  THE REPORTING SURFACE, REDRAWN. Included by slides.qmd via {{< include >}}.
+
+  This slide can never use a real capture and that is not a stylistic choice.
+  The 11 August 2026 screens carry real citizen names, mobile numbers, email
+  addresses and home addresses, and the source document is marked internal, not
+  for circulation. So the left panel is drawn in CSS with invented numbers and
+  no place names -- office TYPES only, never a named office -- and it is labelled
+  as an illustration on its own header, the same rule the desk card follows.
+
+  What is NOT invented is the shape: counts by office and status, a disposal
+  percentage over filings, and no time-related field anywhere on the screen.
+  That is the finding (Q0.1, Q0.2, Figures B.19-B.20), and it is scoped to the
+  CM Grievance Cell in the source line on the slide.
+
+  The right panel is checkable rather than rhetorical: every field names the
+  actual column in janasunani/db/models.py that already holds it. The argument
+  is not "you should collect more". It is "you already have this".
+
+  Reveal fragments do the reveal. `.rg-f` overrides reveal's default hide so the
+  fields start visible-but-grey and light maroon as they are stepped through --
+  an absence you can see going from absent to present. No custom JS: if reveal
+  never fires, every field simply stays in its grey state and the slide still
+  reads correctly.
+-->
+<div class="repgap">
+  <div class="rg-panel rg-today">
+    <div class="rg-head">Pendency report &middot; illustration, redrawn, not a capture</div>
+    <table class="rg-table">
+      <colgroup>
+        <col style="width:34%"><col style="width:15%"><col style="width:19%">
+        <col style="width:16%"><col style="width:16%">
+      </colgroup>
+      <thead>
+        <tr><th>Office</th><th>Total</th><th>Resolved</th><th>Pending</th><th>Disposal</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Collector</td><td>4,812</td><td>4,166</td><td>646</td><td>86.6</td></tr>
+        <tr><td>BDO</td><td>1,340</td><td>1,102</td><td>238</td><td>82.2</td></tr>
+        <tr><td>EE, RWSS</td><td>918</td><td>705</td><td>213</td><td>76.8</td></tr>
+        <tr><td>Tahasildar</td><td>734</td><td>651</td><td>83</td><td>88.7</td></tr>
+        <tr><td>Sub-Collector</td><td>402</td><td>318</td><td>84</td><td>79.1</td></tr>
+        <!-- The columns add up and 6,942/8,206 really is 84.6%. Someone in the
+             room will check, and an illustration that fails arithmetic costs
+             more credibility than it saves effort. -->
+        <tr class="rg-total"><td>Total</td><td>8,206</td><td>6,942</td><td>1,264</td><td>84.6</td></tr>
+      </tbody>
+    </table>
+    <div class="rg-formula">Disposal rate = (Resolve / Total) &times; 100</div>
+  </div>
+
+  <div class="rg-panel rg-missing">
+    <div class="rg-head">Already recorded &middot; on no report</div>
+    <div class="rg-fields">
+      <span class="fragment rg-f"><b>Median age of a pending case</b><i>created_on</i></span>
+      <span class="fragment rg-f"><b>Time to first action</b><i>assigned_on</i></span>
+      <span class="fragment rg-f"><b>What it is about</b><i>category, subcategory</i></span>
+      <span class="fragment rg-f"><b>Where</b><i>district, block</i></span>
+      <span class="fragment rg-f"><b>How it was filed</b><i>mode</i></span>
+      <span class="fragment rg-f"><b>Who filed</b><i>petitioner_gender</i></span>
+      <span class="fragment rg-f"><b>Whether the citizen benefited</b><i>benefitted</i></span>
+    </div>
+    <div class="rg-foot">Every one of these is a column the portal already writes.
+    None of them reaches a report.</div>
+  </div>
+</div>
+```

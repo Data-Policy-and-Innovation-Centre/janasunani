@@ -309,6 +309,8 @@ def main(argv: list[str] | None = None) -> int:
         help="ladder = R0-R3; mechanism = drop-office, drop-pending, ridge",
     )
     parser.add_argument("--fit-draws", type=int, default=N_FIT_DRAWS)
+    # Run artifacts belong beside the other run artifacts, not in docs/. The .tex
+    # tables are the durable record; this file is regenerable and gitignored.
     parser.add_argument(
         "--out",
         type=Path,
