@@ -6,7 +6,7 @@ here as `EmpiricalSharePropensity` -- it is a defensible first pass -- with two
 corrections:
 
 * an unseen (cell, flow) pair returned a literal 0.01, i.e. the *clip floor*,
-  which then multiplied the doubly robust residual by 100. It now returns the
+  which then multiplied the augmented residual by 100. It now returns the
   marginal share of that flow, falling back to the floor only when the flow is
   unseen everywhere.
 * effective sample size is computed and returned, because a DR estimate whose
@@ -46,10 +46,10 @@ class EmpiricalSharePropensity:
         df: pd.DataFrame,
         *,
         cell_col: str = "cell",
-        flow_col: str = "flow_template",
+        action_col: str = "action_template",
     ) -> "EmpiricalSharePropensity":
-        usable = df[df[flow_col].notna()]
-        counts = usable.groupby([cell_col, flow_col]).size()
+        usable = df[df[action_col].notna()]
+        counts = usable.groupby([cell_col, action_col]).size()
         totals = usable.groupby(cell_col).size()
         shares = (counts / totals).rename("share").reset_index()
 
@@ -57,7 +57,7 @@ class EmpiricalSharePropensity:
         for cell, flow, share in shares.itertuples(index=False):
             by_cell.setdefault(cell, {})[flow] = float(share)
 
-        marginal = (usable[flow_col].value_counts(normalize=True)).to_dict()
+        marginal = (usable[action_col].value_counts(normalize=True)).to_dict()
         return cls(by_cell=by_cell, marginal={k: float(v) for k, v in marginal.items()})
 
     def score(self, cells: pd.Series, flows: pd.Series) -> pd.Series:

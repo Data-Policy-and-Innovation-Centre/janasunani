@@ -1,4 +1,9 @@
-"""Off-policy evaluation: what would delta have saved, per correctly disposed case.
+"""Developmental OPE for joint assignment under a correctness constraint.
+
+The treatment is the intention to route: the jointly selected department and
+complete assigned chain. The current lake snapshot does not prove that those
+fields preserve their immutable initial values, so outputs remain observational
+diagnostics rather than causal effects or savings.
 
 Replaces both the original `ope.py` (test 2025) and `val_ope.py` (val 2024),
 which were near-duplicate scripts that disagreed with each other about what the
@@ -26,7 +31,7 @@ here, in descending order of how much they moved the answer.
    the difference between the two estimators rather than the model's error.
    Both terms now use the same mu.
 
-4. **The score was clipped to [0, 365].** Clipping a DR score is not a
+4. **The score was clipped to [0, 365].** Clipping an augmented score is not a
    robustness measure; it is a bias whose size depends on the propensity draw.
    The propensity is clipped instead (a stated assumption), the correction is
    self-normalised, and ESS is reported so a correction resting on a handful of
@@ -57,7 +62,11 @@ SEED = 20260811
 
 @dataclass
 class ArmValue:
-    """Value of one policy arm, by direct method and by doubly robust score."""
+    """Value by direct method and augmented score (legacy field name ``v_dr``).
+
+    With censored outcomes, the augmented score is doubly robust in the outcome
+    and propensity models only conditional on a correct censoring model.
+    """
 
     name: str
     v_direct: float
@@ -76,7 +85,7 @@ def dr_scores(
     censoring_weight: np.ndarray | None = None,
     self_normalise: bool = True,
 ) -> np.ndarray:
-    """Per-row doubly robust scores for a deterministic policy.
+    """Per-row augmented IPCW scores for a deterministic policy.
 
     Gamma_i = mu_delta(x_i)
               + 1{A_i = delta(x_i)} * R_i / (e_delta(x_i) G(Y_i-)) * (Y_i - mu_{A_i}(x_i))
@@ -92,6 +101,12 @@ def dr_scores(
     long enough to have its restricted duration known. Omitting it leaves the
     residual correction on the completers, which is the selection the restricted
     mean exists to undo.
+
+    The score is doubly robust in ``mu`` and ``propensity`` only when ``G`` is
+    correct. An exact outcome regression does not protect against a wrong
+    censoring weight because ``R/G(Y)`` changes the conditional residual mean.
+    Without censoring-martingale augmentation this is not the censored-data
+    efficient influence function.
     """
     factor = np.ones_like(propensity, dtype=float) if censoring_weight is None else np.asarray(
         censoring_weight, dtype=float
@@ -130,16 +145,18 @@ def evaluate_arm(
     outcome_col: str,
     mu_observed_col: str,
     mu_policy_col: str,
-    policy_flow_col: str,
-    observed_flow_col: str,
+    policy_action_col: str,
+    observed_action_col: str,
     propensity: EmpiricalSharePropensity,
     cell_col: str = "cell",
     cluster_col: str = "cluster",
     censoring_weight_col: str | None = None,
 ) -> tuple[ArmValue, np.ndarray]:
     """Direct-method and DR value for one policy arm, with overlap diagnostics."""
-    matched = (df[policy_flow_col] == df[observed_flow_col]) & df[observed_flow_col].notna()
-    e_policy = propensity.score(df[cell_col], df[policy_flow_col])
+    matched = (df[policy_action_col] == df[observed_action_col]) & df[
+        observed_action_col
+    ].notna()
+    e_policy = propensity.score(df[cell_col], df[policy_action_col])
     censoring_weight = (
         df[censoring_weight_col].to_numpy(dtype=float) if censoring_weight_col else None
     )
@@ -169,11 +186,15 @@ def historical_value(
     mu_observed_col: str,
     censoring_weight_col: str | None = None,
 ) -> ArmValue:
-    """Baseline arm.
+    """Value of the stochastic logging regime, not a deterministic rule.
 
-    Under the logging policy every row is a match, so the DR score collapses to
-    the realised outcome and `v_dr` is the mean of Y -- but the *IPCW-weighted*
-    mean, not the plain one. Weighting only the policy arms and not the baseline
+    Each observed action is one draw from ``g_0(a | x)``. Averaging the fitted
+    value at those realised draws is the Monte Carlo direct estimate of
+    ``E[sum_a g_0(a | X) m_a(X)]``; the observed outcome mean estimates the same
+    regime by the outcome route. Under the logging policy ``v_dr`` retains its
+    legacy name but is computed as
+    the Hájek IPCW mean of Y, not a plain mean. Weighting only the policy arms
+    and not the baseline
     would difference a censoring-corrected value against an uncorrected one and
     report the correction as a treatment effect.
 
@@ -200,19 +221,39 @@ def summarise(
     summary: dict = {
         "n": n,
         "censoring_rate_of_split": censoring_rate,
+        "historical_regime": "stochastic_logging_policy",
         "historical": asdict(historical),
         "arms": {},
         "caveats": [
-            "S is read off the closing remark, so the actionable population is "
-            "conditioned on resolution. IPCW corrects for differential speed "
+            "The legacy S column is the closure-derived proxy S_tilde, so the "
+            "selected population is conditioned on resolution and does not "
+            "identify the intake-time S*=1 target. IPCW corrects for differential speed "
             "among cases that closed; it does not restore cases still open at "
-            "the snapshot, whose restricted duration is known but whose S is "
-            "not. Predicting S from pre-treatment covariates is unbuilt.",
+            "the snapshot, whose restricted duration is known but whose S_tilde is "
+            "not. Constructing S* from pre-treatment inputs is unbuilt.",
+            "The available X does not distinguish the responsible assigning "
+            "office from the citizen-selected intake office. Category timing "
+            "and the office/time-specific workflow menu are also unverified.",
+            "The current complaint snapshot does not establish that dept_id "
+            "and vchAllEscUser preserve the initial de jure assignment. The "
+            "available action history records de facto handling but contains "
+            "no route snapshots from which to reconstruct an overwritten "
+            "intention to route. Until source-system immutability is verified, "
+            "the treatment provenance is unresolved.",
+            "The department-role-template action coarsens named-authority and "
+            "resolution-time choices made in the same assignment transaction, "
+            "so a causal interpretation requires a fixed treatment-version "
+            "mechanism that is not yet established. The semantics of the portal's "
+            "Assign Another ATA control are also unresolved.",
             "Congestion Q_r(t) and trailing destination performance are absent "
-            "from X, so unconfoundedness is invoked on a smaller information "
-            "set than the officer's screen (§2.2.1). Direction unknown.",
+            "from X. They are proposed point-in-time system-state adjustments, "
+            "not fields shown on the captured assignment form. Direction unknown.",
             "Propensity is an empirical category x district share, not the "
             "hierarchical penalized logit in the plan.",
+            "The augmented duration score requires a correct censoring model "
+            "in both outcome/propensity robustness branches and is not the "
+            "censored-data efficient influence function without a censoring-"
+            "martingale augmentation.",
             "Selection on officer observables is assumed, not tested.",
         ],
     }

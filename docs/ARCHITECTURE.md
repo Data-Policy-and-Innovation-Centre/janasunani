@@ -115,7 +115,7 @@ migration change): **1,371,288 complaints / 6,556,171 action-history rows**.
 | [`janasunani/pii/`](../janasunani/pii/__init__.py) | PII gold-set construction: the ensemble labelling helpers, agreement report and adjudication queue (#15). |
 | [`janasunani/egress/`](../janasunani/egress/__init__.py) | The **only** package permitted to send citizen data to an `authorized-external` destination. Provider route registry, per-call audit log, rate limiting, kill switch, and the governance gate. |
 | [`janasunani/tracking/`](../janasunani/tracking/__init__.py) | DVC owns artifact bytes; MLflow records runs/versions and resolves reviewed aliases only in the pre-deploy control plane. A checksummed immutable release manifest is activated atomically, and runtime resolution remains local-only. See [`MODELS.md`](MODELS.md). |
-| `janasunani/experiments/` *(planned, Phase 16)* | Assignment service (deterministic seeded hash), exposure log, shadow-mode plumbing, the locked analysis plan, the analysis CLI. |
+| [`janasunani/experiments/`](../janasunani/experiments/__init__.py) | Research-only experiment implementations. The routing-outcome package builds local aggregate diagnostics and does not feed serving or egress. Phase 16 assignment, exposure, and shadow-mode instrumentation remain unbuilt. |
 | [`deploy/`](../deploy/README.md) | docker-compose for the CPU box; [Terraform](../deploy/terraform/README.md) for both EC2 boxes. |
 | [`scripts/`](../scripts/README.md) | Operational one-offs: `migrate.sh` (cold-start), `gpu_smoke.sh` (DeepSeek smoke), `sample_english_complaints.py` (evaluation bundles), `setup.sh`. |
 | [`tests/`](../tests/README.md) | Real-code-path pytest suite. Read the README before running tests anywhere near production. |

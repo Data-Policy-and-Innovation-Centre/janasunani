@@ -11,9 +11,9 @@ Each rung changes exactly one thing, and each is two fits (with and without the
 flow columns) reporting `delta = RMSE_noflow - RMSE_flow`.
 
     R0  correct==1   log1p(days_capped), completers   unweighted   <- 11 Aug
-    R1  S==1         log1p(days_capped), completers   unweighted
-    R2  S==1         log1p(min(T,365))                unweighted
-    R3  S==1         log1p(min(T,365))                IPCW         <- current
+    R1  S_tilde==1   log1p(days_capped), completers   unweighted
+    R2  S_tilde==1   log1p(min(T,365))                unweighted
+    R3  S_tilde==1   log1p(min(T,365))                IPCW         <- current
 
 THERE IS NO SEED NOISE TO MEASURE
 ----------------------------------
@@ -40,18 +40,16 @@ from __future__ import annotations
 import argparse
 import json
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import GradientBoostingRegressor
-from sklearn.linear_model import Ridge
-from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import StandardScaler
-
 from . import censoring, paths
-from .features import FeatureEncoder, decode_flow_columns
+from .features import ACTION_DEFINITION, FeatureEncoder, decode_flow_columns
 from .flow import load_tables
-from .train import GBM_PARAMS, _cluster, _weight_kwarg
+from .models import boosted_duration_model, ridge_duration_model
+from .train import _cluster, _weight_kwarg
 
 #: Cluster-bootstrap replicates for the evaluation band.
 N_EVAL_BOOT = 200
@@ -61,6 +59,8 @@ N_EVAL_BOOT = 200
 N_FIT_DRAWS = 8
 
 SEED = 20260813
+
+SCHEMA_VERSION = "routing-outcome-robustness-v1"
 
 LADDER: dict[str, dict] = {
     "R0_binary_completers": {
@@ -160,11 +160,11 @@ def _rmse(y, yhat, w=None) -> float:
     return float(np.sqrt(np.average(error, weights=w)))
 
 
-def _build_model(model: str, seed: int):
+def _build_model(model: str, seed: int, features: list[str]):
     if model == "gbm":
-        return GradientBoostingRegressor(**{**GBM_PARAMS, "random_state": seed})
+        return boosted_duration_model(features, random_state=seed)
     if model == "ridge":
-        return make_pipeline(StandardScaler(), Ridge(alpha=1.0))
+        return ridge_duration_model(features)
     raise ValueError(f"unknown model {model!r}")
 
 
@@ -210,7 +210,9 @@ def run_ablation(
 
     encoder = FeatureEncoder.fit(train)
     keep = [c for c in encoder.feature_names() if c not in drop_covariates]
-    keep_noflow = [c for c in encoder.feature_names(include_flow=False) if c not in drop_covariates]
+    keep_noflow = [
+        c for c in encoder.feature_names(include_action=False) if c not in drop_covariates
+    ]
 
     y_train, w_train = _target_and_weight(train, splits["train"], target, weights)
     y_val, w_val = _target_and_weight(val, splits["val"], target, weights)
@@ -218,16 +220,16 @@ def run_ablation(
     val_rows = w_val > 0
 
     x_train = encoder.transform(train)[keep][fit_rows]
-    x_train_nf = encoder.transform(train, include_flow=False)[keep_noflow][fit_rows]
+    x_train_nf = encoder.transform(train, include_action=False)[keep_noflow][fit_rows]
     x_val = encoder.transform(val)[keep][val_rows]
-    x_val_nf = encoder.transform(val, include_flow=False)[keep_noflow][val_rows]
+    x_val_nf = encoder.transform(val, include_action=False)[keep_noflow][val_rows]
     yt, wt = y_train[fit_rows], w_train[fit_rows]
     yv = y_val[val_rows].to_numpy()
     clusters = val["cluster"].to_numpy()[val_rows]
 
-    flow_model = _build_model(model, 0)
+    flow_model = _build_model(model, 0, keep)
     flow_model.fit(x_train, yt, **_weight_kwarg(flow_model, wt))
-    noflow_model = _build_model(model, 0)
+    noflow_model = _build_model(model, 0, keep_noflow)
     noflow_model.fit(x_train_nf, yt, **_weight_kwarg(noflow_model, wt))
 
     pred_flow = flow_model.predict(x_val)
@@ -258,9 +260,9 @@ def run_ablation(
             idx = np.concatenate(
                 [np.flatnonzero(train_clusters == c) for c in chosen]
             )
-            a = _build_model(model, 0)
+            a = _build_model(model, 0, keep)
             a.fit(x_train.iloc[idx], yt.iloc[idx], **_weight_kwarg(a, wt[idx]))
-            b = _build_model(model, 0)
+            b = _build_model(model, 0, keep_noflow)
             b.fit(x_train_nf.iloc[idx], yt.iloc[idx], **_weight_kwarg(b, wt[idx]))
             draws.append(_rmse(yv, b.predict(x_val_nf)) - _rmse(yv, a.predict(x_val)))
         result.delta_fit_draws = [float(d) for d in draws]
@@ -274,13 +276,16 @@ def seed_is_inert(model: str = "gbm") -> dict:
     rng = np.random.default_rng(0)
     x = pd.DataFrame(rng.normal(size=(2000, 6)))
     y = pd.Series(x[0] + rng.normal(size=2000))
-    predictions = [_build_model(model, s).fit(x, y).predict(x.head(20)) for s in (0, 1, 2)]
+    features = list(x.columns)
+    fitted = [_build_model(model, s, features).fit(x, y) for s in (0, 1, 2)]
+    predictions = [pipeline.predict(x.head(20)) for pipeline in fitted]
     identical = all(np.allclose(predictions[0], p) for p in predictions[1:])
+    estimator = fitted[0][-1]
     return {
         "model": model,
         "identical_across_seeds": bool(identical),
-        "subsample": getattr(_build_model(model, 0), "subsample", None),
-        "max_features": getattr(_build_model(model, 0), "max_features", None),
+        "subsample": getattr(estimator, "subsample", None),
+        "max_features": getattr(estimator, "max_features", None),
     }
 
 
@@ -294,20 +299,26 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--fit-draws", type=int, default=N_FIT_DRAWS)
     parser.add_argument(
-        "--out", default="docs/experiments/routing-outcome-robustness-2026-08-13.json"
+        "--out",
+        type=Path,
+        help="Output JSON (default: ROUTING_OUTCOME_OUT/robustness.json)",
     )
     args = parser.parse_args(argv)
 
+    # Exercise the cheap provenance diagnostic before the full-data fits. A
+    # broken check must fail fast, not discard an otherwise completed ladder.
+    seed_check = seed_is_inert()
     splits = _load_splits()
     results: list[AblationResult] = []
 
     if args.exercise in ("ladder", "all"):
         for name, config in LADDER.items():
-            note = config.pop("note", "")
+            kwargs = dict(config)
+            note = kwargs.pop("note", "")
             # The fit band is only informative on the endpoints of the ladder.
             draws = args.fit_draws if name in ("R0_binary_completers", "R3_actionable_restricted_ipcw") else 0
             results.append(
-                run_ablation(splits, name=name, note=note, fit_draws=draws, **config)
+                run_ablation(splits, name=name, note=note, fit_draws=draws, **kwargs)
             )
             print(f"  {results[-1].name:<32} delta={results[-1].delta:+.4f}")
 
@@ -315,7 +326,7 @@ def main(argv: list[str] | None = None) -> int:
         base = dict(population="S1", target="restricted", weights="ipcw")
 
         # R8 is the decisive test of the collider explanation for R0 -> R1.
-        # `C` is post-treatment, so conditioning on it inside the actionable
+        # `C` is post-treatment, so conditioning on it inside the proxy-selected
         # population reintroduces the selection without changing anything else.
         # If selection is what made the flow look predictive under the binary
         # label, the ablation gap should reappear here; if it stays at zero,
@@ -339,24 +350,26 @@ def main(argv: list[str] | None = None) -> int:
                 dict(drop_covariates=("office_code",),
                      note="tests whether office-flow collinearity explains the collapse"),
             ),
-            (
-                "R6_drop_pending_code",
-                dict(drop_covariates=("pending_code",),
-                     note="pending_with_id is the holder at closure, so post-treatment"),
-            ),
             ("R7_ridge", dict(model="ridge", note="the better out-of-sample model, previously unablated")),
         ):
             results.append(run_ablation(splits, name=name, **base, **kwargs))
             print(f"  {results[-1].name:<32} delta={results[-1].delta:+.4f}")
 
     payload = {
-        "generated_at": "2026-08-13",
-        "seed_check": seed_is_inert(),
+        "schema_version": SCHEMA_VERSION,
+        "generated_at": datetime.now(timezone.utc).date().isoformat(),
+        "action_definition": ACTION_DEFINITION,
+        "population_note": (
+            "S denotes the closure-derived S_tilde proxy in this diagnostic; "
+            "it is not intake-time latent actionability S_star"
+        ),
+        "seed_check": seed_check,
         "results": [r.as_dict() for r in results],
     }
-    with open(args.out, "w") as handle:
-        json.dump(payload, handle, indent=2)
-    print(f"\nwrote {args.out}")
+    output = args.out if args.out is not None else paths.out("robustness.json")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    print(f"\nwrote {output}")
     return 0
 
 

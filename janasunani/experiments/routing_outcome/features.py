@@ -19,14 +19,16 @@ Two other columns are gone rather than fixed:
   boundary leaf. Month and quarter carry the within-year seasonality that was
   actually wanted.
 
-`X` still contains the treatment. `mu_a(x)` is a function of the flow, so
-`entry_role`, `last_role` and `n_esc` must be in the design matrix; they are
-tagged `FLOW_COLUMNS` so that the ablation can drop them and, more importantly,
-so that `transform(..., flow=...)` can *re-score the same row under a different
-flow*. That counterfactual is the whole point of the exercise and the as-run
-code could not compute it (see the abandoned `best_mu_for_row` stub in the
-original `ope.py`), which is why its "policy" fell back to a raw training cell
-mean that ignores `x` entirely.
+`X` still contains a representation of the treatment. The action is the joint
+department-and-complete-chain assignment, not the chain alone. `mu_a(x)` is
+therefore evaluated with the candidate department, entry role, last role and
+chain length all changed together. They are tagged `ACTION_COLUMNS` so the
+ablation can drop them and, more importantly, so `transform(..., action=...)`
+can re-score the same row under a different joint action.
+
+`pending_with_id` is deliberately absent. It is the holder after routing has
+unfolded, so retaining the observed holder while changing the assigned action
+would feed a post-treatment cross-world value into every counterfactual.
 """
 
 from __future__ import annotations
@@ -41,19 +43,25 @@ import pandas as pd
 CATEGORICAL_COLUMNS: tuple[str, ...] = ("district", "category", "block", "mode", "office")
 
 #: Binary covariates, stored as "Yes"/"No" strings in the lake.
-BINARY_COLUMNS: tuple[str, ...] = ("transfer_status", "self_assign")
-
-#: Treatment-derived columns: the flow, not the case. Dropped by the ablation
-#: and overridden when scoring a counterfactual flow.
 #:
-#: `pending_with_id` is the holder at closure, so it is post-treatment as well
-#: as high-cardinality; it is grouped here rather than with the covariates.
-FLOW_COLUMNS: tuple[str, ...] = (
+#: ``transfer_status`` is deliberately absent.  The lake audit shows that it
+#: is a transient complaint state: every ``Yes`` row is currently
+#: ``Not Assigned`` and carries no assigned chain, while complaints with an
+#: earlier transfer revert to ``No`` after assignment.  It is therefore not an
+#: assignment-time case characteristic or an "ever transferred" history flag.
+BINARY_COLUMNS: tuple[str, ...] = ("self_assign",)
+
+#: Treatment-derived columns: the joint assignment, not the case. Dropped by
+#: the ablation and overridden together for a counterfactual action.
+ACTION_COLUMNS: tuple[str, ...] = (
+    "department_code",
     "entry_role_code",
     "last_role_code",
     "n_esc",
-    "pending_code",
 )
+
+ACTION_SEPARATOR = "::"
+ACTION_DEFINITION = "department_id::complete_role_chain/v1"
 
 
 def _as_str(values: pd.Series) -> pd.Series:
@@ -85,7 +93,7 @@ class FeatureEncoder:
     @classmethod
     def fit(cls, df: pd.DataFrame) -> "FeatureEncoder":
         levels: dict[str, pd.Index] = {}
-        for col in (*CATEGORICAL_COLUMNS, "entry_role", "last_role", "pending_with_id"):
+        for col in (*CATEGORICAL_COLUMNS, "department_id", "entry_role", "last_role"):
             levels[col] = pd.Index(sorted(_as_str(df[col]).dropna().unique()))
         encoder = cls(levels=levels)
         # Column order is derived from a transform so that it can never drift
@@ -96,17 +104,16 @@ class FeatureEncoder:
         self,
         df: pd.DataFrame,
         *,
-        flow: str | pd.Series | None = None,
-        include_flow: bool = True,
+        action: str | pd.Series | None = None,
+        include_action: bool = True,
     ) -> pd.DataFrame:
         """Design matrix for `df`.
 
         Args:
-            flow: counterfactual flow template (comma-separated roleIds), either
-                one template applied to every row or a per-row Series. When set,
-                the flow columns describe that template instead of the observed
-                chain, which is what makes `mu_a(x)` evaluable off-policy.
-            include_flow: drop `FLOW_COLUMNS` entirely (the no-flow ablation).
+            action: counterfactual ``department_id::role,sequence`` identifier,
+                either one action applied to every row or a per-row Series.
+                Department and chain columns are overridden together.
+            include_action: drop `ACTION_COLUMNS` entirely (the no-action ablation).
         """
         X = pd.DataFrame(index=df.index)
 
@@ -115,56 +122,80 @@ class FeatureEncoder:
         for col in BINARY_COLUMNS:
             X[col] = (df[col] == "Yes").astype(int)
 
-        entry, last, n_esc, pending = self._flow_columns(df, flow)
+        department, entry, last, n_esc = self._action_columns(df, action)
+        X["department_code"] = _codes(department, self.levels["department_id"])
         X["entry_role_code"] = _codes(entry, self.levels["entry_role"])
         X["last_role_code"] = _codes(last, self.levels["last_role"])
         X["n_esc"] = n_esc
-        X["pending_code"] = _codes(pending, self.levels["pending_with_id"])
 
         created = pd.to_datetime(df["created_on"], errors="coerce")
         X["month"] = created.dt.month.fillna(6).astype(int)
         X["quarter"] = ((X["month"] - 1) // 3) + 1
 
-        if not include_flow:
-            X = X.drop(columns=list(FLOW_COLUMNS), errors="ignore")
+        if not include_action:
+            X = X.drop(columns=list(ACTION_COLUMNS), errors="ignore")
         if self.columns:
             keep = [c for c in self.columns if c in X.columns]
             X = X[keep]
         return X
 
     @staticmethod
-    def _flow_columns(
-        df: pd.DataFrame, flow: str | pd.Series | None
+    def _action_columns(
+        df: pd.DataFrame, action: str | pd.Series | None
     ) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
-        """Observed flow columns, or the ones implied by a counterfactual `flow`."""
-        if flow is None:
+        """Observed joint-action columns, or those implied by `action`."""
+        if action is None:
             return (
+                _as_str(df["department_id"]),
                 df["entry_role"].astype("object"),
                 df["last_role"].astype("object"),
                 pd.to_numeric(df["n_esc"], errors="coerce").fillna(2.0),
-                df["pending_with_id"].astype("object"),
             )
 
-        templates = (
-            pd.Series(flow, index=df.index) if isinstance(flow, str) else flow.reindex(df.index)
+        actions = (
+            pd.Series(action, index=df.index)
+            if isinstance(action, str)
+            else action.reindex(df.index)
         )
+        decoded = actions.map(decode_action)
+        department = decoded.map(lambda value: value[0] if value else None)
+        templates = decoded.map(lambda value: value[1] if value else None)
         parts = templates.fillna("").astype(str).str.split(",")
         entry = parts.map(lambda p: p[0] if p and p[0] else None)
         last = parts.map(lambda p: p[-1] if p and p[-1] else None)
         n_esc = parts.map(lambda p: float(len(p)) if p and p[0] else np.nan).fillna(2.0)
-        # The counterfactual says nothing about who ends up holding the file, so
-        # the observed holder is kept rather than invented.
-        return entry, last, n_esc, df["pending_with_id"].astype("object")
+        return department, entry, last, n_esc
 
-    def feature_names(self, *, include_flow: bool = True) -> list[str]:
+    def feature_names(self, *, include_action: bool = True) -> list[str]:
         names = list(self.columns)
-        if not include_flow:
-            names = [c for c in names if c not in FLOW_COLUMNS]
+        if not include_action:
+            names = [c for c in names if c not in ACTION_COLUMNS]
         return names
 
 
+def encode_action(department_id: object, chain_template: object) -> str | None:
+    """Stable identifier for the jointly assigned department and complete chain."""
+    if pd.isna(department_id) or pd.isna(chain_template):
+        return None
+    department = str(department_id).strip()
+    chain = str(chain_template).strip()
+    if not department or not chain or ACTION_SEPARATOR in department:
+        return None
+    return f"{department}{ACTION_SEPARATOR}{chain}"
+
+
+def decode_action(action: object) -> tuple[str, str] | None:
+    """Inverse of :func:`encode_action`; malformed identifiers are unsupported."""
+    if action is None or (isinstance(action, float) and np.isnan(action)):
+        return None
+    parts = str(action).split(ACTION_SEPARATOR, maxsplit=1)
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        return None
+    return parts[0], parts[1]
+
+
 def decode_flow_columns(df: pd.DataFrame, user_role: Mapping[str, str]) -> pd.DataFrame:
-    """Attach `entry_role`, `last_role`, `flow_template` decoded from the chain.
+    """Attach chain columns and the joint department-chain action identifier.
 
     Mutates and returns `df`. A chain with any token missing from
     `t_user_role_details` yields nulls, which `_codes` maps to -1.
@@ -182,7 +213,13 @@ def decode_flow_columns(df: pd.DataFrame, user_role: Mapping[str, str]) -> pd.Da
     parsed = df["all_esc_user"].map(parse)
     df["entry_role"] = [p[0] for p in parsed]
     df["last_role"] = [p[1] for p in parsed]
-    df["flow_template"] = [p[2] for p in parsed]
+    df["chain_template"] = [p[2] for p in parsed]
+    department = _as_str(df["dept_id"])
+    df["department_id"] = department
+    df["action_template"] = [
+        encode_action(dept, chain)
+        for dept, chain in zip(department, df["chain_template"])
+    ]
     return df
 
 

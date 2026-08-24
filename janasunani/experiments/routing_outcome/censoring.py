@@ -156,9 +156,9 @@ def restricted_outcome(
 
     `fit_frame` estimates `G` somewhere other than `df`, and passing it is
     mandatory whenever `df` has been filtered on anything downstream of closure.
-    The motivating case is the actionable population: `S` is read off the
-    closing remark, so every `S == 1` row is resolved by construction, and a `G`
-    fitted there sees no censoring events at all, returns the constant 1, and
+    The motivating case is the proxy-selected population: legacy `S` means
+    closure-derived `S_tilde`, so every `S == 1` row is resolved by
+    construction, and a `G` fitted there sees no censoring events, returns 1, and
     hands back weights that are all exactly 1. The correction silently becomes a
     no-op and every downstream number looks unremarkable. Fit `G` on the whole
     arrival cohort instead, where the censoring actually is.

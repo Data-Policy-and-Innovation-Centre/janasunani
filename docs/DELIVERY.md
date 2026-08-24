@@ -8,6 +8,14 @@ partnership: Government of Odisha and the University of Chicago Trust
 status: Internal
 ---
 
+> **Post-demo evidence update, 24 August 2026.** The dated commitments below
+> remain the record for 14 August. A research-only routing-outcome analysis now
+> exists, but its positive validation contrast does not replicate under the
+> augmented estimator in the 2025 period. Assignment-field provenance,
+> intake-time actionability and congestion remain unresolved, so it supports no
+> routing gain, deployable threshold, causal impact or recommendation. See
+> [QUALITY_BENCHMARKS.md](QUALITY_BENCHMARKS.md#routing--outcome-not-destination).
+
 ## What is built
 
 The full grievance history is loaded and verified: 1,371,288 complaints and 6,556,171 action records.
@@ -26,9 +34,9 @@ new chronological benchmark (2021–23 train, 2024 validation, 2025 test) report
 category+district features on 208,267 eligible test cases; because the 2025
 cohort was inspected during harness development, this is **developmental
 held-out evidence**, not a release gate. It measures where cases were sent, not
-jurisdictional correctness or where they resolved best. A learned outcome-based
-scorer on disposal time and officer-recorded benefit (issue #106) is a separate,
-harder problem and stays later work.
+jurisdictional correctness or where they resolved best. A separate research
+analysis now examines routing outcomes, but it remains developmental and does
+not feed serving; the post-demo note above records its current conclusion.
 
 Deployment automation is written and reviewed but not yet run. The system is not switched on at our AWS server.
 

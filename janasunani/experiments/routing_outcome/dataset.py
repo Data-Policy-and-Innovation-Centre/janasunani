@@ -14,12 +14,12 @@ it, and dropping it would silently change what old artifacts mean. It is
 correct closure of a duplicate as a failure, and does so disproportionately
 among fast cases.
 
-`s_bucket`, `S` and `C` are the three-state replacement from `outcome.py`.
-Prefer them. `S` is a property of the grievance and may be conditioned on; `C`
-is an outcome and may only be constrained. Both are NULL where the closing
-remark does not determine them, which is 14.9% of resolved grievances for `S`
-and a further 7.5% for `C`; the NULLs are the honest answer and must not be
-filled with zeros.
+`s_bucket`, `S` and `C` are the closure-derived replacement from `outcome.py`.
+The legacy column `S` is the post-resolution proxy `S_tilde`, not latent
+intake-time actionability `S*`; it therefore does not license conditioning for
+the causal target. `C` is an outcome and may only be constrained. Both are NULL
+where the closing remark does not determine them; the NULLs are the honest
+answer and must not be filled with zeros.
 
 CENSORING IS NO LONGER DROPPED AT THIS STAGE
 ---------------------------------------------
@@ -111,7 +111,7 @@ SNAPSHOT_SQL = """
 MART_SQL = f"""
 WITH base AS (
     SELECT ticket_no, created_on, resolved_on, benefitted, category, subcategory,
-           district, block, state, mode, mode_id, office, office_id,
+           district, block, state, mode, mode_id, office, office_id, dept, dept_id,
            pending_with_id, pending_with, all_esc_user, transfer_status,
            self_assign, created_year, assigned_on, escalation_date
     FROM read_parquet('{{complaints}}')
@@ -186,8 +186,9 @@ def build_mart(con: duckdb.DuckDBPyConnection | None = None) -> pd.DataFrame:
         )
 
     df["created_on"] = pd.to_datetime(df["created_on"], errors="coerce")
-    df["year"] = df["created_on"].dt.year
-    df.loc[df["year"].isna(), "year"] = df.loc[df["year"].isna(), "created_year"]
+    parsed_year = df["created_on"].dt.year.astype("Int64")
+    fallback_year = pd.to_numeric(df["created_year"], errors="coerce").astype("Int64")
+    df["year"] = parsed_year.fillna(fallback_year)
     return df
 
 
@@ -208,7 +209,7 @@ def main() -> int:
         #
         # It is written from `split` rather than `resolved`, but that buys
         # nothing on its own and the comment here used to claim otherwise:
-        # `S` is read off the closing remark and `CLOSING_SQL` only joins
+        # legacy `S` is S_tilde, read off the closing remark, and `CLOSING_SQL` only joins
         # tickets with a non-null `resolved_on`, so an unresolved grievance has
         # no remark, lands in `unknown`, and is dropped by the `S == 1` filter.
         # **Every row in this file is resolved**, and IPCW cannot recover rows
@@ -221,9 +222,9 @@ def main() -> int:
         # restricted duration `min(T, 365)` is already known exactly -- an
         # informative row thrown away for want of a label.
         #
-        # Closing this properly needs `S` predicted from pre-treatment
-        # covariates, which §2.3.2 licenses (S does not vary with the flow) but
-        # does not build. Recorded as an unbuilt item, not silently absorbed.
+        # Closing this properly needs intake-time S* adjudicated or predicted
+        # from pre-treatment inputs. Nothing currently bridges that latent
+        # quantity and S_tilde. Recorded as unbuilt, not silently absorbed.
         split[split["S"] == 1].to_parquet(paths.out(f"{name}_actionable.parquet"))
 
         buckets = split["s_bucket"].value_counts()

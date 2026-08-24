@@ -6,24 +6,47 @@ These cover the defects that invalidated the 11 Aug run. Nothing here reads
 
 from __future__ import annotations
 
+from copy import deepcopy
+from datetime import date
+import json
+
 import duckdb
 import numpy as np
 import pandas as pd
 import pytest
 
 from janasunani.analytics.findings import discards
-from janasunani.experiments.routing_outcome import censoring, crossfit, outcome, smear, tau
+from janasunani.experiments.routing_outcome import (
+    censoring,
+    crossfit,
+    outcome,
+    provenance,
+    robustness,
+    smear,
+    tau,
+)
+from janasunani.experiments.routing_outcome import e0_flow_census as census_mod
 from janasunani.experiments.routing_outcome import flow as flow_mod
 from janasunani.experiments.routing_outcome.features import (
-    FLOW_COLUMNS,
+    ACTION_DEFINITION,
+    ACTION_COLUMNS,
     FeatureEncoder,
     cell_key,
+    decode_action,
     decode_flow_columns,
+    encode_action,
 )
 from janasunani.experiments.routing_outcome.ope import (
+    ArmValue,
     cluster_bootstrap_se,
     dr_scores,
     historical_value,
+    summarise,
+)
+from janasunani.experiments.routing_outcome.models import (
+    boosted_correctness_model,
+    boosted_duration_model,
+    ridge_duration_model,
 )
 from janasunani.experiments.routing_outcome.policy import EligibleSets, score_policy
 from janasunani.experiments.routing_outcome.propensity import (
@@ -33,8 +56,9 @@ from janasunani.experiments.routing_outcome.propensity import (
 )
 
 
-def _frame(districts, categories, flows, *, n_esc=None) -> pd.DataFrame:
+def _frame(districts, categories, flows, *, n_esc=None, departments=None) -> pd.DataFrame:
     n = len(districts)
+    department_ids = departments if departments is not None else [10] * n
     return pd.DataFrame(
         {
             "district": districts,
@@ -42,6 +66,8 @@ def _frame(districts, categories, flows, *, n_esc=None) -> pd.DataFrame:
             "block": ["B"] * n,
             "mode": ["online"] * n,
             "office": ["Collector"] * n,
+            "dept": ["Water Resources"] * n,
+            "dept_id": department_ids,
             "pending_with_id": ["14"] * n,
             "transfer_status": ["No"] * n,
             "self_assign": ["No"] * n,
@@ -89,18 +115,22 @@ def test_encoder_maps_unseen_levels_to_sentinel():
     assert encoder.transform(val)["district_code"].iloc[0] == -1
 
 
-def test_encoder_codes_numeric_id_columns_rather_than_voiding_them():
-    """The bug: `pending_with_id` is int64, levels were fitted as strings.
+def test_encoder_codes_numeric_department_ids_rather_than_voiding_them():
+    """Integer department IDs must match the train-fitted string levels.
 
-    Comparing the raw int against string levels matched nothing, so the column
-    was a constant -1 in every split -- a dead feature that no error reports.
+    Comparing raw ints against string levels would make the joint-action column
+    a constant -1 and silently erase the department half of the treatment.
     """
-    train = _frame(["Angul"] * 3, ["Water"] * 3, [None] * 3)
-    train["pending_with_id"] = [31, 81, 81]  # int64, as the lake stores it
+    train = _frame(
+        ["Angul"] * 3,
+        ["Water"] * 3,
+        ["100"] * 3,
+        departments=[31, 81, 81],
+    )
     decode_flow_columns(train, {})
 
     encoder = FeatureEncoder.fit(train)
-    codes = encoder.transform(train)["pending_code"]
+    codes = encoder.transform(train)["department_code"]
     assert (codes >= 0).all()
     assert codes.iloc[1] == codes.iloc[2]  # same id, same code
     assert codes.iloc[0] != codes.iloc[1]
@@ -114,37 +144,268 @@ def test_encoder_omits_leaking_and_split_collinear_columns():
     # `benefitted` partly defines `correct`; `year` is collinear with the split.
     assert "govt_ticket" not in columns
     assert "year" not in columns
+    # This is a transient not-yet-assigned state, not a baseline history flag.
+    assert "transfer_status" not in columns
     assert "month" in columns
 
 
-def test_encoder_flow_override_rewrites_only_the_treatment_columns():
-    """Counterfactual scoring: the same x, re-expressed under a different flow."""
-    train = _frame(["Angul", "Angul"], ["Water", "Water"], ["100,200", "100"])
+def test_encoder_is_invariant_to_transient_transfer_state():
+    """Changing a current workflow-state flag cannot alter assignment-time X."""
+    train = _frame(["Angul", "Angul"], ["Water", "Water"], ["100", "100"])
+    decode_flow_columns(train, {"100": "1"})
+    encoder = FeatureEncoder.fit(train)
+
+    changed = train.copy()
+    changed["transfer_status"] = ["Yes", "No"]
+
+    pd.testing.assert_frame_equal(
+        encoder.transform(train),
+        encoder.transform(changed),
+    )
+
+
+def test_robustness_cli_uses_derived_output_without_mutating_ladder(
+    tmp_path, monkeypatch
+):
+    """A run must not overwrite a dated record or consume its global config."""
+    before = deepcopy(robustness.LADDER)
+
+    def fake_ablation(_splits, *, name, note, **_kwargs):
+        return robustness.AblationResult(
+            name=name,
+            rmse_flow=1.0,
+            rmse_noflow=1.1,
+            delta=0.1,
+            delta_eval_se=0.01,
+            n_train=10,
+            n_val=5,
+            note=note,
+        )
+
+    monkeypatch.setattr(robustness, "_load_splits", lambda: {})
+    monkeypatch.setattr(robustness, "run_ablation", fake_ablation)
+    monkeypatch.setattr(
+        robustness,
+        "seed_is_inert",
+        lambda: {"model": "gbm", "identical_across_seeds": True},
+    )
+    monkeypatch.setattr(robustness.paths, "OUT_DIR", tmp_path)
+
+    assert robustness.main(["--exercise", "ladder", "--fit-draws", "0"]) == 0
+    assert robustness.LADDER == before
+
+    payload = json.loads((tmp_path / "robustness.json").read_text())
+    assert payload["schema_version"] == robustness.SCHEMA_VERSION
+    assert payload["action_definition"] == ACTION_DEFINITION
+    assert date.fromisoformat(payload["generated_at"]) <= date.today()
+    assert [row["name"] for row in payload["results"]] == list(before)
+
+
+def test_robustness_seed_check_exercises_the_fitted_estimator():
+    result = robustness.seed_is_inert()
+    assert result == {
+        "model": "gbm",
+        "identical_across_seeds": True,
+        "subsample": 1.0,
+        "max_features": None,
+    }
+
+
+# --------------------------------------------------------------------------
+# provenance.py: assignment timing versus current transfer state
+# --------------------------------------------------------------------------
+
+
+def test_assignment_provenance_separates_transfer_timing_without_claiming_versions(
+    tmp_path,
+):
+    complaints = pd.DataFrame(
+        {
+            "ticket_no": ["none", "before", "after", "waiting", "bad-flag"],
+            "created_on": pd.to_datetime(["2026-01-01"] * 5),
+            "resolved_on": pd.to_datetime([None, None, "2026-01-04", None, None]),
+            "last_updated_on": pd.to_datetime(
+                ["2026-01-01", "2026-01-03", "2026-01-04", "2026-01-02", "2026-01-01"]
+            ),
+            "assigned_on": pd.to_datetime(
+                ["2026-01-01", "2026-01-02", "2026-01-02", None, "2026-01-01"]
+            ),
+            "transfer_status": ["No", "No", "No", "Yes", "Yes"],
+            "status": ["Open", "Open", "Disposed", "Not Assigned", "Open"],
+            "all_esc_user": ["1,2", "1,2", "1,2", None, "1,2"],
+            "pending_with_id": [1, 1, 1, None, 1],
+        }
+    )
+    actions = pd.DataFrame(
+        {
+            "ticket_no": ["none", "before", "after", "waiting"],
+            "action_taken_date": pd.to_datetime(
+                ["2026-01-01", "2026-01-01", "2026-01-03", "2026-01-01"]
+            ),
+            "action_status": [
+                "Open",
+                provenance.TRANSFER_ACTION,
+                provenance.TRANSFER_ACTION,
+                provenance.TRANSFER_ACTION,
+            ],
+        }
+    )
+    complaints_path = tmp_path / "complaints.parquet"
+    actions_path = tmp_path / "action_history.parquet"
+    complaints.to_parquet(complaints_path)
+    actions.to_parquet(actions_path)
+
+    report = provenance.assignment_provenance_audit(complaints_path, actions_path)
+
+    assert report["explicit_transfer_history"] == {
+        "tickets": 3,
+        "events": 3,
+        "pre_assignment_only": 1,
+        "pre_assignment_on_creation_day": 1,
+        "at_or_after_assignment": 1,
+        "unassigned": 1,
+    }
+    assert report["current_transfer_state"] == {
+        "flag_yes": 2,
+        "history_but_flag_no": 2,
+        "flag_yes_without_history": 1,
+        "flag_yes_other_status": 1,
+        "flag_yes_with_assignment": 1,
+        "flag_yes_with_chain": 1,
+        "flag_yes_with_pending_holder": 1,
+        "flag_yes_resolved": 0,
+    }
+    field_provenance = report["assignment_field_provenance"]
+    assert field_provenance["status"] == "not_identified_from_current_snapshot"
+    assert field_provenance["action_history_route_snapshot_columns"] == []
+    assert "cannot reveal an earlier value" in field_provenance["reason"]
+
+
+@pytest.mark.parametrize("factory", [ridge_duration_model, boosted_duration_model])
+def test_duration_models_are_invariant_to_permuting_nominal_codes(factory):
+    """Integer category labels must not create a distance or ordering."""
+    rows = 60
+    x = pd.DataFrame(
+        {
+            "department_code": np.tile([0, 1, 2], rows // 3),
+            "district_code": np.tile([0, 0, 1, 1, 2], rows // 5),
+            "n_esc": np.tile([1, 2], rows // 2),
+        }
+    )
+    y = pd.Series(
+        2.0
+        + 0.7 * (x["department_code"] == 1)
+        - 0.3 * (x["district_code"] == 2)
+        + 0.1 * x["n_esc"]
+    )
+    permuted = x.copy()
+    permuted["department_code"] = permuted["department_code"].map({0: 20, 1: 3, 2: 11})
+    permuted["district_code"] = permuted["district_code"].map({0: 9, 1: 2, 2: 14})
+    features = list(x.columns)
+
+    original = factory(features).fit(x, y).predict(x)
+    relabelled = factory(features).fit(permuted, y).predict(permuted)
+
+    assert np.allclose(original, relabelled)
+
+
+def test_nominal_model_pipelines_handle_unseen_levels_with_finite_predictions():
+    x = pd.DataFrame(
+        {
+            "department_code": np.tile([0, 1], 20),
+            "district_code": np.tile([0, 1, 2, 3], 10),
+            "n_esc": np.tile([1, 2], 20),
+        }
+    )
+    y_duration = pd.Series(2.0 + 0.2 * x["department_code"] + 0.1 * x["n_esc"])
+    y_correct = pd.Series((np.arange(len(x)) % 3) == 0, dtype=int)
+    unseen = pd.DataFrame(
+        {"department_code": [99], "district_code": [77], "n_esc": [2]}
+    )
+    features = list(x.columns)
+
+    duration_predictions = [
+        ridge_duration_model(features).fit(x, y_duration).predict(unseen),
+        boosted_duration_model(features).fit(x, y_duration).predict(unseen),
+    ]
+    probability = (
+        boosted_correctness_model(features)
+        .fit(x, y_correct)
+        .predict_proba(unseen)[:, 1]
+    )
+
+    assert all(np.isfinite(prediction).all() for prediction in duration_predictions)
+    assert np.isfinite(probability).all()
+
+
+def test_encoder_action_override_rewrites_department_and_chain_together():
+    """Counterfactual scoring changes both halves of the joint action."""
+    train = _frame(
+        ["Angul", "Angul"],
+        ["Water", "Water"],
+        ["100,200", "100"],
+        departments=[10, 81],
+    )
     decode_flow_columns(train, {"100": "1", "200": "5"})
     encoder = FeatureEncoder.fit(train)
 
     observed = encoder.transform(train)
-    counterfactual = encoder.transform(train, flow="1,5")
+    counterfactual = encoder.transform(train, action="81::1,5")
 
     assert (counterfactual["n_esc"] == 2).all()
+    assert (counterfactual["department_code"] == counterfactual["department_code"].iloc[0]).all()
+    assert (counterfactual["department_code"] >= 0).all()
+    assert not observed["department_code"].equals(counterfactual["department_code"])
     assert (counterfactual["entry_role_code"] == counterfactual["entry_role_code"].iloc[0]).all()
     # Covariates are untouched.
     for column in ("district_code", "category_code", "month"):
         pd.testing.assert_series_equal(observed[column], counterfactual[column])
 
 
-def test_encoder_ablation_drops_flow_columns():
+def test_encoder_ablation_drops_joint_action_columns():
     train = _frame(["Angul"], ["Water"], ["100,200"])
     decode_flow_columns(train, {"100": "1", "200": "5"})
     encoder = FeatureEncoder.fit(train)
-    ablated = encoder.transform(train, include_flow=False)
-    assert not set(FLOW_COLUMNS) & set(ablated.columns)
+    ablated = encoder.transform(train, include_action=False)
+    assert not set(ACTION_COLUMNS) & set(ablated.columns)
 
 
-def test_decode_flow_columns_nulls_unmappable_chains():
+def test_decode_flow_columns_builds_joint_action_and_nulls_unmappable_chains():
     df = _frame(["Angul", "Angul"], ["Water", "Water"], ["100,200", "100,999"])
     decode_flow_columns(df, {"100": "1", "200": "5"})
-    assert df["flow_template"].tolist() == ["1,5", None]
+    assert df["chain_template"].tolist() == ["1,5", None]
+    assert df["action_template"].tolist() == ["10::1,5", None]
+
+
+def test_joint_action_identifier_round_trips_department_and_complete_chain():
+    action = encode_action(31, "1,5,8")
+    assert action == "31::1,5,8"
+    assert decode_action(action) == ("31", "1,5,8")
+    assert decode_action("chain-only") is None
+
+
+def test_census_detects_when_one_chain_spans_departments():
+    frame = _frame(
+        ["Angul"] * 3,
+        ["Water"] * 3,
+        ["100,200", "100,200", "100"],
+        departments=[10, 20, 10],
+    )
+    tables = type(
+        "Tables",
+        (),
+        {
+            "user_role": {"100": "1", "200": "5"},
+            "role_name": {"1": "BDO", "5": "Collector"},
+        },
+    )()
+
+    census = census_mod.flow_census(frame, tables)
+
+    assert census["n_templates"] == 2
+    assert census["n_joint_actions"] == 3
+    assert census["n_multidepartment_templates"] == 1
+    assert census["rows_on_multidepartment_templates"] == 2
 
 
 def test_cell_key_keeps_nulls_addressable():
@@ -161,21 +422,21 @@ def _propensity_frame() -> pd.DataFrame:
     return pd.DataFrame(
         {
             "cell": ["A"] * 8 + ["B"] * 2,
-            "flow_template": ["1,5"] * 6 + ["6"] * 2 + ["1,5"] * 2,
+            "action_template": ["10::1,5"] * 6 + ["20::6"] * 2 + ["10::1,5"] * 2,
         }
     )
 
 
 def test_propensity_returns_training_shares():
     model = EmpiricalSharePropensity.fit(_propensity_frame())
-    scored = model.score(pd.Series(["A", "A"]), pd.Series(["1,5", "6"]))
+    scored = model.score(pd.Series(["A", "A"]), pd.Series(["10::1,5", "20::6"]))
     assert scored.tolist() == pytest.approx([0.75, 0.25])
 
 
 def test_propensity_backs_off_to_marginal_not_the_clip_floor():
     """The bug: an unseen (cell, flow) returned 0.01, inflating 1/e by 100x."""
     model = EmpiricalSharePropensity.fit(_propensity_frame())
-    unseen_in_cell = model.score(pd.Series(["B"]), pd.Series(["6"])).iloc[0]
+    unseen_in_cell = model.score(pd.Series(["B"]), pd.Series(["20::6"])).iloc[0]
     assert unseen_in_cell == pytest.approx(0.2)  # marginal share of "6"
     assert unseen_in_cell > model.clip_low
 
@@ -200,7 +461,7 @@ def test_overlap_report_counts_only_matched_rows():
 
 
 # --------------------------------------------------------------------------
-# The doubly robust estimator
+# The augmented score (doubly robust in m/e only when G is correct)
 # --------------------------------------------------------------------------
 
 
@@ -214,6 +475,65 @@ def test_dr_collapses_to_direct_method_when_the_model_is_exact():
         propensity=np.array([0.5, 0.5, 0.5]),
     )
     assert scores.mean() == pytest.approx(6.0)
+
+
+def test_exact_outcome_model_does_not_protect_against_wrong_censoring_weights():
+    """D and T form an independent 2x2 population, but R depends on Y through time.
+
+    Even with the exact conditional mean, replacing R/G(Y) by R biases the
+    augmented score. Correct G is required in both m/e robustness branches.
+    """
+    outcome = np.array([0.0, 0.0, 10.0, 10.0])
+    exact_mu = np.full(4, 5.0)
+    matched = np.ones(4, dtype=bool)
+    propensity = np.ones(4)
+    observed = np.array([True, True, False, True])
+
+    correct_r_over_g = np.array([1.0, 1.0, 0.0, 2.0])
+    wrong_r_over_g = observed.astype(float)
+    correct = dr_scores(
+        outcome,
+        exact_mu,
+        exact_mu,
+        matched,
+        propensity,
+        censoring_weight=correct_r_over_g,
+    )
+    wrong = dr_scores(
+        outcome,
+        exact_mu,
+        exact_mu,
+        matched,
+        propensity,
+        censoring_weight=wrong_r_over_g,
+    )
+
+    assert correct.mean() == pytest.approx(5.0)
+    assert wrong.mean() != pytest.approx(5.0)
+
+
+def test_correct_propensity_branch_still_requires_correct_censoring_weights():
+    """With misspecified mu and correct e, correct R/G recovers the value."""
+    outcome = np.array([0.0, 0.0, 10.0, 10.0])
+    wrong_mu = np.zeros(4)
+    correct = dr_scores(
+        outcome,
+        wrong_mu,
+        wrong_mu,
+        np.ones(4, dtype=bool),
+        np.ones(4),
+        censoring_weight=np.array([1.0, 1.0, 0.0, 2.0]),
+    )
+    wrong = dr_scores(
+        outcome,
+        wrong_mu,
+        wrong_mu,
+        np.ones(4, dtype=bool),
+        np.ones(4),
+        censoring_weight=np.array([1.0, 1.0, 0.0, 1.0]),
+    )
+    assert correct.mean() == pytest.approx(5.0)
+    assert wrong.mean() != pytest.approx(5.0)
 
 
 def test_dr_recovers_the_sample_mean_under_the_logging_policy():
@@ -246,12 +566,25 @@ def test_self_normalisation_bounds_a_single_low_propensity_match():
 
 
 def test_historical_value_separates_the_two_estimators():
-    """The bug: delta differenced a fitted mean against a raw group mean."""
+    """The stochastic baseline retains like-with-like outcome/model routes."""
     df = pd.DataFrame({"outcome": [10.0, 30.0], "mu": [15.0, 15.0]})
     arm = historical_value(df, outcome_col="outcome", mu_observed_col="mu")
     assert arm.v_dr == pytest.approx(20.0)  # mean of realised T
     assert arm.v_direct == pytest.approx(15.0)  # mean of fitted values
     assert arm.v_dr != arm.v_direct
+
+    summary = summarise(arm, [ArmValue("candidate", 12.0, 18.0)], censoring_rate=0, n=2)
+    assert summary["historical_regime"] == "stochastic_logging_policy"
+    assert summary["arms"]["candidate"]["delta_direct"] == pytest.approx(3.0)
+    assert summary["arms"]["candidate"]["delta_dr"] == pytest.approx(2.0)
+    caveats = " ".join(summary["caveats"])
+    assert "responsible assigning office" in caveats
+    assert "initial de jure assignment" in caveats
+    assert "de facto handling" in caveats
+    assert "treatment provenance is unresolved" in caveats
+    assert "treatment-version mechanism" in caveats
+    assert "Assign Another ATA" in caveats
+    assert "not fields shown on the captured assignment form" in caveats
 
 
 def test_cluster_bootstrap_se_prices_within_cluster_correlation():
@@ -288,13 +621,29 @@ def test_eligible_sets_apply_support_floor_and_top_k():
     df = pd.DataFrame(
         {
             "cell": ["A"] * 26,
-            "flow_template": ["1,5"] * 12 + ["6"] * 10 + ["5"] * 3 + ["7"] * 1,
+            "action_template": (
+                ["10::1,5"] * 12
+                + ["20::6"] * 10
+                + ["10::5"] * 3
+                + ["20::7"] * 1
+            ),
         }
     )
     eligible = EligibleSets.fit(df, top_k=3, min_support=10)
-    assert eligible.candidates("A") == ("1,5", "6")  # "5" and "7" fall below support
+    assert eligible.candidates("A") == ("10::1,5", "20::6")
     assert eligible.candidates("missing-cell") == ()
-    assert set(eligible.universe) == {"1,5", "6"}
+    assert set(eligible.universe) == {"10::1,5", "20::6"}
+
+
+def test_same_chain_in_two_departments_remains_two_actions():
+    df = pd.DataFrame(
+        {
+            "cell": ["A"] * 20,
+            "action_template": ["10::1,5"] * 10 + ["20::1,5"] * 10,
+        }
+    )
+    eligible = EligibleSets.fit(df, top_k=3, min_support=10)
+    assert eligible.candidates("A") == ("10::1,5", "20::1,5")
 
 
 class _MuStub:
@@ -304,11 +653,26 @@ class _MuStub:
         return np.log1p(10.0 * X["n_esc"].to_numpy(dtype=float))
 
 
+class _TradeoffMuStub:
+    """Longer chains are faster, so a correctness floor has a visible cost."""
+
+    def predict(self, X):
+        days = 30.0 - 10.0 * X["n_esc"].to_numpy(dtype=float)
+        return np.log1p(days)
+
+
+class _NonFiniteMuStub:
+    def predict(self, X):
+        values = np.zeros(len(X), dtype=float)
+        values[0] = np.nan
+        return values
+
+
 class _PiStub:
     """Correctness falls with chain length, so tau bites the long chains."""
 
     def predict_proba(self, X):
-        p = 1.0 / X["n_esc"].to_numpy(dtype=float)
+        p = 0.8 / X["n_esc"].to_numpy(dtype=float)
         return np.column_stack([1 - p, p])
 
 
@@ -329,10 +693,9 @@ def test_score_policy_picks_the_row_wise_argmin_over_eligible_flows():
         mu_model=_MuStub(),
         eligible=eligible,
         features=encoder.feature_names(),
-        observed_mu=pd.Series(999.0, index=train.index),
     )
     # "1" is the one-hop chain, so it minimises the stub's mu everywhere.
-    assert set(scored.flow) == {"1"}
+    assert set(scored.action) == {"10::1"}
     assert scored.mu.round(6).eq(10.0).all()
     assert (scored.n_eligible == 2).all()
 
@@ -347,9 +710,8 @@ def test_score_policy_respects_the_correctness_floor():
         features=encoder.feature_names(),
         pi_model=_PiStub(),
         tau=0.4,
-        observed_mu=pd.Series(999.0, index=train.index),
     )
-    assert set(permissive.flow) == {"1"}  # pi = 1.0 for the one-hop chain
+    assert set(permissive.action) == {"10::1"}  # pi = 0.8 for the one-hop chain
 
     blocked = score_policy(
         train,
@@ -358,29 +720,92 @@ def test_score_policy_respects_the_correctness_floor():
         eligible=eligible,
         features=encoder.feature_names(),
         pi_model=_PiStub(),
-        tau=1.5,  # unreachable, so every candidate is refused
-        observed_mu=pd.Series(999.0, index=train.index),
+        tau=0.9,  # unreachable, so every candidate is refused
     )
     assert (blocked.n_eligible == 0).all()
-    assert blocked.mu.eq(999.0).all()  # falls back to the observed flow
+    assert blocked.fallback.all()
+    assert blocked.action.eq("10::1").all()  # highest predicted correctness
+    assert np.allclose(blocked.mu, 10.0)
+    assert blocked.pi is not None and blocked.pi.eq(0.8).all()
 
 
-def test_score_policy_falls_back_where_the_cell_has_no_eligible_flow():
+def test_score_policy_frontier_is_total_and_pointwise_monotone():
+    train, encoder, eligible = _policy_fixture()
+    scores = [
+        score_policy(
+            train,
+            encoder=encoder,
+            mu_model=_TradeoffMuStub(),
+            eligible=eligible,
+            features=encoder.feature_names(),
+            pi_model=_PiStub(),
+            tau=floor,
+        )
+        for floor in (0.0, 0.6, 0.9)
+    ]
+
+    for row in train.index:
+        assert np.allclose([score.mu[row] for score in scores], [10.0, 20.0, 20.0])
+        assert np.allclose([score.pi[row] for score in scores], [0.4, 0.8, 0.8])
+    assert not scores[0].fallback.any()
+    assert not scores[1].fallback.any()
+    assert scores[2].fallback.all()
+    assert scores[2].pi is not None and np.isfinite(scores[2].pi).all()
+
+
+def test_score_policy_requires_correctness_model_for_positive_floor():
+    train, encoder, eligible = _policy_fixture()
+    with pytest.raises(ValueError, match="positive correctness floor requires pi_model"):
+        score_policy(
+            train,
+            encoder=encoder,
+            mu_model=_MuStub(),
+            eligible=eligible,
+            features=encoder.feature_names(),
+            tau=0.5,
+        )
+
+
+def test_score_policy_rejects_floor_outside_probability_range():
+    train, encoder, eligible = _policy_fixture()
+    with pytest.raises(ValueError, match=r"correctness floor tau must lie in \[0, 1\]"):
+        score_policy(
+            train,
+            encoder=encoder,
+            mu_model=_MuStub(),
+            eligible=eligible,
+            features=encoder.feature_names(),
+            pi_model=_PiStub(),
+            tau=1.5,
+        )
+
+
+def test_score_policy_fails_closed_on_non_finite_predictions():
+    train, encoder, eligible = _policy_fixture()
+    with pytest.raises(ValueError, match="non-finite log-duration predictions"):
+        score_policy(
+            train,
+            encoder=encoder,
+            mu_model=_NonFiniteMuStub(),
+            eligible=eligible,
+            features=encoder.feature_names(),
+        )
+
+
+def test_score_policy_rejects_rows_outside_the_supported_target_population():
     train, encoder, eligible = _policy_fixture()
     other = _frame(["Puri"], ["Land"], ["100"])
     decode_flow_columns(other, {"100": "1"})
     other["cell"] = cell_key(other)
 
-    scored = score_policy(
-        other,
-        encoder=encoder,
-        mu_model=_MuStub(),
-        eligible=eligible,
-        features=encoder.feature_names(),
-        observed_mu=pd.Series([42.0], index=other.index),
-    )
-    assert scored.flow.iloc[0] == "1"
-    assert scored.mu.iloc[0] == pytest.approx(42.0)
+    with pytest.raises(ValueError, match="no supported policy candidates"):
+        score_policy(
+            other,
+            encoder=encoder,
+            mu_model=_MuStub(),
+            eligible=eligible,
+            features=encoder.feature_names(),
+        )
 
 
 # --------------------------------------------------------------------------
@@ -463,7 +888,14 @@ def test_importing_flow_does_not_read_the_mapping_tables(monkeypatch):
         # binary label.
         ("duplicate copy", "s0"),
         ("case already taken up for examination", "s0"),
-        ("this is not within the purview of this grievance cell", "s0"),
+        # The current cell's inability to act is a routing outcome, not proof
+        # that no admissible department-and-chain could act.
+        ("this is not within the purview of this grievance cell", "unknown"),
+        (
+            "you are requested to send your grievance/petition directly to vigilance "
+            "organisation for redressal of your grievance",
+            "unknown",
+        ),
         # Worked, but the remark declines to say whether action followed.
         ("as reported", "s1_c_unknown"),
         # Genuinely undecided; must not be guessed either way.
@@ -518,12 +950,22 @@ def test_no_template_is_assigned_twice_with_different_buckets():
             assert template not in seen, f"{template!r} collides with discards.py:{family}"
 
 
-def test_every_governed_discard_family_is_non_actionable():
-    """The divergence from `WEAK_LABELS_BY_DISCARD_FAMILY` is deliberate: the two
-    duplicate families are excluded there and are `S=0` here."""
-    for templates in discards.TEMPLATES.values():
+def test_intrinsic_discard_families_are_proxy_non_actionable():
+    """Only families establishing that no admissible route could act are zero."""
+    intrinsic_families = set(discards.TEMPLATES) - set(
+        outcome.ROUTING_DEPENDENT_DISCARD_FAMILIES
+    )
+    for family in intrinsic_families:
+        templates = discards.TEMPLATES[family]
         for template in templates:
             assert outcome.classify(template) == "s0"
+
+
+def test_routing_dependent_discard_families_are_unknown():
+    """A current-cell rejection cannot define intake-time actionability."""
+    for family in outcome.ROUTING_DEPENDENT_DISCARD_FAMILIES:
+        for template in discards.TEMPLATES[family]:
+            assert outcome.classify(template) == "unknown"
 
 
 def test_sql_case_and_classify_agree_on_every_mapped_template():
@@ -625,7 +1067,7 @@ def test_censoring_curve_estimates_censoring_not_survival():
 def test_fitting_g_on_a_resolved_only_frame_is_a_silent_no_op():
     """Why `fit_frame` exists.
 
-    `S` is read off the closing remark, so every actionable row is resolved.
+    Legacy `S` is closure proxy `S_tilde`, so every selected row is resolved.
     Estimating the censoring curve there sees no censoring events, returns a
     constant 1, and produces weights that are all exactly 1 -- the correction
     quietly does nothing and the output looks perfectly ordinary.
@@ -811,34 +1253,50 @@ def test_in_fold_scoring_is_optimistic_on_pure_noise_and_out_of_fold_is_not():
 
 
 def _stub_frontier(tau_value):
-    """A raised floor buys correctness and costs speed, by construction."""
-    return (40.0 + 30.0 * tau_value, 0.25 + 0.30 * tau_value, int(100 * tau_value), 3.0)
+    """Direct scores are monotone while AIPW corrections may fluctuate."""
+    return (
+        40.0 + 30.0 * tau_value,
+        44.0 - tau_value,
+        0.25 + 0.30 * tau_value,
+        0.35 - 0.05 * tau_value,
+        int(100 * tau_value),
+        3.0,
+    )
 
 
 def test_frontier_is_monotone_in_tau():
     points = tau.sweep(_stub_frontier, historical_correct=0.30)
-    durations = [p.v_duration for p in points]
-    corrects = [p.v_correct for p in points]
-    assert durations == sorted(durations)
-    assert corrects == sorted(corrects)
+    report = tau.monotonicity_report(points)
+    assert report == {
+        "duration_dm_nondecreasing": True,
+        "duration_aipw_nondecreasing": False,
+        "correct_dm_nondecreasing": True,
+        "correct_aipw_nondecreasing": False,
+    }
 
 
 def test_smallest_feasible_tau_is_the_smallest_not_the_safest():
     """Any floor above `tau*` buys correctness the constraint did not ask for
     and pays for it in days."""
     points = tau.sweep(_stub_frontier, historical_correct=0.30)
-    best = tau.smallest_feasible(points)
+    best = tau.smallest_feasible(points, estimator="dm")
     assert best is not None
-    assert best.v_correct >= 0.30
+    assert best.v_correct_dm >= 0.30
     infeasible = [p for p in points if p.tau < best.tau]
-    assert all(not p.feasible for p in infeasible)
+    assert all(not p.feasible_dm for p in infeasible)
+
+    augmented = tau.smallest_feasible(points, estimator="aipw")
+    assert augmented is not None
+    assert augmented.tau == 0.0
+    assert augmented.tau != best.tau
 
 
 def test_no_feasible_tau_returns_none_rather_than_the_largest():
     """Reporting the top of the grid as optimal would present an infeasible
     policy as the answer."""
     points = tau.sweep(_stub_frontier, historical_correct=0.99)
-    assert tau.smallest_feasible(points) is None
+    assert tau.smallest_feasible(points, estimator="dm") is None
+    assert tau.smallest_feasible(points, estimator="aipw") is None
 
 
 def test_calibration_report_prices_a_miscalibrated_classifier():

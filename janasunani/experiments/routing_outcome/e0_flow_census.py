@@ -19,6 +19,7 @@ import pandas as pd
 
 from . import paths
 from .dataset import build_mart
+from .features import encode_action
 from .flow import load_tables
 
 
@@ -34,9 +35,11 @@ def flow_census(df: pd.DataFrame, tables) -> dict:
     entry_roles: collections.Counter = collections.Counter()
     last_roles: collections.Counter = collections.Counter()
     templates: collections.Counter = collections.Counter()
+    joint_actions: collections.Counter = collections.Counter()
+    departments_by_template: dict[str, set[str]] = collections.defaultdict(set)
     absent = decoded = failed = 0
 
-    for chain in df["all_esc_user"]:
+    for chain, department_id in zip(df["all_esc_user"], df["dept_id"]):
         if chain is None or not str(chain).strip():
             absent += 1
             continue
@@ -49,9 +52,18 @@ def flow_census(df: pd.DataFrame, tables) -> dict:
         chain_lengths[len(roles)] += 1
         entry_roles[tables.role_name.get(roles[0], "?")] += 1
         last_roles[tables.role_name.get(roles[-1], "?")] += 1
-        templates[",".join(roles)] += 1
+        template = ",".join(roles)
+        templates[template] += 1
+        action = encode_action(department_id, template)
+        if action is not None:
+            joint_actions[action] += 1
+            departments_by_template[template].add(str(department_id))
 
     present = decoded + failed
+    multidepartment_templates = {
+        template for template, departments in departments_by_template.items()
+        if len(departments) > 1
+    }
     return {
         "absent": absent,
         "decoded": decoded,
@@ -61,6 +73,14 @@ def flow_census(df: pd.DataFrame, tables) -> dict:
         "top_entry_roles": entry_roles.most_common(10),
         "top_last_roles": last_roles.most_common(10),
         "top_templates": templates.most_common(15),
+        "n_departments": int(df["dept_id"].nunique(dropna=True)),
+        "n_templates": len(templates),
+        "n_joint_actions": len(joint_actions),
+        "n_multidepartment_templates": len(multidepartment_templates),
+        "rows_on_multidepartment_templates": sum(
+            templates[template] for template in multidepartment_templates
+        ),
+        "top_joint_actions": joint_actions.most_common(15),
     }
 
 
@@ -92,6 +112,20 @@ def main() -> int:
     print("top entry roles", census["top_entry_roles"][:10])
     print("top last roles", census["top_last_roles"][:10])
     print("top templates", census["top_templates"][:15])
+    print(
+        "joint action audit",
+        {
+            key: census[key]
+            for key in (
+                "n_departments",
+                "n_templates",
+                "n_joint_actions",
+                "n_multidepartment_templates",
+                "rows_on_multidepartment_templates",
+            )
+        },
+    )
+    print("top joint actions", census["top_joint_actions"][:15])
 
     print("\nE0 office vs pending")
     print(office_divergence(duckdb.connect()).head(10).to_string(index=False))

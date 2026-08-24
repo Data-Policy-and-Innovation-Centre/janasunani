@@ -10,9 +10,10 @@ The 11 Aug fit trained `mu` on `log1p(days_capped)` over rows with `correct == 1
 -- completers only, on a population selected by a post-treatment outcome. Three
 corrections, each from a module beside this one:
 
-* **Population.** Rows are now the actionable ones (`S == 1`) from `outcome.py`,
-  not the binary-correct ones. `S` does not vary with the flow, so conditioning
-  on it is harmless; `correct` does, and conditioning on it was the
+* **Population.** Rows are now those with closure proxy `S_tilde == 1` (stored
+  in the legacy `S` column), not the binary-correct ones. This remains a
+  post-resolution selected population and does not identify the intake-time
+  `S* == 1` target. Conditioning on `correct` was an additional
   principal-stratum error of Example 2.9.
 * **Censoring.** The target is the restricted duration `Y = min(T, 365)` and
   rows carry IPCW weights from `censoring.py`, so censored cases are reweighted
@@ -34,18 +35,17 @@ import pickle
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import GradientBoostingClassifier, GradientBoostingRegressor
-from sklearn.linear_model import Ridge
 from sklearn.metrics import brier_score_loss, mean_squared_error, roc_auc_score
-from sklearn.pipeline import Pipeline, make_pipeline
-from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
 
 from . import censoring, paths, smear, tau
-from .features import FeatureEncoder, decode_flow_columns
+from .features import ACTION_DEFINITION, FeatureEncoder, decode_flow_columns
 from .flow import load_tables
-
-GBM_PARAMS = {"n_estimators": 200, "max_depth": 6, "learning_rate": 0.1, "random_state": 0}
-CLF_PARAMS = {"n_estimators": 150, "max_depth": 4, "random_state": 0}
+from .models import (
+    boosted_correctness_model,
+    boosted_duration_model,
+    ridge_duration_model,
+)
 
 
 def _rmse(y_true, y_pred) -> float:
@@ -82,9 +82,10 @@ def main() -> int:
         df["cluster"] = _cluster(df)
         splits[name] = df
 
-        # The full arrival cohort, censored rows included. `S` is read off the
-        # closing remark, so every actionable row is resolved and a censoring
-        # curve fitted there would be the constant 1. `G` is estimated here.
+        # The full arrival cohort, censored rows included. Legacy `S` is the
+        # closure proxy S_tilde, so every selected row is resolved and a
+        # censoring curve fitted there would be the constant 1. `G` is estimated
+        # here.
         cohort = pd.read_parquet(paths.out(f"{name}_all.parquet"))
         cohort["cluster"] = _cluster(cohort)
         cohorts[name] = cohort
@@ -93,7 +94,7 @@ def main() -> int:
     # them per split is the bug that invalidated the first run.
     encoder = FeatureEncoder.fit(splits["train"])
     features = encoder.feature_names()
-    features_noflow = encoder.feature_names(include_flow=False)
+    features_noflow = encoder.feature_names(include_action=False)
 
     # Restricted duration with censoring weights, per split.
     restricted = {
@@ -124,14 +125,14 @@ def main() -> int:
             metrics[name][split] = _rmse(target[split][keep], predicted)
         return model
 
-    ridge = _fit(make_pipeline(StandardScaler(), Ridge(alpha=1.0)), "ridge", features)
-    gbm = _fit(GradientBoostingRegressor(**GBM_PARAMS), "gbm", features)
+    ridge = _fit(ridge_duration_model(features), "ridge", features)
+    gbm = _fit(boosted_duration_model(features), "gbm", features)
 
     gbm_noflow = _fit(
-        GradientBoostingRegressor(**{**GBM_PARAMS, "random_state": 1}),
+        boosted_duration_model(features_noflow, random_state=1),
         "gbm_noflow",
         features_noflow,
-        {"include_flow": False},
+        {"include_action": False},
     )
 
     # Smearing factors, fitted on training residuals and stored with the models.
@@ -146,14 +147,14 @@ def main() -> int:
         )
         metrics[f"smearing_{name}"] = smearing[name].summary()
 
-    # pi is fitted on every actionable case with C determined -- `C` is NULL for
+    # pi is fitted on every proxy-selected case with C determined -- `C` is NULL for
     # the `as reported` bucket, and imputing zero there would invent 90,061
     # no-action closures.
     labelled = {name: splits[name]["C"].notna().to_numpy() for name in splits}
     design_all = {name: encoder.transform(df)[features] for name, df in splits.items()}
     label = {name: splits[name]["C"].fillna(0).astype(int) for name in splits}
 
-    clf = GradientBoostingClassifier(**CLF_PARAMS)
+    clf = boosted_correctness_model(features)
     clf.fit(design_all["train"][labelled["train"]], label["train"][labelled["train"]])
 
     # Calibrated on validation, which the classifier did not train on.
@@ -187,6 +188,7 @@ def main() -> int:
     with open(paths.out("models.pkl"), "wb") as handle:
         pickle.dump(
             {
+                "action_definition": ACTION_DEFINITION,
                 "encoder": encoder,
                 "features": features,
                 "features_noflow": features_noflow,

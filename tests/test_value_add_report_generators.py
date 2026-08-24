@@ -2,8 +2,6 @@ from pathlib import Path
 import sys
 import zipfile
 
-from docx import Document
-
 from janasunani.evaluation.value_add_benchmark_facts import BenchmarkFacts
 
 SCRIPTS = Path(__file__).parents[1] / "scripts"
@@ -12,7 +10,7 @@ if str(SCRIPTS) not in sys.path:
 
 import create_officer_brief as officer  # noqa: E402
 import create_public_systems_capability_brief as public  # noqa: E402
-from docx_archive import CANONICAL_ZIP_TIMESTAMP  # noqa: E402
+from docx_archive import CANONICAL_ZIP_TIMESTAMP, main as canonicalize_main  # noqa: E402
 import update_value_add_report as report  # noqa: E402
 
 
@@ -64,7 +62,14 @@ def benchmark_facts() -> BenchmarkFacts:
             "office_variation": {"max_total_variation": 0.522},
         },
         pii={
-            "overall": {"gold": 50, "overlap_recall": 0.84, "exact_recall": 0.7},
+            "overall": {
+                "gold": 50,
+                "predicted": 80,
+                "overlap_hits": 42,
+                "exact_hits": 35,
+                "overlap_recall": 0.84,
+                "exact_recall": 0.7,
+            },
             "coverage": {"overlap_recall": 0.86},
             "by_entity": {
                 entity: {"overlap_recall": value}
@@ -87,6 +92,57 @@ def benchmark_facts() -> BenchmarkFacts:
             "top_k_accuracy": {"3": 0.7968},
             "n": 120000,
         },
+        routing_outcome={
+            "validation_2024": {
+                "support": {"n_evaluated": 100},
+                "tau_0": {
+                    "ridge_top_three": {
+                        "delta_dm": 14.0,
+                        "delta_aipw": 12.4,
+                        "aipw_se": 2.0,
+                        "ess_over_n": 0.5,
+                    },
+                    "gbm_top_three": {
+                        "delta_dm": 28.0,
+                        "delta_aipw": 26.77,
+                        "aipw_se": 3.0,
+                        "ess_over_n": 0.4,
+                    },
+                },
+            },
+            "test_2025": {
+                "support": {"n_evaluated": 80},
+                "tau_0": {
+                    "ridge_top_three": {
+                        "delta_dm": -1.0,
+                        "delta_aipw": -2.35,
+                        "aipw_se": 2.0,
+                        "ess_over_n": 0.5,
+                    },
+                    "gbm_top_three": {
+                        "delta_dm": 1.0,
+                        "delta_aipw": 0.15,
+                        "aipw_se": 3.0,
+                        "ess_over_n": 0.4,
+                    },
+                },
+            },
+            "robustness_ladder_2024": {
+                "rungs": {
+                    rung: {
+                        "n_validation": 100,
+                        "delta": delta,
+                        "delta_evaluation_se": 0.01,
+                    }
+                    for rung, delta in {
+                        "R0_binary_completers": 0.0305,
+                        "R1_proxy_actionable_completers": 0.0002,
+                        "R2_proxy_actionable_restricted": 0.0002,
+                        "R3_proxy_actionable_restricted_ipcw": 0.0002,
+                    }.items()
+                }
+            },
+        },
         summary={
             "critical_fact_recall": {"successes": 55, "n": 84},
             "usable_without_edit_rate": {"successes": 8},
@@ -101,70 +157,41 @@ def benchmark_facts() -> BenchmarkFacts:
     )
 
 
-def _document_text(path: Path) -> str:
-    document = Document(path)
-    text = [paragraph.text for paragraph in document.paragraphs]
-    text.extend(
-        paragraph.text
-        for table in document.tables
-        for row in table.rows
-        for cell in row.cells
-        for paragraph in cell.paragraphs
-    )
-    return "\n".join(text)
-
-
-def test_actual_word_generators_create_bundle_backed_outputs(tmp_path, monkeypatch):
+def test_report_generators_create_reviewable_bundle_backed_markdown(
+    tmp_path, monkeypatch
+):
     facts = benchmark_facts()
     for module in (officer, public, report):
         monkeypatch.setattr(module, "load_benchmark_facts", lambda _path: facts)
 
-    officer_path = tmp_path / "officer.docx"
-    public_path = tmp_path / "public.docx"
-    report_path = tmp_path / "report.docx"
+    officer_path = tmp_path / "officer.md"
+    public_path = tmp_path / "public.md"
+    report_path = tmp_path / "report.md"
     officer.create_brief(officer_path, benchmark_bundle=Path("unused.json"))
     public.create_brief(public_path, benchmark_bundle=Path("unused.json"))
-    report.patch_report(
-        report.DEFAULT_SOURCE,
-        report_path,
-        benchmark_bundle=Path("unused.json"),
-    )
+    report.create_report(report_path, benchmark_bundle=Path("unused.json"))
 
     for output in (officer_path, public_path, report_path):
-        assert output.stat().st_size > 10_000
-        assert "test-bundle-1234567890" in _document_text(output)
+        text = output.read_text(encoding="utf-8")
+        assert output.stat().st_size > 1_000
+        assert "test-bundle-1234" in text
+        assert text.startswith("---\n")
 
-    document = Document(report_path)
-    assert len(document.inline_shapes) > 0
 
+def test_docx_cli_produces_reproducible_archives(tmp_path):
+    first = tmp_path / "first.docx"
+    second = tmp_path / "second.docx"
+    for path, timestamp in (
+        (first, (2025, 1, 2, 3, 4, 6)),
+        (second, (2026, 7, 8, 9, 10, 12)),
+    ):
+        with zipfile.ZipFile(path, "w") as archive:
+            member = zipfile.ZipInfo("word/document.xml", date_time=timestamp)
+            archive.writestr(member, b"<document>same bytes</document>")
 
-def test_word_generators_produce_reproducible_archives(tmp_path, monkeypatch):
-    facts = benchmark_facts()
-    for module in (officer, public, report):
-        monkeypatch.setattr(module, "load_benchmark_facts", lambda _path: facts)
-
-    first = tmp_path / "first"
-    second = tmp_path / "second"
-    first.mkdir()
-    second.mkdir()
-
-    outputs = []
-    for directory in (first, second):
-        officer_path = directory / "officer.docx"
-        public_path = directory / "public.docx"
-        report_path = directory / "report.docx"
-        officer.create_brief(officer_path, benchmark_bundle=Path("unused.json"))
-        public.create_brief(public_path, benchmark_bundle=Path("unused.json"))
-        report.patch_report(
-            report.DEFAULT_SOURCE,
-            report_path,
-            benchmark_bundle=Path("unused.json"),
-        )
-        outputs.append((officer_path, public_path, report_path))
-
-    for first_output, second_output in zip(*outputs, strict=True):
-        assert first_output.read_bytes() == second_output.read_bytes()
-        with zipfile.ZipFile(first_output) as archive:
-            assert {member.date_time for member in archive.infolist()} == {
-                CANONICAL_ZIP_TIMESTAMP
-            }
+    assert canonicalize_main([str(first), str(second)]) == 0
+    assert first.read_bytes() == second.read_bytes()
+    with zipfile.ZipFile(first) as archive:
+        assert {member.date_time for member in archive.infolist()} == {
+            CANONICAL_ZIP_TIMESTAMP
+        }

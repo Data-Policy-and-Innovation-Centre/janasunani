@@ -43,6 +43,7 @@ so `calibrate()` here is required before any sweep.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -57,21 +58,34 @@ DEFAULT_GRID: tuple[float, ...] = (
 
 @dataclass(frozen=True)
 class FrontierPoint:
-    """One point on the speed-correctness frontier."""
+    """One policy floor, valued by direct and augmented estimators separately.
+
+    The fitted pointwise policy scores inherit the monotonicity result in
+    Corollary 4.6. Their finite-sample AIPW corrections do not: the residual
+    correction and the set of logging-policy matches both change with `tau`.
+    Keeping the estimates separate prevents sampling noise from being reported
+    as a violation of the policy theorem, or silently used as its substitute.
+    """
 
     tau: float
-    v_duration: float
-    v_correct: float
-    feasible: bool
+    v_duration_dm: float
+    v_duration_aipw: float
+    v_correct_dm: float
+    v_correct_aipw: float
+    feasible_dm: bool
+    feasible_aipw: bool
     n_fallback: int
     mean_eligible: float
 
     def as_dict(self) -> dict:
         return {
             "tau": self.tau,
-            "v_duration": self.v_duration,
-            "v_correct": self.v_correct,
-            "feasible": self.feasible,
+            "v_duration_dm": self.v_duration_dm,
+            "v_duration_aipw": self.v_duration_aipw,
+            "v_correct_dm": self.v_correct_dm,
+            "v_correct_aipw": self.v_correct_aipw,
+            "feasible_dm": self.feasible_dm,
+            "feasible_aipw": self.feasible_aipw,
             "n_fallback": self.n_fallback,
             "mean_eligible": self.mean_eligible,
         }
@@ -135,20 +149,31 @@ def sweep(
 ) -> list[FrontierPoint]:
     """Trace the frontier over `grid`.
 
-    `evaluate(tau)` must return `(v_duration, v_correct, n_fallback,
-    mean_eligible)` for the policy formed at that floor. It is injected rather
-    than built here so this module needs neither a fitted model nor the lake,
-    and so the sweep can be tested against a closed-form stub.
+    `evaluate(tau)` must return `(duration_dm, duration_aipw, correct_dm,
+    correct_aipw, n_fallback, mean_eligible)` for the policy formed at that
+    floor. It is injected rather than built here so this module needs neither a
+    fitted model nor the lake, and so the sweep can be tested against a
+    closed-form stub.
     """
     points: list[FrontierPoint] = []
     for tau in grid:
-        v_duration, v_correct, n_fallback, mean_eligible = evaluate(tau)
+        (
+            v_duration_dm,
+            v_duration_aipw,
+            v_correct_dm,
+            v_correct_aipw,
+            n_fallback,
+            mean_eligible,
+        ) = evaluate(tau)
         points.append(
             FrontierPoint(
                 tau=float(tau),
-                v_duration=float(v_duration),
-                v_correct=float(v_correct),
-                feasible=bool(v_correct >= historical_correct),
+                v_duration_dm=float(v_duration_dm),
+                v_duration_aipw=float(v_duration_aipw),
+                v_correct_dm=float(v_correct_dm),
+                v_correct_aipw=float(v_correct_aipw),
+                feasible_dm=bool(v_correct_dm >= historical_correct),
+                feasible_aipw=bool(v_correct_aipw >= historical_correct),
                 n_fallback=int(n_fallback),
                 mean_eligible=float(mean_eligible),
             )
@@ -156,16 +181,38 @@ def sweep(
     return points
 
 
-def smallest_feasible(points: list[FrontierPoint]) -> FrontierPoint | None:
-    """`tau*`: the smallest floor meeting the correctness constraint.
+def smallest_feasible(
+    points: list[FrontierPoint], *, estimator: Literal["dm", "aipw"]
+) -> FrontierPoint | None:
+    """Smallest floor meeting the chosen estimator's correctness constraint.
 
     None when no point on the grid is feasible, which is a real answer and not
     an error -- it says the constraint cannot be met by thresholding `pi` alone,
     and the caller must report that rather than fall back to the largest `tau`
     and call it optimal.
     """
-    feasible = [p for p in points if p.feasible]
+    feasible = [p for p in points if getattr(p, f"feasible_{estimator}")]
     return min(feasible, key=lambda p: p.tau) if feasible else None
+
+
+def monotonicity_report(points: list[FrontierPoint], *, atol: float = 1e-10) -> dict[str, bool]:
+    """Report, but do not impose, monotonicity of each empirical curve.
+
+    Direct fitted scores should be monotone under the total policy rule. AIPW
+    estimates may move either way in a finite sample and are retained as an
+    honest diagnostic rather than projected onto a monotone curve.
+    """
+
+    def nondecreasing(attribute: str) -> bool:
+        values = np.asarray([getattr(point, attribute) for point in points], dtype=float)
+        return bool(np.all(np.diff(values) >= -atol))
+
+    return {
+        "duration_dm_nondecreasing": nondecreasing("v_duration_dm"),
+        "duration_aipw_nondecreasing": nondecreasing("v_duration_aipw"),
+        "correct_dm_nondecreasing": nondecreasing("v_correct_dm"),
+        "correct_aipw_nondecreasing": nondecreasing("v_correct_aipw"),
+    }
 
 
 def frontier_frame(points: list[FrontierPoint]) -> pd.DataFrame:

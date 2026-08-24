@@ -341,6 +341,7 @@ stages:
       --markdown outputs/benchmark/full_benchmark.md
     deps:
       - config/benchmark_bundle.json
+      - docs/experiments/routing-outcome-evidence-2026-08-19.json
       - docs/evidence/sarvam_cached_benchmark.json
       - outputs/benchmark/latency.json
       - outputs/evaluation/actionability_candidates_muril_high_catch.json
@@ -360,17 +361,30 @@ stages:
   value-add-report-documents:
     desc: >-
       Regenerate the long report and both short briefs from the governed
-      benchmark bundle, shared DPIC palette, and immutable source template.
+      benchmark bundle, render their reviewable Markdown sources with the
+      shared DPIC document framework, and canonicalize the Word archives.
     cmd: >-
       uv run --frozen python scripts/update_value_add_report.py
       --benchmark-bundle outputs/benchmark/full_benchmark.json &&
       uv run --frozen python scripts/create_officer_brief.py
       --benchmark-bundle outputs/benchmark/full_benchmark.json &&
       uv run --frozen python scripts/create_public_systems_capability_brief.py
-      --benchmark-bundle outputs/benchmark/full_benchmark.json
+      --benchmark-bundle outputs/benchmark/full_benchmark.json &&
+      uv run --frozen dpic-build-brief
+      docs/value-add-report/value-add-report.md
+      docs/value-add-report/Janasunani_2.0_Value_Add_Report_August_2026.docx &&
+      uv run --frozen dpic-build-brief
+      docs/value-add-report/officer-brief.md
+      docs/value-add-report/Janasunani_2.0_IAS_Officer_Brief_August_2026.docx &&
+      uv run --frozen dpic-build-brief
+      docs/value-add-report/capability-brief.md
+      docs/value-add-report/Janasunani_2.0_Public_Systems_Capability_Brief_August_2026.docx &&
+      uv run --frozen python scripts/docx_archive.py
+      docs/value-add-report/Janasunani_2.0_Value_Add_Report_August_2026.docx
+      docs/value-add-report/Janasunani_2.0_IAS_Officer_Brief_August_2026.docx
+      docs/value-add-report/Janasunani_2.0_Public_Systems_Capability_Brief_August_2026.docx
     deps:
       - outputs/benchmark/full_benchmark.json
-      - docs/value-add-report/templates/Janasunani_2.0_Value_Add_Report_August_2026.source.docx
       - janasunani/evaluation/value_add_benchmark_facts.py
       - scripts/update_value_add_report.py
       - scripts/create_officer_brief.py
