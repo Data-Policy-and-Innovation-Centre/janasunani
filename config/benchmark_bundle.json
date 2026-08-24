@@ -7,7 +7,8 @@
       "path": "outputs/benchmark/latency.json",
       "producer": "scripts/benchmark_pipeline.py",
       "claim": "current per-stage and end-to-end development timing",
-      "required_for_publication": false
+      "required_for_publication": false,
+      "tracked_input": true
     },
     {
       "id": "pipeline_latency_release",
@@ -16,8 +17,12 @@
       "producer": "release timing runner built on scripts/benchmark_pipeline.py",
       "claim": "cold and warm per-stage and end-to-end latency on an identified release and host, with attempts, failures, throughput and p50/p90/p95",
       "required_for_publication": true,
+      "tracked_input": false,
       "schema_version": "janasunani.pipeline-latency/v1",
-      "required_values": {"publication_ready": true},
+      "required_values": {
+        "publication_ready": true,
+        "failed_attempts": 0
+      },
       "required_fields": {
         "benchmark_context.host_label": "nonempty_string",
         "benchmark_context.model_release_id": "nonempty_string",
@@ -49,7 +54,8 @@
       "path": "outputs/evaluation/actionability_candidates_muril_high_catch.json",
       "producer": "dvc stage actionability-local-candidate-benchmark",
       "claim": "binary developmental actionability benchmark",
-      "required_for_publication": false
+      "required_for_publication": false,
+      "tracked_input": true
     },
     {
       "id": "actionability_officer_release",
@@ -58,6 +64,7 @@
       "producer": "future officer-adjudicated release scorecard",
       "claim": "five-class officer-confirmed actionability quality",
       "required_for_publication": true,
+      "tracked_input": false,
       "schema_version": "janasunani.actionability-officer-release/v1",
       "required_values": {
         "publication_ready": true,
@@ -89,7 +96,8 @@
       "path": "outputs/evaluation/actionability_weak_label_audit.json",
       "producer": "dvc stage actionability-weak-label-audit",
       "claim": "administrative weak-label support and confounding audit",
-      "required_for_publication": false
+      "required_for_publication": false,
+      "tracked_input": true
     },
     {
       "id": "categorization_historical_chronological",
@@ -97,7 +105,8 @@
       "path": "outputs/evaluation/categorization_historical_v1.json",
       "producer": "dvc stage categorization-historical-benchmark",
       "claim": "chronological historical-category agreement for development decision support",
-      "required_for_publication": false
+      "required_for_publication": false,
+      "tracked_input": true
     },
     {
       "id": "categorization_release",
@@ -106,6 +115,7 @@
       "producer": "future categorization scorecard run",
       "claim": "frozen release-set categorization quality and abstention",
       "required_for_publication": true,
+      "tracked_input": false,
       "schema_version": "janasunani.categorization-release/v1",
       "required_values": {
         "publication_ready": true,
@@ -137,7 +147,8 @@
       "path": "outputs/evaluation/summary_development_v1.json",
       "producer": "dvc stage summary-development-benchmark",
       "claim": "single-frontier-judge local BART factuality, usefulness, abstention and residual-PII development evidence",
-      "required_for_publication": false
+      "required_for_publication": false,
+      "tracked_input": true
     },
     {
       "id": "summary_release",
@@ -146,6 +157,7 @@
       "producer": "future summary scorecard run",
       "claim": "critical-fact recall, unsupported facts, contradictions, PII leaks, and usefulness",
       "required_for_publication": true,
+      "tracked_input": false,
       "schema_version": "janasunani.summary-release/v1",
       "required_values": {
         "publication_ready": true,
@@ -177,7 +189,8 @@
       "path": "outputs/evaluation/pii_release.json",
       "producer": "dvc stage pii-development-scorecard",
       "claim": "current per-entity redaction recall with its observed language limitations",
-      "required_for_publication": false
+      "required_for_publication": false,
+      "tracked_input": true
     },
     {
       "id": "pii_officer_release",
@@ -186,6 +199,7 @@
       "producer": "future expanded PII release scorecard",
       "claim": "precision, recall, and supported-language redaction quality",
       "required_for_publication": true,
+      "tracked_input": false,
       "schema_version": "janasunani.pii-officer-release/v1",
       "required_values": {
         "publication_ready": true,
@@ -217,7 +231,8 @@
       "path": "outputs/evaluation/routing_historical_all.json",
       "producer": "dvc stage routing-historical-benchmark",
       "claim": "historical-destination agreement over all eligible structured cases",
-      "required_for_publication": false
+      "required_for_publication": false,
+      "tracked_input": true
     },
     {
       "id": "routing_historical_informative",
@@ -225,7 +240,8 @@
       "path": "outputs/evaluation/routing_historical_informative.json",
       "producer": "dvc stage routing-historical-benchmark",
       "claim": "historical-destination agreement where category is informative",
-      "required_for_publication": false
+      "required_for_publication": false,
+      "tracked_input": true
     },
     {
       "id": "routing_correct_authority_release",
@@ -234,6 +250,7 @@
       "producer": "future officer-adjudicated routing scorecard",
       "claim": "correct-authority top-k routing quality",
       "required_for_publication": true,
+      "tracked_input": false,
       "schema_version": "janasunani.routing-authority-release/v1",
       "required_values": {
         "publication_ready": true,
@@ -265,7 +282,8 @@
       "path": "docs/evidence/sarvam_cached_benchmark.json",
       "producer": "cached Sarvam evidence reconciliation",
       "claim": "provider coverage and divergence, not OCR accuracy",
-      "required_for_publication": false
+      "required_for_publication": false,
+      "tracked_input": true
     },
     {
       "id": "pilot_operational_effects",
@@ -274,6 +292,7 @@
       "producer": "future locked-pilot impact estimator",
       "claim": "officer decisions, transfers, first action, and 30/90-day resolution effects",
       "required_for_publication": true,
+      "tracked_input": false,
       "schema_version": "janasunani.pilot-operational-effects/v1",
       "required_values": {
         "publication_ready": true,
@@ -317,6 +336,7 @@
       "producer": "future privacy-safe satisfaction estimator",
       "claim": "citizen satisfaction with invitations, responses, missingness, and uncertainty",
       "required_for_publication": true,
+      "tracked_input": false,
       "schema_version": "janasunani.pilot-citizen-outcomes/v1",
       "required_values": {
         "publication_ready": true,

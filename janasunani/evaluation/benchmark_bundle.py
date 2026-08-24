@@ -149,6 +149,22 @@ def _matches_field_schema(payload: object, dotted_path: str, schema: str) -> boo
     raise AssertionError(f"unvalidated required-field schema: {schema}")
 
 
+def _schema_relation_errors(payload: object, schema_version: object) -> list[str]:
+    """Validate cross-field invariants that scalar schemas cannot express."""
+
+    if schema_version != "janasunani.pipeline-latency/v1":
+        return []
+    attempts = _lookup(payload, "attempts")
+    completed = _lookup(payload, "completed_attempts")
+    failed = _lookup(payload, "failed_attempts")
+    values = (attempts, completed, failed)
+    if not all(isinstance(value, int) and not isinstance(value, bool) for value in values):
+        return []
+    if attempts != completed + failed:
+        return ["attempts must equal completed_attempts plus failed_attempts"]
+    return []
+
+
 def _validate_config(config: object) -> dict[str, Any]:
     if not isinstance(config, dict):
         raise ValueError("benchmark bundle config must be an object")
@@ -159,7 +175,16 @@ def _validate_config(config: object) -> dict[str, Any]:
     for index, artifact in enumerate(artifacts):
         if not isinstance(artifact, dict):
             raise ValueError(f"artifacts[{index}] must be an object")
-        missing = sorted({"id", "section", "path", "required_for_publication"} - artifact.keys())
+        missing = sorted(
+            {
+                "id",
+                "section",
+                "path",
+                "required_for_publication",
+                "tracked_input",
+            }
+            - artifact.keys()
+        )
         if missing:
             raise ValueError(f"artifacts[{index}] missing keys: {', '.join(missing)}")
         artifact_id = artifact["id"]
@@ -174,6 +199,8 @@ def _validate_config(config: object) -> dict[str, Any]:
             raise ValueError(f"{artifact_id}: path must be a non-empty string")
         if not isinstance(artifact["required_for_publication"], bool):
             raise ValueError(f"{artifact_id}: required_for_publication must be boolean")
+        if not isinstance(artifact["tracked_input"], bool):
+            raise ValueError(f"{artifact_id}: tracked_input must be boolean")
         required_values = artifact.get("required_values", {})
         if not isinstance(required_values, dict) or not all(
             isinstance(key, str) and key for key in required_values
@@ -247,9 +274,24 @@ def build_bundle(config: dict[str, Any], *, root: Path) -> dict[str, Any]:
             "producer": spec.get("producer"),
             "claim": spec.get("claim"),
             "required_for_publication": spec["required_for_publication"],
+            "tracked_input": spec["tracked_input"],
             "expected_schema_version": spec.get("schema_version"),
         }
-        if not path.is_file():
+        if not spec["tracked_input"]:
+            record["status"] = "untracked"
+            record["sha256"] = None
+            record["payload"] = None
+            if spec["required_for_publication"]:
+                blockers.append(
+                    {
+                        "artifact_id": spec["id"],
+                        "reason": (
+                            f"{relative.as_posix()} is not enabled as a DVC-tracked "
+                            "bundle input"
+                        ),
+                    }
+                )
+        elif not path.is_file():
             record["status"] = "missing"
             record["sha256"] = None
             record["payload"] = None
@@ -280,6 +322,7 @@ def build_bundle(config: dict[str, Any], *, root: Path) -> dict[str, Any]:
                 for dotted_path, schema in spec.get("required_fields", {}).items()
                 if not _matches_field_schema(payload, dotted_path, schema)
             )
+            mismatches.extend(_schema_relation_errors(payload, expected_schema))
             record["status"] = "incomplete" if mismatches else "available"
             record["sha256"] = _sha256(raw)
             record["payload"] = payload

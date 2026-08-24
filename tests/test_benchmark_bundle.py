@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from janasunani.evaluation.benchmark_bundle import build_bundle, main, render_markdown
 
@@ -17,6 +18,7 @@ def _config() -> dict[str, object]:
                 "section": "speed",
                 "path": "results/latency.json",
                 "required_for_publication": True,
+                "tracked_input": True,
                 "schema_version": "test-latency/v1",
                 "required_values": {"publication_ready": True},
                 "required_fields": {"metrics": "nonempty_object"},
@@ -26,6 +28,7 @@ def _config() -> dict[str, object]:
                 "section": "accuracy",
                 "path": "results/quality.json",
                 "required_for_publication": True,
+                "tracked_input": True,
                 "schema_version": "test-quality/v1",
                 "required_values": {"publication_ready": True},
                 "required_fields": {"metrics": "nonempty_object"},
@@ -35,6 +38,7 @@ def _config() -> dict[str, object]:
                 "section": "impact",
                 "path": "results/pilot.json",
                 "required_for_publication": True,
+                "tracked_input": True,
                 "schema_version": "test-pilot/v1",
                 "required_values": {"publication_ready": True},
                 "required_fields": {"metrics": "nonempty_object"},
@@ -147,6 +151,14 @@ def test_required_artifact_must_declare_schema_and_publication_predicate() -> No
         build_bundle(config, root=Path("."))  # type: ignore[arg-type]
 
 
+def test_tracked_input_must_be_explicit_boolean() -> None:
+    config = _config()
+    config["artifacts"][0]["tracked_input"] = "yes"  # type: ignore[index]
+
+    with pytest.raises(ValueError, match="tracked_input must be boolean"):
+        build_bundle(config, root=Path("."))  # type: ignore[arg-type]
+
+
 def test_required_field_schema_names_are_closed() -> None:
     config = _config()
     config["artifacts"][0]["required_fields"] = {  # type: ignore[index]
@@ -184,6 +196,39 @@ def test_schema_mismatch_blocks_required_artifact(tmp_path: Path) -> None:
             "artifact_id": "quality",
             "reason": "schema_version must equal 'test-quality/v1'",
         }
+    ]
+
+
+def test_latency_attempt_counts_must_reconcile_at_bundle_boundary(tmp_path: Path) -> None:
+    config = _config()
+    config["artifacts"][0]["schema_version"] = (  # type: ignore[index]
+        "janasunani.pipeline-latency/v1"
+    )
+    results = tmp_path / "results"
+    results.mkdir()
+    for name in ("latency", "quality", "pilot"):
+        schema_version = (
+            "janasunani.pipeline-latency/v1"
+            if name == "latency"
+            else f"test-{name}/v1"
+        )
+        payload = {
+            "schema_version": schema_version,
+            "publication_ready": True,
+            "metrics": {"n": 1},
+        }
+        if name == "latency":
+            payload.update(
+                {"attempts": 2, "completed_attempts": 1, "failed_attempts": 0}
+            )
+        (results / f"{name}.json").write_text(json.dumps(payload) + "\n")
+
+    bundle = build_bundle(config, root=tmp_path)  # type: ignore[arg-type]
+
+    latency = next(row for row in bundle["artifacts"] if row["id"] == "latency")
+    assert latency["status"] == "incomplete"
+    assert latency["completeness_errors"] == [
+        "attempts must equal completed_attempts plus failed_attempts"
     ]
 
 
@@ -392,6 +437,7 @@ def test_production_contract_rejects_outer_container_placeholders(tmp_path: Path
         if artifact["required_for_publication"]
     ]
     for artifact in required:
+        artifact["tracked_input"] = True
         payload: dict[str, object] = {
             "schema_version": artifact["schema_version"],
             "publication_ready": True,
@@ -430,6 +476,7 @@ def test_production_contract_rejects_nested_map_placeholders(tmp_path: Path) -> 
         if artifact["required_for_publication"]
     ]
     for artifact in required:
+        artifact["tracked_input"] = True
         payload: dict[str, object] = {
             "schema_version": artifact["schema_version"],
             "publication_ready": True,
@@ -464,6 +511,57 @@ def test_rejects_paths_outside_root(tmp_path: Path) -> None:
     config["artifacts"][0]["path"] = "../latency.json"  # type: ignore[index]
     with pytest.raises(ValueError, match="repository root"):
         build_bundle(config, root=tmp_path)  # type: ignore[arg-type]
+
+
+def test_untracked_required_artifact_cannot_participate_from_ambient_file(
+    tmp_path: Path,
+) -> None:
+    config = _config()
+    config["artifacts"][1]["tracked_input"] = False  # type: ignore[index]
+    results = tmp_path / "results"
+    results.mkdir()
+    for name in ("latency", "quality", "pilot"):
+        (results / f"{name}.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": f"test-{name}/v1",
+                    "publication_ready": True,
+                    "metrics": {"n": 1},
+                }
+            )
+            + "\n"
+        )
+
+    bundle = build_bundle(config, root=tmp_path)  # type: ignore[arg-type]
+
+    quality = next(row for row in bundle["artifacts"] if row["id"] == "quality")
+    assert quality["status"] == "untracked"
+    assert quality["payload"] is None
+    assert quality["sha256"] is None
+    assert bundle["publication_ready"] is False
+    assert bundle["blockers"] == [
+        {
+            "artifact_id": "quality",
+            "reason": "results/quality.json is not enabled as a DVC-tracked bundle input",
+        }
+    ]
+
+
+def test_production_tracked_inputs_match_full_bundle_dvc_dependencies() -> None:
+    root = Path(__file__).parents[1]
+    config = json.loads((root / "config" / "benchmark_bundle.json").read_text())
+    stage = yaml.safe_load((root / "dvc.yaml").read_text())["stages"][
+        "full-benchmark-bundle"
+    ]
+    artifact_paths = {artifact["path"] for artifact in config["artifacts"]}
+    tracked_paths = {
+        artifact["path"]
+        for artifact in config["artifacts"]
+        if artifact["tracked_input"]
+    }
+    declared_artifact_dependencies = artifact_paths & set(stage["deps"])
+
+    assert tracked_paths == declared_artifact_dependencies
 
 
 def test_rejects_artifacts_under_data_even_when_they_are_json(tmp_path: Path) -> None:

@@ -417,16 +417,16 @@ stages:
     deps:
     - path: config/benchmark_bundle.json
       hash: md5
-      md5: 13e90f0b6e56174557fc5512d974b55a
-      size: 8443
+      md5: d66e0213e133ee66c1b419373f465093
+      size: 15760
     - path: docs/evidence/sarvam_cached_benchmark.json
       hash: md5
       md5: b19e45a4bfd16cfdb6f2f3a831617cf2
       size: 3730
     - path: janasunani/evaluation/benchmark_bundle.py
       hash: md5
-      md5: 21ad3f68c8106b0ee5577d7faad9a347
-      size: 12790
+      md5: 53ad9d51b7e80d18dad759400a74c721
+      size: 18069
     - path: outputs/benchmark/latency.json
       hash: md5
       md5: 110395e545d5b7a176aaad03d15402de
@@ -470,12 +470,12 @@ stages:
     outs:
     - path: outputs/benchmark/full_benchmark.json
       hash: md5
-      md5: e3c55ad7639b989fbd79bfa540b3ad7a
-      size: 557202
+      md5: d38c47c01473e8ddd67388b20aa862c0
+      size: 557776
     - path: outputs/benchmark/full_benchmark.md
       hash: md5
-      md5: e326318cba0beb65489f2c49e688fd4f
-      size: 2960
+      md5: a13584e5f62519e757bc8ae4c7d8f7da
+      size: 3169
   pii-development-scorecard:
     cmd: uv run --frozen --extra pii python -m
       janasunani.evaluation.pii_scorecard --gold
