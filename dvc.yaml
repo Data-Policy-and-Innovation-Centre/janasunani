@@ -123,7 +123,7 @@ stages:
       Elapsed time between recorded handling steps (phase 1, descriptive
       only): median/IQR gap by opening action type, forwarded/delegated-
       opened gaps by ticket-creation-year proxy, and the dedup-sensitivity
-      bound. Reads action_history only (via action_type.sql's
+      comparison. Reads action_history only (via action_type.sql's
       action_history_typed) -- no complaints, no dept_id/vchAllEscUser
       chain, no counterfactual. Not the withdrawn routing-savings claim.
     cmd: uv run --frozen janasunani-handoff-finding
