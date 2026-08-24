@@ -1,113 +1,14 @@
-"""Emit the officer decision brief as DPIC Markdown.
+---
+title: Janasunani 2.0
+subtitle: What it does, and what we are asking for
+author: Data, Policy and Innovation Centre
+date: 23 August 2026
+organisation: Data, Policy and Innovation Centre
+partnership: Government of Odisha and the University of Chicago Trust
+status: Working draft. Findings are from historical records, not from a pilot.
+---
 
-Render with:
-
-    dpic-build-brief docs/value-add-report/officer-brief.md \\
-                     docs/value-add-report/Janasunani_2.0_IAS_Officer_Brief_August_2026.docx
-
-WHO READS THIS
---------------
-A Secretary, in about five minutes, before a meeting. That constraint decides
-everything below.
-
-Two earlier drafts failed it in different ways. The first was a designed .docx
-with a navy/teal/gold palette and shaded callout boxes: the communications team
-had to undo the design before they could use the content. The second was plain
-but was written as a research memo -- it opened with an evidence ladder, carried
-seven tables of denominators, and reached the ask on page six. Both were honest
-and neither was legible.
-
-So: the ask is on page one. Sentences are short. Every number is one an officer
-can act on -- days, minutes, hours, cases -- and the model-quality apparatus
-lives in the long report, which is the evidence record and is cited as such.
-
-WHICH NUMBERS APPEAR, AND WHY SOME DO NOT
------------------------------------------
-Routing top-1/top-3 agreement is deliberately absent. It measures whether a model
-reproduces the destination a case historically went to, and the central argument
-of this work is that historical destination is the wrong objective. Publishing a
-figure against an objective we are arguing against concedes the point on the
-wrong terms, and invites the reader to judge the work by a standard we reject.
-The number is not suppressed: it is in the long report and in
-docs/QUALITY_BENCHMARKS.md with the space to explain what it is. What appears
-here instead is the outcome analysis, including the later-period failure to
-reproduce the validation-period gain.
-
-Redaction leads with the corpus scan rather than the 89-page recall figure, for a
-related reason. Recall against a small hand-labelled set that includes names is a
-research diagnostic; "no mobile number, Aadhaar, PAN or non-government email
-survives across 55,544 records" is the operational claim, and it is the stronger
-one. The recall figure stays as the qualifier that stops the scan being
-overread.
-
-Summary drafting is named as the weakest component rather than scored. It is not
-proposed for a decision, so a number would invite one.
-
-WHAT SURVIVED FROM THE FIRST VERSION
-------------------------------------
-The fail-closed contract. `docs/value-add-report/README.md` promises that the
-generators refuse to build when the bundle lacks real timing, the selected
-actionability test, the weak-label audit, the PII scorecard or either routing
-scorecard. `load_benchmark_facts` still raises on any of them, including the
-routing scorecards this brief no longer prints, so dropping a figure from the
-prose does not drop it from the guarantee.
-
-DIALECT CONSTRAINTS
--------------------
-`dpic.documents.markdown` parses a deliberately small subset: YAML frontmatter,
-`#`--`###` headings, paragraphs, `> blockquote`, `*note*`, `**Table N. Caption**`
-followed by a pipe table, `![caption](path)` resolved against a sibling
-`Exhibits/`, `<!-- pagebreak -->` and `[^n]:` footnotes. **There is no list
-support**, so bullets become paragraphs or table rows.
-"""
-
-from __future__ import annotations
-
-import argparse
-from pathlib import Path
-
-from janasunani.evaluation.value_add_benchmark_facts import (
-    DEFAULT_BUNDLE,
-    BenchmarkFacts,
-    load_benchmark_facts,
-)
-
-DEFAULT_OUTPUT = Path("docs/value-add-report/officer-brief.md")
-
-# Resolved grievances carrying a closing remark, from the routing-outcome mart.
-# Reproduced by the commands in QUALITY_BENCHMARKS.md.
-RESOLVED_GRIEVANCES = 1_209_144
-
-# Self-reported by officers at the CM Grievance Cell, 12 August 2026. The only
-# officer-time denominator that exists; an estimate, not an observation.
-INTAKE_MINUTES_LOW = 10
-INTAKE_MINUTES_HIGH = 15
-
-# Redacted complaints in the demonstration slice scanned for surviving shaped
-# identifiers. docs/FINDINGS.md, slice Sambalpur/2024.
-SCANNED_RECORDS = 55_544
-
-
-def _percent(value: float, places: int = 0) -> str:
-    return f"{value * 100:.{places}f}%"
-
-
-def _frontmatter() -> str:
-    return (
-        "---\n"
-        "title: Janasunani 2.0\n"
-        "subtitle: What it does, and what we are asking for\n"
-        "author: Data, Policy and Innovation Centre\n"
-        "date: 23 August 2026\n"
-        "organisation: Data, Policy and Innovation Centre\n"
-        "partnership: Government of Odisha and the University of Chicago Trust\n"
-        "status: Working draft. Findings are from historical records, not from a pilot.\n"
-        "---\n"
-    )
-
-
-def _the_ask() -> str:
-    return """# What we are asking for
+# What we are asking for
 
 Four decisions. None of them is about automation. Each is small on its own, and
 together they turn a set of working tools into something whose value to the
@@ -148,11 +49,8 @@ The last row is the new research question, and it is the subject of most of this
 brief.
 
 *Note: the fourteen seconds is machine time on a laptop, measured on test filings. It is not officer time. Officers describe roughly 10 to 15 minutes to turn a petition into a registered complaint, and that figure is their own estimate rather than something we have observed.*
-"""
 
-
-def _findings() -> str:
-    return f"""<!-- pagebreak -->
+<!-- pagebreak -->
 
 # Three things the records already show
 
@@ -173,7 +71,7 @@ long does this take, and is it getting better?
 
 ## Closing a case and solving it are not the same thing
 
-**Table 3. How {RESOLVED_GRIEVANCES:,} resolved grievances were closed**
+**Table 3. How 1,209,144 resolved grievances were closed**
 
 | Closing wording | Cases | Share | Median days |
 |---|---:|---:|---:|
@@ -205,18 +103,8 @@ It also means the disposal rate can be raised by attracting duplicates and
 closing them. Counting problems instead removes that.
 
 *Note: 37,299 duplicate cases are the officers' own hand-marked baseline. How many more the software can find is not yet claimed, because we have not measured it.*
-"""
 
-
-def _routing(facts: BenchmarkFacts) -> str:
-    routing = facts.routing_outcome
-    val = routing["validation_2024"]
-    test = routing["test_2025"]
-    val_ridge = val["tau_0"]["ridge_top_three"]
-    val_gbm = val["tau_0"]["gbm_top_three"]
-    test_ridge = test["tau_0"]["ridge_top_three"]
-    test_gbm = test["tau_0"]["gbm_top_three"]
-    return f"""<!-- pagebreak -->
+<!-- pagebreak -->
 
 # The routing result
 
@@ -239,8 +127,8 @@ records can support a developmental comparison, not a routing recommendation.
 
 | Question | Answer |
 |---|---|
-| Did the 2024 analysis favour alternative assignments? | Yes. The augmented estimates were {val_gbm['delta_aipw']:.1f} to {val_ridge['delta_aipw']:.1f} days lower on {val['support']['n_evaluated']:,} common-support cases |
-| Did that result repeat in 2025? | No. The same estimates were {test_ridge['delta_aipw']:.1f} and {test_gbm['delta_aipw']:.1f} days on {test['support']['n_evaluated']:,} cases, both statistically compatible with no gain |
+| Did the 2024 analysis favour alternative assignments? | Yes. The augmented estimates were 12.4 to 26.8 days lower on 450,567 common-support cases |
+| Did that result repeat in 2025? | No. The same estimates were -2.3 and 0.1 days on 113,535 cases, both statistically compatible with no gain |
 | Has today's routing been shown to be slower? | No. The direct and augmented methods disagree, and the later-period augmented result does not reproduce the gain |
 | Can we recommend acting on it today? | No. No routing gain is established, and the prior correctness frontier is withdrawn pending a corrected labelled-row rerun (#284) |
 
@@ -254,14 +142,8 @@ the first measurement; an assignment event log and governed pilot are still
 needed for the other two.
 
 *Note: an earlier internal comparison of two housing-scheme routes, 23 days against 48, was a raw average with no adjustment for the fact that harder cases travel further. It was never a saving.*
-"""
 
-
-def _expectations() -> str:
-    burden_low = int(RESOLVED_GRIEVANCES * INTAKE_MINUTES_LOW / 60 / 1000) * 1000
-    burden_high = int(RESOLVED_GRIEVANCES * INTAKE_MINUTES_HIGH / 60 / 1000) * 1000
-
-    return f"""<!-- pagebreak -->
+<!-- pagebreak -->
 
 # What we expect this to change
 
@@ -270,10 +152,10 @@ separate for that reason.
 
 ## Officer workload
 
-Registering complaints, at the officers' own estimate of {INTAKE_MINUTES_LOW} to
-{INTAKE_MINUTES_HIGH} minutes each, accounts for somewhere between
-{burden_low:,} and {burden_high:,} officer-hours across the
-{RESOLVED_GRIEVANCES:,} grievances already resolved. We are not claiming to save
+Registering complaints, at the officers' own estimate of 10 to
+15 minutes each, accounts for somewhere between
+201,000 and 302,000 officer-hours across the
+1,209,144 grievances already resolved. We are not claiming to save
 any of it. That is the size of the pot a saving would come out of, and it is why
 the question is worth measuring properly.
 
@@ -312,23 +194,14 @@ something a citizen tells you, and nothing currently asks them.
 The pattern in that table is the argument of this brief. Almost everything worth
 knowing is close to measurable, and what blocks it is instrumentation and
 permission rather than software. The software is the part that is nearly done.
-"""
 
-
-def _limits(facts: BenchmarkFacts) -> str:
-    actionability = facts.actionability
-    confusion = actionability["confusion"]
-    review_caught = confusion["true_review"]
-    false_review = confusion["false_review"]
-    actionable_total = confusion["true_actionable"] + confusion["false_review"]
-
-    return f"""<!-- pagebreak -->
+<!-- pagebreak -->
 
 # What we are not claiming
 
 No officer minutes saved. No faster resolution. No improvement in citizen
-satisfaction. {facts.impact_required} kinds of record are needed before any
-impact claim can be made, and {facts.impact_available_required} of them exist. So
+satisfaction. 2 kinds of record are needed before any
+impact claim can be made, and 0 of them exist. So
 impact is reported as not measured. That is different from measured and found to
 be zero, and closing the difference is the second decision in Table 1.
 
@@ -336,15 +209,15 @@ Three honest weaknesses, stated here rather than left to be found.
 
 Personal-data removal is good at the things it can be checked on and unproven on
 the rest. Across every redacted complaint in one district-year,
-{SCANNED_RECORDS:,} records, no mobile number, Aadhaar number, PAN or
+55,544 records, no mobile number, Aadhaar number, PAN or
 non-government email survived. Names are harder. On a small hand-corrected set the
-software found {_percent(facts.pii['overall']['overlap_recall'])} of the personal
+software found 78% of the personal
 details a human marked, and we have not measured how often it removes too much,
 which has its own cost.
 
-The review flag was tested on 57 cases. It caught all {review_caught} of the ones
-that genuinely needed clarification, and also sent {false_review} of
-{actionable_total} ordinary complaints to review unnecessarily. That second figure
+The review flag was tested on 57 cases. It caught all 13 of the ones
+that genuinely needed clarification, and also sent 3 of
+44 ordinary complaints to review unnecessarily. That second figure
 is the cost the officer pays, and 57 cases is a small test.
 
 Draft summaries are the weakest part of the system. Most still need editing, and
@@ -355,39 +228,4 @@ Everything above was measured on historical records, or on test filings on a
 laptop. None of it was measured in a live office, which is what the second
 decision would change.
 
-*Source: figures come from benchmark bundle {facts.bundle_id[:16]}. Every definition, denominator and limitation is in the value-add report, which is the full evidence record, and in docs/QUALITY_BENCHMARKS.md.*
-"""
-
-
-def create_brief(destination: Path, *, benchmark_bundle: Path = DEFAULT_BUNDLE) -> None:
-    # Fails closed when the bundle lacks a required artifact -- including the two
-    # routing scorecards this brief no longer prints. Dropping a figure from the
-    # prose must not drop it from the guarantee README.md makes.
-    facts = load_benchmark_facts(benchmark_bundle)
-
-    document = "\n".join(
-        [
-            _frontmatter(),
-            _the_ask(),
-            _findings(),
-            _routing(facts),
-            _expectations(),
-            _limits(facts),
-        ]
-    )
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(document, encoding="utf-8")
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
-    parser.add_argument("--benchmark-bundle", type=Path, default=DEFAULT_BUNDLE)
-    args = parser.parse_args()
-    create_brief(args.output, benchmark_bundle=args.benchmark_bundle)
-    print(f"wrote {args.output}")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+*Source: figures come from benchmark bundle f64a999f47bf3240. Every definition, denominator and limitation is in the value-add report, which is the full evidence record, and in docs/QUALITY_BENCHMARKS.md.*

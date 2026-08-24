@@ -1,57 +1,14 @@
-"""Emit the public-systems capability brief as DPIC Markdown.
+---
+title: Governed decision support over public case records
+subtitle: A capability brief for public-system partners
+author: Data, Policy and Innovation Centre
+date: 23 August 2026
+organisation: Data, Policy and Innovation Centre
+partnership: Government of Odisha and the University of Chicago Trust
+status: Working draft. Janasunani figures are proof points, not promised performance.
+---
 
-Companion to `create_officer_brief.py`, and rewritten for the same reason: the
-previous version built a .docx directly, with a navy/teal/gold palette, shaded
-callout boxes, three-column value cards and headings like "From case records to
-measurable public value". The reader is a prospective partner deciding whether
-this approach applies to their own service, and for that reader a tinted box is
-not an argument.
-
-Render with:
-
-    dpic-build-brief docs/value-add-report/capability-brief.md \\
-                     docs/value-add-report/Janasunani_2.0_Public_Systems_Capability_Brief_August_2026.docx
-
-The fail-closed contract is preserved: `load_benchmark_facts` raises when the
-bundle lacks a required artifact, so no figure here can outlive the evidence
-behind it. Dialect constraints are as in the officer brief -- no list support,
-so bullets become paragraphs or table rows.
-"""
-
-from __future__ import annotations
-
-import argparse
-from pathlib import Path
-
-from janasunani.evaluation.value_add_benchmark_facts import (
-    DEFAULT_BUNDLE,
-    BenchmarkFacts,
-    load_benchmark_facts,
-)
-
-DEFAULT_OUTPUT = Path("docs/value-add-report/capability-brief.md")
-
-
-def _percent(value: float, places: int = 1) -> str:
-    return f"{value * 100:.{places}f}%"
-
-
-def _frontmatter() -> str:
-    return (
-        "---\n"
-        "title: Governed decision support over public case records\n"
-        "subtitle: A capability brief for public-system partners\n"
-        "author: Data, Policy and Innovation Centre\n"
-        "date: 23 August 2026\n"
-        "organisation: Data, Policy and Innovation Centre\n"
-        "partnership: Government of Odisha and the University of Chicago Trust\n"
-        "status: Working draft. Janasunani figures are proof points, not promised performance.\n"
-        "---\n"
-    )
-
-
-def _opening() -> str:
-    return """# What this is
+# What this is
 
 We help public agencies read what citizens actually wrote, decide what to do
 with it, and then measure whether the result made the service better. Janasunani,
@@ -84,13 +41,8 @@ nothing reported depends on it.
 
 So the first contribution is usually not a model. It is a measurement that the
 organisation does not currently have and cannot get from its own reports.
-"""
 
-
-def _measured(facts: BenchmarkFacts) -> str:
-    actionability = facts.actionability
-    confusion = actionability["confusion"]
-    return f"""<!-- pagebreak -->
+<!-- pagebreak -->
 
 # What has been measured, and on what
 
@@ -98,17 +50,17 @@ def _measured(facts: BenchmarkFacts) -> str:
 
 | Capability | Result | Status |
 |---|---|---|
-| Remove personal information before analysis | {_percent(facts.pii['overall']['overlap_recall'])} of items found, {_percent(facts.pii['overall']['exact_recall'])} on exact characters | Development. Recall only; {facts.pii['overall']['predicted']} spans predicted against {facts.pii['overall']['gold']} labelled, so no precision figure exists |
-| Separate cases needing clarification from the rest | {confusion['true_review']}/{actionability['actual_review']} caught, {confusion['false_review']}/{confusion['true_actionable'] + confusion['false_review']} ordinary cases also flagged | Development, n={actionability['n']}. Frontier-adjudicated, not officer-confirmed. Not release-eligible |
-| Suggest a category as a ranked shortlist | {_percent(facts.categorization['top_k_accuracy']['3'])} top-3, {_percent(facts.categorization['accuracy'])} top-1 | Development, n={facts.categorization['n']:,}, test viewed. Agreement with the recorded label |
-| Suggest a route as a ranked shortlist | {_percent(facts.routing_all['top_k_accuracy']['3'])} top-3, rising to {_percent(facts.routing_informative['top_k_accuracy']['3'])} where intake data is informative | Development, n={facts.routing_all['n']:,}. Where cases were sent, not where they resolved best |
-| Draft a summary an officer can check | {facts.summary['usable_without_edit_rate']['successes']}/{facts.summary['generated_n']} usable unedited | Development, single judge. Residual private detail in some drafts |
+| Remove personal information before analysis | 77.9% of items found, 55.0% on exact characters | Development. Recall only; 824 spans predicted against 480 labelled, so no precision figure exists |
+| Separate cases needing clarification from the rest | 13/13 caught, 3/44 ordinary cases also flagged | Development, n=57. Frontier-adjudicated, not officer-confirmed. Not release-eligible |
+| Suggest a category as a ranked shortlist | 90.9% top-3, 46.6% top-1 | Development, n=3,160, test viewed. Agreement with the recorded label |
+| Suggest a route as a ranked shortlist | 69.0% top-3, rising to 79.7% where intake data is informative | Development, n=208,267. Where cases were sent, not where they resolved best |
+| Draft a summary an officer can check | 8/26 usable unedited | Development, single judge. Residual private detail in some drafts |
 | Distinguish repeat filing from broad demand | Officer-confirmed duplicates as the baseline | The incremental reviewable gain is not yet claimed |
 
 *Note: no row above is a release result. Each rests on a test that was viewed during development, or on labels no officer confirmed, or both. They compare candidates; they do not promote one.*
 
 The bundle behind these figures is not publication-ready, and
-{facts.impact_available_required} of {facts.impact_required} required impact
+0 of 2 required impact
 artifacts exist. Impact is therefore reported as not measured, which is
 different from measured and found to be zero.
 
@@ -160,19 +112,8 @@ In Janasunani a routing suggestion already ships in the live portal. There is no
 measured accuracy for it and no record of when an officer overrode it. That is
 the ordinary situation, and it is why the exposure-and-decision log is a
 precondition rather than a refinement.
-"""
 
-
-def _routing_case_study(facts: BenchmarkFacts) -> str:
-    routing = facts.routing_outcome
-    val = routing["validation_2024"]
-    test = routing["test_2025"]
-    robustness = routing["robustness_ladder_2024"]["rungs"]
-    val_ridge = val["tau_0"]["ridge_top_three"]
-    val_gbm = val["tau_0"]["gbm_top_three"]
-    test_ridge = test["tau_0"]["ridge_top_three"]
-    test_gbm = test["tau_0"]["gbm_top_three"]
-    return f"""<!-- pagebreak -->
+<!-- pagebreak -->
 
 # A worked example: routing
 
@@ -199,8 +140,8 @@ choice and rewards a route for abandoning its hard ones.
 
 Getting that distinction wrong is measurable, not merely theoretical. Adding
 the joint department-and-chain assignment reduces validation prediction error by
-{robustness['R0_binary_completers']['delta']:.4f} among cases selected as correct
-completers, but only {robustness['R1_proxy_actionable_completers']['delta']:.4f}
+0.0305 among cases selected as correct
+completers, but only 0.0002
 among closure-proxy actionable completers. The restricted and weighted rungs are
 identical in the historical aggregate because the closure-derived proxy is
 observed only after resolution. The weighted rung is withdrawn pending a rerun:
@@ -212,8 +153,8 @@ warning, not an estimate of what an intake-time constraint would do.
 
 | Question | Answer |
 |---|---|
-| What did the 2024 comparison show? | Augmented estimates favoured alternative assignments by {val_gbm['delta_aipw']:.1f} to {val_ridge['delta_aipw']:.1f} days on {val['support']['n_evaluated']:,} common-support cases |
-| Did the result repeat in 2025? | No. The same estimates were {test_ridge['delta_aipw']:.1f} and {test_gbm['delta_aipw']:.1f} days on {test['support']['n_evaluated']:,} cases, compatible with no gain |
+| What did the 2024 comparison show? | Augmented estimates favoured alternative assignments by 12.4 to 26.8 days on 450,567 common-support cases |
+| Did the result repeat in 2025? | No. The same estimates were -2.3 and 0.1 days on 113,535 cases, compatible with no gain |
 | Is historical routing shown to be time-optimal? | No conclusion. Direct and augmented duration estimates disagree; the prior correctness frontier is withdrawn pending a corrected labelled-row rerun (#284) |
 | Is this a recommendation? | No. Assignment provenance, intake-time actionability and a governed pilot remain missing |
 
@@ -240,11 +181,8 @@ about whether the problem is worth automating, and that answer is sometimes no.
 A finding that a simple query answers the question, or that the record cannot
 support the claim anyone wanted, is a successful outcome and is cheaper to reach
 early.
-"""
 
-
-def _closing(facts: BenchmarkFacts) -> str:
-    return f"""# What we do not claim
+# What we do not claim
 
 No officer time saved. No correct-authority rate. No faster resolution. No
 change in citizen satisfaction. Those require exposure logging, adjudication
@@ -255,34 +193,4 @@ Nor do we claim the Janasunani figures transfer. A different corpus, language
 mix, taxonomy and set of officers will produce different numbers, and the first
 job of a new engagement is to find out what they are.
 
-*Source: benchmark-backed figures come from development bundle {facts.bundle_id[:16]}, publication_ready={str(facts.publication_ready).lower()}. Definitions and reproduction limits are in the long report and docs/QUALITY_BENCHMARKS.md.*
-"""
-
-
-def create_brief(destination: Path, *, benchmark_bundle: Path = DEFAULT_BUNDLE) -> None:
-    facts = load_benchmark_facts(benchmark_bundle)
-    document = "\n".join(
-        [
-            _frontmatter(),
-            _opening(),
-            _measured(facts),
-            _routing_case_study(facts),
-            _closing(facts),
-        ]
-    )
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(document, encoding="utf-8")
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
-    parser.add_argument("--benchmark-bundle", type=Path, default=DEFAULT_BUNDLE)
-    args = parser.parse_args()
-    create_brief(args.output, benchmark_bundle=args.benchmark_bundle)
-    print(f"wrote {args.output}")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+*Source: benchmark-backed figures come from development bundle f64a999f47bf3240, publication_ready=false. Definitions and reproduction limits are in the long report and docs/QUALITY_BENCHMARKS.md.*

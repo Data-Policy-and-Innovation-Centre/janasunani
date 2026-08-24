@@ -1,0 +1,112 @@
+{
+  "schema_version": "routing-outcome-evidence-v1",
+  "_provenance": {
+    "date": "2026-08-19",
+    "branch": "docs/routing-pointwise-reduction",
+    "model_commit": "05f50da",
+    "action_definition": "department_id::complete_role_chain/v1",
+    "population": "closure-derived S_tilde==1; developmental, not intake-time S*==1",
+    "source": "authorized local aggregate computation over complaints and action-history lake extracts",
+    "commands": [
+      "python -m janasunani.experiments.routing_outcome.dataset",
+      "python -m janasunani.experiments.routing_outcome.train",
+      "python -m janasunani.experiments.routing_outcome.ope --split val --mu {ridge,gbm} --tau 0 --top-k 3",
+      "python -m janasunani.experiments.routing_outcome.ope --split val --mu ridge --top-k 3 --sweep-tau",
+      "python -m janasunani.experiments.routing_outcome.ope --split test --mu {ridge,gbm} --tau 0 --top-k 3",
+      "python -m janasunani.experiments.routing_outcome.robustness --exercise ladder --fit-draws 0"
+    ],
+    "assignment_field_provenance": "unresolved: current dept_id and vchAllEscUser snapshots are not proven immutable; action history has no route snapshots",
+    "regeneration_required": true,
+    "known_invalidations": [
+      "issue #284: correctness scores were normalized before restricting to labelled rows; code fixed after this aggregate was generated",
+      "issue #291: the R3 validation risk and bootstrap dropped IPCW magnitudes; code fixed after this aggregate was generated"
+    ]
+  },
+  "fit": {
+    "rmse_log1p_restricted_duration": {
+      "ridge": {"train": 1.0525376849, "validation": 1.1861081978, "test": 1.3705105817},
+      "gbm": {"train": 0.9466557867, "validation": 1.2645984414, "test": 1.4076413111},
+      "gbm_without_action": {"train": 0.9911213988, "validation": 1.2629848244, "test": 1.3774177081}
+    },
+    "correctness_auc": {
+      "raw": {"train": 0.9222088842, "validation": 0.7575496840, "test": 0.7476873145},
+      "isotonic": {"train": 0.9118689730, "validation": 0.7738807175, "test": 0.7425329936}
+    },
+    "correctness_ece": {
+      "raw": {"train": 0.0220662075, "validation": 0.1495820702, "test": 0.1432970868},
+      "isotonic": {"train": 0.1373043128, "validation_in_sample": 0.0, "test": 0.0614761160}
+    }
+  },
+  "robustness_ladder_2024": {
+    "generated_at": "2026-08-23",
+    "schema_version": "routing-outcome-robustness-v1",
+    "model": "gradient boosting after cross-fitted target encoding",
+    "uncertainty": "district-year cluster-bootstrap evaluation SE with fitted models held fixed; no fit-bootstrap draws",
+    "rungs": {
+      "R0_binary_completers": {
+        "n_train": 162639,
+        "n_validation": 166628,
+        "rmse_with_action": 1.2557285823,
+        "rmse_without_action": 1.2861880371,
+        "delta": 0.0304594548,
+        "delta_evaluation_se": 0.0137991238
+      },
+      "R1_proxy_actionable_completers": {
+        "n_train": 302863,
+        "n_validation": 454232,
+        "rmse_with_action": 1.2645984414,
+        "rmse_without_action": 1.2648429031,
+        "delta": 0.0002444617,
+        "delta_evaluation_se": 0.0058606636
+      },
+      "R2_proxy_actionable_restricted": {
+        "n_train": 302863,
+        "n_validation": 454232,
+        "rmse_with_action": 1.2645984414,
+        "rmse_without_action": 1.2648429031,
+        "delta": 0.0002444617,
+        "delta_evaluation_se": 0.0058606636
+      },
+      "R3_proxy_actionable_restricted_ipcw": {
+        "n_train": 302863,
+        "n_validation": 454232,
+        "rmse_with_action": 1.2645984414,
+        "rmse_without_action": 1.2648429031,
+        "delta": 0.0002444617,
+        "delta_evaluation_se": 0.0058606636
+      }
+    },
+    "interpretation": "The apparent action signal collapses when the population changes from selected correct completers to closure-proxy actionable cases. R0-R2 remain the historical as-run diagnostic. The R3 validation risk and bootstrap omitted IPCW magnitudes and are withdrawn pending regeneration with the corrected code (issue #291); the as-run R2/R3 equality must not be interpreted."
+  },
+  "validation_2024": {
+    "support": {"n_before": 454232, "n_evaluated": 450567, "n_excluded": 3665, "n_cells": 651},
+    "historical": {"duration_aipw": 93.2158769023, "correctness": 0.3866780932, "n_correctness_labelled": 378069},
+    "tau_0": {
+      "ridge_top_three": {"delta_dm": 24.5006515996, "delta_aipw": 26.7738424105, "aipw_se": 4.0448533323, "ess_over_n": 0.1943526889, "correct_dm": 0.3616224026, "correct_aipw": 0.4135178571},
+      "ridge_unrestricted": {"delta_dm": 35.6136934570, "delta_aipw": 28.5778571928, "aipw_se": 7.0208050733, "ess_over_n": 0.0327301632},
+      "gbm_top_three": {"delta_dm": 23.8985541241, "delta_aipw": 12.3958044463, "aipw_se": 4.1157211099, "ess_over_n": 0.1683616470, "correct_dm": 0.3680172540, "correct_aipw": 0.4861901571},
+      "gbm_unrestricted": {"delta_dm": 36.1786420466, "delta_aipw": 0.5043010811, "aipw_se": 4.9453578795, "ess_over_n": 0.0441116730}
+    },
+    "ridge_frontier": {
+      "tau_star": null,
+      "status": "unresolved_estimator_disagreement",
+      "tau_star_dm": 0.3,
+      "tau_star_aipw": 0.0,
+      "monotonicity": {"duration_dm": true, "duration_aipw": false, "correct_dm": true, "correct_aipw": false},
+      "tau_0_correct": {"dm": 0.3616224026, "aipw": 0.4135178571},
+      "tau_0_2_correct": {"dm": 0.3736030790, "aipw": 0.3084544766, "n_fallback": 187160},
+      "tau_0_3": {"duration_dm": 85.7193460416, "duration_aipw": 78.6416418445, "correct_dm": 0.3995499461, "correct_aipw": 0.3868963154, "n_fallback": 247363}
+    }
+  },
+  "test_2025": {
+    "support": {"n_before": 115572, "n_evaluated": 113535, "n_excluded": 2037, "n_cells": 651},
+    "historical": {"duration_aipw": 49.7353793799, "correctness": 0.2669633037, "n_correctness_labelled": 100010},
+    "tau_0": {
+      "ridge_top_three": {"delta_dm": 30.5276925625, "delta_aipw": -2.3462034234, "aipw_se": 3.4954156985, "ess_over_n": 0.0730270784, "correct_dm": 0.3178040277, "correct_aipw": 0.3260045771},
+      "ridge_unrestricted": {"delta_dm": 42.7473657696, "delta_aipw": 15.0622026838, "aipw_se": 6.0459110380, "ess_over_n": 0.0190697827},
+      "gbm_top_three": {"delta_dm": 31.3154746561, "delta_aipw": 0.1482567227, "aipw_se": 4.4138022965, "ess_over_n": 0.0812776767, "correct_dm": 0.3092177137, "correct_aipw": 0.3366791406},
+      "gbm_unrestricted": {"delta_dm": 43.6173706691, "delta_aipw": 2.7586207576, "aipw_se": 5.0815279611, "ess_over_n": 0.0254109784}
+    }
+  },
+  "interpretation": "The positive validation AIPW top-three contrast does not replicate in the untouched 2025 period. Direct-method gains are not corroborated after augmentation and temporal holdout. No causal routing gain or resolved tau star is established."
+}

@@ -5,7 +5,7 @@ document for the reader; do not use the short briefs as substitutes for the
 definitions and caveats in the long report.
 
 > **Status: working drafts populated from development bundle
-> `72076ba23e5ba0ec0db0dc6718378a0150abc3c97c5bf9cbf73429b6b95dbee5`;
+> `f62af909d2289bca4892c61619cc310754f9ee1f7bf9588079e99008240222a8`;
 > publication_ready=false.** The bundle now contains reproducible development
 > timing and available accuracy/safety runs, but 0/1 required release-speed,
 > 0/5 required release-accuracy and 0/2 required impact artifacts. The files
@@ -57,7 +57,7 @@ The `figures/` directory contains charts embedded in the long report. They can
 also be used as standalone presentation material, provided their captions and
 evidence qualifications travel with them.
 
-## Verification status — 2026-08-11
+## Verification status — 2026-08-23
 
 The report's headline figures were re-checked against the code on 10 August
 2026. The following values reproduced exactly unless qualified in the table:
@@ -76,6 +76,9 @@ The report's headline figures were re-checked against the code on 10 August
 | Local BART summary baseline, enriched n=30: 65.48% critical-fact recall; 8/26 usable without edit; 4/26 residual-PII cases | ✅ single-judge development only | `dvc repro --single-item summary-development-benchmark` |
 | CPU development timing: 90/90 attempts, 0 failures; warm text mean 0.109 s (n=40), PDF mean 13.244 s (n=20); overall p50/p90/p95 0.139/14.348/14.883 s | ✅ | `dvc pull outputs/benchmark/latency.json.dvc`; bundle ID above |
 | Full benchmark publication gate | ❌ speed 0/1, accuracy 0/5, impact 0/2 required artifacts | `dvc repro --single-item full-benchmark-bundle` |
+| Routing outcome: joint-action ablation Δ falls from +0.0305 (SE 0.0138) in selected correct completers to +0.0002 (SE 0.0059) in closure-proxy actionable cases | ⚠️ R0-R2 developmental diagnostic; weighted R3 withdrawn pending corrected rerun (#291) | `python -m janasunani.experiments.routing_outcome.robustness --exercise ladder --fit-draws 0` |
+| Routing outcome: validation 2024 augmented top-three Δ = 26.77 ridge / 12.40 boosting; test 2025 = −2.35 / 0.15 days | ✅ no temporal replication | `python -m janasunani.experiments.routing_outcome.ope --split {val,test} --tau 0 --top-k 3` |
+| Routing outcome: correctness-constrained `tau*` | ❌ prior frontier withdrawn pending labelled-population rerun (#284); not published | `python -m janasunani.experiments.routing_outcome.ope --split val --mu ridge --top-k 3 --sweep-tau` |
 
 The report was **ahead of** `DELIVERY.md`, `DEMO_SCRIPT.md` and `PERFORMANCE.md` on the PII
 figure: those three still carried 49.6%, which was measured six hours before the ALL-CAPS
@@ -128,9 +131,27 @@ to match this report, not the other way round.
   transcription against which to score either engine. Credit exhaustion and
   failed or excluded pages remain part of the denominator. The aggregate has no
   reportable latency distribution or actual billing record, and its source
-  source snapshots are now privately DVC-tracked and hashed. The original sample
+  snapshots are now privately DVC-tracked and hashed. The original sample
   manifest and derivation command were not recovered, so the larger aggregate
   still cannot be independently rebuilt from those snapshots alone.
+- **The routing outcome work does not support a recommendation.** It is
+  research-only, no serving provider reads it, and the
+  positive validation contrast does not replicate under augmented estimation
+  in the untouched 2025 period. The prior correctness frontier used the wrong
+  normalization population and is withdrawn pending a corrected rerun (#284),
+  so no correctness-constrained `tau*` is published.
+  The treatment is the jointly selected department and complete intended chain,
+  but the current snapshot does not prove those fields preserve the immutable
+  initial assignment. `S_tilde` is inferred from closing remarks rather than
+  observed at intake, destination workload is absent, and the result is
+  developmental observational evidence rather than causal impact. No day-saving
+  range may be quoted from it.
+- **The PMAY route contrast is ours and is unadjusted.** The 23-versus-48-day
+  comparison in the canonical-questions record (Q1.3) is a raw mean by route
+  from the Box CA&GR note, with no adjustment for how cases differ. It was put
+  to officers for verification and no answer was recorded, so it has no field
+  corroboration either. It is not a saving and the ~32k/yr extrapolation is not
+  a benefit estimate.
 - **Summary has a small development baseline, not officer validation.** On an
   enriched 30-case redacted typed-text set, local BART retained 55/84 critical
   facts, had no unsupported or contradictory cases in 26 generated outputs,
@@ -174,55 +195,66 @@ is reported as **not measured**, not as a zero effect.
 
 ## Regenerate and verify
 
-[`../../scripts/update_value_add_report.py`](../../scripts/update_value_add_report.py)
-applies the pipeline-quality corrections idempotently to the tracked Word
-report. It intentionally preserves the established layout and embedded charts;
-it is not a from-scratch chart generator. The two short briefs are generated
-from Python sources so that their text and layout can be reproduced.
-
-Generate all three tracked documents from the repository root. DVC treats the
-long report's `.source.docx` as an immutable input and the three published DOCX
-files as outputs, so regeneration cannot silently patch its own previous output:
+The three report scripts emit **reviewable Markdown sources** and load every
+development figure from the governed benchmark bundle. The `dpic` package then
+renders the same small document dialect to Word. The `.docx` files are DVC
+outputs so a reader without the toolchain can materialize and open them; no
+binary Word file is a source of truth.
 
 ```bash
 dvc pull dvc.yaml:full-benchmark-bundle
 dvc repro value-add-report-documents
 ```
 
-All three generators fail closed if the bundle lacks the tracked real timing,
-selected actionability test, weak-label audit, PII scorecard, or both routing
-scorecards. They also refuse fake timing. Accuracy and speed claims therefore
-come from one bundle; impact remains an explicit missing section until its two
-required artifacts exist. Required release artifacts must match their declared
-schema, and every configured evidence field must satisfy its declared JSON type
-and cardinality; a self-declared `publication_ready=true` stub cannot open the
-publication gate. Cross-field invariants also fail closed: confidence intervals
-must contain their estimates, and citizen-response counts and rates must
-reconcile. A configured artifact participates only when its
-`tracked_input` flag is true and its path is a dependency of the
-`full-benchmark-bundle` DVC stage; future release files remain explicit blockers
-even if an ambient file appears at the configured path. Each generator also
-canonicalizes DOCX archive metadata, so identical inputs produce byte-identical
-DVC outputs.
+`dpic-build-brief` is a console script from the `dpic` package
+(`dpic.documents.brief:main`). Its Markdown dialect is deliberately small: YAML
+frontmatter, `#`–`###` headings, paragraphs, `> blockquote`, `*note*`,
+`**Table N. Caption**` followed by a pipe table, `<!-- pagebreak -->`,
+`![caption](path)` figures resolved against a sibling `Exhibits/` directory, and
+`[^n]:` footnotes. **There is no list support** — bullets render as paragraphs,
+so anything that wants to be a list should be a table.
 
-Render each output with the `documents` skill's `render_docx.py`. Set
-`DOCX_RENDERER` to the absolute path of that installed script, then run:
+All generators fail closed if the bundle lacks the tracked real timing,
+selected actionability test, weak-label audit, PII scorecard, either historical
+routing scorecard, or the governed routing-outcome aggregate with its temporal
+holdout and unresolved frontier. They also refuse fake timing. Required release
+artifacts must match their declared schema, and every configured evidence field
+must satisfy its declared JSON type and cardinality. Cross-field invariants also
+fail closed: confidence intervals must contain their estimates, and
+citizen-response counts and rates must reconcile. A configured artifact
+participates only when its `tracked_input` flag is true and its path is a
+dependency of the `full-benchmark-bundle` DVC stage; an ambient file cannot open
+the publication gate. Accuracy, speed, and developmental outcome claims
+therefore come from one bundle; causal impact remains explicitly missing until
+its two required pilot artifacts exist. The DVC stage canonicalizes DOCX archive
+metadata, so identical inputs produce byte-identical outputs.
+
+That guarantee is checkable, and should be re-checked whenever a generator is
+edited, because a rewrite is exactly when it would quietly break:
 
 ```bash
-DOCX_RENDERER="/absolute/path/to/documents-skill/render_docx.py"
-mkdir -p /tmp/janasunani-value-add-render/long
-mkdir -p /tmp/janasunani-value-add-render/ias
-mkdir -p /tmp/janasunani-value-add-render/capability
-.venv/bin/python "$DOCX_RENDERER" \
-  docs/value-add-report/Janasunani_2.0_Value_Add_Report_August_2026.docx \
-  --output_dir /tmp/janasunani-value-add-render/long --emit_pdf
-.venv/bin/python "$DOCX_RENDERER" \
-  docs/value-add-report/Janasunani_2.0_IAS_Officer_Brief_August_2026.docx \
-  --output_dir /tmp/janasunani-value-add-render/ias --emit_pdf
-.venv/bin/python "$DOCX_RENDERER" \
-  docs/value-add-report/Janasunani_2.0_Public_Systems_Capability_Brief_August_2026.docx \
-  --output_dir /tmp/janasunani-value-add-render/capability --emit_pdf
+python - <<'PY'
+import json, subprocess, sys
+from pathlib import Path
+data = json.loads(Path("outputs/benchmark/full_benchmark.json").read_text())
+for name in ("pii_development_scorecard", "routing_historical_all",
+             "actionability_candidates", "pipeline_latency_development",
+             "summary_development", "categorization_historical_chronological"):
+    broken = json.loads(json.dumps(data))
+    before = len(broken["artifacts"])
+    broken["artifacts"] = [a for a in broken["artifacts"] if a.get("id") != name]
+    assert before - len(broken["artifacts"]) == 1, f"{name} not present — check the id"
+    Path("/tmp/broken.json").write_text(json.dumps(broken))
+    r = subprocess.run([sys.executable, "scripts/create_officer_brief.py",
+                        "--benchmark-bundle", "/tmp/broken.json",
+                        "--output", "/tmp/out.md"], capture_output=True)
+    print(f"  drop {name:<44} {'REFUSED' if r.returncode else '*** BUILT ANYWAY ***'}")
+PY
 ```
+
+The `assert` matters. An earlier version of this check used wrong artifact ids,
+removed nothing, and reported that the generators built successfully from a
+bundle it had not actually damaged.
 
 Open every rendered page and check clipping, table breaks, repeated headers,
 font substitution and blank pages. A successful conversion alone is not visual

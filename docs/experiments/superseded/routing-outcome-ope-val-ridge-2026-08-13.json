@@ -1,0 +1,103 @@
+{
+  "n": 454232,
+  "censoring_rate_of_split": 0.09245211198796319,
+  "historical": {
+    "name": "historical",
+    "v_direct": 107.34827627420783,
+    "v_dr": 93.5445813414513,
+    "v_dr_se": null,
+    "overlap": null
+  },
+  "arms": {
+    "eligible": {
+      "name": "eligible",
+      "v_direct": 96.77384026567329,
+      "v_dr": 73.45693107618517,
+      "v_dr_se": 7.007080863295577,
+      "overlap": {
+        "n": 454232,
+        "n_matched": 243472,
+        "match_rate": 0.536008031138273,
+        "e_median": 0.41203703703703703,
+        "e_p10": 0.09826589595375723,
+        "e_p90": 0.7619433198380566,
+        "ess": 36514.13011985605,
+        "ess_over_n": 0.0803865208084328,
+        "max_weight_share": 0.00013777770379604646
+      },
+      "delta_direct": 10.574436008534548,
+      "delta_dr": 20.087650265266134
+    },
+    "unrestricted": {
+      "name": "unrestricted",
+      "v_direct": 93.25365694940423,
+      "v_dr": 70.09319731511314,
+      "v_dr_se": 7.993501652372316,
+      "overlap": {
+        "n": 454232,
+        "n_matched": 170579,
+        "match_rate": 0.37553276739639657,
+        "e_median": 0.14957264957264957,
+        "e_p10": 0.01,
+        "e_p90": 0.6723574282600799,
+        "ess": 23072.080159586007,
+        "ess_over_n": 0.050793603620145664,
+        "max_weight_share": 0.0001585170679390181
+      },
+      "delta_direct": 14.094619324803602,
+      "delta_dr": 23.45138402633816
+    }
+  },
+  "caveats": [
+    "S is read off the closing remark, so the actionable population is conditioned on resolution. IPCW corrects for differential speed among cases that closed; it does not restore cases still open at the snapshot, whose restricted duration is known but whose S is not. Predicting S from pre-treatment covariates is unbuilt.",
+    "Congestion Q_r(t) and trailing destination performance are absent from X, so unconfoundedness is invoked on a smaller information set than the officer's screen (\u00a72.2.1). Direction unknown.",
+    "Propensity is an empirical category x district share, not the hierarchical penalized logit in the plan.",
+    "Selection on officer observables is assumed, not tested."
+  ],
+  "split": "val",
+  "tau": 0.0,
+  "top_k": 3,
+  "mu_model": "ridge",
+  "mu_val_rmse": 1.1825535801560034,
+  "horizon": 365.0,
+  "ipcw": {
+    "horizon": 365.0,
+    "n": 454232,
+    "n_contributing": 454232,
+    "n_weight_clipped": 0,
+    "strata": 31,
+    "rmst": 93.5445813414513,
+    "naive_completer_mean": 84.47126358336709,
+    "mean_weight": 1.03728595027628
+  },
+  "smearing": {
+    "pooled": 1.7834226911004885,
+    "n_strata_fitted": 93,
+    "stratum_min": 0.7931235809316316,
+    "stratum_max": 3.2986260126039135,
+    "implied_pct_uplift": 0.7834226911004885
+  },
+  "pi_calibrated": true,
+  "policy_split": null,
+  "correctness": {
+    "eligible": {
+      "v_direct": 0.3530482052052909,
+      "v_dr": 0.43349615416376114,
+      "n_labelled": 381436,
+      "mean_eligible": 2.9489820179996125,
+      "n_fallback": 2934
+    },
+    "unrestricted": {
+      "v_direct": 0.3567208044871752,
+      "v_dr": 0.4817319659556705,
+      "n_labelled": 381436,
+      "mean_eligible": 13.408579756600151,
+      "n_fallback": 2934
+    }
+  },
+  "historical_correct": {
+    "rate": 0.38683553728541614,
+    "n_labelled": 381436,
+    "n_undetermined": 72796
+  }
+}

@@ -417,16 +417,20 @@ stages:
     deps:
     - path: config/benchmark_bundle.json
       hash: md5
-      md5: d66e0213e133ee66c1b419373f465093
-      size: 15760
+      md5: 0c2dc8cf9be7d06721fe571aa6064af1
+      size: 17600
     - path: docs/evidence/sarvam_cached_benchmark.json
       hash: md5
       md5: b19e45a4bfd16cfdb6f2f3a831617cf2
       size: 3730
+    - path: docs/experiments/routing-outcome-evidence-2026-08-19.json
+      hash: md5
+      md5: c38394f1fa45287b3d81d951d6b2b245
+      size: 6784
     - path: janasunani/evaluation/benchmark_bundle.py
       hash: md5
-      md5: 53ad9d51b7e80d18dad759400a74c721
-      size: 18069
+      md5: 3fcc66632c13e070beb22bf8ed73bc30
+      size: 23583
     - path: outputs/benchmark/latency.json
       hash: md5
       md5: 110395e545d5b7a176aaad03d15402de
@@ -470,12 +474,12 @@ stages:
     outs:
     - path: outputs/benchmark/full_benchmark.json
       hash: md5
-      md5: d38c47c01473e8ddd67388b20aa862c0
-      size: 557776
+      md5: 5017696a1686fa93aadfdb1bb1087e64
+      size: 564160
     - path: outputs/benchmark/full_benchmark.md
       hash: md5
-      md5: a13584e5f62519e757bc8ae4c7d8f7da
-      size: 3169
+      md5: 740cd11fc3654a9c2c43d52835c5578f
+      size: 3296
   pii-development-scorecard:
     cmd: uv run --frozen --extra pii python -m
       janasunani.evaluation.pii_scorecard --gold
@@ -696,40 +700,48 @@ stages:
       --frozen python scripts/create_officer_brief.py --benchmark-bundle
       outputs/benchmark/full_benchmark.json && uv run --frozen python
       scripts/create_public_systems_capability_brief.py --benchmark-bundle
-      outputs/benchmark/full_benchmark.json
+      outputs/benchmark/full_benchmark.json && uv run --frozen
+      dpic-build-brief docs/value-add-report/value-add-report.md
+      docs/value-add-report/Janasunani_2.0_Value_Add_Report_August_2026.docx
+      && uv run --frozen dpic-build-brief
+      docs/value-add-report/officer-brief.md
+      docs/value-add-report/Janasunani_2.0_IAS_Officer_Brief_August_2026.docx
+      && uv run --frozen dpic-build-brief
+      docs/value-add-report/capability-brief.md
+      docs/value-add-report/Janasunani_2.0_Public_Systems_Capability_Brief_August_2026.docx
+      && uv run --frozen python scripts/docx_archive.py
+      docs/value-add-report/Janasunani_2.0_Value_Add_Report_August_2026.docx
+      docs/value-add-report/Janasunani_2.0_IAS_Officer_Brief_August_2026.docx
+      docs/value-add-report/Janasunani_2.0_Public_Systems_Capability_Brief_August_2026.docx
     deps:
-    - path: docs/value-add-report/templates/Janasunani_2.0_Value_Add_Report_August_2026.source.docx
-      hash: md5
-      md5: 97ded42bf08df68e1e2681573fa7c2ab
-      size: 668719
     - path: janasunani/evaluation/value_add_benchmark_facts.py
       hash: md5
-      md5: e7fd6085ed428f3919cc995396e292f8
-      size: 5723
+      md5: c35e9a22120e7c72b80a54899cce3ea0
+      size: 9182
     - path: outputs/benchmark/full_benchmark.json
       hash: md5
-      md5: e3c55ad7639b989fbd79bfa540b3ad7a
-      size: 557202
+      md5: 58ffc43a594cec2faeb0bfd96c557f58
+      size: 563288
     - path: pyproject.toml
       hash: md5
       md5: 7650a32a2ab1519840a182edfcf10a50
       size: 10346
     - path: scripts/create_officer_brief.py
       hash: md5
-      md5: f1c4dd89842eda5a900ad657cb82faf4
-      size: 27146
+      md5: d5abd81df98b2d57b0f013d5afaf6edf
+      size: 19080
     - path: scripts/create_public_systems_capability_brief.py
       hash: md5
-      md5: 31e7c91332ea9f22086fdf2e13ceac8f
-      size: 14994
+      md5: fec0dd34c6b7136ff5974cc7c9db957a
+      size: 15018
     - path: scripts/docx_archive.py
       hash: md5
-      md5: e8aaf306065de9061ad41d0238c53527
-      size: 1698
+      md5: 791f8da3b9686aefc8d6f0ab4cd4fd4b
+      size: 2156
     - path: scripts/update_value_add_report.py
       hash: md5
-      md5: fd4699f379266fd2a36e92fd00e796eb
-      size: 62186
+      md5: f8ffd054d9223d1d342cf045811ac99b
+      size: 23334
     - path: uv.lock
       hash: md5
       md5: f895934178f603f5315683d02abc6449
@@ -737,13 +749,13 @@ stages:
     outs:
     - path: docs/value-add-report/Janasunani_2.0_IAS_Officer_Brief_August_2026.docx
       hash: md5
-      md5: 71e8697302db1727c291054edb2ba945
-      size: 41322
+      md5: d3c7943667e568099a172e350717786b
+      size: 148414
     - path: docs/value-add-report/Janasunani_2.0_Public_Systems_Capability_Brief_August_2026.docx
       hash: md5
-      md5: ff9f691acb0133966ad24e47bb1e0329
-      size: 40591
+      md5: c26a68a0c8d1652796ddcc44fb21106d
+      size: 40334
     - path: docs/value-add-report/Janasunani_2.0_Value_Add_Report_August_2026.docx
       hash: md5
-      md5: 3aa81d822da4674153b53434d57b9aea
-      size: 641959
+      md5: 49173df49499877b24fd389f0bb38523
+      size: 604718

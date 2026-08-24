@@ -1,64 +1,14 @@
-"""Emit the long value-add report as DPIC Markdown.
+---
+title: Janasunani 2.0 — value-add report
+subtitle: The evidence record
+author: Data, Policy and Innovation Centre
+date: 23 August 2026
+organisation: Data, Policy and Innovation Centre
+partnership: Government of Odisha and the University of Chicago Trust
+status: Working draft. Not publication-ready; impact is not measured.
+---
 
-This replaces a script that patched an existing .docx in place: it applied
-corrections idempotently to a tracked binary, regenerated six embedded charts
-and preserved a layout nobody could review in a diff. That made the Word file
-the source of truth, which meant the actual source of truth was unreadable in
-version control and every correction had to be expressed as a search-and-replace
-against prose it could not see.
-
-The report is now written here and rendered by `dpic-build-brief`:
-
-    dpic-build-brief docs/value-add-report/value-add-report.md \\
-                     docs/value-add-report/Janasunani_2.0_Value_Add_Report_August_2026.docx
-
-Figures are referenced by bare filename and resolved against the sibling
-`Exhibits/` directory, which is a symlink to `figures/` so the PNGs are not
-duplicated in the repository.
-
-This is the evidence record. Where the two short briefs summarise, this one
-carries the denominators, the split policy, the intervals and the reasons a
-number may not be used for something adjacent to what it measures. If the three
-documents ever disagree, this one is right and the others are stale.
-
-The fail-closed contract is unchanged: `load_benchmark_facts` raises when the
-bundle lacks a required artifact.
-"""
-
-from __future__ import annotations
-
-import argparse
-from pathlib import Path
-
-from janasunani.evaluation.value_add_benchmark_facts import (
-    DEFAULT_BUNDLE,
-    BenchmarkFacts,
-    load_benchmark_facts,
-)
-
-DEFAULT_OUTPUT = Path("docs/value-add-report/value-add-report.md")
-
-
-def _percent(value: float, places: int = 2) -> str:
-    return f"{value * 100:.{places}f}%"
-
-
-def _frontmatter() -> str:
-    return (
-        "---\n"
-        "title: Janasunani 2.0 — value-add report\n"
-        "subtitle: The evidence record\n"
-        "author: Data, Policy and Innovation Centre\n"
-        "date: 23 August 2026\n"
-        "organisation: Data, Policy and Innovation Centre\n"
-        "partnership: Government of Odisha and the University of Chicago Trust\n"
-        "status: Working draft. Not publication-ready; impact is not measured.\n"
-        "---\n"
-    )
-
-
-def _how_to_read(facts: BenchmarkFacts) -> str:
-    return f"""# How to read this document
+# How to read this document
 
 This is the evidence record. The two short briefs summarise it; where they
 disagree with this document, this one is right and they are stale.
@@ -78,8 +28,8 @@ version of the same claim — it is a different and unsupported one.
 | Cached provider evidence | Paid calls already made, no new spend | Coverage, failures, cost and measured divergence only |
 
 **Nothing in this report is at release-gate status.** The bundle behind it is
-`{facts.bundle_id[:16]}`, `publication_ready={str(facts.publication_ready).lower()}`,
-with {facts.impact_available_required} of {facts.impact_required} required impact
+`f64a999f47bf3240`, `publication_ready=false`,
+with 0 of 2 required impact
 artifacts available.
 
 Three distinctions run through everything below, and most misreadings collapse
@@ -112,16 +62,8 @@ metric depends on it.
 This matters for reading the rest of the document. Several contributions below
 are not improvements to an existing number. They are numbers the organisation
 does not currently have.
-"""
 
-
-def _measured(facts: BenchmarkFacts) -> str:
-    pii = facts.pii["overall"]
-    act = facts.actionability
-    conf = act["confusion"]
-    summary = facts.summary
-    latency = facts.latency
-    return f"""# Removing personal information
+# Removing personal information
 
 Historical complaint text is passed through redaction before any matching,
 grouping or model work runs over it. That order is not negotiable: dedup
@@ -131,13 +73,13 @@ signatures, groups and embeddings are all built from citizen writing.
 
 | Measure | Result |
 |---|---:|
-| Items found anywhere on the span | {_percent(pii['overlap_recall'])} ({pii['overlap_hits']}/{pii['gold']}) |
-| Items found on exact characters | {_percent(pii['exact_recall'])} ({pii['exact_hits']}/{pii['gold']}) |
-| Spans predicted | {pii['predicted']} |
+| Items found anywhere on the span | 77.92% (374/480) |
+| Items found on exact characters | 55.00% (264/480) |
+| Spans predicted | 824 |
 
 ![Redaction recall by data type, against the 89-page corrected set.](fig_pii.png)
 
-*Note: {pii['predicted']} spans predicted against {pii['gold']} labelled. The set cannot separate a name the labeller missed from an over-redaction, so there is no precision figure and none should be inferred.*
+*Note: 824 spans predicted against 480 labelled. The set cannot separate a name the labeller missed from an over-redaction, so there is no precision figure and none should be inferred.*
 
 Three qualifications travel with this number wherever it goes.
 
@@ -167,11 +109,11 @@ than 89.
 
 | Task | Result | Denominator and status |
 |---|---|---|
-| Cases needing officer review | {conf['true_review']}/{act['actual_review']} caught; {conf['false_review']}/{conf['true_actionable'] + conf['false_review']} ordinary cases also flagged | n={act['n']}, frontier-adjudicated, test viewed. `release_eligible={str(act['release_eligible']).lower()}` |
-| Category, top-3 | {_percent(facts.categorization['top_k_accuracy']['3'])} | n={facts.categorization['n']:,}, 2024 chronological, exact-text-group-disjoint, test viewed |
-| Category, top-1 | {_percent(facts.categorization['accuracy'])} | macro-F1 {_percent(facts.categorization['macro_f1'])} |
-| Summary drafts usable unedited | {summary['usable_without_edit_rate']['successes']}/{summary['generated_n']} | Single frontier judge, 30 cases. Not officer validation |
-| Summary critical facts retained | {summary['critical_fact_recall']['successes']}/{summary['critical_fact_recall']['n']} | Same set |
+| Cases needing officer review | 13/13 caught; 3/44 ordinary cases also flagged | n=57, frontier-adjudicated, test viewed. `release_eligible=false` |
+| Category, top-3 | 90.89% | n=3,160, 2024 chronological, exact-text-group-disjoint, test viewed |
+| Category, top-1 | 46.55% | macro-F1 36.49% |
+| Summary drafts usable unedited | 8/26 | Single frontier judge, 30 cases. Not officer validation |
+| Summary critical facts retained | 55/84 | Same set |
 
 The actionability taxonomy separates *underspecified*, *irrelevant*,
 *out of scope* and *policy blocked* rather than calling all four spam. The
@@ -200,8 +142,8 @@ required before any promotion.
 
 | Measure | Result |
 |---|---:|
-| Attempts completed | {latency['completed_attempts']}/{latency['attempts']} |
-| Failures | {latency['failed_attempts']} |
+| Attempts completed | 90/90 |
+| Failures | 0 |
 
 ![Processing time by input type, development run.](fig_time_comparison.png)
 
@@ -216,15 +158,8 @@ observation.
 One assumption this corrects. Handwritten Odia has been treated as the
 bottleneck. Officers fluent in Odia do not describe it that way: reading the
 document is not what takes the time. The constraint is comprehension and typing.
-"""
 
-
-def _routing(facts: BenchmarkFacts) -> str:
-    routing = facts.routing_outcome
-    val = routing["validation_2024"]
-    test = routing["test_2025"]
-    robustness = routing["robustness_ladder_2024"]["rungs"]
-    return f"""<!-- pagebreak -->
+<!-- pagebreak -->
 
 # Routing, part one: where cases go
 
@@ -232,8 +167,8 @@ def _routing(facts: BenchmarkFacts) -> str:
 
 | Features | Test n | Top-1 | Top-3 |
 |---|---:|---:|---:|
-| Category + district, all eligible | {facts.routing_all['n']:,} | {_percent(facts.routing_all['accuracy'])} | {_percent(facts.routing_all['top_k_accuracy']['3'])} |
-| Category + district, informative categories | {facts.routing_informative['n']:,} | {_percent(facts.routing_informative['accuracy'])} | {_percent(facts.routing_informative['top_k_accuracy']['3'])} |
+| Category + district, all eligible | 208,267 | 45.14% | 69.04% |
+| Category + district, informative categories | 142,181 | 54.96% | 79.68% |
 
 *Note: 2021–23 train, 2024 validation, 2025 test. The 2025 cohort was inspected while developing the harness, so this is developmental held-out evidence, not a release gate.*
 
@@ -294,9 +229,9 @@ department-and-chain assignment appear to predict duration when it does not.
 
 | Population and target | Validation n | Δ RMSE from adding the joint action | Evaluation SE |
 |---|---:|---:|---:|
-| Cases selected as correct completers | {robustness['R0_binary_completers']['n_validation']:,} | {robustness['R0_binary_completers']['delta']:+.4f} | {robustness['R0_binary_completers']['delta_evaluation_se']:.4f} |
-| Closure-proxy actionable completers | {robustness['R1_proxy_actionable_completers']['n_validation']:,} | {robustness['R1_proxy_actionable_completers']['delta']:+.4f} | {robustness['R1_proxy_actionable_completers']['delta_evaluation_se']:.4f} |
-| Closure-proxy actionable, restricted outcome | {robustness['R2_proxy_actionable_restricted']['n_validation']:,} | {robustness['R2_proxy_actionable_restricted']['delta']:+.4f} | {robustness['R2_proxy_actionable_restricted']['delta_evaluation_se']:.4f} |
+| Cases selected as correct completers | 166,628 | +0.0305 | 0.0138 |
+| Closure-proxy actionable completers | 454,232 | +0.0002 | 0.0059 |
+| Closure-proxy actionable, restricted outcome | 454,232 | +0.0002 | 0.0059 |
 | Closure-proxy actionable, restricted outcome with IPCW | rerun required | — | — |
 
 *Note: positive means lower prediction error after adding the joint action. The SE resamples district-year validation clusters with fitted models held fixed; no fit-bootstrap uncertainty was run.*
@@ -317,19 +252,19 @@ the jointly selected department and complete intended chain on common support.
 Positive Δ means the candidate rule has a lower fitted restricted duration than
 historical assignment.
 
-**Table 8. Validation 2024 (common-support n={val['support']['n_evaluated']:,})**
+**Table 8. Validation 2024 (common-support n=450,567)**
 
 | Outcome model | Direct Δ | Augmented Δ (SE) | ESS / n |
 |---|---:|---:|---:|
-| Ridge, top-three actions | {val['tau_0']['ridge_top_three']['delta_dm']:.2f} | {val['tau_0']['ridge_top_three']['delta_aipw']:.2f} ({val['tau_0']['ridge_top_three']['aipw_se']:.2f}) | {val['tau_0']['ridge_top_three']['ess_over_n']:.3f} |
-| Boosting, top-three actions | {val['tau_0']['gbm_top_three']['delta_dm']:.2f} | {val['tau_0']['gbm_top_three']['delta_aipw']:.2f} ({val['tau_0']['gbm_top_three']['aipw_se']:.2f}) | {val['tau_0']['gbm_top_three']['ess_over_n']:.3f} |
+| Ridge, top-three actions | 24.50 | 26.77 (4.04) | 0.194 |
+| Boosting, top-three actions | 23.90 | 12.40 (4.12) | 0.168 |
 
-**Table 9. Test 2025 (common-support n={test['support']['n_evaluated']:,})**
+**Table 9. Test 2025 (common-support n=113,535)**
 
 | Outcome model | Direct Δ | Augmented Δ (SE) | ESS / n |
 |---|---:|---:|---:|
-| Ridge, top-three actions | {test['tau_0']['ridge_top_three']['delta_dm']:.2f} | {test['tau_0']['ridge_top_three']['delta_aipw']:.2f} ({test['tau_0']['ridge_top_three']['aipw_se']:.2f}) | {test['tau_0']['ridge_top_three']['ess_over_n']:.3f} |
-| Boosting, top-three actions | {test['tau_0']['gbm_top_three']['delta_dm']:.2f} | {test['tau_0']['gbm_top_three']['delta_aipw']:.2f} ({test['tau_0']['gbm_top_three']['aipw_se']:.2f}) | {test['tau_0']['gbm_top_three']['ess_over_n']:.3f} |
+| Ridge, top-three actions | 30.53 | -2.35 (3.50) | 0.073 |
+| Boosting, top-three actions | 31.32 | 0.15 (4.41) | 0.081 |
 
 *Note: 3,665 validation and 2,037 test rows lie outside the declared common support. The 2025 augmented estimates do not reproduce the validation gain.*
 
@@ -353,11 +288,8 @@ conditioning set. Actionability is read from closing remarks, so it is a
 post-resolution proxy rather than an intake-time population definition. And an
 earlier internal comparison of two PMAY routes, 23 days against 48, was a raw
 average by route with no adjustment for how cases differ; it was never a saving.
-"""
 
-
-def _intelligence_and_impact(facts: BenchmarkFacts) -> str:
-    return f"""<!-- pagebreak -->
+<!-- pagebreak -->
 
 # Duplicate-adjusted workload
 
@@ -397,7 +329,7 @@ cases adjudicated by hand.
 
 # What is not claimed
 
-{facts.impact_available_required} of {facts.impact_required} required impact
+0 of 2 required impact
 artifacts exist. Impact is therefore reported as **not measured**, which is
 different from measured and found to be zero.
 
@@ -429,34 +361,4 @@ routing scorecard or routing-outcome aggregate, so no figure here can outlive
 the evidence behind it. The routing-outcome evidence is reproduced by the
 commands in `docs/QUALITY_BENCHMARKS.md`.
 
-*Source: bundle {facts.bundle_id[:16]}, publication_ready={str(facts.publication_ready).lower()}.*
-"""
-
-
-def create_report(destination: Path, *, benchmark_bundle: Path = DEFAULT_BUNDLE) -> None:
-    facts = load_benchmark_facts(benchmark_bundle)
-    document = "\n".join(
-        [
-            _frontmatter(),
-            _how_to_read(facts),
-            _measured(facts),
-            _routing(facts),
-            _intelligence_and_impact(facts),
-        ]
-    )
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(document, encoding="utf-8")
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
-    parser.add_argument("--benchmark-bundle", type=Path, default=DEFAULT_BUNDLE)
-    args = parser.parse_args()
-    create_report(args.output, benchmark_bundle=args.benchmark_bundle)
-    print(f"wrote {args.output}")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+*Source: bundle f64a999f47bf3240, publication_ready=false.*

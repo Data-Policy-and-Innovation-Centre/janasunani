@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 from pathlib import Path
 import tempfile
@@ -54,3 +55,19 @@ def canonicalize_docx_archive(path: Path) -> None:
     except Exception:
         rebuilt.unlink(missing_ok=True)
         raise
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Normalize DOCX ZIP metadata for reproducible byte hashes."
+    )
+    parser.add_argument("paths", nargs="+", type=Path)
+    args = parser.parse_args(argv)
+    for path in args.paths:
+        canonicalize_docx_archive(path)
+        print(f"canonicalized {path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

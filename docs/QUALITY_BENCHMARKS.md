@@ -1,6 +1,6 @@
 # Pipeline quality benchmark register
 
-**Snapshot:** 11 August 2026. **Purpose:** separate measured quality from
+**Snapshot:** 23 August 2026. **Purpose:** separate measured quality from
 developmental estimates, weak supervision, regression evidence, and proposed
 experiments. A number can enter the value-add report only with its denominator,
 split policy, uncertainty, and limitations on the same page.
@@ -39,6 +39,67 @@ it is not reliably supplied at live intake. All figures measure agreement with
 the historical department, not jurisdictional correctness or improved citizen
 outcomes. The older 60.9/67.5/72.8% crosswalk figures are in-sample
 resubstitution and are not comparable held-out results.
+
+## Routing — outcome, not destination
+
+Separate from the section above, and the separation is the point. That benchmark
+asks whether a model can predict *where a grievance was sent*. This one asks
+whether sending it somewhere else would have disposed it *faster without losing
+whether action was taken*. They share a name and nothing else, and a number from
+one must never be quoted for the other.
+
+Research-only. No serving provider reads it, there is no `egress` route, and
+nothing here is release-eligible. Design of record:
+[`experiments/routing-outcome-model.tex`](experiments/routing-outcome-model.tex).
+
+**Measurement.** The treatment is the jointly selected department and complete
+assigned chain: the intention to route fixed at assignment. Explicit transfer
+and the nodes later observed in action history are downstream realised handling.
+Intake-time intrinsic actionability is latent (`S*`). The current executable
+population instead uses a closure-derived proxy (`S_tilde`) and is therefore
+developmental and post-resolution. The current complaint snapshot also does not
+prove that `dept_id` and `vchAllEscUser` preserve the immutable initial
+assignment; action history contains no route snapshots from which to reconstruct
+it.
+
+**Why the binary label was wrong.** It conditions on a result that routing can
+affect. The fresh joint-action ladder reproduces a `+0.0305` validation RMSE
+increment (evaluation SE `0.0138`) among selected correct completers, but it
+collapses to `+0.0002` (SE `0.0059`) after moving to closure-proxy actionable
+cases. Those first three as-run rungs remain a developmental diagnostic. The
+weighted R3 validation risk and bootstrap had dropped the IPCW magnitudes; that
+rung is withdrawn pending regeneration with the corrected code (#291). The
+historical R2/R3 equality must not be interpreted.
+
+**Temporal evaluation.** Durations are restricted at a 365-day horizon. The
+policy comparison is limited to declared common support and reports direct and
+augmented estimators separately.
+
+| Cohort | Common-support n | Model | Direct Δ | Augmented Δ (SE) | ESS / n |
+|---|---:|---|---:|---:|---:|
+| Validation 2024 | 450,567 | Ridge, top-three actions | 24.50 | 26.77 (4.04) | 0.194 |
+| Validation 2024 | 450,567 | Boosting, top-three actions | 23.90 | 12.40 (4.12) | 0.168 |
+| Test 2025 | 113,535 | Ridge, top-three actions | 30.53 | −2.35 (3.50) | 0.073 |
+| Test 2025 | 113,535 | Boosting, top-three actions | 31.32 | 0.15 (4.41) | 0.081 |
+
+**Status: no routing gain established.** The positive validation contrast does
+not replicate under the augmented estimator in the untouched 2025 period.
+The prior correctness frontier was normalized on the wrong population and is
+withdrawn pending regeneration with the corrected code (#284), so no
+correctness-constrained `tau*` is published. Congestion remains absent from the
+conditioning set. These are developmental observational diagnostics, not causal
+impact, a saving, or a recommendation.
+
+Reproduce:
+
+```bash
+uv run --extra pipeline-core python -m janasunani.experiments.routing_outcome.dataset
+uv run --extra pipeline-core python -m janasunani.experiments.routing_outcome.train
+uv run --extra pipeline-core python -m janasunani.experiments.routing_outcome.ope --split val --mu ridge --top-k 3 --sweep-tau
+uv run --extra pipeline-core python -m janasunani.experiments.routing_outcome.ope --split test --mu ridge --tau 0 --top-k 3
+uv run --extra pipeline-core python -m janasunani.experiments.routing_outcome.robustness --exercise ladder --fit-draws 0
+uv run dvc repro --single-item full-benchmark-bundle
+```
 
 ## Actionability and low-signal review
 
@@ -201,10 +262,11 @@ uv run dvc repro --single-item full-benchmark-bundle
 ```
 
 `full-benchmark-bundle` joins the governed actionability, category, summary,
-PII, routing and cached-Sarvam reports and records missing required artifacts.
-Its publication gate validates configured field types and cardinalities plus
-cross-field relationships such as interval ordering and citizen-response
-count/rate reconciliation; self-declared readiness is not sufficient.
+PII, historical-destination routing, developmental routing-outcome and
+cached-Sarvam reports and records missing required artifacts. Its publication
+gate validates configured field types and cardinalities plus cross-field
+relationships such as interval ordering and citizen-response count/rate
+reconciliation; self-declared readiness is not sufficient.
 The separate legacy `benchmark-table` stage consumes only latency, PII and
 cached-Sarvam inputs for its presentation table; it is not the full evidence
 bundle. Neither stage accesses a provider unless one of its already-materialized

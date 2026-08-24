@@ -1,0 +1,99 @@
+{
+  "ridge": {
+    "train": 1.1742195387090353,
+    "val": 1.1825535801560034,
+    "test": 1.2881565541950735
+  },
+  "gbm": {
+    "train": 0.9257403643924081,
+    "val": 1.2337019629616572,
+    "test": 1.3452487240343858
+  },
+  "gbm_noflow": {
+    "train": 0.9789523754187273,
+    "val": 1.233426331050499,
+    "test": 1.308725716357036
+  },
+  "pi_auc_raw": {
+    "train": 0.9238972000547889,
+    "val": 0.7749787348657186,
+    "test": 0.7638581300340285
+  },
+  "pi_auc_calibrated": {
+    "train": 0.9181489444049988,
+    "val": 0.7819352523221251,
+    "test": 0.760448338896367
+  },
+  "pi_ece_raw": {
+    "train": 0.03968800743598041,
+    "val": 0.12205905838358873,
+    "test": 0.10969274365796028
+  },
+  "pi_ece_calibrated": {
+    "train": 0.13023634233010514,
+    "val": 1.0085987433590171e-16,
+    "test": 0.06959943922599966
+  },
+  "smearing_ridge": {
+    "pooled": 1.7834226911004885,
+    "n_strata_fitted": 93,
+    "stratum_min": 0.7931235809316316,
+    "stratum_max": 3.2986260126039135,
+    "implied_pct_uplift": 0.7834226911004885
+  },
+  "smearing_gbm": {
+    "pooled": 1.4884500422991414,
+    "n_strata_fitted": 93,
+    "stratum_min": 1.0145624150036734,
+    "stratum_max": 2.47688650062778,
+    "implied_pct_uplift": 0.48845004229914135
+  },
+  "n_rows": {
+    "train": 302863,
+    "val": 454232,
+    "test": 115572
+  },
+  "n_c_labelled": {
+    "train": 299424,
+    "val": 381436,
+    "test": 101746
+  },
+  "ipcw": {
+    "train": {
+      "horizon": 365.0,
+      "n": 302863,
+      "n_contributing": 302863,
+      "n_weight_clipped": 0,
+      "strata": 93,
+      "rmst": 115.37257109650238,
+      "naive_completer_mean": 115.37257109650238,
+      "mean_weight": 1.0
+    },
+    "val": {
+      "horizon": 365.0,
+      "n": 454232,
+      "n_contributing": 454232,
+      "n_weight_clipped": 0,
+      "strata": 31,
+      "rmst": 93.5445813414513,
+      "naive_completer_mean": 84.47126358336709,
+      "mean_weight": 1.03728595027628
+    },
+    "test": {
+      "horizon": 365.0,
+      "n": 115572,
+      "n_contributing": 115572,
+      "n_weight_clipped": 40,
+      "strata": 31,
+      "rmst": 49.71662280520668,
+      "naive_completer_mean": 37.16978160800194,
+      "mean_weight": 1.318152734281063
+    }
+  },
+  "_provenance": {
+    "date": "2026-08-13",
+    "population": "S==1 (actionable) from outcome.py, censored rows retained",
+    "target": "log1p(min(T,365)) with Kaplan-Meier IPCW weights, G fitted on the full arrival cohort",
+    "supersedes": "the 11 Aug fit on correct==1 completers with days_capped"
+  }
+}
