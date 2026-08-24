@@ -615,12 +615,27 @@ def _router_from_artifact(payload: object) -> IncidenceRouter:
     serving_min_support = parameters["serving_min_support"]
     serving_min_concentration = parameters["serving_min_concentration"]
     serving_min_margin = parameters["serving_min_margin"]
-    if isinstance(alpha, bool) or not isinstance(alpha, (int, float)):
-        raise ValueError("alpha must be numeric")
-    if not math.isfinite(float(alpha)) or float(alpha) <= 0.0:
+
+    def finite_float(value: object, *, name: str) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{name} must be numeric")
+        try:
+            parsed = float(value)
+        except OverflowError as exc:
+            raise ValueError(f"{name} must be finite") from exc
+        if not math.isfinite(parsed):
+            raise ValueError(f"{name} must be finite")
+        return parsed
+
+    alpha_value = finite_float(alpha, name="alpha")
+    if alpha_value <= 0.0:
         raise ValueError("alpha must be positive and finite")
     if not isinstance(use_subcategory, bool):
         raise ValueError("use_subcategory must be boolean")
+    concentration_value = finite_float(
+        serving_min_concentration, name="serving_min_concentration"
+    )
+    margin_value = finite_float(serving_min_margin, name="serving_min_margin")
 
     raw_departments = payload["departments"]
     if not isinstance(raw_departments, list) or not raw_departments:
@@ -682,11 +697,11 @@ def _router_from_artifact(payload: object) -> IncidenceRouter:
         raise ValueError("non-subcategory artifact contains unreachable tables")
 
     router = IncidenceRouter(
-        alpha=float(alpha),
+        alpha=alpha_value,
         use_subcategory=use_subcategory,
         serving_min_support=serving_min_support,
-        serving_min_concentration=serving_min_concentration,
-        serving_min_margin=serving_min_margin,
+        serving_min_concentration=concentration_value,
+        serving_min_margin=margin_value,
     )
     router.departments = tuple(raw_departments)
     router._global = global_counts

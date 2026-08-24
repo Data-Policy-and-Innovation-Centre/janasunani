@@ -406,6 +406,29 @@ def test_incidence_artifact_rejects_checksum_and_schema_tampering(tmp_path):
     assert load_incidence_router(artifact) is None
 
 
+@pytest.mark.parametrize(
+    "parameter", ["alpha", "serving_min_concentration", "serving_min_margin"]
+)
+def test_incidence_artifact_rejects_oversized_numeric_parameters(
+    tmp_path, parameter
+):
+    training = [record for record in dataset() if record.split == "train"]
+    artifact = save_incidence_router(
+        IncidenceRouter(alpha=10.0).fit(training), tmp_path / parameter
+    )
+    payload = json.loads(artifact.read_text())
+    payload["parameters"][parameter] = 10**309
+    unsigned = dict(payload)
+    unsigned.pop("checksum")
+    canonical = json.dumps(
+        unsigned, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    ).encode()
+    payload["checksum"] = "sha256:" + hashlib.sha256(canonical).hexdigest()
+    artifact.write_text(json.dumps(payload))
+
+    assert load_incidence_router(artifact) is None
+
+
 def test_benchmark_can_publish_an_explicit_serving_artifact(tmp_path):
     benchmark = benchmark_incidence_router(
         dataset(), alpha_values=(10.0,), artifact_dir=tmp_path / "release"
