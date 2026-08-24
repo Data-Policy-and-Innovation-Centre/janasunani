@@ -26,10 +26,20 @@
         "completed_attempts": "positive_integer",
         "failed_attempts": "nonnegative_integer",
         "processor_startup_seconds": "nonnegative_number",
-        "temperature_e2e.cold": "nonempty_object",
-        "temperature_e2e.warm": "nonempty_object",
-        "input_paths": "nonempty_object",
-        "stages": "nonempty_object"
+        "temperature_e2e.cold.n": "positive_integer",
+        "temperature_e2e.cold.p50": "positive_number",
+        "temperature_e2e.cold.p90": "positive_number",
+        "temperature_e2e.cold.p95": "positive_number",
+        "temperature_e2e.warm.n": "positive_integer",
+        "temperature_e2e.warm.p50": "positive_number",
+        "temperature_e2e.warm.p90": "positive_number",
+        "temperature_e2e.warm.p95": "positive_number",
+        "input_paths.text.e2e.n": "positive_integer",
+        "input_paths.document.e2e.n": "positive_integer",
+        "stages.e2e.n": "positive_integer",
+        "stages.e2e.p50": "positive_number",
+        "stages.e2e.p90": "positive_number",
+        "stages.e2e.p95": "positive_number"
       },
       "missing_reason": "run the real release timing harness; deterministic fake timings are not publishable"
     },
@@ -49,13 +59,27 @@
       "claim": "five-class officer-confirmed actionability quality",
       "required_for_publication": true,
       "schema_version": "janasunani.actionability-officer-release/v1",
-      "required_values": {"publication_ready": true},
+      "required_values": {
+        "publication_ready": true,
+        "dataset.officer_confirmed": true
+      },
       "required_fields": {
-        "dataset": "nonempty_object",
-        "model": "nonempty_object",
-        "metrics": "nonempty_object",
-        "subgroups": "array",
-        "failures": "array"
+        "dataset.id": "nonempty_string",
+        "dataset.sha256": "sha256",
+        "dataset.records": "positive_integer",
+        "dataset.officer_confirmed": "boolean",
+        "model.id": "nonempty_string",
+        "model.revision": "nonempty_string",
+        "metrics.sample_size": "positive_integer",
+        "metrics.accuracy": "unit_interval",
+        "metrics.macro_f1": "unit_interval",
+        "metrics.coverage": "unit_interval",
+        "metrics.abstention_rate": "unit_interval",
+        "metrics.per_class": "nonempty_object",
+        "subgroups.dimension_names": "nonempty_string_array",
+        "subgroups.results": "nonempty_object",
+        "failures.reviewed": "positive_integer",
+        "failures.by_class": "nonempty_object"
       },
       "missing_reason": "needs a frozen officer-confirmed five-class release set"
     },
@@ -83,13 +107,27 @@
       "claim": "frozen release-set categorization quality and abstention",
       "required_for_publication": true,
       "schema_version": "janasunani.categorization-release/v1",
-      "required_values": {"publication_ready": true},
+      "required_values": {
+        "publication_ready": true,
+        "dataset.officer_confirmed": true
+      },
       "required_fields": {
-        "dataset": "nonempty_object",
-        "model": "nonempty_object",
-        "metrics": "nonempty_object",
-        "subgroups": "array",
-        "failures": "array"
+        "dataset.id": "nonempty_string",
+        "dataset.sha256": "sha256",
+        "dataset.records": "positive_integer",
+        "dataset.officer_confirmed": "boolean",
+        "model.id": "nonempty_string",
+        "model.revision": "nonempty_string",
+        "metrics.sample_size": "positive_integer",
+        "metrics.accuracy": "unit_interval",
+        "metrics.macro_f1": "unit_interval",
+        "metrics.coverage": "unit_interval",
+        "metrics.abstention_rate": "unit_interval",
+        "metrics.per_class": "nonempty_object",
+        "subgroups.dimension_names": "nonempty_string_array",
+        "subgroups.results": "nonempty_object",
+        "failures.reviewed": "positive_integer",
+        "failures.by_class": "nonempty_object"
       },
       "missing_reason": "needs a governed production-domain categorization release set"
     },
@@ -109,13 +147,27 @@
       "claim": "critical-fact recall, unsupported facts, contradictions, PII leaks, and usefulness",
       "required_for_publication": true,
       "schema_version": "janasunani.summary-release/v1",
-      "required_values": {"publication_ready": true},
+      "required_values": {
+        "publication_ready": true,
+        "dataset.human_judged": true
+      },
       "required_fields": {
-        "dataset": "nonempty_object",
-        "model": "nonempty_object",
-        "metrics": "nonempty_object",
-        "subgroups": "array",
-        "failures": "array"
+        "dataset.id": "nonempty_string",
+        "dataset.sha256": "sha256",
+        "dataset.records": "positive_integer",
+        "dataset.human_judged": "boolean",
+        "model.id": "nonempty_string",
+        "model.revision": "nonempty_string",
+        "metrics.sample_size": "positive_integer",
+        "metrics.critical_fact_recall": "unit_interval",
+        "metrics.unsupported_fact_rate": "unit_interval",
+        "metrics.contradiction_rate": "unit_interval",
+        "metrics.pii_leak_rate": "unit_interval",
+        "metrics.usefulness_rate": "unit_interval",
+        "subgroups.dimension_names": "nonempty_string_array",
+        "subgroups.results": "nonempty_object",
+        "failures.reviewed": "positive_integer",
+        "failures.by_class": "nonempty_object"
       },
       "missing_reason": "needs paired human summary judgments"
     },
@@ -135,13 +187,27 @@
       "claim": "precision, recall, and supported-language redaction quality",
       "required_for_publication": true,
       "schema_version": "janasunani.pii-officer-release/v1",
-      "required_values": {"publication_ready": true},
+      "required_values": {
+        "publication_ready": true,
+        "dataset.human_adjudicated": true
+      },
       "required_fields": {
-        "dataset": "nonempty_object",
-        "model": "nonempty_object",
-        "metrics": "nonempty_object",
-        "subgroups": "array",
-        "failures": "array"
+        "dataset.id": "nonempty_string",
+        "dataset.sha256": "sha256",
+        "dataset.records": "positive_integer",
+        "dataset.human_adjudicated": "boolean",
+        "dataset.supported_languages": "nonempty_string_array",
+        "model.id": "nonempty_string",
+        "model.revision": "nonempty_string",
+        "metrics.sample_size": "positive_integer",
+        "metrics.precision": "unit_interval",
+        "metrics.recall": "unit_interval",
+        "metrics.f1": "unit_interval",
+        "metrics.per_entity": "nonempty_object",
+        "subgroups.dimension_names": "nonempty_string_array",
+        "subgroups.results": "nonempty_object",
+        "failures.reviewed": "positive_integer",
+        "failures.by_class": "nonempty_object"
       },
       "missing_reason": "current PII evidence lacks a complete precision and supported-language release scorecard"
     },
@@ -169,13 +235,27 @@
       "claim": "correct-authority top-k routing quality",
       "required_for_publication": true,
       "schema_version": "janasunani.routing-authority-release/v1",
-      "required_values": {"publication_ready": true},
+      "required_values": {
+        "publication_ready": true,
+        "dataset.officer_confirmed": true
+      },
       "required_fields": {
-        "dataset": "nonempty_object",
-        "model": "nonempty_object",
-        "metrics": "nonempty_object",
-        "subgroups": "array",
-        "failures": "array"
+        "dataset.id": "nonempty_string",
+        "dataset.sha256": "sha256",
+        "dataset.records": "positive_integer",
+        "dataset.officer_confirmed": "boolean",
+        "model.id": "nonempty_string",
+        "model.revision": "nonempty_string",
+        "metrics.sample_size": "positive_integer",
+        "metrics.top1_accuracy": "unit_interval",
+        "metrics.top3_accuracy": "unit_interval",
+        "metrics.coverage": "unit_interval",
+        "metrics.abstention_rate": "unit_interval",
+        "metrics.per_authority": "nonempty_object",
+        "subgroups.dimension_names": "nonempty_string_array",
+        "subgroups.results": "nonempty_object",
+        "failures.reviewed": "positive_integer",
+        "failures.by_class": "nonempty_object"
       },
       "missing_reason": "historical destination agreement is not correct-authority adjudication"
     },
@@ -195,13 +275,38 @@
       "claim": "officer decisions, transfers, first action, and 30/90-day resolution effects",
       "required_for_publication": true,
       "schema_version": "janasunani.pilot-operational-effects/v1",
-      "required_values": {"publication_ready": true},
+      "required_values": {
+        "publication_ready": true,
+        "design.prespecified": true
+      },
       "required_fields": {
-        "design": "nonempty_object",
-        "estimands": "nonempty_object",
-        "effects": "nonempty_object",
-        "missingness": "nonempty_object",
-        "censoring": "nonempty_object"
+        "design.id": "nonempty_string",
+        "design.protocol_sha256": "sha256",
+        "design.prespecified": "boolean",
+        "design.assignment_method": "nonempty_string",
+        "design.start_date": "nonempty_string",
+        "design.end_date": "nonempty_string",
+        "estimands.names": "nonempty_string_array",
+        "effects.first_action.estimate": "finite_number",
+        "effects.first_action.ci_low": "finite_number",
+        "effects.first_action.ci_high": "finite_number",
+        "effects.first_action.n": "positive_integer",
+        "effects.transfer_rate.estimate": "finite_number",
+        "effects.transfer_rate.ci_low": "finite_number",
+        "effects.transfer_rate.ci_high": "finite_number",
+        "effects.transfer_rate.n": "positive_integer",
+        "effects.resolution_30d.estimate": "finite_number",
+        "effects.resolution_30d.ci_low": "finite_number",
+        "effects.resolution_30d.ci_high": "finite_number",
+        "effects.resolution_30d.n": "positive_integer",
+        "effects.resolution_90d.estimate": "finite_number",
+        "effects.resolution_90d.ci_low": "finite_number",
+        "effects.resolution_90d.ci_high": "finite_number",
+        "effects.resolution_90d.n": "positive_integer",
+        "missingness.total": "nonnegative_integer",
+        "missingness.by_reason": "nonempty_object",
+        "censoring.method": "nonempty_string",
+        "censoring.censored": "nonnegative_integer"
       },
       "missing_reason": "needs pre-recorded assignment/exposure events and mature follow-up"
     },
@@ -213,14 +318,26 @@
       "claim": "citizen satisfaction with invitations, responses, missingness, and uncertainty",
       "required_for_publication": true,
       "schema_version": "janasunani.pilot-citizen-outcomes/v1",
-      "required_values": {"publication_ready": true},
+      "required_values": {
+        "publication_ready": true,
+        "design.prespecified": true
+      },
       "required_fields": {
-        "design": "nonempty_object",
+        "design.id": "nonempty_string",
+        "design.protocol_sha256": "sha256",
+        "design.prespecified": "boolean",
+        "design.invitation_method": "nonempty_string",
+        "design.horizon_days": "positive_integer",
         "invitations": "positive_integer",
         "responses": "positive_integer",
-        "estimands": "nonempty_object",
-        "effects": "nonempty_object",
-        "missingness": "nonempty_object"
+        "estimands.names": "nonempty_string_array",
+        "effects.satisfaction.estimate": "finite_number",
+        "effects.satisfaction.ci_low": "finite_number",
+        "effects.satisfaction.ci_high": "finite_number",
+        "effects.satisfaction.n": "positive_integer",
+        "effects.response_rate": "unit_interval",
+        "missingness.total": "nonnegative_integer",
+        "missingness.by_reason": "nonempty_object"
       },
       "missing_reason": "needs an approved fixed-horizon satisfaction workflow and response data"
     }

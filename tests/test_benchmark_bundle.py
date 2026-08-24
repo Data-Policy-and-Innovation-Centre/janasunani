@@ -147,6 +147,16 @@ def test_required_artifact_must_declare_schema_and_publication_predicate() -> No
         build_bundle(config, root=Path("."))  # type: ignore[arg-type]
 
 
+def test_required_field_schema_names_are_closed() -> None:
+    config = _config()
+    config["artifacts"][0]["required_fields"] = {  # type: ignore[index]
+        "metrics": "anything_truthy"
+    }
+
+    with pytest.raises(ValueError, match="supported schemas"):
+        build_bundle(config, root=Path("."))  # type: ignore[arg-type]
+
+
 def test_schema_mismatch_blocks_required_artifact(tmp_path: Path) -> None:
     results = tmp_path / "results"
     results.mkdir()
@@ -280,6 +290,72 @@ def test_required_numeric_field_rejects_nonfinite_values(
         (results / f"{name}.json").write_text(json.dumps(payload) + "\n")
 
     assert build_bundle(config, root=tmp_path)["publication_ready"] is False  # type: ignore[arg-type]
+
+
+def _assign_dotted(payload: dict[str, object], path: str, value: object) -> None:
+    parts = path.split(".")
+    target = payload
+    for part in parts[:-1]:
+        child = target.setdefault(part, {})
+        assert isinstance(child, dict)
+        target = child
+    target[parts[-1]] = value
+
+
+def _minimum_value_for_schema(schema: str) -> object:
+    if schema in {"positive_integer", "positive_number"}:
+        return 1
+    if schema in {"nonnegative_integer", "nonnegative_number", "finite_number"}:
+        return 0
+    if schema == "unit_interval":
+        return 0
+    if schema == "boolean":
+        return False
+    if schema in {"array", "nonempty_array", "nonempty_string_array"}:
+        return []
+    if schema in {"object", "nonempty_object"}:
+        return {"placeholder": False}
+    if schema == "sha256":
+        return "0" * 64
+    return "placeholder"
+
+
+def test_production_contract_rejects_outer_container_placeholders(tmp_path: Path) -> None:
+    config = json.loads(
+        (Path(__file__).parents[1] / "config" / "benchmark_bundle.json").read_text()
+    )
+    required = [
+        artifact
+        for artifact in config["artifacts"]
+        if artifact["required_for_publication"]
+    ]
+    for artifact in required:
+        payload: dict[str, object] = {
+            "schema_version": artifact["schema_version"],
+            "publication_ready": True,
+        }
+        for dotted_path, expected in artifact["required_values"].items():
+            _assign_dotted(payload, dotted_path, expected)
+        top_level_schemas: dict[str, str] = {}
+        for dotted_path, schema in artifact["required_fields"].items():
+            top_level_schemas.setdefault(dotted_path.split(".")[0], schema)
+        for top_level, schema in top_level_schemas.items():
+            if top_level not in payload:
+                payload[top_level] = _minimum_value_for_schema(schema)
+            elif isinstance(payload[top_level], dict):
+                payload[top_level]["placeholder"] = False
+        path = tmp_path / artifact["path"]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload) + "\n")
+
+    bundle = build_bundle(config, root=tmp_path)
+
+    assert bundle["publication_ready"] is False
+    assert all(
+        artifact["status"] == "incomplete"
+        for artifact in bundle["artifacts"]
+        if artifact["required_for_publication"]
+    )
 
 
 def test_rejects_paths_outside_root(tmp_path: Path) -> None:

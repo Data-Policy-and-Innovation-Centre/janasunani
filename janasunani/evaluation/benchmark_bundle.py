@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 import math
+import re
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -20,15 +21,20 @@ SECTIONS = ("speed", "accuracy", "impact")
 REQUIRED_FIELD_SCHEMAS = {
     "array",
     "boolean",
+    "finite_number",
     "nonempty_array",
     "nonempty_object",
     "nonempty_string",
+    "nonempty_string_array",
     "nonnegative_integer",
     "nonnegative_number",
     "object",
     "positive_integer",
     "positive_number",
+    "sha256",
+    "unit_interval",
 }
+SHA256_RE = re.compile(r"^(?:sha256:)?[0-9a-f]{64}$")
 
 
 def _canonical_json(value: object) -> bytes:
@@ -58,12 +64,24 @@ def _matches_field_schema(payload: object, dotted_path: str, schema: str) -> boo
         return isinstance(value, list)
     if schema == "boolean":
         return isinstance(value, bool)
+    if schema == "finite_number":
+        return (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+        )
     if schema == "nonempty_array":
         return isinstance(value, list) and bool(value)
     if schema == "nonempty_object":
         return isinstance(value, dict) and bool(value)
     if schema == "nonempty_string":
         return isinstance(value, str) and bool(value.strip())
+    if schema == "nonempty_string_array":
+        return (
+            isinstance(value, list)
+            and bool(value)
+            and all(isinstance(item, str) and bool(item.strip()) for item in value)
+        )
     if schema == "nonnegative_integer":
         return isinstance(value, int) and not isinstance(value, bool) and value >= 0
     if schema == "nonnegative_number":
@@ -83,6 +101,15 @@ def _matches_field_schema(payload: object, dotted_path: str, schema: str) -> boo
             and not isinstance(value, bool)
             and math.isfinite(value)
             and value > 0
+        )
+    if schema == "sha256":
+        return isinstance(value, str) and SHA256_RE.fullmatch(value) is not None
+    if schema == "unit_interval":
+        return (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+            and 0 <= value <= 1
         )
     raise AssertionError(f"unvalidated required-field schema: {schema}")
 
