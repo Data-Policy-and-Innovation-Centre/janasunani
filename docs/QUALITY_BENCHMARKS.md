@@ -202,6 +202,9 @@ uv run dvc repro --single-item full-benchmark-bundle
 
 `full-benchmark-bundle` joins the governed actionability, category, summary,
 PII, routing and cached-Sarvam reports and records missing required artifacts.
+Its publication gate validates configured field types and cardinalities plus
+cross-field relationships such as interval ordering and citizen-response
+count/rate reconciliation; self-declared readiness is not sufficient.
 The separate legacy `benchmark-table` stage consumes only latency, PII and
 cached-Sarvam inputs for its presentation table; it is not the full evidence
 bundle. Neither stage accesses a provider unless one of its already-materialized

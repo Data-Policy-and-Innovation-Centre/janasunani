@@ -153,6 +153,12 @@ class ModelRelease:
         artifact_path = payload.get("artifact_path")
         endpoint = payload.get("endpoint")
         artifact_digest = payload.get("artifact_sha256")
+        if artifact_path is not None and (
+            not isinstance(artifact_path, str) or not artifact_path.strip()
+        ):
+            raise ReleaseManifestError(
+                f"model {name!r} artifact_path must be a non-empty string"
+            )
         if endpoint is not None and (
             not isinstance(endpoint, str) or not endpoint.strip()
         ):
@@ -236,8 +242,8 @@ class ReleaseManifest:
             raise ReleaseManifestError("created_at must be ISO-8601") from exc
         if parsed.tzinfo is None:
             raise ReleaseManifestError("created_at must include a timezone")
-        git_sha = str(payload.get("git_sha", ""))
-        if _GIT_SHA.fullmatch(git_sha) is None:
+        git_sha = payload.get("git_sha")
+        if not isinstance(git_sha, str) or _GIT_SHA.fullmatch(git_sha) is None:
             raise ReleaseManifestError("git_sha must be a full 40- or 64-character SHA")
         model_payload = payload.get("models")
         if not isinstance(model_payload, Mapping) or not model_payload:

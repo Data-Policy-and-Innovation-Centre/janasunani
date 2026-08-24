@@ -175,6 +175,32 @@ def test_hosted_model_requires_a_nonempty_string_endpoint(endpoint):
         ReleaseManifest.from_dict(payload)
 
 
+@pytest.mark.parametrize(
+    "artifact_path", [["not-a-string"], {"path": "artifact"}, 7, "", "  "]
+)
+def test_local_model_requires_a_nonempty_string_artifact_path(artifact_path):
+    payload = {
+        "schema_version": "janasunani.release/v1",
+        "release_id": "release-1",
+        "created_at": "2026-08-10T10:00:00Z",
+        "git_sha": "a" * 40,
+        "models": {
+            "actionability": {
+                "provider": "local_sklearn",
+                "trust_tier": "local",
+                "version": "1",
+                "artifact_path": artifact_path,
+                "artifact_sha256": "0" * 64,
+            }
+        },
+    }
+
+    with pytest.raises(
+        ReleaseManifestError, match="artifact_path must be a non-empty string"
+    ):
+        ReleaseManifest.from_dict(payload)
+
+
 @pytest.mark.parametrize("field", ["provider", "trust_tier", "version"])
 @pytest.mark.parametrize("value", [["not-a-string"], {"key": "value"}, 7, "", "  "])
 def test_model_identity_fields_require_nonempty_strings(field, value):
@@ -236,10 +262,11 @@ def test_write_manifest_never_overwrites_an_immutable_release(tmp_path):
         write_manifest(path, manifest)
 
 
-def test_manifest_requires_a_full_git_sha(tmp_path):
+@pytest.mark.parametrize("git_sha", ["abc123", int("1" * 40), int("1" * 64)])
+def test_manifest_requires_a_full_string_git_sha(tmp_path, git_sha):
     path, _ = _release(tmp_path)
     payload = json.loads(path.read_text())
-    payload["git_sha"] = "abc123"
+    payload["git_sha"] = git_sha
 
     with pytest.raises(ReleaseManifestError, match="full 40- or 64-character"):
         ReleaseManifest.from_dict(payload)

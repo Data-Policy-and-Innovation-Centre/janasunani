@@ -196,7 +196,9 @@ come from one bundle; impact remains an explicit missing section until its two
 required artifacts exist. Required release artifacts must match their declared
 schema, and every configured evidence field must satisfy its declared JSON type
 and cardinality; a self-declared `publication_ready=true` stub cannot open the
-publication gate. A configured artifact participates only when its
+publication gate. Cross-field invariants also fail closed: confidence intervals
+must contain their estimates, and citizen-response counts and rates must
+reconcile. A configured artifact participates only when its
 `tracked_input` flag is true and its path is a dependency of the
 `full-benchmark-bundle` DVC stage; future release files remain explicit blockers
 even if an ambient file appears at the configured path. Each generator also
