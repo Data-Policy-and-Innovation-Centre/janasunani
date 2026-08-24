@@ -205,6 +205,36 @@ def _schema_relation_errors(payload: object, schema_version: object) -> list[str
     return []
 
 
+def _required_field_relation_errors(
+    payload: object, required_fields: dict[str, str]
+) -> list[str]:
+    """Validate relations implied by configured groups of required fields."""
+
+    suffixes = ("estimate", "ci_low", "ci_high")
+    interval_prefixes = {
+        path.removesuffix(".estimate")
+        for path, schema in required_fields.items()
+        if path.endswith(".estimate")
+        and schema == "finite_number"
+        and all(
+            required_fields.get(f"{path.removesuffix('.estimate')}.{suffix}")
+            == "finite_number"
+            for suffix in suffixes
+        )
+    }
+    errors: list[str] = []
+    for prefix in sorted(interval_prefixes):
+        estimate = _lookup(payload, f"{prefix}.estimate")
+        ci_low = _lookup(payload, f"{prefix}.ci_low")
+        ci_high = _lookup(payload, f"{prefix}.ci_high")
+        if all(_is_finite_number(value) for value in (estimate, ci_low, ci_high)):
+            if not ci_low <= estimate <= ci_high:
+                errors.append(
+                    f"{prefix} must satisfy ci_low <= estimate <= ci_high"
+                )
+    return errors
+
+
 def _validate_config(config: object) -> dict[str, Any]:
     if not isinstance(config, dict):
         raise ValueError("benchmark bundle config must be an object")
@@ -410,6 +440,11 @@ def build_bundle(config: dict[str, Any], *, root: Path) -> dict[str, Any]:
                     label_keys=frozenset(
                         spec.get("metric_map_labels", {}).get(dotted_path, [])
                     ),
+                )
+            )
+            mismatches.extend(
+                _required_field_relation_errors(
+                    payload, spec.get("required_fields", {})
                 )
             )
             mismatches.extend(_schema_relation_errors(payload, expected_schema))

@@ -385,6 +385,63 @@ def test_citizen_outcomes_reconciles_response_counts(
     assert build_bundle(config, root=tmp_path)["publication_ready"] is False  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize(
+    ("schema_version", "effect"),
+    [
+        ("janasunani.pilot-operational-effects/v1", "first_action"),
+        ("janasunani.pilot-operational-effects/v1", "transfer_rate"),
+        ("janasunani.pilot-operational-effects/v1", "resolution_30d"),
+        ("janasunani.pilot-operational-effects/v1", "resolution_90d"),
+        ("janasunani.pilot-citizen-outcomes/v1", "satisfaction"),
+    ],
+)
+def test_pilot_effect_confidence_interval_must_contain_estimate(
+    tmp_path: Path, schema_version: str, effect: str
+) -> None:
+    config = _config()
+    pilot = config["artifacts"][2]  # type: ignore[index]
+    prefix = f"effects.{effect}"
+    pilot["schema_version"] = schema_version
+    pilot["required_fields"] = {
+        f"{prefix}.estimate": "finite_number",
+        f"{prefix}.ci_low": "finite_number",
+        f"{prefix}.ci_high": "finite_number",
+    }
+    results = tmp_path / "results"
+    results.mkdir()
+    for name in ("latency", "quality"):
+        (results / f"{name}.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": f"test-{name}/v1",
+                    "publication_ready": True,
+                    "metrics": {"n": 1},
+                }
+            )
+            + "\n"
+        )
+    (results / "pilot.json").write_text(
+        json.dumps(
+            {
+                "schema_version": schema_version,
+                "publication_ready": True,
+                "effects": {
+                    effect: {"estimate": 100, "ci_low": 10, "ci_high": -10}
+                },
+            }
+        )
+        + "\n"
+    )
+
+    bundle = build_bundle(config, root=tmp_path)  # type: ignore[arg-type]
+
+    pilot_record = next(row for row in bundle["artifacts"] if row["id"] == "pilot")
+    assert pilot_record["status"] == "incomplete"
+    assert pilot_record["completeness_errors"] == [
+        f"{prefix} must satisfy ci_low <= estimate <= ci_high"
+    ]
+
+
 @pytest.mark.parametrize("placeholder", [float("inf"), float("-inf"), float("nan")])
 def test_required_numeric_field_rejects_nonfinite_values(
     tmp_path: Path, placeholder: float
