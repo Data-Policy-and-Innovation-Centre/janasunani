@@ -400,6 +400,20 @@ def test_allowlisted_list_rejects_empty_required_metadata():
 
 
 @pytest.mark.parametrize(
+    "value",
+    [
+        "Ramesh Chandra Sahoo sample split",
+        "sample split phone 9876543210",
+        "unrelated lowercase prose",
+    ],
+)
+def test_legacy_metadata_phrase_rejects_name_phone_and_unanchored_text(value):
+    assert check._check_metadata_phrase(
+        "metadata", value, anchors={"sample", "split"}
+    )
+
+
+@pytest.mark.parametrize(
     "schema",
     ["categorization-benchmark-sample-v1", "summary-development-provenance/v1"],
 )
