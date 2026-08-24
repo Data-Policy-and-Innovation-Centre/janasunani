@@ -230,8 +230,8 @@ def test_categorization_sidecar_rejects_malformed_counts_without_crashing():
     assert all("not-a-count" not in problem for problem in problems)
 
 
-def test_summary_development_sidecar_is_metadata_only():
-    payload = {
+def _summary_payload():
+    return {
         "schema_version": "summary-development-provenance/v1",
         "evidence_status": "single-frontier-judge-development-only",
         "publication_ready": False,
@@ -251,7 +251,7 @@ def test_summary_development_sidecar_is_metadata_only():
             "provider": "OpenAI Codex",
             "exact_served_model_revision": "unavailable",
             "prompt_and_sampling_metadata": "unavailable-beyond-committed-rubric",
-            "edit_seconds_source": "judge estimate",
+            "edit_seconds_source": "frontier-judge estimate, not observed officer time",
             "rubric": "summary-scorecard-v1",
             "rubric_sha256": "b" * 64,
             "structured_judgments_only_in_governed_artifacts": True,
@@ -263,7 +263,7 @@ def test_summary_development_sidecar_is_metadata_only():
             "transformers": "4.57",
         },
         "model": {
-            "family": "local-test-model",
+            "family": "facebook/bart-large-cnn",
             "local_files_only": True,
             "revision": "c" * 40,
             "max_input_tokens": 1024,
@@ -276,19 +276,22 @@ def test_summary_development_sidecar_is_metadata_only():
             "cohort_counts": {"category:Housing": 1},
             "generated": 1,
             "not_prevalence_representative": True,
-            "policy": "deterministic-enriched-test",
+            "policy": "deterministic-enriched-category-short-long-language-v1",
             "private_review_sha256": "e" * 64,
             "sample_size": 1,
             "skipped": 0,
         },
         "source": {
-            "path": "data/external/private.jsonl",
+            "path": "data/external/categorization_historical_v1/benchmark.jsonl",
             "redacted_only": True,
             "sha256": "f" * 64,
             "split": "test",
         },
     }
-    assert check.check_payload(payload) == []
+
+
+def test_summary_development_sidecar_is_metadata_only():
+    assert check.check_payload(_summary_payload()) == []
 
 
 def test_summary_sidecar_rejects_free_text_limitations_without_echoing():
@@ -303,6 +306,32 @@ def test_summary_sidecar_rejects_free_text_limitations_without_echoing():
         "selection": {},
         "source": {},
     }
+
+    problems = check.check_payload(payload)
+
+    assert problems
+    assert all(CITIZEN_TEXT not in problem for problem in problems)
+
+
+@pytest.mark.parametrize(
+    "field_path",
+    [
+        ("evidence_status",),
+        ("adjudication", "provider"),
+        ("environment", "device"),
+        ("model", "family"),
+        ("model", "revision"),
+        ("selection", "policy"),
+        ("source", "path"),
+        ("source", "split"),
+    ],
+)
+def test_summary_sidecar_rejects_free_text_scalars_without_echoing(field_path):
+    payload = _summary_payload()
+    target = payload
+    for key in field_path[:-1]:
+        target = target[key]
+    target[field_path[-1]] = CITIZEN_TEXT
 
     problems = check.check_payload(payload)
 

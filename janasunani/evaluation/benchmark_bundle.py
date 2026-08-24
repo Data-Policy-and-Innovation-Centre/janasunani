@@ -16,6 +16,18 @@ from typing import Any, Sequence
 
 SCHEMA_VERSION = "janasunani-full-benchmark-v1"
 SECTIONS = ("speed", "accuracy", "impact")
+REQUIRED_FIELD_SCHEMAS = {
+    "array",
+    "boolean",
+    "nonempty_array",
+    "nonempty_object",
+    "nonempty_string",
+    "nonnegative_integer",
+    "nonnegative_number",
+    "object",
+    "positive_integer",
+    "positive_number",
+}
 
 
 def _canonical_json(value: object) -> bytes:
@@ -39,13 +51,37 @@ def _lookup(payload: object, dotted_path: str) -> object:
     return current
 
 
-def _contains_substantive_value(payload: object, dotted_path: str) -> bool:
+def _matches_field_schema(payload: object, dotted_path: str, schema: str) -> bool:
     value = _lookup(payload, dotted_path)
-    if value is None:
-        return False
-    if isinstance(value, (str, list, dict)):
-        return bool(value)
-    return True
+    if schema == "array":
+        return isinstance(value, list)
+    if schema == "boolean":
+        return isinstance(value, bool)
+    if schema == "nonempty_array":
+        return isinstance(value, list) and bool(value)
+    if schema == "nonempty_object":
+        return isinstance(value, dict) and bool(value)
+    if schema == "nonempty_string":
+        return isinstance(value, str) and bool(value.strip())
+    if schema == "nonnegative_integer":
+        return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+    if schema == "nonnegative_number":
+        return (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and value >= 0
+        )
+    if schema == "object":
+        return isinstance(value, dict)
+    if schema == "positive_integer":
+        return isinstance(value, int) and not isinstance(value, bool) and value > 0
+    if schema == "positive_number":
+        return (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and value > 0
+        )
+    raise AssertionError(f"unvalidated required-field schema: {schema}")
 
 
 def _validate_config(config: object) -> dict[str, Any]:
@@ -78,12 +114,16 @@ def _validate_config(config: object) -> dict[str, Any]:
             isinstance(key, str) and key for key in required_values
         ):
             raise ValueError(f"{artifact_id}: required_values must be an object of dotted paths")
-        required_fields = artifact.get("required_fields", [])
-        if not isinstance(required_fields, list) or not all(
-            isinstance(field, str) and field for field in required_fields
+        required_fields = artifact.get("required_fields", {})
+        if not isinstance(required_fields, dict) or not all(
+            isinstance(field, str)
+            and field
+            and isinstance(schema, str)
+            and schema in REQUIRED_FIELD_SCHEMAS
+            for field, schema in required_fields.items()
         ):
             raise ValueError(
-                f"{artifact_id}: required_fields must be a list of dotted paths"
+                f"{artifact_id}: required_fields must map dotted paths to supported schemas"
             )
         expected_schema = artifact.get("schema_version")
         if expected_schema is not None and (
@@ -171,9 +211,9 @@ def build_bundle(config: dict[str, Any], *, root: Path) -> dict[str, Any]:
                 if _lookup(payload, dotted_path) != expected
             )
             mismatches.extend(
-                f"{dotted_path} must contain substantive evidence"
-                for dotted_path in spec.get("required_fields", [])
-                if not _contains_substantive_value(payload, dotted_path)
+                f"{dotted_path} must satisfy required schema {schema!r}"
+                for dotted_path, schema in spec.get("required_fields", {}).items()
+                if not _matches_field_schema(payload, dotted_path, schema)
             )
             record["status"] = "incomplete" if mismatches else "available"
             record["sha256"] = _sha256(raw)

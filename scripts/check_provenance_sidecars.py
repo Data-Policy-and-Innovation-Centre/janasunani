@@ -78,6 +78,9 @@ _UTC_TIMESTAMP_RE = re.compile(
 )
 _GIT_REVISION_RE = re.compile(r"^(?:[0-9a-f]{7,40}(?:-dirty)?|unknown)$")
 _VERSION_RE = re.compile(r"^(?:unknown|\d{1,4}\.\d{1,4}(?:\.\d{1,4})?[A-Za-z0-9.+-]*)$")
+_SUMMARY_MODEL_REVISION_RE = re.compile(
+    r"^(?=.{1,80}$)(?=.*[A-Za-z])[A-Za-z0-9._-]+$"
+)
 _ACTIONABILITY_SCHEMA = "actionability-adjudication-sample-v1"
 _ACTIONABILITY_FRONTIER_SCHEMA = "janasunani.actionability-frontier-artifacts/v1"
 _CATEGORIZATION_SCHEMA = "categorization-benchmark-sample-v1"
@@ -547,7 +550,11 @@ def _check_summary_development(payload: dict[str, Any]) -> list[str]:
     problems = _check_exact_keys("summary sidecar", payload, top_keys)
     if problems:
         return problems
-    problems += _check_scalar("evidence_status", payload["evidence_status"], MAX_STRING)
+    problems += _check_closed_string(
+        "evidence_status",
+        payload["evidence_status"],
+        allowed={"single-frontier-judge-development-only"},
+    )
     problems += _check_bool("publication_ready", payload["publication_ready"])
     if payload["publication_ready"] is not False:
         problems.append("summary development evidence cannot be publication-ready")
@@ -582,34 +589,43 @@ def _check_summary_development(payload: dict[str, Any]) -> list[str]:
         "summary adjudication", adjudication, adjudication_keys
     )
     if isinstance(adjudication, dict):
-        for key in {
-            "independent_judges",
-            "officer_validated",
-            "one_time_redacted_egress_authorized",
-            "structured_judgments_only_in_governed_artifacts",
-        }:
+        expected_booleans = {
+            "independent_judges": False,
+            "officer_validated": False,
+            "one_time_redacted_egress_authorized": True,
+            "structured_judgments_only_in_governed_artifacts": True,
+        }
+        for key, expected in expected_booleans.items():
             problems += _check_bool(f"adjudication.{key}", adjudication.get(key))
+            if adjudication.get(key) is not expected:
+                problems.append(f"adjudication.{key} must be {expected}")
         problems += _check_sha256(
             "adjudication.rubric_sha256", adjudication.get("rubric_sha256")
         )
-        for key in adjudication_keys - {
-            "independent_judges",
-            "officer_validated",
-            "one_time_redacted_egress_authorized",
-            "rubric_sha256",
-            "structured_judgments_only_in_governed_artifacts",
-        }:
-            problems += _check_scalar(
-                f"adjudication.{key}", adjudication.get(key), MAX_STRING
+        expected_strings = {
+            "edit_seconds_source": "frontier-judge estimate, not observed officer time",
+            "exact_served_model_revision": "unavailable",
+            "judge_type": "single-frontier-agent-context",
+            "narrative_review_storage": "private-temporary-only",
+            "prompt_and_sampling_metadata": "unavailable-beyond-committed-rubric",
+            "provider": "OpenAI Codex",
+            "rubric": "summary-scorecard-v1",
+        }
+        for key, expected in expected_strings.items():
+            problems += _check_closed_string(
+                f"adjudication.{key}", adjudication.get(key), allowed={expected}
             )
 
     environment = payload["environment"]
     environment_keys = {"device", "python", "torch", "transformers"}
     problems += _check_exact_keys("summary environment", environment, environment_keys)
     if isinstance(environment, dict):
-        for key in environment_keys:
-            problems += _check_scalar(
-                f"environment.{key}", environment.get(key), MAX_STRING
+        problems += _check_closed_string(
+            "environment.device", environment.get("device"), allowed={"cpu", "cuda"}
+        )
+        for key in environment_keys - {"device"}:
+            problems += _check_closed_string(
+                f"environment.{key}", environment.get(key), pattern=_VERSION_RE
             )
 
     model = payload["model"]
@@ -626,16 +642,25 @@ def _check_summary_development(payload: dict[str, Any]) -> list[str]:
     problems += _check_exact_keys("summary model", model, model_keys)
     if isinstance(model, dict):
         problems += _check_bool("model.local_files_only", model.get("local_files_only"))
+        if model.get("local_files_only") is not True:
+            problems.append("model.local_files_only must be True")
         problems += _check_sha256("model.weights_sha256", model.get("weights_sha256"))
-        for key in {
-            "max_input_tokens",
-            "max_output_tokens",
-            "min_output_tokens",
-            "num_beams",
-        }:
+        expected_numbers = {
+            "max_input_tokens": 1024,
+            "max_output_tokens": 100,
+            "min_output_tokens": 20,
+            "num_beams": 4,
+        }
+        for key, expected in expected_numbers.items():
             problems += _check_nonnegative_int(f"model.{key}", model.get(key))
-        for key in {"family", "revision"}:
-            problems += _check_scalar(f"model.{key}", model.get(key), MAX_STRING)
+            if model.get(key) != expected:
+                problems.append(f"model.{key} must equal the committed generator value")
+        problems += _check_closed_string(
+            "model.family", model.get("family"), allowed={"facebook/bart-large-cnn"}
+        )
+        problems += _check_closed_string(
+            "model.revision", model.get("revision"), pattern=_SUMMARY_MODEL_REVISION_RE
+        )
 
     selection = payload["selection"]
     selection_keys = {
@@ -653,8 +678,12 @@ def _check_summary_development(payload: dict[str, Any]) -> list[str]:
             "selection.not_prevalence_representative",
             selection.get("not_prevalence_representative"),
         )
-        problems += _check_scalar(
-            "selection.policy", selection.get("policy"), MAX_STRING
+        if selection.get("not_prevalence_representative") is not True:
+            problems.append("selection.not_prevalence_representative must be True")
+        problems += _check_closed_string(
+            "selection.policy",
+            selection.get("policy"),
+            allowed={"deterministic-enriched-category-short-long-language-v1"},
         )
         problems += _check_sha256(
             "selection.private_review_sha256", selection.get("private_review_sha256")
@@ -687,9 +716,17 @@ def _check_summary_development(payload: dict[str, Any]) -> list[str]:
     problems += _check_exact_keys("summary source", source, source_keys)
     if isinstance(source, dict):
         problems += _check_bool("source.redacted_only", source.get("redacted_only"))
+        if source.get("redacted_only") is not True:
+            problems.append("source.redacted_only must be True")
         problems += _check_sha256("source.sha256", source.get("sha256"))
-        for key in {"path", "split"}:
-            problems += _check_scalar(f"source.{key}", source.get(key), MAX_STRING)
+        problems += _check_closed_string(
+            "source.path",
+            source.get("path"),
+            allowed={"data/external/categorization_historical_v1/benchmark.jsonl"},
+        )
+        problems += _check_closed_string(
+            "source.split", source.get("split"), allowed={"test"}
+        )
     return problems
 
 

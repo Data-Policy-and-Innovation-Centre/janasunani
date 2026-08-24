@@ -18,19 +18,19 @@
       "required_for_publication": true,
       "schema_version": "janasunani.pipeline-latency/v1",
       "required_values": {"publication_ready": true},
-      "required_fields": [
-        "benchmark_context.host_label",
-        "benchmark_context.model_release_id",
-        "git_sha",
-        "attempts",
-        "completed_attempts",
-        "failed_attempts",
-        "processor_startup_seconds",
-        "temperature_e2e.cold",
-        "temperature_e2e.warm",
-        "input_paths",
-        "stages"
-      ],
+      "required_fields": {
+        "benchmark_context.host_label": "nonempty_string",
+        "benchmark_context.model_release_id": "nonempty_string",
+        "git_sha": "nonempty_string",
+        "attempts": "positive_integer",
+        "completed_attempts": "positive_integer",
+        "failed_attempts": "nonnegative_integer",
+        "processor_startup_seconds": "nonnegative_number",
+        "temperature_e2e.cold": "nonempty_object",
+        "temperature_e2e.warm": "nonempty_object",
+        "input_paths": "nonempty_object",
+        "stages": "nonempty_object"
+      },
       "missing_reason": "run the real release timing harness; deterministic fake timings are not publishable"
     },
     {
@@ -50,7 +50,13 @@
       "required_for_publication": true,
       "schema_version": "janasunani.actionability-officer-release/v1",
       "required_values": {"publication_ready": true},
-      "required_fields": ["dataset", "model", "metrics", "subgroups", "failures"],
+      "required_fields": {
+        "dataset": "nonempty_object",
+        "model": "nonempty_object",
+        "metrics": "nonempty_object",
+        "subgroups": "array",
+        "failures": "array"
+      },
       "missing_reason": "needs a frozen officer-confirmed five-class release set"
     },
     {
@@ -78,7 +84,13 @@
       "required_for_publication": true,
       "schema_version": "janasunani.categorization-release/v1",
       "required_values": {"publication_ready": true},
-      "required_fields": ["dataset", "model", "metrics", "subgroups", "failures"],
+      "required_fields": {
+        "dataset": "nonempty_object",
+        "model": "nonempty_object",
+        "metrics": "nonempty_object",
+        "subgroups": "array",
+        "failures": "array"
+      },
       "missing_reason": "needs a governed production-domain categorization release set"
     },
     {
@@ -98,7 +110,13 @@
       "required_for_publication": true,
       "schema_version": "janasunani.summary-release/v1",
       "required_values": {"publication_ready": true},
-      "required_fields": ["dataset", "model", "metrics", "subgroups", "failures"],
+      "required_fields": {
+        "dataset": "nonempty_object",
+        "model": "nonempty_object",
+        "metrics": "nonempty_object",
+        "subgroups": "array",
+        "failures": "array"
+      },
       "missing_reason": "needs paired human summary judgments"
     },
     {
@@ -118,7 +136,13 @@
       "required_for_publication": true,
       "schema_version": "janasunani.pii-officer-release/v1",
       "required_values": {"publication_ready": true},
-      "required_fields": ["dataset", "model", "metrics", "subgroups", "failures"],
+      "required_fields": {
+        "dataset": "nonempty_object",
+        "model": "nonempty_object",
+        "metrics": "nonempty_object",
+        "subgroups": "array",
+        "failures": "array"
+      },
       "missing_reason": "current PII evidence lacks a complete precision and supported-language release scorecard"
     },
     {
@@ -146,7 +170,13 @@
       "required_for_publication": true,
       "schema_version": "janasunani.routing-authority-release/v1",
       "required_values": {"publication_ready": true},
-      "required_fields": ["dataset", "model", "metrics", "subgroups", "failures"],
+      "required_fields": {
+        "dataset": "nonempty_object",
+        "model": "nonempty_object",
+        "metrics": "nonempty_object",
+        "subgroups": "array",
+        "failures": "array"
+      },
       "missing_reason": "historical destination agreement is not correct-authority adjudication"
     },
     {
@@ -166,7 +196,13 @@
       "required_for_publication": true,
       "schema_version": "janasunani.pilot-operational-effects/v1",
       "required_values": {"publication_ready": true},
-      "required_fields": ["design", "estimands", "effects", "missingness", "censoring"],
+      "required_fields": {
+        "design": "nonempty_object",
+        "estimands": "nonempty_object",
+        "effects": "nonempty_object",
+        "missingness": "nonempty_object",
+        "censoring": "nonempty_object"
+      },
       "missing_reason": "needs pre-recorded assignment/exposure events and mature follow-up"
     },
     {
@@ -178,7 +214,14 @@
       "required_for_publication": true,
       "schema_version": "janasunani.pilot-citizen-outcomes/v1",
       "required_values": {"publication_ready": true},
-      "required_fields": ["design", "invitations", "responses", "estimands", "effects", "missingness"],
+      "required_fields": {
+        "design": "nonempty_object",
+        "invitations": "positive_integer",
+        "responses": "positive_integer",
+        "estimands": "nonempty_object",
+        "effects": "nonempty_object",
+        "missingness": "nonempty_object"
+      },
       "missing_reason": "needs an approved fixed-horizon satisfaction workflow and response data"
     }
   ]

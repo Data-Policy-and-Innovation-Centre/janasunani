@@ -19,7 +19,7 @@ def _config() -> dict[str, object]:
                 "required_for_publication": True,
                 "schema_version": "test-latency/v1",
                 "required_values": {"publication_ready": True},
-                "required_fields": ["metrics"],
+                "required_fields": {"metrics": "nonempty_object"},
             },
             {
                 "id": "quality",
@@ -28,7 +28,7 @@ def _config() -> dict[str, object]:
                 "required_for_publication": True,
                 "schema_version": "test-quality/v1",
                 "required_values": {"publication_ready": True},
-                "required_fields": ["metrics"],
+                "required_fields": {"metrics": "nonempty_object"},
             },
             {
                 "id": "pilot",
@@ -37,7 +37,7 @@ def _config() -> dict[str, object]:
                 "required_for_publication": True,
                 "schema_version": "test-pilot/v1",
                 "required_values": {"publication_ready": True},
-                "required_fields": ["metrics"],
+                "required_fields": {"metrics": "nonempty_object"},
             },
         ],
     }
@@ -207,9 +207,56 @@ def test_required_artifact_needs_substantive_evidence_fields(
     assert bundle["blockers"] == [
         {
             "artifact_id": "quality",
-            "reason": "metrics must contain substantive evidence",
+            "reason": "metrics must satisfy required schema 'nonempty_object'",
         }
     ]
+
+
+@pytest.mark.parametrize("placeholder", [False, True, 0, 1, 0.0, 1.0, "metrics"])
+def test_required_artifact_rejects_scalar_placeholders(
+    tmp_path: Path, placeholder: object
+) -> None:
+    results = tmp_path / "results"
+    results.mkdir()
+    for name in ("latency", "quality", "pilot"):
+        payload = {
+            "schema_version": f"test-{name}/v1",
+            "publication_ready": True,
+            "metrics": {"n": 1},
+        }
+        if name == "quality":
+            payload["metrics"] = placeholder
+        (results / f"{name}.json").write_text(json.dumps(payload) + "\n")
+
+    bundle = build_bundle(_config(), root=tmp_path)
+
+    quality = next(row for row in bundle["artifacts"] if row["id"] == "quality")
+    assert quality["status"] == "incomplete"
+    assert bundle["publication_ready"] is False
+
+
+def test_required_field_schema_distinguishes_boolean_from_integer(tmp_path: Path) -> None:
+    config = _config()
+    config["artifacts"][1]["required_fields"] = {  # type: ignore[index]
+        "metrics.failures": "nonnegative_integer"
+    }
+    results = tmp_path / "results"
+    results.mkdir()
+    for name in ("latency", "quality", "pilot"):
+        payload = {
+            "schema_version": f"test-{name}/v1",
+            "publication_ready": True,
+            "metrics": {"n": 1, "failures": 0},
+        }
+        (results / f"{name}.json").write_text(json.dumps(payload) + "\n")
+
+    assert build_bundle(config, root=tmp_path)["publication_ready"] is True  # type: ignore[arg-type]
+
+    (results / "quality.json").write_text(
+        '{"schema_version":"test-quality/v1","publication_ready":true,'
+        '"metrics":{"failures":false}}\n'
+    )
+    assert build_bundle(config, root=tmp_path)["publication_ready"] is False  # type: ignore[arg-type]
 
 
 def test_rejects_paths_outside_root(tmp_path: Path) -> None:
