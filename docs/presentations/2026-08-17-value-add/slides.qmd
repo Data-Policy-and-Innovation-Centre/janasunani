@@ -607,9 +607,9 @@ We are not saying simple always wins. We are saying nobody can tell you which wi
 back to you later.
 
 Tell it as a story about being wrong. We expected the large multilingual model to
-win, because that is what everyone expects. It lost, clearly and repeatedly, on
-two separate tasks. The thing now suggesting categories is a method that
-essentially counts words and weighs them.
+win, because that is what everyone expects. In this 57-case actionability
+comparison, the simple development candidate caught more of the cases needing
+clarification. This does not replace the separate production categoriser.
 
 Then the transferable point, which is the reason the slide exists. When a
 proposal arrives built on a large model, the size of the model is not evidence
@@ -623,9 +623,9 @@ small test. It is enough to say the expensive option did not automatically win;
 it is not enough to say the simple one is better in general, and we are not
 saying that.
 
-Model names if anyone asks, and only if: the large model was MuRIL, the simple
-one TF-IDF, and the categoriser is a word-and-character hashing SGD. None of that
-belongs on the slide.
+Model names if anyone asks, and only if: the large actionability comparison model
+was MuRIL and the simple candidate was TF-IDF. The production categoriser is a
+separate model; none of those implementation details belongs on the slide.
 :::
 
 ---
