@@ -215,8 +215,28 @@ def build_report(
         if latency_result is None:
             return NOT_MEASURED
         stages = latency_result.get("stages") if isinstance(latency_result, dict) else None
-        if isinstance(stages, dict) and stage_key in stages:
-            return stages[stage_key]
+        # The live serving timer uses verbs for the actual operations. Keep
+        # the report's historical noun labels without silently dropping the
+        # new measurements. Components nested inside OCR/triage remain
+        # not_measured because the live timer does not split them further.
+        live_aliases = {
+            "categorizer": "categorize",
+            "summarizer": "summarize",
+            "pii": "redact",
+        }
+        alias = live_aliases.get(stage_key)
+        direct = stages.get(stage_key) if isinstance(stages, dict) else None
+        aliased = stages.get(alias) if isinstance(stages, dict) and alias else None
+        # Batch-compatible placeholders can coexist with live serving names.
+        # Prefer the live alias when the direct entry contains no observations.
+        if isinstance(aliased, dict) and aliased.get("n", 0) > 0 and (
+            not isinstance(direct, dict) or direct.get("n", 0) == 0
+        ):
+            return aliased
+        if direct is not None:
+            return direct
+        if aliased is not None:
+            return aliased
         if stage_key == "e2e" and isinstance(latency_result, dict) and "e2e" in latency_result:
             return latency_result["e2e"]
         return NOT_MEASURED
@@ -422,7 +442,7 @@ def build_report(
         latency_appendix = {
             "status": "measured",
             "result": latency_result,
-            "notes": "Wall-clock per stage, ticket-clustered SE, p50/p95, n_clusters.",
+            "notes": "Wall-clock per stage and input path, ticket-clustered SE, p50/p90/p95, throughput, attempts and failures.",
         }
     report: dict[str, Any] = {
         "generated_at": _dt.datetime.now(tz=_dt.timezone.utc).isoformat(),
@@ -564,11 +584,11 @@ def render_markdown(report: dict[str, Any]) -> str:
         stages = res.get("stages") if isinstance(res, dict) else None
         if isinstance(stages, dict):
             lines.append("")
-            lines.append("| Stage | mean (s) | SE (s) | n_clusters | p50 (s) | p95 (s) |")
-            lines.append("|---|---:|---:|---:|---:|---:|")
+            lines.append("| Stage | n | mean (s) | SE (s) | n_clusters | p50 (s) | p90 (s) | p95 (s) | throughput/s |")
+            lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|")
             for k, v in sorted(stages.items()):
                 if isinstance(v, dict):
-                    lines.append(f"| {k} | {v.get('mean_seconds', '—')} | {v.get('se_seconds', '—')} | {v.get('n_clusters', '—')} | {v.get('p50', '—')} | {v.get('p95', '—')} |")
+                    lines.append(f"| {k} | {v.get('n', '—')} | {v.get('mean_seconds', '—')} | {v.get('se_seconds', '—')} | {v.get('n_clusters', '—')} | {v.get('p50', '—')} | {v.get('p90', '—')} | {v.get('p95', '—')} | {v.get('throughput_per_second', '—')} |")
         e2e = res.get("e2e") if isinstance(res, dict) else None
         if isinstance(e2e, dict):
             lines.append("")
@@ -770,6 +790,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sarvam", type=Path, default=None, help="Optional Sarvam scorecard JSON (default: outputs/benchmark/sarvam_scorecard.json or outputs/sarvam/sarvam_scorecard.json if present).")
     parser.add_argument("--spam", type=Path, default=None, help="Optional spam prevalence JSON (default: outputs/benchmark/spam_prevalence.json or spam.json if present).")
     parser.add_argument("--dedup", type=Path, default=None, help="Optional dedup snapshot JSON (default: outputs/benchmark/dedup.json if present).")
+    parser.add_argument(
+        "--no-auto-discovery",
+        action="store_true",
+        help=(
+            "Do not load optional scorecards from ambient default paths. "
+            "Use for reproducible pipeline stages that declare every input."
+        ),
+    )
     parser.add_argument("--check", action="store_true", help="Validate existing outputs and exit; do not regenerate.")
     parser.add_argument("--allow-stale", action="store_true", help="With --check, do not fail on stale generated_at (>7d).")
     args = parser.parse_args(argv)
@@ -864,10 +892,44 @@ def main(argv: list[str] | None = None) -> int:
     # Auto-load other scorecards from default locations if not explicitly passed.
     # Check both the canonical ROOT_DIR/outputs/... and the chosen --out dir
     # so a custom --out that contains the artifacts still resolves.
-    pii_result = _try_load_json(args.pii) if args.pii else _try_load_first([DEFAULT_PII_PATH, DEFAULT_PII_SCORECARD_PATH, out_dir / "pii.json", out_dir / "pii_scorecard.json"])
-    sarvam_result = _try_load_json(args.sarvam) if args.sarvam else _try_load_first([DEFAULT_SARVAM_PATH, DEFAULT_SARVAM_ALT_PATH, out_dir / "sarvam_scorecard.json", out_dir / "sarvam.json"])
-    spam_result = _try_load_json(args.spam) if args.spam else _try_load_first([DEFAULT_SPAM_PATH, DEFAULT_SPAM_ALT_PATH, out_dir / "spam_prevalence.json", out_dir / "spam.json"])
-    dedup_result = _try_load_json(args.dedup) if args.dedup else _try_load_first([DEFAULT_DEDUP_PATH, out_dir / "dedup.json"])
+    def optional_input(explicit: Path | None, candidates: list[Path]):
+        if explicit is not None:
+            return _try_load_json(explicit)
+        if args.no_auto_discovery:
+            return None
+        return _try_load_first(candidates)
+
+    pii_result = optional_input(
+        args.pii,
+        [
+            DEFAULT_PII_PATH,
+            DEFAULT_PII_SCORECARD_PATH,
+            out_dir / "pii.json",
+            out_dir / "pii_scorecard.json",
+        ],
+    )
+    sarvam_result = optional_input(
+        args.sarvam,
+        [
+            DEFAULT_SARVAM_PATH,
+            DEFAULT_SARVAM_ALT_PATH,
+            out_dir / "sarvam_scorecard.json",
+            out_dir / "sarvam.json",
+        ],
+    )
+    spam_result = optional_input(
+        args.spam,
+        [
+            DEFAULT_SPAM_PATH,
+            DEFAULT_SPAM_ALT_PATH,
+            out_dir / "spam_prevalence.json",
+            out_dir / "spam.json",
+        ],
+    )
+    dedup_result = optional_input(
+        args.dedup,
+        [DEFAULT_DEDUP_PATH, out_dir / "dedup.json"],
+    )
     report = build_report(
         pii_result=pii_result,
         sarvam_result=sarvam_result,

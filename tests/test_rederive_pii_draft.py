@@ -116,6 +116,7 @@ def test_provenance_records_the_gold_checksum_and_flags_the_kind(tmp_path):
 
     meta = mod.provenance(gold, tmp_path / "draft.jsonl", 1, mod.Counter({"NAME": 1}))
 
+    assert meta["schema_version"] == mod.PROVENANCE_SCHEMA_VERSION
     assert meta["kind"] == "rederived_draft"
     assert meta["source_gold_md5"] == expected_md5
     assert meta["records"] == 1 and meta["spans"] == 1

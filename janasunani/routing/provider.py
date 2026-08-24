@@ -25,6 +25,7 @@ models to find out.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Optional, Protocol
 
 from loguru import logger
@@ -41,7 +42,15 @@ ROUTER_DEFAULT = "crosswalk"
 #: reproduce the pre-#33 behaviour and to isolate the crosswalk in a comparison.
 ROUTER_RULES = "rules"
 
-SUPPORTED_ROUTERS = (ROUTER_DEFAULT, ROUTER_RULES)
+#: Checksummed aggregate-only empirical-Bayes artifact. This predicts the
+#: unconfirmed department snapshot recorded in complaints.dept, never initial
+#: assignment intent, action-history traversal, routing correctness, disposal
+#: quality, or citizen benefit.
+ROUTER_INCIDENCE = "incidence"
+
+ROUTING_INCIDENCE_ARTIFACT_NAME = "routing_incidence"
+
+SUPPORTED_ROUTERS = (ROUTER_DEFAULT, ROUTER_RULES, ROUTER_INCIDENCE)
 
 
 class RoutingProvider(Protocol):
@@ -65,7 +74,90 @@ class RoutingProvider(Protocol):
     ) -> RoutingResult: ...
 
 
-def router_from_env(value: str | None = None) -> RoutingProvider:
+class IncidenceRoutingProvider:
+    """Serve a governed local incidence artifact with a safe fallback ladder."""
+
+    def __init__(self, router, fallback: RoutingProvider) -> None:
+        self._router = router
+        self._fallback = fallback
+
+    def route(
+        self,
+        *,
+        category: str,
+        subcategory: Optional[str] = None,
+        district: Optional[str] = None,
+    ) -> RoutingResult:
+        try:
+            prediction = self._router.predict_with_evidence(
+                category=category,
+                subcategory=subcategory,
+                district=district,
+            )
+            if prediction is not None:
+                department = max(
+                    prediction.probabilities,
+                    key=prediction.probabilities.get,
+                )
+                district_name = " ".join((district or "State").split())
+                from janasunani.serving.schemas import EmpiricalRoutingEvidence
+
+                return RoutingResult(
+                    dept=department,
+                    office=f"{department}, {district_name}",
+                    confidence=min(0.95, prediction.probabilities[department]),
+                    method="learned",
+                    empirical_evidence=EmpiricalRoutingEvidence(
+                        support=prediction.support,
+                        concentration=prediction.concentration,
+                        width=prediction.width,
+                    ),
+                )
+        except Exception:
+            logger.warning(
+                "incidence routing failed for an aggregate lookup; using the "
+                "crosswalk/rules fallback"
+            )
+        return self._fallback.route(
+            category=category,
+            subcategory=subcategory,
+            district=district,
+        )
+
+
+def _load_incidence_provider(
+    *,
+    models_dir: Path | None = None,
+    verified_artifacts: dict[tuple[Path, str], Path] | None = None,
+) -> IncidenceRoutingProvider | None:
+    """Resolve and load the local artifact; never contact MLflow or a registry."""
+
+    try:
+        from janasunani.evaluation.routing import load_incidence_router
+        from janasunani.routing.rules import DEFAULT_ROUTER
+        from janasunani.tracking.artifacts import resolve_artifact
+
+        artifact = resolve_artifact(
+            ROUTING_INCIDENCE_ARTIFACT_NAME,
+            models_dir=models_dir,
+            verified_artifacts=verified_artifacts,
+        )
+        if artifact is None:
+            return None
+        router = load_incidence_router(artifact)
+        if router is None:
+            return None
+        return IncidenceRoutingProvider(router, DEFAULT_ROUTER)
+    except Exception:
+        return None
+
+
+def router_from_env(
+    value: str | None = None,
+    *,
+    models_dir: Path | None = None,
+    verified_artifacts: dict[tuple[Path, str], Path] | None = None,
+) -> RoutingProvider:
     """Select a router by environment, degrading to the default on anything odd.
 
     Unset, unknown, or unconstructable all return the shipped router. An
@@ -85,6 +177,20 @@ def router_from_env(value: str | None = None) -> RoutingProvider:
         except (OSError, RuntimeError, ValueError):
             logger.warning("{}={} could not be constructed; using the default router", ROUTER_ENV_VAR, configured)
             return RuleRouter()
+    if configured == ROUTER_INCIDENCE:
+        provider = _load_incidence_provider(
+            models_dir=models_dir,
+            verified_artifacts=verified_artifacts,
+        )
+        if provider is not None:
+            return provider
+        logger.warning(
+            "{}={} has no valid local {} artifact; using the default router",
+            ROUTER_ENV_VAR,
+            configured,
+            ROUTING_INCIDENCE_ARTIFACT_NAME,
+        )
+        return DEFAULT_ROUTER
     logger.warning(
         "{}={!r} is not one of {}; using the default router",
         ROUTER_ENV_VAR,
@@ -94,7 +200,11 @@ def router_from_env(value: str | None = None) -> RoutingProvider:
     return DEFAULT_ROUTER
 
 
-def router_status() -> tuple[str, bool, str]:
+def router_status(
+    *,
+    models_dir: Path | None = None,
+    verified_artifacts: dict[tuple[Path, str], Path] | None = None,
+) -> tuple[str, bool, str]:
     """Report ``(name, ok, detail)`` naming the rung that will answer first.
 
     Validates by **loading** the crosswalk, not by checking that a file
@@ -151,6 +261,57 @@ def router_status() -> tuple[str, bool, str]:
             True,
             "crosswalk disabled by configuration; first rung is the ORTPSA mapping tables",
         )
+
+    if configured == ROUTER_INCIDENCE:
+        try:
+            from janasunani.evaluation.routing import (
+                INCIDENCE_ARTIFACT_SCHEMA_VERSION,
+                load_incidence_router,
+            )
+            from janasunani.tracking.artifacts import resolve_artifact
+
+            artifact = resolve_artifact(
+                ROUTING_INCIDENCE_ARTIFACT_NAME,
+                models_dir=models_dir,
+                verified_artifacts=verified_artifacts,
+            )
+            if artifact is None:
+                return (
+                    ROUTER_DEFAULT,
+                    False,
+                    "incidence router requested but no local routing_incidence "
+                    "artifact resolved; using the crosswalk/rules fallback",
+                )
+            router = load_incidence_router(artifact)
+            if router is None:
+                return (
+                    ROUTER_DEFAULT,
+                    False,
+                    "incidence router artifact is unreadable, corrupt, or invalid; "
+                    "using the crosswalk/rules fallback",
+                )
+            if not router.has_eligible_prediction():
+                return (
+                    ROUTER_DEFAULT,
+                    False,
+                    "incidence router artifact has no aggregate that clears its "
+                    "serving gates; using the crosswalk/rules fallback",
+                )
+            return (
+                ROUTER_INCIDENCE,
+                True,
+                f"checksummed {INCIDENCE_ARTIFACT_SCHEMA_VERSION} artifact loaded "
+                "locally; objective is agreement with the unconfirmed "
+                "complaints.dept snapshot, not assignment intent, action-history "
+                "traversal, routing correctness, or outcome optimization",
+            )
+        except Exception as exc:
+            return (
+                ROUTER_DEFAULT,
+                False,
+                f"incidence router could not be loaded ({exc}); using the "
+                "crosswalk/rules fallback",
+            )
 
     if configured not in SUPPORTED_ROUTERS:
         return (

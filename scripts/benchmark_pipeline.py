@@ -12,8 +12,8 @@ Design (per demo-integration-rehearsal Part 5):
 * Cluster SE by ticket/document — reuse the ticket-clustering logic from
   ``sarvam_scorecard._clustered_se`` (pages from one complaint are
   correlated; same for repeated timings on one ticket).
-* Report: mean_seconds, se_seconds, n_clusters, p50, p95 per stage and
-  end-to-end.
+* Report: mean_seconds, se_seconds, n_clusters, p50, p90, p95 and throughput
+  per stage/input path and end-to-end, plus run-level attempts and failures.
 * Output: ``outputs/benchmark/latency.json``
 * Variants: standard, sarvam_digitise, sarvam_extract, sarvam_both
 
@@ -34,6 +34,8 @@ import argparse
 import hashlib
 import json
 import math
+import os
+import platform
 import random
 import subprocess
 import time
@@ -77,6 +79,7 @@ DEFAULT_REPEATS = 3
 
 # Output location (relative to repo root)
 DEFAULT_OUTPUT = Path("outputs/benchmark/latency.json")
+LATENCY_SCHEMA_VERSION = "janasunani.pipeline-latency/v1"
 
 # Fake per-stage mean seconds (CPU laptop, no GPU). These are not
 # performance claims — they are deterministic stand-ins so the harness
@@ -155,15 +158,15 @@ def compute_stage_stats(
     times: list[float],
     tickets: list[str],
 ) -> dict[str, Any]:
-    """Compute mean/se/p50/p95 with ticket-clustered SE.
+    """Compute mean/se/percentiles/throughput with ticket-clustered SE.
 
     Args:
         times: per-measurement wall seconds for one stage (or e2e).
         tickets: ticket/document id per measurement (same length as times).
 
     Returns dict with keys mean_seconds, se_seconds, n_clusters,
-    p50, p95, n, min_seconds, max_seconds. All floats are plain Python
-    floats for JSON serialisation.
+    p50, p90, p95, n, min_seconds, max_seconds and throughput. All floats
+    are plain Python floats for JSON serialisation.
     """
     if len(times) != len(tickets):
         raise ValueError("times and tickets must have equal length")
@@ -175,11 +178,14 @@ def compute_stage_stats(
             "n_clusters": 0,
             "n": 0,
             "p50": 0.0,
+            "p90": 0.0,
             "p95": 0.0,
             "min_seconds": 0.0,
             "max_seconds": 0.0,
+            "throughput_per_second": 0.0,
         }
-    mean = sum(times) / n
+    total_seconds = sum(times)
+    mean = total_seconds / n
     se = _clustered_se(times, tickets)
     n_clusters = len(set(tickets))
     p50 = _percentile(times, 50)
@@ -190,10 +196,44 @@ def compute_stage_stats(
         "n_clusters": int(n_clusters),
         "n": int(n),
         "p50": float(p50),
+        "p90": float(_percentile(times, 90)),
         "p95": float(p95),
         "min_seconds": float(min(times)),
         "max_seconds": float(max(times)),
+        "throughput_per_second": float(n / total_seconds) if total_seconds > 0 else 0.0,
     }
+
+
+def _input_kind(ticket: str) -> str:
+    if ticket.startswith("SYN-TXT-"):
+        return "text"
+    if ticket.startswith("SYN-IMG-"):
+        return "document"
+    return "unspecified"
+
+
+def _stats_by_input(
+    times_by_stage: dict[str, list[float]],
+    tickets_by_stage: dict[str, list[str]],
+) -> dict[str, dict[str, dict[str, Any]]]:
+    result: dict[str, dict[str, dict[str, Any]]] = {}
+    kinds = sorted(
+        {_input_kind(ticket) for tickets in tickets_by_stage.values() for ticket in tickets}
+    )
+    for kind in kinds:
+        result[kind] = {}
+        for stage, times in times_by_stage.items():
+            tickets = tickets_by_stage.get(stage, [])
+            selected = [
+                (seconds, ticket)
+                for seconds, ticket in zip(times, tickets)
+                if _input_kind(ticket) == kind
+            ]
+            result[kind][stage] = compute_stage_stats(
+                [seconds for seconds, _ in selected],
+                [ticket for _, ticket in selected],
+            )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -237,36 +277,72 @@ def synthesize_documents(
                 "district": "Sambalpur",
             }
         )
-    # Synthetic image documents — valid minimal PDF so real OCR path does not abort
-    # (single blank page, ~350 bytes, pdfinfo-clean; content is not used for
-    # accuracy, only for wall-clock measurement).
-    _VALID_MINIMAL_PDF = (
-        b"%PDF-1.1\n"
-        b"1 0 obj\n<</Type/Catalog/Pages 2 0 R>>\nendobj\n"
-        b"2 0 obj\n<</Type/Pages/Kids[3 0 R]/Count 1>>\nendobj\n"
-        b"3 0 obj\n<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]>>\nendobj\n"
-        b"xref\n0 4\n"
-        b"0000000000 65535 f \n"
-        b"0000000009 00000 n \n"
-        b"0000000056 00000 n \n"
-        b"0000000111 00000 n \n"
-        b"trailer\n<</Size 4/Root 1 0 R>>\n"
-        b"startxref\n178\n%%EOF\n"
-    )
+    # Synthetic image documents use a one-page PDF with visible text. The old
+    # fixture was a structurally valid *blank* page; the real OCR quality gate
+    # correctly rejected it, so the timing harness could only run in fake mode.
     for i in range(n_image):
         ticket = f"SYN-IMG-{i:04d}"
+        document_bytes = _single_page_text_pdf(
+            "To,\n"
+            "The District Collector, Sambalpur\n\n"
+            "Subject: Request for road repair near the health centre\n\n"
+            "Respected Sir or Madam,\n"
+            "The road near our primary health centre has remained damaged for several weeks.\n"
+            "Residents request an inspection and timely repair so ambulances can pass safely.\n\n"
+            f"Reference: synthetic grievance {i}, ticket {ticket}\n\n"
+            "Yours faithfully,\nA concerned resident"
+        )
         docs.append(
             {
                 "ticket": ticket,
                 "text": None,
                 "document_name": f"synthetic_{i}.pdf",
-                "document_bytes": _VALID_MINIMAL_PDF,
+                "document_bytes": document_bytes,
                 "district": "Sambalpur",
             }
         )
     # Deterministic shuffle so order is not fixture-grouped
     rng.shuffle(docs)
     return docs
+
+
+def _single_page_text_pdf(text: str) -> bytes:
+    """Build a deterministic one-page Helvetica PDF using only the stdlib."""
+    commands = ["BT /F1 14 Tf 54 740 Td 20 TL"]
+    for line in text.splitlines():
+        escaped = line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+        commands.append(f"({escaped}) Tj T*")
+    commands.append("ET")
+    content = ("\n".join(commands) + "\n").encode("ascii")
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>"
+        ),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length " + str(len(content)).encode("ascii") + b" >>\nstream\n"
+        + content
+        + b"endstream",
+    ]
+    payload = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets = [0]
+    for index, obj in enumerate(objects, start=1):
+        offsets.append(len(payload))
+        payload.extend(f"{index} 0 obj\n".encode("ascii"))
+        payload.extend(obj)
+        payload.extend(b"\nendobj\n")
+    xref_offset = len(payload)
+    payload.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    payload.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        payload.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    payload.extend(
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+        f"startxref\n{xref_offset}\n%%EOF\n".encode("ascii")
+    )
+    return bytes(payload)
 
 
 # ---------------------------------------------------------------------------
@@ -366,7 +442,7 @@ def _measure_with_processor(
     discard_warm: bool,
     processor_factory: Callable[[str], Any] | None,
     sleep_fake: bool = False,
-) -> dict[str, list[float]]:
+) -> dict[str, Any]:
     """Run processor over docs repeats times, collect per-stage wall seconds.
 
     Returns dict stage -> list of wall seconds (one entry per measured
@@ -381,6 +457,12 @@ def _measure_with_processor(
     """
     per_stage_times: dict[str, list[float]] = {k: [] for k in ALL_KEYS}
     per_stage_tickets: dict[str, list[str]] = {k: [] for k in ALL_KEYS}
+    temperature_times: dict[str, list[float]] = {"cold": [], "warm": []}
+    temperature_tickets: dict[str, list[str]] = {"cold": [], "warm": []}
+    has_completed_request = False
+    attempts = 0
+    completed_attempts = 0
+    failures_by_error: defaultdict[str, int] = defaultdict(int)
 
     # Optionally warm a real processor once per variant
     processor = None
@@ -390,6 +472,7 @@ def _measure_with_processor(
     for doc in docs:
         ticket = doc["ticket"]
         for r in range(repeats):
+            attempts += 1
             is_warm = discard_warm and r == 0
             # Timing path: real processor vs fake
             if processor is not None:
@@ -409,11 +492,25 @@ def _measure_with_processor(
                         document_bytes=doc.get("document_bytes"),
                         district=doc.get("district"),
                     )
-                except Exception:
-                    # Benchmark must not hide processor bugs as slow timings.
-                    # Re-raise so the harness fails visibly.
-                    raise
+                except Exception as exc:  # noqa: BLE001
+                    # Failed attempts are reliability evidence, not latency
+                    # samples. Record only the exception type so processor
+                    # messages cannot leak grievance content, then continue.
+                    failures_by_error[type(exc).__name__] += 1
+                    continue
                 elapsed = time.perf_counter() - start
+                completed = captured.pop("ok", 1.0)
+                if completed != 1.0:
+                    failures_by_error["IncompleteTimingRecord"] += 1
+                    continue
+                completed_attempts += 1
+                # "Cold" means the first successful request after processor
+                # construction, not the first repeat of every document.  The
+                # latter would relabel already-warm requests as cold.
+                temperature = "warm" if has_completed_request else "cold"
+                temperature_times[temperature].append(captured.get(E2E_KEY, elapsed))
+                temperature_tickets[temperature].append(ticket)
+                has_completed_request = True
                 if is_warm:
                     continue
                 # Prefer the sink's own e2e; fall back to the outer wall clock
@@ -435,6 +532,11 @@ def _measure_with_processor(
                 # Fake timing path — deterministic, fast, no sleep unless
                 # BENCHMARK_FAKE_SLEEP is set (for manual wall-clock checks).
                 timings = _fake_process(variant, ticket, r)
+                completed_attempts += 1
+                temperature = "warm" if has_completed_request else "cold"
+                temperature_times[temperature].append(timings.e2e)
+                temperature_tickets[temperature].append(ticket)
+                has_completed_request = True
                 if sleep_fake:
                     # Optionally sleep a tiny fraction so wall-clock is real
                     time.sleep(min(timings.e2e * 0.01, 0.005))
@@ -450,6 +552,12 @@ def _measure_with_processor(
     return {
         "times": per_stage_times,  # type: ignore[return-value]
         "tickets": per_stage_tickets,  # type: ignore[return-value]
+        "attempts": attempts,
+        "completed_attempts": completed_attempts,
+        "failed_attempts": attempts - completed_attempts,
+        "failures_by_error": dict(sorted(failures_by_error.items())),
+        "temperature_times": temperature_times,
+        "temperature_tickets": temperature_tickets,
     }
 
 
@@ -513,7 +621,7 @@ def run_benchmark(
     per_stage_tickets: dict[str, list[str]] = raw["tickets"]  # type: ignore[assignment]
 
     stages_stats: dict[str, dict[str, Any]] = {}
-    for key in ALL_KEYS:
+    for key in per_stage_times:
         times = per_stage_times.get(key, [])
         tickets = per_stage_tickets.get(key, [])
         stages_stats[key] = compute_stage_stats(times, tickets)
@@ -532,10 +640,34 @@ def run_benchmark(
         "repeats": repeats,
         "warm_discarded": discard_warm,
         "n_measured": len(per_stage_times.get(E2E_KEY, [])),
+        "attempts": raw["attempts"],
+        "completed_attempts": raw["completed_attempts"],
+        "failed_attempts": raw["failed_attempts"],
+        "failures_by_error": raw["failures_by_error"],
         "timestamp": timestamp,
         "git_sha": git_sha,
         "stages": stages_stats,
+        "input_paths": _stats_by_input(per_stage_times, per_stage_tickets),
+        "temperature_e2e": {
+            temperature: compute_stage_stats(
+                raw["temperature_times"][temperature],
+                raw["temperature_tickets"][temperature],
+            )
+            for temperature in ("cold", "warm")
+        },
+        "temperature_definition": {
+            "cold": "first successful request after processor construction",
+            "warm": "all subsequent successful requests in the same process",
+        },
         "is_fake_timing": bool(is_fake),
+        "environment": {
+            "python": platform.python_version(),
+            "system": platform.system(),
+            "release": platform.release(),
+            "machine": platform.machine(),
+            "processor": platform.processor() or None,
+            "logical_cpu_count": os.cpu_count(),
+        },
     }
     # Keep raw times under a separate key for callers that want to inspect
     # or re-aggregate differently; not part of the committed latency.json
@@ -567,6 +699,42 @@ def latency_json_payload(
         clean = {k: v for k, v in result.items() if k != "_raw"}
         variants_payload[variant] = clean
 
+    def nonblank(value: object) -> bool:
+        return isinstance(value, str) and bool(value.strip())
+
+    def has_cold_and_warm(result: dict[str, Any]) -> bool:
+        temperatures = result.get("temperature_e2e")
+        return isinstance(temperatures, dict) and all(
+            isinstance(temperatures.get(key), dict)
+            and temperatures[key].get("n", 0) > 0
+            for key in ("cold", "warm")
+        )
+
+    def has_clean_full_path_coverage(result: dict[str, Any]) -> bool:
+        if result.get("failed_attempts") != 0:
+            return False
+        input_paths = result.get("input_paths")
+        return isinstance(input_paths, dict) and all(
+            isinstance(input_paths.get(path_name), dict)
+            and isinstance(input_paths[path_name].get("e2e"), dict)
+            and input_paths[path_name]["e2e"].get("n", 0) > 0
+            for path_name in ("text", "document")
+        )
+
+    publication_ready = bool(variants_payload) and all(
+        not result.get("is_fake_timing", True)
+        and result.get("n_measured", 0) > 0
+        and has_cold_and_warm(result)
+        and has_clean_full_path_coverage(result)
+        and result.get("attempts")
+        == result.get("completed_attempts", 0) + result.get("failed_attempts", 0)
+        and isinstance(result.get("benchmark_context"), dict)
+        and nonblank(result["benchmark_context"].get("host_label"))
+        and nonblank(result["benchmark_context"].get("model_release_id"))
+        and nonblank(result.get("git_sha"))
+        for result in variants_payload.values()
+    )
+
     # If single variant, also expose top-level stages for backwards compat
     if len(variants_payload) == 1:
         only_variant = next(iter(variants_payload))
@@ -574,11 +742,15 @@ def latency_json_payload(
         # Top-level is that variant's payload plus variants wrapper
         payload: dict[str, Any] = {
             **only_result,
+            "schema_version": LATENCY_SCHEMA_VERSION,
+            "publication_ready": publication_ready,
             "variants": variants_payload,
         }
     else:
         # Multi-variant file: top-level is variants plus summary
         payload = {
+            "schema_version": LATENCY_SCHEMA_VERSION,
+            "publication_ready": publication_ready,
             "variants": variants_payload,
             "n_variants": len(variants_payload),
             "timestamp": datetime.now(UTC).isoformat(),
@@ -673,6 +845,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use deterministic fake timings (synthetic, not publishable). "
         "By default, real processor is attempted; requires --fake explicitly for CI.",
     )
+    parser.add_argument(
+        "--host-label",
+        default=None,
+        help="Stable label for the benchmark host.",
+    )
+    parser.add_argument(
+        "--model-release-id",
+        default=None,
+        help="Approved release ID, or an explicit development artifact identifier.",
+    )
     return parser
 
 
@@ -705,7 +887,13 @@ def main(argv: list[str] | None = None) -> int:
     # the result as is_fake_timing=true (non-publishable). Real wiring is
     # tracked as post-demo work (provider registry + live Sarvam path).
     is_fake = args.fake
+    if not is_fake and any(variant != "standard" for variant in variants):
+        parser.error(
+            "real Sarvam variants are not wired into this timing harness; "
+            "run only --variant standard or use --fake for harness tests"
+        )
     processor_factory: Any = None
+    startup: dict[str, float] = {}
     if not is_fake:
         # Real wiring. This used to force is_fake=True unconditionally, which
         # meant every number this harness ever printed came from the constant
@@ -724,7 +912,9 @@ def main(argv: list[str] | None = None) -> int:
 
         def processor_factory(variant: str) -> Any:  # noqa: ARG001 - one warm processor serves every variant
             if "processor" not in warmed:
+                started = time.perf_counter()
                 warmed["processor"] = build_processor(timing_sink=lambda _timings: None)
+                startup["seconds"] = time.perf_counter() - started
             return warmed["processor"]
 
     results: dict[str, dict[str, Any]] = {}
@@ -740,6 +930,13 @@ def main(argv: list[str] | None = None) -> int:
             processor_factory=processor_factory,
             is_fake=is_fake,
         )
+        result["processor_startup_seconds"] = startup.get("seconds")
+        result["benchmark_context"] = {
+            "host_label": args.host_label,
+            "model_release_id": args.model_release_id,
+            "fixture": "deterministic synthetic grievances without citizen data",
+            "execution": "sequential single-process execution",
+        }
         results[variant] = result
         e2e = result["stages"][E2E_KEY]
         print(
@@ -747,7 +944,8 @@ def main(argv: list[str] | None = None) -> int:
             f"warm_discarded={discard_warm} -> "
             f"e2e mean={e2e['mean_seconds']:.3f}s "
             f"se={e2e['se_seconds']:.3f}s "
-            f"p50={e2e['p50']:.3f}s p95={e2e['p95']:.3f}s "
+            f"p50={e2e['p50']:.3f}s p90={e2e['p90']:.3f}s "
+            f"p95={e2e['p95']:.3f}s "
             f"n={e2e['n']} clusters={e2e['n_clusters']}"
         )
 

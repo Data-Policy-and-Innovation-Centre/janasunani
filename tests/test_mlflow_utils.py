@@ -1,3 +1,4 @@
+import hashlib
 from uuid import uuid4
 
 import pytest
@@ -8,6 +9,7 @@ from janasunani.tracking.mlflow_utils import (
     DVC_PATH_TAG,
     ensure_experiment,
     log_benchmark_run,
+    log_evaluation_run,
     log_model_artifact,
 )
 
@@ -132,6 +134,146 @@ def test_log_model_artifact_dvc_tags_survive_clobbering_extra_tags(tmp_path):
     version = client.get_model_version(model_name, logged.model_version)
     assert version.tags[DVC_PATH_TAG] == "models/categorizer"
     assert version.tags[DVC_HASH_TAG] == "abc123"
+
+
+# ---------------------------------------------------------------------------
+# Governed evaluation runs
+# ---------------------------------------------------------------------------
+
+
+def _governed_evaluation_args(tmp_path):
+    report = tmp_path / "evaluation.json"
+    report.write_text('{"accuracy": 0.75}\n', encoding="utf-8")
+    return {
+        "task": "actionability",
+        "dataset_fingerprint": f"sha256:{'a' * 64}",
+        "split_fingerprint": f"sha256:{'b' * 64}",
+        "code_sha": "c" * 40,
+        "dependency_lock_sha": f"sha256:{'d' * 64}",
+        "report_schema": "classification-report",
+        "report_version": "1.0",
+        "parameters": {
+            "model_family": "tfidf-logreg",
+            "c": 2.0,
+            "class_weight_balanced": True,
+            "max_features": None,
+        },
+        "metrics": {"macro_f1": 0.72, "accuracy": 0.75},
+        "report_path": report,
+    }
+
+
+def test_log_evaluation_run_records_required_provenance_and_report(tmp_path):
+    tracking_uri = (tmp_path / "mlruns").as_uri()
+    artifact_uri = (tmp_path / "artifacts").as_uri()
+    arguments = _governed_evaluation_args(tmp_path)
+
+    run_id = log_evaluation_run(
+        **arguments,
+        experiment_name="governed-test",
+        tracking_uri=tracking_uri,
+        artifact_uri=artifact_uri,
+    )
+
+    client = MlflowClient(tracking_uri=tracking_uri)
+    run = client.get_run(run_id)
+    params = run.data.params
+    assert params["evaluation.task"] == "actionability"
+    assert params["dataset.fingerprint"] == f"sha256:{'a' * 64}"
+    assert params["split.fingerprint"] == f"sha256:{'b' * 64}"
+    assert params["code.sha"] == "c" * 40
+    assert params["dependency_lock.sha256"] == "d" * 64
+    assert params["report.schema"] == "classification-report"
+    assert params["report.version"] == "1.0"
+    assert params["report.sha256"] == hashlib.sha256(
+        arguments["report_path"].read_bytes()
+    ).hexdigest()
+    assert params["parameter.model_family"] == "tfidf-logreg"
+    assert params["parameter.c"] == "2.0"
+    assert params["parameter.class_weight_balanced"] == "true"
+    assert params["parameter.max_features"] == "null"
+    assert run.data.metrics["macro_f1"] == pytest.approx(0.72)
+    assert run.data.metrics["accuracy"] == pytest.approx(0.75)
+    assert {item.path for item in client.list_artifacts(run_id, "report")} == {
+        "report/evaluation.json"
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("task", "", "task"),
+        ("dataset_fingerprint", "", "dataset_fingerprint"),
+        ("split_fingerprint", "not-a-digest", "split_fingerprint"),
+        ("code_sha", "abc1234", "code_sha"),
+        ("dependency_lock_sha", "f" * 40, "dependency_lock_sha"),
+        ("report_schema", "", "report_schema"),
+        ("report_version", "version with spaces", "report_version"),
+    ],
+)
+def test_log_evaluation_run_rejects_missing_or_invalid_provenance(
+    tmp_path, field, value, message
+):
+    arguments = _governed_evaluation_args(tmp_path)
+    arguments[field] = value
+
+    with pytest.raises(ValueError, match=message):
+        log_evaluation_run(**arguments, tracking_uri=(tmp_path / "mlruns").as_uri())
+
+    # Validation is complete before MLflow creates a local experiment/run.
+    assert not (tmp_path / "mlruns").exists()
+
+
+@pytest.mark.parametrize(
+    ("parameters", "message"),
+    [
+        ({}, "parameters"),
+        ({"nested": {"c": 1}}, "scalar"),
+        ({"bad value": 1}, "parameter name"),
+        ({"c": float("nan")}, "scalar"),
+    ],
+)
+def test_log_evaluation_run_rejects_incomplete_or_lossy_parameters(
+    tmp_path, parameters, message
+):
+    arguments = _governed_evaluation_args(tmp_path)
+    arguments["parameters"] = parameters
+
+    with pytest.raises(ValueError, match=message):
+        log_evaluation_run(**arguments, tracking_uri=(tmp_path / "mlruns").as_uri())
+
+
+@pytest.mark.parametrize(
+    ("metrics", "message"),
+    [
+        ({}, "metrics"),
+        ({"accuracy": float("inf")}, "finite"),
+        ({"accuracy": True}, "finite"),
+        ({"bad metric": 0.5}, "metric name"),
+    ],
+)
+def test_log_evaluation_run_rejects_missing_or_invalid_metrics(
+    tmp_path, metrics, message
+):
+    arguments = _governed_evaluation_args(tmp_path)
+    arguments["metrics"] = metrics
+
+    with pytest.raises(ValueError, match=message):
+        log_evaluation_run(**arguments, tracking_uri=(tmp_path / "mlruns").as_uri())
+
+
+@pytest.mark.parametrize("kind", ["missing", "empty", "directory"])
+def test_log_evaluation_run_requires_a_nonempty_report_file(tmp_path, kind):
+    arguments = _governed_evaluation_args(tmp_path)
+    report = tmp_path / f"{kind}-report.json"
+    if kind == "empty":
+        report.touch()
+    elif kind == "directory":
+        report.mkdir()
+    arguments["report_path"] = report
+
+    with pytest.raises(ValueError, match="report_path"):
+        log_evaluation_run(**arguments, tracking_uri=(tmp_path / "mlruns").as_uri())
 
 
 # ---------------------------------------------------------------------------

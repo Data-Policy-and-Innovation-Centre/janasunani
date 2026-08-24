@@ -1,0 +1,79 @@
+{
+  "adjudication": {
+    "independent_judges": false,
+    "judge_type": "single-frontier-agent-context",
+    "narrative_review_storage": "private-temporary-only",
+    "officer_validated": false,
+    "one_time_redacted_egress_authorized": true,
+    "provider": "OpenAI Codex",
+    "exact_served_model_revision": "unavailable",
+    "prompt_and_sampling_metadata": "unavailable-beyond-committed-rubric",
+    "edit_seconds_source": "frontier-judge estimate, not observed officer time",
+    "rubric": "summary-scorecard-v1",
+    "rubric_sha256": "a887bfcff4011ee541f4bff91d1ea86394c4ad388215b2fee59bd56a7f5a578c",
+    "structured_judgments_only_in_governed_artifacts": true
+  },
+  "environment": {
+    "device": "cpu",
+    "python": "3.13.0",
+    "torch": "2.12.1",
+    "transformers": "4.57.6"
+  },
+  "evidence_status": "single-frontier-judge-development-only",
+  "limitations": [
+    "typed redacted inputs only",
+    "language labels not adjudicated",
+    "single frontier-agent judge",
+    "development test viewed",
+    "edit time is adjudicator time, not officer time saved"
+  ],
+  "model": {
+    "family": "facebook/bart-large-cnn",
+    "local_files_only": true,
+    "revision": "37f520fa929c961707657b28798b30c003dd100b",
+    "max_input_tokens": 1024,
+    "max_output_tokens": 100,
+    "min_output_tokens": 20,
+    "num_beams": 4,
+    "weights_sha256": "40041830399afb5348525ef8354b007ecec4286fdf3524f7e6b54377e17096cb"
+  },
+  "publication_ready": false,
+  "schema_version": "summary-development-provenance/v1",
+  "selection": {
+    "cohort_counts": {
+      "category:Agriculture & Farming": 1,
+      "category:Education": 1,
+      "category:Energy": 1,
+      "category:General": 1,
+      "category:Health Care": 1,
+      "category:Housing": 1,
+      "category:Infrastructure": 1,
+      "category:Irrigation": 1,
+      "category:Land Matters": 1,
+      "category:Miscellaneous": 1,
+      "category:Pension/Retirement Benefits": 1,
+      "category:Police Case": 1,
+      "category:Public Utility": 1,
+      "category:School & College": 1,
+      "category:Service Matters": 1,
+      "category:Social Welfare": 1,
+      "category:Water Supply": 1,
+      "deterministic-fill": 1,
+      "language-abstention": 3,
+      "long-input": 3,
+      "short-input": 6
+    },
+    "generated": 26,
+    "not_prevalence_representative": true,
+    "policy": "deterministic-enriched-category-short-long-language-v1",
+    "private_review_sha256": "7eebf8800d96351e715f739683ed0e0b07e9ce27c3acb40915df30f989d0f275",
+    "sample_size": 30,
+    "skipped": 4
+  },
+  "source": {
+    "path": "data/external/categorization_historical_v1/benchmark.jsonl",
+    "redacted_only": true,
+    "sha256": "9d188465147aaf9b9460374fd27156d1f7af4085557d569adbe8ceb46efbf634",
+    "split": "test"
+  }
+}

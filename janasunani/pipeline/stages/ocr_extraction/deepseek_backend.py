@@ -1,14 +1,13 @@
 """DeepSeek-OCR backend.
 
-Loads `deepseek-ai/DeepSeek-OCR` from HuggingFace and runs inference
+Loads a pinned local DeepSeek-OCR artifact and runs inference
 via `model.infer()`. Requires CUDA — fails fast at model load time
 if a GPU isn't available, with a clear message pointing to pytesseract
 as the CPU alternative.
 
-The model itself is multi-gigabyte and takes a noticeable time to load
-(and download on first run). For that reason this module never auto-
-loads the model — the caller must explicitly call `load_model()` only
-when there's work to do.
+The model itself is multi-gigabyte and takes a noticeable time to load. This
+module never auto-loads it, and a mutable public Hugging Face ID is accepted
+only with the explicit development-only remote-model opt-in.
 """
 from __future__ import annotations
 
@@ -17,6 +16,7 @@ from tempfile import NamedTemporaryFile
 from typing import Any
 
 from PIL import Image
+from janasunani.tracking.artifacts import remote_models_allowed, resolve_artifact
 
 # Default model ID. Override by passing a different name to load_model().
 DEFAULT_MODEL_NAME = "deepseek-ai/DeepSeek-OCR"
@@ -26,12 +26,39 @@ DEFAULT_MODEL_NAME = "deepseek-ai/DeepSeek-OCR"
 DEFAULT_PROMPT = "<image>\nFree OCR. Oriya or English."
 
 
-def load_model(model_name: str = DEFAULT_MODEL_NAME) -> tuple[Any, Any]:
+def _resolve_model_source(
+    model_name: str | None = None, *, models_dir: Path | None = None
+) -> tuple[str, bool]:
+    if model_name is not None:
+        candidate = Path(model_name)
+        if candidate.exists():
+            return str(candidate), True
+        if remote_models_allowed():
+            return model_name, False
+        raise RuntimeError(
+            "remote DeepSeek model IDs require JANASUNANI_ALLOW_REMOTE_MODELS=1"
+        )
+    artifact = resolve_artifact("deepseek_ocr", models_dir=models_dir)
+    if artifact is not None:
+        return str(artifact), True
+    if remote_models_allowed():
+        return DEFAULT_MODEL_NAME, False
+    raise RuntimeError(
+        "no local DeepSeek OCR artifact resolved; materialize the approved release "
+        "or set JANASUNANI_ALLOW_REMOTE_MODELS=1 for development only"
+    )
+
+
+def load_model(
+    model_name: str | None = None, *, models_dir: Path | None = None
+) -> tuple[Any, Any]:
     """Load the DeepSeek-OCR tokenizer and model. Returns (tokenizer, model).
 
     Raises a clear error if CUDA isn't available, since this model is
     GPU-only in practice (the original code calls .cuda() unconditionally).
     """
+    source, local_only = _resolve_model_source(model_name, models_dir=models_dir)
+
     # Import torch/transformers lazily so importing this module doesn't
     # fail on systems without those deps installed.
     import torch
@@ -46,18 +73,24 @@ def load_model(model_name: str = DEFAULT_MODEL_NAME) -> tuple[Any, Any]:
     # The original code preferred LlamaTokenizer and fell back to AutoTokenizer.
     # Keep that order.
     try:
-        tokenizer = LlamaTokenizer.from_pretrained(model_name, trust_remote_code=True)
+        tokenizer = LlamaTokenizer.from_pretrained(
+            source, trust_remote_code=True, local_files_only=local_only
+        )
     except Exception:
         tokenizer = AutoTokenizer.from_pretrained(
-            model_name, trust_remote_code=True, use_fast=False
+            source,
+            trust_remote_code=True,
+            use_fast=False,
+            local_files_only=local_only,
         )
 
     model = AutoModel.from_pretrained(
-        model_name,
+        source,
         attn_implementation="eager",
         trust_remote_code=True,
         use_safetensors=True,
         torch_dtype=torch.bfloat16,
+        local_files_only=local_only,
     )
     model = model.to("cuda").eval()
 

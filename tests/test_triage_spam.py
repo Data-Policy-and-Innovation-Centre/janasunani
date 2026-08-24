@@ -66,8 +66,8 @@ def test_unavailable_fallback():
     result = unavailable_triage()
     assert result.spam.decision == "abstained"
     assert result.spam.reason_code == "advisory_provider_unavailable"
-    assert result.spam.spam_score == 0.0
-    assert result.spam.spam_reason == "clean"
+    assert result.spam.spam_score is None
+    assert result.spam.spam_reason is None
     assert result.spam.method == "unavailable"
     assert result.duplicate_review.decision == "unavailable"
 

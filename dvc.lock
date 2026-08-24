@@ -29,9 +29,10 @@ stages:
       md5: 4ad7a17893cb22a396f572b899e68c25
       size: 3925
   pipeline-sample:
-    cmd: uv run --extra pipeline-core janasunani-pipeline run --input 
-      data/raw/documents-sample --db data/processed/pipeline-sample.sqlite 
-      --models models --ocr-engine pytesseract --stages format_classifier 
+    cmd: JANASUNANI_FORMAT_CLASSIFIER_ARTIFACT=models/format_classifier/page_split_v3.0_doc_split.pkl
+      uv run --extra pipeline-core janasunani-pipeline run --input
+      data/raw/documents-sample --db data/processed/pipeline-sample.sqlite
+      --models models --ocr-engine pytesseract --stages format_classifier
       ocr_extraction --workers 1 && uv run --extra pii janasunani-pipeline run
       --input data/raw/documents-sample --db
       data/processed/pipeline-sample.sqlite --models models --stages pii_tagger
@@ -189,3 +190,560 @@ stages:
       hash: md5
       md5: 903dc729212929dc0b8891df6487bd40
       size: 868
+  actionability-adjudication-prepare:
+    cmd: uv run --frozen python scripts/reconcile_actionability_adjudication.py
+      prepare --sample data/external/actionability_frontier_v1/sample.jsonl
+      --judge-a data/external/actionability_frontier_v1/judge_a.jsonl --judge-b
+      data/external/actionability_frontier_v1/judge_b.jsonl --consensus
+      data/external/actionability_frontier_v1/consensus.jsonl --resolver-input
+      data/external/actionability_frontier_v1/resolver_input.jsonl --report
+      data/external/actionability_frontier_v1/adjudication_report.json
+      --protocol-version frontier-actionability-adjudication-v1
+      --inference-environment openai-codex-agent-contexts --egress-policy
+      pii-redacted-shape-screened
+    deps:
+    - path: data/external/actionability_frontier_v1/judge_a.jsonl
+      hash: md5
+      md5: 427e921461cb83bdfb100142f948280b
+      size: 32259
+    - path: data/external/actionability_frontier_v1/judge_b.jsonl
+      hash: md5
+      md5: 2cbc713848adcfc841ee1160b671852d
+      size: 30781
+    - path: data/external/actionability_frontier_v1/sample.jsonl
+      hash: md5
+      md5: 2e54fdceec9425dc4520f2cb1bd16111
+      size: 206944
+    - path: janasunani/evaluation/adjudication.py
+      hash: md5
+      md5: 20c44867183cc01c9dde0929a9fa2398
+      size: 17058
+    - path: janasunani/inference/actionability.py
+      hash: md5
+      md5: 0baf5452a92c097aff6c518be1b66ac6
+      size: 14479
+    - path: pyproject.toml
+      hash: md5
+      md5: a75720710945819f44a16c502fb9c665
+      size: 10265
+    - path: scripts/reconcile_actionability_adjudication.py
+      hash: md5
+      md5: 15eca871fd564362a3c7c958ac9e17ce
+      size: 3268
+    - path: uv.lock
+      hash: md5
+      md5: f895934178f603f5315683d02abc6449
+      size: 1038485
+    outs:
+    - path: data/external/actionability_frontier_v1/adjudication_report.json
+      hash: md5
+      md5: a47f0746d6e065882cbdf6179119222f
+      size: 1789
+    - path: data/external/actionability_frontier_v1/consensus.jsonl
+      hash: md5
+      md5: 58f3fea583b67dad6a1ec7fc17d9ae5f
+      size: 15843
+    - path: data/external/actionability_frontier_v1/resolver_input.jsonl
+      hash: md5
+      md5: 93da96f7114dce4b7974cc1992a2039c
+      size: 9437
+  actionability-adjudication-finalize:
+    cmd: uv run --frozen python scripts/reconcile_actionability_adjudication.py
+      finalize --sample data/external/actionability_frontier_v1/sample.jsonl
+      --consensus data/external/actionability_frontier_v1/consensus.jsonl
+      --resolver data/external/actionability_frontier_v1/resolver.jsonl --gold
+      data/external/actionability_frontier_v1/gold.jsonl --manifest
+      data/external/actionability_frontier_v1/gold.manifest.json
+      --sample-manifest
+      data/external/actionability_frontier_v1/sample.provenance.json
+      --protocol-version frontier-actionability-adjudication-v1
+      --inference-environment openai-codex-agent-contexts --egress-policy
+      pii-redacted-shape-screened
+    deps:
+    - path: data/external/actionability_frontier_v1/consensus.jsonl
+      hash: md5
+      md5: 58f3fea583b67dad6a1ec7fc17d9ae5f
+      size: 15843
+    - path: data/external/actionability_frontier_v1/resolver.jsonl
+      hash: md5
+      md5: 4b5d2d04a9cf37c7a6f500692830a59a
+      size: 4955
+    - path: data/external/actionability_frontier_v1/sample.jsonl
+      hash: md5
+      md5: 2e54fdceec9425dc4520f2cb1bd16111
+      size: 206944
+    - path: data/external/actionability_frontier_v1/sample.provenance.json
+      hash: md5
+      md5: 0b99c76202e4993201f9f926753030ca
+      size: 1129
+    - path: janasunani/evaluation/adjudication.py
+      hash: md5
+      md5: 20c44867183cc01c9dde0929a9fa2398
+      size: 17058
+    - path: janasunani/inference/actionability.py
+      hash: md5
+      md5: 0baf5452a92c097aff6c518be1b66ac6
+      size: 14479
+    - path: pyproject.toml
+      hash: md5
+      md5: a75720710945819f44a16c502fb9c665
+      size: 10265
+    - path: scripts/reconcile_actionability_adjudication.py
+      hash: md5
+      md5: 15eca871fd564362a3c7c958ac9e17ce
+      size: 3268
+    - path: uv.lock
+      hash: md5
+      md5: f895934178f603f5315683d02abc6449
+      size: 1038485
+    outs:
+    - path: data/external/actionability_frontier_v1/gold.jsonl
+      hash: md5
+      md5: 359a39bc0030391dd774a5e0078c7132
+      size: 212025
+    - path: data/external/actionability_frontier_v1/gold.manifest.json
+      hash: md5
+      md5: b57c5c7bc4d015a3f84fe5dfc4e909fd
+      size: 2462
+  actionability-local-candidate-benchmark:
+    cmd: uv run --frozen --extra categorizer python
+      scripts/benchmark_actionability_candidates.py --gold
+      data/external/actionability_frontier_v1/gold.jsonl --manifest
+      data/external/actionability_frontier_v1/gold.manifest.json --output
+      outputs/evaluation/actionability_candidates_muril_high_catch.json
+      --artifact-dir models/actionability --multilingual-encoder
+      muril_local=models/categorizer --min-review-precision 0.6
+      --max-actionable-review-rate 0.1 --overwrite
+    deps:
+    - path: data/external/actionability_frontier_v1/gold.jsonl
+      hash: md5
+      md5: 359a39bc0030391dd774a5e0078c7132
+      size: 212025
+    - path: data/external/actionability_frontier_v1/gold.manifest.json
+      hash: md5
+      md5: b57c5c7bc4d015a3f84fe5dfc4e909fd
+      size: 2462
+    - path: janasunani/evaluation/actionability.py
+      hash: md5
+      md5: 988d2469936623e2b8b08886bf31100a
+      size: 35312
+    - path: janasunani/evaluation/classification.py
+      hash: md5
+      md5: 5be5a49505010f6b20ec6a183f30fd0f
+      size: 12995
+    - path: janasunani/evaluation/embedding_actionability.py
+      hash: md5
+      md5: 2df505de662473b67cffb3db7d2c552f
+      size: 16216
+    - path: janasunani/evaluation/stats.py
+      hash: md5
+      md5: b3a53f566b6bb134331b12c9fb78afb6
+      size: 26269
+    - path: models/categorizer
+      hash: md5
+      md5: 8924294cd47417e40b8ad1cc0b5382b4.dir
+      size: 956698867
+      nfiles: 8
+    - path: pyproject.toml
+      hash: md5
+      md5: a75720710945819f44a16c502fb9c665
+      size: 10265
+    - path: scripts/benchmark_actionability_candidates.py
+      hash: md5
+      md5: d983021f5ed1219c103eb0f6dd94ee1e
+      size: 15529
+    - path: uv.lock
+      hash: md5
+      md5: f895934178f603f5315683d02abc6449
+      size: 1038485
+    outs:
+    - path: models/actionability
+      hash: md5
+      md5: 6ce39b26b90dece8c73b7252e8ec085f.dir
+      size: 615724
+      nfiles: 3
+    - path: outputs/evaluation/actionability_candidates_muril_high_catch.json
+      hash: md5
+      md5: 1ca037f87466f329299f05307752c8b9
+      size: 16310
+  actionability-weak-label-audit:
+    cmd: uv run --frozen janasunani-audit-actionability-labels --complaints
+      data/interim/complaints.parquet --action-history
+      data/interim/action_history.parquet --min-office-support 100 --output
+      outputs/evaluation/actionability_weak_label_audit.json
+    deps:
+    - path: data/interim/action_history.parquet
+      hash: md5
+      md5: a69b4a902baa6bab082f3ee21dfcaeb5
+      size: 497002355
+    - path: data/interim/complaints.parquet
+      hash: md5
+      md5: f0eeb1379c88a70ecf2fac5bad07868f
+      size: 410159639
+    - path: janasunani/analytics/findings/discards.py
+      hash: md5
+      md5: 13e1b915153d273c589021b99813036a
+      size: 12020
+    - path: janasunani/evaluation/actionability.py
+      hash: md5
+      md5: 08570b2471796f49214c2f801d8791db
+      size: 33241
+    - path: janasunani/evaluation/classification.py
+      hash: md5
+      md5: 5be5a49505010f6b20ec6a183f30fd0f
+      size: 12995
+    - path: janasunani/evaluation/weak_labels.py
+      hash: md5
+      md5: 9d1731d003d9f8da8fda59a42b53cb45
+      size: 9383
+    - path: pyproject.toml
+      hash: md5
+      md5: a75720710945819f44a16c502fb9c665
+      size: 10265
+    - path: uv.lock
+      hash: md5
+      md5: f895934178f603f5315683d02abc6449
+      size: 1038485
+    outs:
+    - path: outputs/evaluation/actionability_weak_label_audit.json
+      hash: md5
+      md5: f8a1a3d705c68959429278db77bf0ac0
+      size: 5538
+  full-benchmark-bundle:
+    cmd: uv run --frozen janasunani-build-benchmark-bundle --config
+      config/benchmark_bundle.json --output
+      outputs/benchmark/full_benchmark.json --markdown
+      outputs/benchmark/full_benchmark.md
+    deps:
+    - path: config/benchmark_bundle.json
+      hash: md5
+      md5: d66e0213e133ee66c1b419373f465093
+      size: 15760
+    - path: docs/evidence/sarvam_cached_benchmark.json
+      hash: md5
+      md5: b19e45a4bfd16cfdb6f2f3a831617cf2
+      size: 3730
+    - path: janasunani/evaluation/benchmark_bundle.py
+      hash: md5
+      md5: 53ad9d51b7e80d18dad759400a74c721
+      size: 18069
+    - path: outputs/benchmark/latency.json
+      hash: md5
+      md5: 110395e545d5b7a176aaad03d15402de
+      size: 31784
+    - path: outputs/evaluation/actionability_candidates_muril_high_catch.json
+      hash: md5
+      md5: 1ca037f87466f329299f05307752c8b9
+      size: 16310
+    - path: outputs/evaluation/actionability_weak_label_audit.json
+      hash: md5
+      md5: f8a1a3d705c68959429278db77bf0ac0
+      size: 5538
+    - path: outputs/evaluation/categorization_historical_v1.json
+      hash: md5
+      md5: 2274c96f003be985a5fbbb670c12433a
+      size: 68115
+    - path: outputs/evaluation/pii_release.json
+      hash: md5
+      md5: a7a7cbebe68f24bf469b1e7f890990a4
+      size: 1771
+    - path: outputs/evaluation/routing_historical_all.json
+      hash: md5
+      md5: 9740b971cd6b815c80e6e8c83587a607
+      size: 316695
+    - path: outputs/evaluation/routing_historical_informative.json
+      hash: md5
+      md5: 91145c5adb596264ab36e57c4cef16f2
+      size: 315567
+    - path: outputs/evaluation/summary_development_v1.json
+      hash: md5
+      md5: 540cac6452208f686812883a9e3617d7
+      size: 7038
+    - path: pyproject.toml
+      hash: md5
+      md5: 7650a32a2ab1519840a182edfcf10a50
+      size: 10346
+    - path: uv.lock
+      hash: md5
+      md5: f895934178f603f5315683d02abc6449
+      size: 1038485
+    outs:
+    - path: outputs/benchmark/full_benchmark.json
+      hash: md5
+      md5: d38c47c01473e8ddd67388b20aa862c0
+      size: 557776
+    - path: outputs/benchmark/full_benchmark.md
+      hash: md5
+      md5: a13584e5f62519e757bc8ae4c7d8f7da
+      size: 3169
+  pii-development-scorecard:
+    cmd: uv run --frozen --extra pii python -m
+      janasunani.evaluation.pii_scorecard --gold
+      data/external/pii_gold_draft_n50.jsonl --out
+      outputs/evaluation/pii_release.md --json-out
+      outputs/evaluation/pii_release.json
+    deps:
+    - path: data/external/pii_gold_draft_n50.jsonl
+      hash: md5
+      md5: c4862fcc95548934cfd5bf004e77542d
+      size: 164850
+    - path: janasunani/evaluation/pii_scorecard.py
+      hash: md5
+      md5: e4d5644f2b2563ff0b46ba91427c6df5
+      size: 17000
+    - path: janasunani/pipeline/pii_eval.py
+      hash: md5
+      md5: f2e706bc3e79276c347b5ebe4be061ba
+      size: 15536
+    - path: janasunani/pipeline/stages/pii_tagger.py
+      hash: md5
+      md5: a8bde50f8e4e03b883c729e81804a3ae
+      size: 36881
+    - path: pyproject.toml
+      hash: md5
+      md5: a75720710945819f44a16c502fb9c665
+      size: 10265
+    - path: uv.lock
+      hash: md5
+      md5: f895934178f603f5315683d02abc6449
+      size: 1038485
+    outs:
+    - path: outputs/evaluation/pii_release.json
+      hash: md5
+      md5: a7a7cbebe68f24bf469b1e7f890990a4
+      size: 1771
+    - path: outputs/evaluation/pii_release.md
+      hash: md5
+      md5: 834eefcaca8ceed3c8b9c8a41958df7e
+      size: 1223
+  routing-historical-benchmark:
+    cmd: uv run --frozen janasunani-evaluate-routing --complaints
+      data/interim/complaints.parquet --output
+      outputs/evaluation/routing_historical_all.json && uv run --frozen
+      janasunani-evaluate-routing --complaints data/interim/complaints.parquet
+      --informative-categories-only --output
+      outputs/evaluation/routing_historical_informative.json
+    deps:
+    - path: data/interim/complaints.parquet
+      hash: md5
+      md5: f0eeb1379c88a70ecf2fac5bad07868f
+      size: 410159639
+    - path: janasunani/evaluation/classification.py
+      hash: md5
+      md5: 5be5a49505010f6b20ec6a183f30fd0f
+      size: 12995
+    - path: janasunani/evaluation/historical.py
+      hash: md5
+      md5: ca4e5941527a4812ea33d7fbcb33c0a6
+      size: 8627
+    - path: janasunani/evaluation/routing.py
+      hash: md5
+      md5: 1a255d09e470173d3b2a43537259824c
+      size: 37902
+    - path: janasunani/evaluation/stats.py
+      hash: md5
+      md5: b3a53f566b6bb134331b12c9fb78afb6
+      size: 26269
+    - path: pyproject.toml
+      hash: md5
+      md5: a75720710945819f44a16c502fb9c665
+      size: 10265
+    - path: uv.lock
+      hash: md5
+      md5: f895934178f603f5315683d02abc6449
+      size: 1038485
+    outs:
+    - path: outputs/evaluation/routing_historical_all.json
+      hash: md5
+      md5: 9740b971cd6b815c80e6e8c83587a607
+      size: 316695
+    - path: outputs/evaluation/routing_historical_informative.json
+      hash: md5
+      md5: 91145c5adb596264ab36e57c4cef16f2
+      size: 315567
+  benchmark-table:
+    cmd: uv run --frozen janasunani-evaluate-benchmark --out outputs/benchmark
+      --no-auto-discovery --latency outputs/benchmark/latency.json --pii
+      outputs/evaluation/pii_release.json --sarvam
+      docs/evidence/sarvam_cached_benchmark.json
+    deps:
+    - path: docs/evidence/sarvam_cached_benchmark.json
+      hash: md5
+      md5: b19e45a4bfd16cfdb6f2f3a831617cf2
+      size: 3730
+    - path: janasunani/config.py
+      hash: md5
+      md5: 5dbca406ad1a8351276b854c3d2d87ae
+      size: 8522
+    - path: janasunani/evaluation/benchmark_report.py
+      hash: md5
+      md5: e55a77ff89089ef0a6a699af75369de9
+      size: 45910
+    - path: janasunani/evaluation/dsi_baselines.py
+      hash: md5
+      md5: 48267bd7229786ee9da9933b930bce4e
+      size: 10357
+    - path: janasunani/evaluation/pricing.py
+      hash: md5
+      md5: 801ebe8d3ad723849bd65e52f38bfe59
+      size: 8342
+    - path: outputs/benchmark/latency.json
+      hash: md5
+      md5: 110395e545d5b7a176aaad03d15402de
+      size: 31784
+    - path: outputs/evaluation/pii_release.json
+      hash: md5
+      md5: a7a7cbebe68f24bf469b1e7f890990a4
+      size: 1771
+    - path: pyproject.toml
+      hash: md5
+      md5: a75720710945819f44a16c502fb9c665
+      size: 10265
+    - path: uv.lock
+      hash: md5
+      md5: f895934178f603f5315683d02abc6449
+      size: 1038485
+    outs:
+    - path: outputs/benchmark/table2.json
+      hash: md5
+      md5: c5efe1047b6ce5b324c1e13533d5c945
+      size: 47494
+    - path: outputs/benchmark/table2.md
+      hash: md5
+      md5: 1076bef2263589384e170f5f9680bc14
+      size: 9564
+  categorization-historical-benchmark:
+    cmd: uv run --frozen --extra pipeline-core python -m
+      janasunani.evaluation.categorization --dataset
+      data/external/categorization_historical_v1/benchmark.jsonl --provenance
+      data/external/categorization_historical_v1/benchmark.provenance.json --output
+      outputs/evaluation/categorization_historical_v1.json
+      --min-selective-accuracy 0.8 --min-coverage 0.5
+    deps:
+    - path: data/external/categorization_historical_v1/benchmark.jsonl
+      hash: md5
+      md5: c9dae018fedfa198371503243b2e01fa
+      size: 21609889
+    - path: data/external/categorization_historical_v1/benchmark.provenance.json
+      hash: md5
+      md5: 4b8430a62387c767828c1e8aacd2c786
+      size: 2098
+    - path: janasunani/evaluation/categorization.py
+      hash: md5
+      md5: e94c0797d9db958ce9c166937bdf832f
+      size: 16535
+    - path: pyproject.toml
+      hash: md5
+      md5: 7650a32a2ab1519840a182edfcf10a50
+      size: 10346
+    - path: uv.lock
+      hash: md5
+      md5: f895934178f603f5315683d02abc6449
+      size: 1038485
+    outs:
+    - path: outputs/evaluation/categorization_historical_v1.json
+      hash: md5
+      md5: 2274c96f003be985a5fbbb670c12433a
+      size: 68115
+  summary-development-benchmark:
+    cmd: uv run --frozen python -m janasunani.evaluation.summary --judgments
+      data/external/summary_development_v1/judgments.jsonl --provenance
+      data/external/summary_development_v1/provenance.json --binding
+      config/summary_benchmark_binding.json --dataset-id
+      summary-bart-development-v1 --output
+      outputs/evaluation/summary_development_v1.json
+    deps:
+    - path: config/summary_benchmark_binding.json
+      hash: md5
+      md5: 5f32e52c0070d7c0e704c9544939f302
+      size: 224
+    - path: data/external/summary_development_v1/judgments.jsonl
+      hash: md5
+      md5: a7a5cc55690de816e55266d9a9c5e2ed
+      size: 12860
+    - path: data/external/summary_development_v1/provenance.json
+      hash: md5
+      md5: fd025626d60a59e16a2cbaef2eb58012
+      size: 2766
+    - path: janasunani/evaluation/stats.py
+      hash: md5
+      md5: b3a53f566b6bb134331b12c9fb78afb6
+      size: 26269
+    - path: janasunani/evaluation/summary.py
+      hash: md5
+      md5: b03bd223292b9891144bbd3de73b6257
+      size: 15253
+    - path: pyproject.toml
+      hash: md5
+      md5: 7650a32a2ab1519840a182edfcf10a50
+      size: 10346
+    - path: scripts/prepare_summary_development.py
+      hash: md5
+      md5: 9ff580bfa3da0cbad61da3315bae74e1
+      size: 12280
+    - path: uv.lock
+      hash: md5
+      md5: f895934178f603f5315683d02abc6449
+      size: 1038485
+    outs:
+    - path: outputs/evaluation/summary_development_v1.json
+      hash: md5
+      md5: 540cac6452208f686812883a9e3617d7
+      size: 7038
+  value-add-report-documents:
+    cmd: uv run --frozen python scripts/update_value_add_report.py
+      --benchmark-bundle outputs/benchmark/full_benchmark.json && uv run
+      --frozen python scripts/create_officer_brief.py --benchmark-bundle
+      outputs/benchmark/full_benchmark.json && uv run --frozen python
+      scripts/create_public_systems_capability_brief.py --benchmark-bundle
+      outputs/benchmark/full_benchmark.json
+    deps:
+    - path: docs/value-add-report/templates/Janasunani_2.0_Value_Add_Report_August_2026.source.docx
+      hash: md5
+      md5: 97ded42bf08df68e1e2681573fa7c2ab
+      size: 668719
+    - path: janasunani/evaluation/value_add_benchmark_facts.py
+      hash: md5
+      md5: e7fd6085ed428f3919cc995396e292f8
+      size: 5723
+    - path: outputs/benchmark/full_benchmark.json
+      hash: md5
+      md5: e3c55ad7639b989fbd79bfa540b3ad7a
+      size: 557202
+    - path: pyproject.toml
+      hash: md5
+      md5: 7650a32a2ab1519840a182edfcf10a50
+      size: 10346
+    - path: scripts/create_officer_brief.py
+      hash: md5
+      md5: f1c4dd89842eda5a900ad657cb82faf4
+      size: 27146
+    - path: scripts/create_public_systems_capability_brief.py
+      hash: md5
+      md5: 31e7c91332ea9f22086fdf2e13ceac8f
+      size: 14994
+    - path: scripts/docx_archive.py
+      hash: md5
+      md5: e8aaf306065de9061ad41d0238c53527
+      size: 1698
+    - path: scripts/update_value_add_report.py
+      hash: md5
+      md5: fd4699f379266fd2a36e92fd00e796eb
+      size: 62186
+    - path: uv.lock
+      hash: md5
+      md5: f895934178f603f5315683d02abc6449
+      size: 1038485
+    outs:
+    - path: docs/value-add-report/Janasunani_2.0_IAS_Officer_Brief_August_2026.docx
+      hash: md5
+      md5: 71e8697302db1727c291054edb2ba945
+      size: 41322
+    - path: docs/value-add-report/Janasunani_2.0_Public_Systems_Capability_Brief_August_2026.docx
+      hash: md5
+      md5: ff9f691acb0133966ad24e47bb1e0329
+      size: 40591
+    - path: docs/value-add-report/Janasunani_2.0_Value_Add_Report_August_2026.docx
+      hash: md5
+      md5: 3aa81d822da4674153b53434d57b9aea
+      size: 641959

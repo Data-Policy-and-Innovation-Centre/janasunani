@@ -160,9 +160,9 @@ test("a campaign the API actually emits is still displayed", () => {
 });
 
 test("an unavailable screening does not report a clean score", () => {
-  // unavailable_triage() returns spam_score 0.0 and spam_reason "clean" next
-  // to reason_code "advisory_provider_unavailable". Reporting that as a clean
-  // result is false reassurance an officer would act on.
+  // Older persisted unavailable responses carried a zero score and "clean"
+  // reason. The current API omits both, but the UI must keep treating the
+  // legacy shape as unavailable rather than reassuring an officer.
   assert.equal(
     wasActuallyScored({
       decision: "abstained",

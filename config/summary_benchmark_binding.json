@@ -1,0 +1,6 @@
+{
+  "dataset_id": "summary-bart-development-v1",
+  "judgments_md5": "a7a5cc55690de816e55266d9a9c5e2ed",
+  "provenance_md5": "fd025626d60a59e16a2cbaef2eb58012",
+  "schema_version": "janasunani.summary-benchmark-binding/v1"
+}

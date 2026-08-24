@@ -12,7 +12,7 @@ import { Badge } from "./ui";
  * action: a triage signal must never change whether a grievance is received.
  */
 export function TriageBanner({ triage }: { triage: TriageResult }) {
-  const { duplicate, duplicate_review, spam } = triage;
+  const { actionability, duplicate, duplicate_review, spam } = triage;
   const lowSignalMessage = SPAM_REASON_MESSAGES[spam.reason_code];
   const repetitionEvidence = spam.evidence.find(
     (evidence) => evidence.kind === "repetition_collapse",
@@ -159,6 +159,41 @@ export function TriageBanner({ triage }: { triage: TriageResult }) {
                 OCR repetition-collapse guard: {repetitionEvidence.observed ? "observed" : "not observed"}. No source text is shown here.
               </p>
             )}
+          </article>
+        )}
+
+        {actionability?.decision === "review" && (
+          <article className="rounded-sm border border-negative bg-negative/10 px-3 py-2">
+            <Badge tone="negative">actionability review</Badge>
+            <h3 className="mt-1 text-sm font-semibold text-text-dark">
+              Officer review requested
+            </h3>
+            <p className="mt-1 text-sm text-text-body">
+              Local actionability screening requested an officer review. Treat
+              the model label as an advisory cue, not a determination.
+            </p>
+            <p className="mt-1 text-xs text-text-secondary">
+              Model label: <code>{actionability.predicted_label}</code>
+              {" "}(confidence {actionability.confidence.toFixed(2)}; objective{" "}
+              <code>{actionability.objective}</code>). This advisory does not
+              reject the grievance or determine its route.
+            </p>
+          </article>
+        )}
+
+        {actionability?.decision === "abstained" && (
+          <article className="rounded-sm border border-hair bg-surface px-3 py-2">
+            <Badge tone="neutral">actionability review abstained</Badge>
+            <p className="mt-1 text-sm text-text-body">
+              The local actionability screening did not request extra officer
+              review. This does not establish that the grievance is actionable
+              or correctly routed.
+            </p>
+            <p className="mt-1 text-xs text-text-secondary">
+              Model label: <code>{actionability.predicted_label}</code>
+              {" "}(confidence {actionability.confidence.toFixed(2)}; objective{" "}
+              <code>{actionability.objective}</code>).
+            </p>
           </article>
         )}
       </div>

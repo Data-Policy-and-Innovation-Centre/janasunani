@@ -1,0 +1,176 @@
+{
+  "schema_version": "janasunani.actionability-frontier-benchmark/v1",
+  "as_of": "2026-08-10",
+  "objective": "actionable_vs_officer_review",
+  "claim_status": "historical 180-row development benchmark preserved for audit; it is not the canonical reproducible benchmark, officer-confirmed truth, or a release gate",
+  "lineage": {
+    "historical_gold_records": 180,
+    "historical_gold_sha256": "sha256:7459d387916e71c94c154f0ffa87b962991abbe830bf13757b5ed7da0e4a5630",
+    "historical_uncertain_resolver_labels_included": 6,
+    "canonical_gold_records": 174,
+    "canonical_gold_sha256": "sha256:0504ddfbe79c3613250b5a10572f7b2b1d4e4c2628972098a83c61e4a7d94538",
+    "canonical_policy": "exclude every resolver judgment marked uncertain",
+    "canonical_benchmark": "docs/evidence/actionability_frontier_benchmark_reproducible.json"
+  },
+  "privacy": {
+    "source": "PII-redacted DPIC-controlled sample",
+    "aggregate_only": true,
+    "contains_narrative_text": false,
+    "contains_ticket_ids": false,
+    "provider_calls_during_candidate_benchmark": false,
+    "adjudication_egress": "PII-redacted, shape-screened narratives were sent to hosted OpenAI Codex inference for one-time offline adjudication; this was not a production path",
+    "explicit_ticket_or_contact_identifier_fields_sent_for_adjudication": false,
+    "residual_pii_risk": "Redaction has measured misses. Shape screening excluded phone, Aadhaar, PAN and email patterns but did not prove that every name, address or other identifier was removed.",
+    "provider_retention_evidence": "unavailable in this run; do not infer zero retention"
+  },
+  "adjudication": {
+    "status": "historical benchmark input; six uncertain resolver labels were admitted and are excluded from the canonical gold",
+    "records": 180,
+    "split_counts": {
+      "train": 60,
+      "validation": 60,
+      "test": 60
+    },
+    "protocol": "two separate Codex agent-context adjudication passes; another Codex agent context handled every disagreement or uncertainty",
+    "execution_provenance": {
+      "product": "OpenAI Codex",
+      "exact_serving_model_and_version": "unavailable from the adjudication tool context",
+      "judge_a": "separate Codex agent context",
+      "judge_b": "separate Codex agent context",
+      "resolver": "separate Codex agent context",
+      "independence_scope": "independent contexts and passes, not independent model families or providers",
+      "exact_hidden_system_prompt_available": false,
+      "temperature_or_sampling_configuration_available": false,
+      "provider_retention_evidence_available": false
+    },
+    "raw_agreement": 0.9944444444444445,
+    "cohen_kappa": 0.9846245835824721,
+    "confident_consensus": 153,
+    "sent_to_resolver": 27,
+    "label_counts": {
+      "actionable": 145,
+      "underspecified": 14,
+      "irrelevant": 7,
+      "policy_blocked": 14,
+      "out_of_scope": 0
+    },
+    "sample_sha256": "sha256:95d0d3b7757ba5bd616dcffe4aefcf846cdc9f1ab2d0f7eaeba16a1077ecd096",
+    "judge_a_sha256": "sha256:a251d7d6dfb49f36c498feb39957a5e1bcef0fe47b483abecae75e8aa11de33c",
+    "judge_b_sha256": "sha256:ed1fcf0c68c09f84669edc4af2b00109b559aa02a44623f75652d3bbe8c39ee5",
+    "resolver_sha256": "sha256:22dcd6604aad84cbcdc52ee93673fbc64021dc52af88ead22f0881a4b53638ca",
+    "gold_sha256": "sha256:7459d387916e71c94c154f0ffa87b962991abbe830bf13757b5ed7da0e4a5630"
+  },
+  "protocol": {
+    "sample_design": "development sample enriched within each split: 5 records from each of four opaque administrative weak-label strata plus 40 previously unlabeled records",
+    "source_stratum_prevalence_available": false,
+    "inclusion_probabilities_available": false,
+    "population_ppv_or_accuracy_estimable": false,
+    "model_fit_split": "train",
+    "hyperparameter_and_threshold_selection_split": "validation",
+    "test_usage": "aggregate report only",
+    "confidence_intervals": "two-sided 95% Wilson score intervals",
+    "high_catch_validation_constraints": {
+      "minimum_review_precision": 0.6,
+      "maximum_actionable_review_rate": 0.1
+    },
+    "strict_policy_result": "90% minimum precision and 5% maximum actionable-review selected a threshold that flagged zero test cases"
+  },
+  "validation_selected_candidate": "tfidf_word_char",
+  "candidates": {
+    "tfidf_word_char": {
+      "model_family": "tfidf-word-char-logreg",
+      "model_version": "actionability-review-tfidf-v1",
+      "selected_c": 1.0,
+      "review_threshold": 0.42266565409654117,
+      "validation": {
+        "n": 60,
+        "accuracy": 0.9166666666666666,
+        "review_recall": 1.0,
+        "review_precision": 0.6666666666666666,
+        "actionable_review_rate": 0.1,
+        "true_review": 10,
+        "false_review": 5,
+        "true_actionable": 45,
+        "missed_review": 0
+      },
+      "test": {
+        "n": 60,
+        "accuracy": 0.9166666666666666,
+        "accuracy_ci": [0.8193105798166559, 0.9638795433982693],
+        "review_recall": 1.0,
+        "review_recall_ci": [0.7846891972623643, 1.0],
+        "review_precision": 0.7368421052631579,
+        "review_precision_ci": [0.5120844910218489, 0.8819358765321749],
+        "actionable_review_rate": 0.10869565217391304,
+        "actionable_review_rate_ci": [0.04733145858098944, 0.2303782864425082],
+        "true_review": 14,
+        "false_review": 5,
+        "true_actionable": 41,
+        "missed_review": 0,
+        "roc_auc": 0.968944099378882,
+        "average_precision": 0.8950971316019967
+      }
+    },
+    "muril_local": {
+      "role": "multilingual_frozen_encoder_probe",
+      "artifact_fingerprint": "sha256:8a94d0e448ccf0613cc74156151b1d25454169c87c8dbac1c485a323ed3bd3dc",
+      "pooling": "attention_masked_mean_then_l2_normalize",
+      "max_length": 256,
+      "selected_c": 10.0,
+      "review_threshold": 0.5500819087028503,
+      "validation": {
+        "n": 60,
+        "accuracy": 0.9,
+        "review_recall": 0.8,
+        "review_precision": 0.6666666666666666,
+        "actionable_review_rate": 0.08
+      },
+      "test": {
+        "accuracy": 0.8166666666666667,
+        "review_recall": 0.6428571428571429,
+        "review_precision": 0.6,
+        "actionable_review_rate": 0.13043478260869565,
+        "roc_auc": 0.9021739130434783,
+        "average_precision": 0.6654152414034056
+      }
+    },
+    "minilm_english_diagnostic": {
+      "role": "english_only_frozen_encoder_diagnostic",
+      "revision": "c9745ed1d9f207416be6d2e6f8de32d1f16199bf",
+      "artifact_fingerprint": "sha256:04c1a2ae6a1c7299745f8eb7f8db75456a7df9652dd4f48a40be2ee59d7c37c1",
+      "pooling": "attention_masked_mean_then_l2_normalize",
+      "max_length": 256,
+      "selected_c": 10.0,
+      "review_threshold": 0.30470010638237,
+      "validation": {
+        "n": 60,
+        "accuracy": 0.9,
+        "review_recall": 0.8,
+        "review_precision": 0.6666666666666666,
+        "actionable_review_rate": 0.08
+      },
+      "test": {
+        "accuracy": 0.8333333333333334,
+        "review_recall": 0.7142857142857143,
+        "review_precision": 0.625,
+        "actionable_review_rate": 0.13043478260869565,
+        "roc_auc": 0.9177018633540373,
+        "average_precision": 0.7471015350927086
+      }
+    }
+  },
+  "release_eligible": false,
+  "limitations": [
+    "This historical benchmark admitted six resolver judgments marked uncertain; use the 174-row reproducible benchmark for current development evidence.",
+    "The final adjudication is produced by frontier models, not officers.",
+    "No out_of_scope example was defensible, so this does not establish five-class quality.",
+    "The 60-case test has wide item-level confidence intervals and has now been viewed.",
+    "The snapshot split is not chronological and duplicate-group isolation is unavailable.",
+    "Accuracy and review precision describe the enriched sample composition, not production prevalence or PPV.",
+    "Language, source and intake-office strata are not large enough for release decisions.",
+    "The high-catch point estimate exceeded its actionable-review target on test by 0.87 percentage points.",
+    "Judge independence is between Codex agent contexts, not between model families or providers.",
+    "Exact hidden prompts, inference sampling configuration, and provider retention evidence were unavailable in this run.",
+    "All outputs remain advisory; no automatic rejection or eligibility decision is permitted."
+  ]
+}

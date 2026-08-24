@@ -14,13 +14,32 @@ The full grievance history is loaded and verified: 1,371,288 complaints and 6,55
 
 All six pipeline stages are implemented: page classification, text extraction, removal of personal information, page-type filtering, summarisation, categorisation. End-to-end integration is unverified, since it has not yet been run start to finish in one pass.
 
-Live processing works. A grievance submitted through the web interface comes back with its redacted text, category, summary and routing. The interface is built; wiring it to the live models rather than to test responses is still in progress. Routing now runs on the empirical crosswalk learned from case history (issue #33, closed 7 August). Argmax accuracy: 60.9% on category alone, 67.5% with subcategory, 72.8% with subcategory and district. It learns where cases were historically sent, not where they resolved best. A learned outcome-based scorer on disposal time and citizen benefit (issue #106) is a separate, harder problem and stays later work.
+The live API path works in controlled tests and the interface is built, but a
+full scanned grievance has not yet been verified start to finish through the
+interface with every intended local model. Wiring the interface to those model
+responses rather than test responses is still in progress. Routing now runs on
+the empirical crosswalk learned from case history
+(issue #33, closed 7 August). The older 60.9/67.5/72.8% figures were measured on
+the same history used to fit that crosswalk and are not held-out accuracy. The
+new chronological benchmark (2021–23 train, 2024 validation, 2025 test) reports
+45.14% top-1 and 69.04% top-3 historical-destination agreement for the live
+category+district features on 208,267 eligible test cases; because the 2025
+cohort was inspected during harness development, this is **developmental
+held-out evidence**, not a release gate. It measures where cases were sent, not
+jurisdictional correctness or where they resolved best. A learned outcome-based
+scorer on disposal time and officer-recorded benefit (issue #106) is a separate,
+harder problem and stays later work.
 
 Deployment automation is written and reviewed but not yet run. The system is not switched on at our AWS server.
 
-Manual privacy correction of eighty-five pages finishes this week. That is the step that tells us how often redaction misses something. It gates the privacy scorecard, and the privacy half of the Sarvam comparison.
+Manual privacy correction produced an 89-page current set. It measures redaction
+by data type, but the gold has no language field, so it cannot support a
+by-language claim.
 
-The document-reading half of that comparison is gated by something else entirely: a hand-transcribed sample of scanned pages, which nobody has been asked to produce yet. Two different bottlenecks, two different people.
+The document-reading half of that comparison is gated by a hand-transcribed
+sample of scanned pages. No owner was assigned by the 7 August cutoff, so the
+demo took the predeclared divergence-only fallback. Commissioning transcription
+is now post-demo work, not an open dependency on the August path.
 
 ## What we deliver on 14 August
 
@@ -28,13 +47,13 @@ The document-reading half of that comparison is gated by something else entirely
 
 | Component | On the day | Commitment | If it slips |
 |---|---|---|---|
-| The DSI pipeline, rebuilt | A scanned grievance processed live, start to finish, with a table of how often redaction misses personal information, by data type and by language | **Committed** | Demonstrate from a laptop rather than the server. Report redaction results for English only |
-| Spam and duplicates | Repeat submissions linked and mass campaigns grouped as one issue, across a defined portion of the backlog, with a count of how much of it is duplicated work. Complaints written in Odia script and in Roman letters are matched separately, not against each other | **Bounded** | Duplicates without spam scoring. A smaller portion of the backlog |
+| The DSI pipeline, rebuilt | A scanned grievance processed live, start to finish, with a table of how often redaction misses personal information by data type. No by-language result is claimed because the current gold lacks language labels | **Committed** | Demonstrate from a laptop rather than the server; retain the same evidence caveats |
+| Actionability and duplicates | Repeat submissions linked and mass campaigns grouped as one issue, across a defined portion of the backlog. The five-way taxonomy and exact-template weak-label audit are separated from a canonical 57-case frontier-adjudicated developmental test; that test is not officer-confirmed, has no outside-purview support and is not a release gate. Its checksummed binary artifact can serve advisory review but cannot assign five-class reasons | **Bounded** | Duplicates plus the tested bounded low-signal regression behavior; if the developmental score is shown, its 57-case denominator and release limitations stay on the same slide |
 | The intelligence layer | Duplicate-adjusted workload. One worked example of a spike separated into filings, distinct problems and distinct citizens. Local issue themes for one category. The closure finding | **Bounded** | Themes drop first. If duplicate detection slips, only the closure finding survives, since it is the one item needing no new processing |
-| A/B testing of the automation | The experiment design, the size of effect we could detect, and where the AI already agrees with officers today | **Framework only** | None needed. Nothing here depends on new engineering |
-| Sarvam benchmark | Sarvam Vision against our pipeline on a paired sample of a few hundred pages. **Categorisation reports accuracy against the recorded category; document reading reports only how the two differ**, since no transcription owner was named | **Bounded** | Categorisation is now in scope, because its reference is administrative data we already hold. Transcription accuracy is out, and reported comparatively |
+| A/B testing of the automation | A **draft**, not-yet-locked stepped-wedge design, its measurement contract, and the inputs needed for a power calculation. No workflow or citizen effect is claimed before a governed pilot | **Framework only** | The reviewed draft and impact-metric registry; illustrative power values are not presented as measured MDEs |
+| Sarvam benchmark | Cached Sarvam Vision evidence from completed/interrupted runs: 56 paired successful pages in the larger run, provider failures/completions, divergence, list-price cost estimates and adapter wiring. The cached aggregate contains no reportable latency distribution. No new paid calls and no accuracy claim without transcription/adjudication | **Bounded** | Cached aggregate and dry-run wiring only; protected source snapshots are privately DVC-tracked and hashed, but the original sampling manifest/derivation was not recovered, so this is not an independently reconstructable accuracy scorecard |
 
-**Committed** means we will demonstrate it. **Bounded** means we will demonstrate it on a defined slice rather than the full 1.37 million. **Framework only** means a design and a calculation, not running software.
+**Committed** means we will demonstrate it. **Bounded** means we will demonstrate it on a defined slice rather than the full 1.37 million. **Framework only** means a draft design and illustrative calculation, not a locked plan, instrumentation or a running trial.
 
 The portion of the backlog is fixed via #64 (07 Aug 2026, pre-committed highest-volume district×year, no ED override): **Sambalpur 2024 — 55,544 complaints with grievance text** (Ganjam 2024 46,678; Balangir 2024 38,248). The dedup backfill over this slice completed 07 Aug 14:14 on the CPU box (`55,544 of 55,544 indexed, 10,963 duplicate groups`, comparison_pairs=16,138,623). All overnight jobs now read this constant (`janasunani/config.py:DEMO_SLICE_LABEL`).
 
@@ -46,12 +65,18 @@ The portion of the backlog is fixed via #64 (07 Aug 2026, pre-committed highest-
 |---|---|---|
 | Personal information removal | 80.6% of items found, on a 106-sentence English validation split | **77.9% of items found** (any-overlap), **55.0% on exact characters**, re-measured 10 August on our corrected 89-page set, by data type. By data type only: the gold carries no language field, so the by-language half of this row cannot be produced. Separately, a scan of all 55,544 redacted complaints in the demo slice found **no** mobile number, Aadhaar, PAN or non-government email left in clear text |
 | Text extraction from scans | 77.9% of pages passed three plausibility checks, on 96,469 English pages. Not transcription accuracy: there was no ground truth | **No accuracy figure.** No transcription sample was commissioned, so there is still no ground truth. Reported as divergence from Sarvam Vision, handwritten and printed separately, with no verdict on which is right |
-| Duplicate detection | Not attempted | Recall against the 37,299 duplicate action rows officers have already identified |
+| Duplicate detection | Not attempted | The 37,299 duplicate action rows are an officer-confirmed baseline. Held-out recall and adjudicated candidate precision remain to be measured; automation's additional reviewable increment is not yet claimed |
+| Actionability / low-signal | Discard reasons mixed incomplete, irrelevant, duplicate, policy and routing cases | **Developmental, not a release gate:** the weak-label audit retained 106,683 eligible single-label tickets after 67 conflicts and failed the 0.25 office-pooling gate (max total variation 0.522). Separately, on the canonical 57-case frontier-adjudicated test, the local TF-IDF review candidate caught 13/13 review cases and flagged 3/44 actionable cases. Its checksummed binary artifact is serving-compatible for advisory review, but cannot assign five-class reasons. The set is not officer-confirmed, has no outside-purview support and has a viewed test; no production promotion is approved. The screenshot failure remains regression evidence for the named case only |
+| Historical routing destination | 60.9/67.5/72.8% in-sample crosswalk resubstitution | **Developmental held-out:** category+district top-1 45.14% (95% Wilson CI 44.94–45.36), top-3 69.04%, n=208,267. Informative-category top-1 54.96%, n=142,181. This is historical agreement, not correctness or benefit; freeze a future test slice before promotion |
 | Page type | 67% accurate, on the earlier team's own 1,500-page sample | Historical context only. No labelled set exists for August |
-| Category assignment | 71% accurate, on the earlier team's train/test split | Historical context only, unless a held-out labelled set is identified in week 1 |
-| Summarisation | 1.9 of 3 for usefulness, scored by one reviewer over 500 pages | Historical context only. Re-scoring needs a blinded human review we have not scheduled |
+| Category assignment | 71% accurate, on the earlier team's train/test split | **Developmental historical-label agreement:** chronological, exact-text-group-disjoint 2024 redacted typed-text test n=3,160: top-1 46.55%, top-3 90.89%, macro-F1 36.49%. The test was viewed; this is not policy correctness or release evidence |
+| Summarisation | 1.9 of 3 for usefulness, scored by one reviewer over 500 pages | **Single-frontier-judge enriched development baseline:** n=30; 55/84 critical facts retained, 0/26 unsupported or contradictory cases, 8/26 usable without edit, 4/26 residual-PII cases. All six judge-marked skip cases received drafts and all four coherent Odia cases were skipped. This is a repair baseline, not officer validation or a release gate |
 
-The first three rows are measurements we will produce. The last three are the earlier team's numbers, reported so the record is complete, and we are not claiming to have re-measured them. Committing otherwise would be promising evidence the plan contains no step to produce.
+The evidence status in each row is part of the result. Developmental held-out
+numbers may compare candidates but cannot promote one; weak labels support
+training feasibility only; a reproduced regression supports only the named
+defect; and historical context is not a current measurement. The complete
+status definitions and denominators are in `docs/QUALITY_BENCHMARKS.md`.
 
 The earlier figures come from different samples, different splits and almost entirely English text. They are historical reference, not a target, and several are not like-for-like with anything we will measure. Where we come in lower we will say so and say why.
 
@@ -69,7 +94,10 @@ It is measured on a **50-document sample**, which is small enough that a few pag
 
 What the corpus scan supports and the sample does not: across every complaint in the demonstration slice, **no mobile number, Aadhaar number, PAN or non-government email address survives redaction**. That is a weaker claim than an accuracy figure, because it checks shapes we know how to look for rather than everything a human would catch. It is also the claim that holds at 55,544 rather than 89.
 
-Per-class results matter more than the averages. Category accuracy of 71% spans 0.85 for police cases and 0.51 for social welfare. We report the spread, not the headline.
+The historical category figure also hides a wide spread (about 0.85 for police
+cases and 0.51 for social welfare). We retain that as historical context, not
+as evidence for the current live path. The present categorization harness must
+be run on a frozen governed gold set before it yields a reportable number.
 
 ### On the intelligence layer
 
@@ -103,21 +131,39 @@ None of this waits on document scanning.
 
 **On the citizen text itself.** All four items read what people wrote, and what people write contains names, phone numbers and addresses. Historical complaint text is passed through the same redaction step the scanned documents use, before any matching or grouping runs over it. That runs first, not afterwards.
 
-Redaction is not the whole answer. What the matching produces is still built from citizen writing, so those files stay on our own machines, are never sent to an outside provider, and sit under the same access rules as the original records.
+Redaction is not the whole answer. Dedup signatures, groups and embeddings are
+still built from citizen writing, so those matching artifacts stay on our own
+machines and sit under the same access rules as the original records. Separately,
+a shape-screened redacted sample was sent to hosted Codex for one-time
+development adjudication; it contained no ticket IDs, but exact provider
+retention evidence was unavailable and that route is not a production precedent.
 
 ### On the last two
 
 The fourth is a design, not a running trial. No department has yet agreed which of its offices would go first.
 
-The fifth is a measurement: does Sarvam read Odia better than we do? The scorecard is the deliverable and adoption follows the result. It runs on real grievances.
+The fifth is a benchmark harness plus cached provider evidence. The available
+evidence can show which calls completed or failed, measured divergence,
+character-length ratios, list-price cost estimates and whether the adapter
+resumes safely. The cached aggregate has no reportable latency distribution or
+actual billing record. It cannot answer whether Sarvam reads Odia better: that still requires
+hand transcription and observed language/handwriting strata. No additional
+paid call is required to finish the wiring.
 
 Three Sarvam models are relevant.
 
-- **Sarvam Vision** reads scanned documents in 22 Indian languages including Odia. Two modes: reading a page as text at 50 paise, or pulling named fields out of it at ₹1. The second is what a grievance officer would actually use, and our pipeline has no equivalent.
-- **Sarvam-105B** for categorisation and summarisation. Note that the model we originally costed, Sarvam-30B, has since been withdrawn, and its replacement is roughly twelve times the price. The whole comparison is still a few thousand rupees.
+- **Sarvam Vision** reads scanned documents in 22 Indian languages including Odia. Two modes were costed at the then-published list prices: reading a page as text at 50 paise, or pulling named fields out of it at ₹1. Actual billing was unavailable. The second is what a grievance officer would actually use, and our pipeline has no equivalent.
+- **Sarvam-105B** is a candidate for categorisation and summarisation. Note
+  that the model originally costed, Sarvam-30B, has since been withdrawn. No
+  current category or summary quality result exists for 105B in this project.
 - **Transliteration**, converting Odia written in Roman letters into Odia script. Our pipeline does not solve this at all today.
 
-Cost is a few hundred rupees for the whole comparison.
+The durable cached aggregate combines a completed five-page run with the
+successful pages from an interrupted larger run. The larger run contains 56
+paired successful pages. Every paired normalized output differed and Sarvam
+produced 1.3345 times as many normalized characters on that aggregate; neither
+fact is an accuracy result. New spend is paused, so the report uses these cached
+results and does not extrapolate a full-run quality conclusion.
 
 One caveat, and it is not the one we first wrote down. Sarvam state that Vision is trained on handwritten text across all 22 Indian languages, so handwriting is a supported case rather than an unmentioned one. What they do not publish is a handwriting-specific number: the headline benchmarks are general document scores, and they note accuracy is lower on highly stylised handwriting without saying by how much. Much of our corpus is handwritten. We will report handwritten and printed pages separately, because the split is the part nobody has measured.
 
@@ -127,11 +173,11 @@ A naming note, since the two are easy to conflate. Sarvam Akshar is the document
 
 **Table 3. Three weeks**
 
-| Week | Delivered | Verified by |
+| Week | Planned work and current status | Verification or remaining gate |
 |---|---|---|
-| 27 to 31 July | Manual privacy labelling complete. System live on AWS. Pipeline run end to end | A grievance submitted in a browser returns a result. Counts reconcile at every pipeline step |
-| 3 to 7 August | Privacy scorecard. Historical complaint text redacted. Spam and duplicate detection. Backlog duplication count. Management metrics, local issue themes, and spike view | Missed-PII rate by data type and language. Redaction pass completes over the chosen portion before any matching runs. Known repeat submissions found in a held-out sample. Each metric reconciles against source data. One real spike found and explained |
-| 10 to 14 August | Sarvam scorecard. Experiment design and power calculation. Full benchmark table | Sarvam and our models compared on the same pages, as a paired sample with stated uncertainty. Every stage in Table 2 has a number **except text extraction, which has no reference to score against** |
+| 27 to 31 July | Manual privacy labelling completed. AWS activation and one-pass end-to-end verification remain outstanding | The current gold set exists; a scanned grievance must still complete the real browser/model path with reconciled stage counts before either deployment claim is made |
+| 3 to 7 August | Privacy scorecard. Historical complaint text redacted. Actionability weak-label audit and duplicate detection. Backlog duplication count. Management metrics, local issue themes, and spike view | Redaction pass completes over the chosen portion before matching. Actionability is reported as weak-label/confounding evidence only; known repeats and candidate matches keep separate denominators. Each published metric reconciles against source data |
+| 10 to 14 August | Cached Sarvam aggregate; frontier-adjudicated actionability, chronological category and local-summary development benchmarks; draft experiment design and full evidence-status table | Sarvam is reported without an OCR-accuracy claim. Routing, actionability, category and summary results stay developmental: the category target is historical agreement, and the enriched summary set has one frontier judge rather than officers. The experiment MDE remains illustrative until the pre-period extract is frozen |
 
 Work stops Thursday 13 August. Friday is rehearsal, no code changes.
 
@@ -161,14 +207,19 @@ Below that, three kinds of work, and they scale differently.
 
 | Work | Why it takes the time it takes |
 |---|---|
-| Correcting the 85 privacy pages | Reading and judging each one. Finishing this week |
+| Correcting the privacy pages | Reading and judging each one; current scorecard covers 89 pages |
 | Transcribing a sample of scanned pages by hand | The only way to know whether Sarvam reads Odia better than we do is to have a correct transcription to compare both against. No such record exists |
 | Choosing which portion of the backlog to demonstrate on | A judgement about what is defensible. It is also the starting gun for the overnight processing, which cannot begin until the portion is fixed |
 | Fixing the A/B analysis plan | The estimator and the power calculation need statistical judgement |
 
 **Resolved, and not in the direction we wanted.** No owner was named for the transcription sample, so on 7 August we took the written fallback rather than let the decision block the final week. The document-reading comparison reports how the two systems differ, with no verdict on which is right.
 
-What that costs is narrower than it first appears. Only one of the three comparisons needed a transcriber. **Categorisation is measured against the category already recorded on each ticket**, and that reference costs nothing to assemble, so the benchmark still produces a real accuracy result — arguably the more decision-relevant one, since it is the number that would change how a grievance is routed.
+Administrative categories can be joined without transcription, but they record
+historical labels rather than policy correctness and still require a frozen,
+group-disjoint sample. No governed paired category/summary benchmark was
+completed for the cached Sarvam run, so it does not produce a category accuracy
+result. That comparison remains wiring plus an evaluation schema until the
+paired adjudicated reference exists.
 
 The transcription sample is still worth commissioning after 14 August. Sarvam say their model is trained on handwritten text in all 22 languages but publish no handwriting-specific figure, and much of this corpus is handwritten. An independent split result on printed versus handwritten pages would be a measurement nobody has published, on precisely the case this corpus consists of.
 
@@ -185,4 +236,7 @@ Running Sarvam's large model on our own hardware. Natural-language querying. Com
 | Whether the demonstration audience may see real citizen data, and under whose login | 7 August |
 | Whether the closed-without-action finding is shown on 14 August or brought to you first. It reflects on the redressal process, not the software. We would report it at state level only, never office by office | 7 August |
 | Whether any department has agreed in principle to an A/B trial later, which would let us present the design with a named partner | 14 August |
-| Who can hand-transcribe roughly fifty scanned pages in Odia and English. Without it the Sarvam comparison has no correct answer to measure against. **The one item on the final week's path with nobody assigned** | Next meeting, and no later than 31 July |
+
+The transcription-owner decision closed on 7 August with no owner assigned;
+the August comparison therefore uses the divergence-only fallback. A future
+owner and governed printed/handwritten sample are post-demo decisions.

@@ -9,6 +9,63 @@ Where a number is a legacy reference rather than a fresh measurement it says
 so. Where a capability cannot yet be measured, that is stated instead of
 being filled with a placeholder.
 
+## 0. Full development benchmark bundle — 11 August 2026
+
+The current reproducible development ledger is
+`outputs/benchmark/full_benchmark.json`, bundle
+`72076ba23e5ba0ec0db0dc6718378a0150abc3c97c5bf9cbf73429b6b95dbee5`.
+It embeds the exact aggregate inputs used by the value-add report and records
+their checksums. Materialize it with
+`dvc pull dvc.yaml:full-benchmark-bundle`; recompute it from already
+materialized inputs with `dvc repro --single-item full-benchmark-bundle`.
+
+The bundle is deliberately `publication_ready=false`. Development evidence
+exists, but the release gate has **0/1 required speed**, **0/5 required
+accuracy**, and **0/2 required impact** artifacts. Those counts mean “the
+release-grade artifact is missing,” not “the measured effect is zero.”
+
+### Technical speed
+
+The run used 30 deterministic synthetic grievances (20 typed, 10 one-page
+PDF), three passes each, discarding the first observation for every grievance.
+It ran sequentially on Apple arm64, Python 3.13, CPU only, at commit `24ab193`.
+
+| Path | Warm n | Mean (s) | Clustered SE (s) | p50 (s) | p90 (s) | p95 (s) | Throughput/s |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Typed text | 40 | 0.109 | 0.012 | 0.133 | 0.145 | 0.150 | 9.174 |
+| PDF | 20 | 13.244 | 0.425 | 13.661 | 15.079 | 15.261 | 0.076 |
+| **Overall** | **60** | **4.487** | **1.158** | **0.139** | **14.348** | **14.883** | **0.223** |
+
+All **90/90 attempts completed with 0 failures**; model startup took 6.468 s.
+The PDF path includes Poppler and local OCR. OCR itself averaged 5.833 s
+(p50 6.000 s, n=20), but page-type and format work are not separately timed
+inside that OCR container. This is development-host timing, not a service-level
+claim or officer time saved. It used DVC model bytes plus local BART cache
+snapshot `37f520fa…`; no approved release manifest was active. The format
+classifier also warned that its scikit-learn 1.8 artifact was loaded under 1.9.
+
+### Accuracy and safety evidence
+
+| Component | Current development result | What is still missing |
+|---|---|---|
+| Actionability | Validation-selected `tfidf_word_char`, n=57: accuracy 94.74%, F1 89.66%; review recall 13/13 (100%), review precision 13/16 (81.25%); 3/44 actionable cases sent to review; checksummed binary artifact is serving-compatible for advisory review | Officer-confirmed, newly frozen release test; the binary objective does not supply five-class reasons and is not release-eligible |
+| Administrative weak labels | 106,683 valid single-label cases; 67 conflicts; max office total-variation distance 0.522 (pooling gate fails) | These are train-only weak labels, not accuracy evidence |
+| PII redaction | 480 scored spans: typed overlap recall 77.92%, exact recall 55.00%; coverage-overlap recall 78.33%; 49 spans excluded by policy | Precision, language slices, and a release-grade officer gold set |
+| Historical routing, all categories | n=208,267: top-1 45.14%, top-3 69.04%, top-5 79.61%; macro F1 19.79%, balanced accuracy 18.76%, log loss 1.970, ECE 0.114 | Correct-authority adjudication and a frozen release test |
+| Historical routing, informative categories | n=142,181: top-1 54.96%, top-3 79.68%; macro F1 25.17%, balanced accuracy 25.42%, log loss 1.595, ECE 0.132 | Same as above; agreement with history is not legal correctness |
+| Categorization | 2024 chronological, exact-text-group-disjoint historical-label agreement; viewed development test n=3,160: top-1 46.55%, top-3 90.89%, macro-F1 36.49% | Officer-confirmed, newly frozen release scorecard; this measures historical labels, not policy correctness |
+| Summary | Local BART on a deterministic enriched redacted-only development set (n=30): 55/84 critical facts retained (65.48%); 0/26 unsupported or contradictory cases; 8/26 usable without edit; 4/26 residual-PII cases; all 6 judge-marked skip cases were summarized and all 4 coherent Odia cases were skipped | Paired officer review on a newly frozen typed/scan, language-stratified release set; post-summary redaction and abstention must improve before promotion |
+| Sarvam OCR | 56 cached paired successes from an interrupted run; every normalized pair differed | Human transcription; divergence is not OCR accuracy |
+
+### Impact
+
+Impact is **not measured**: neither required artifact exists. There is no
+model-exposure/officer-decision/outcome extract and no fixed-horizon citizen
+satisfaction extract, so this bundle does not estimate minutes saved, fewer
+transfers, faster first action, faster resolution, or higher satisfaction.
+Those numbers require append-only exposure and decision events followed by a
+locked concurrent pilot; descriptive historical trends are not substitutes.
+
 **Bench**: Apple Silicon laptop, CPU only (no CUDA). The CPU box is 2 vCPU /
 7 GB and is slower; dedup timings below are from the box, serving timings
 from the laptop.
@@ -28,9 +85,10 @@ app), frontend on `npm run start`.
 | Frontend routes `/`, `/history`, `/supervisor` | HTTP 200 |
 | Frontend production build | exit 0, 4 routes |
 
-First boot on a machine that has never run the demo is much slower: the
-summarizer pulls `facebook/bart-large-cnn` (~1.6 GB) from the Hugging Face
-hub. Pre-warm it before a demo. See [DEMO.md](DEMO.md) §6.
+Production boot never downloads a model. The summarizer requires an approved
+local release artifact or the DVC mirror and fails closed when neither is
+materialized. A mutable Hugging Face model ID is available only behind the
+explicit `JANASUNANI_ALLOW_REMOTE_MODELS=1` development opt-in.
 
 ### What one submission produces
 
@@ -163,6 +221,14 @@ Do not compare the MuRIL figure against any scanned-page result. It is
 computed on typed subject lines; against scans it measures the difference
 between typed text and scans as much as between models. See #127.
 
+The current local hashing candidate is reported separately because it uses a
+different, stricter benchmark: redacted typed text from 2024, chronological
+train/validation/test cohorts and exact normalized-text groups confined to one
+split. On the viewed later-period development test (n=3,160), it reached 46.55%
+top-1, 90.89% top-3 and 36.49% macro-F1 agreement with historical
+administrative labels. This is neither a like-for-like comparison with the
+MuRIL reference nor evidence that the historical label was correct.
+
 ## 4. Dedup index, production
 
 Sambalpur 2024, the only district-year with redactions. Run on the CPU box
@@ -258,8 +324,18 @@ issue's own baseline: top-10 strings are 36.7% of rows, top-500 pairs 60.3%.
 
 ## 6. Sarvam
 
-Not called. Not because governance blocks it — because nobody has supplied
-`SARVAM_API_KEY` and run it.
+The current record is **cache-only evidence from 56 paired successful pages**
+produced by an earlier interrupted provider run plus its completed validation
+run. No new paid call was made for this release. Every normalized Sarvam/local
+pair differed, and Sarvam emitted 1.3345× as many characters; neither statistic
+identifies which transcription is correct. There is no hand-transcribed gold,
+usable provider-latency distribution or actual billing record.
+
+`janasunani-import-sarvam-evidence` can log this already-materialized aggregate
+evidence to MLflow without contacting Sarvam. The source snapshot remains
+protected and the import does not turn divergence into OCR accuracy. The
+governed evidence record and limitations are in
+[QUALITY_BENCHMARKS.md](QUALITY_BENCHMARKS.md#sarvam-vision--cached-evidence-no-new-calls).
 
 All three provider-held-data controls (`retention_terms`,
 `encryption_in_transit`, `encryption_at_rest`) are `verified=False`. That does
@@ -281,7 +357,7 @@ stays false. The gate the adapter actually checks before a live call
 `live_use_ready`. With `enabled=True` and a real key, it would call Sarvam,
 not fall back to pytesseract.
 
-Sample size for the paired comparison, at 10 points detectable and 25%
+Sample size for a future adjudicated paired comparison, at 10 points detectable and 25%
 discordance: **194 pages** at 80% power / 5% level, **259** at 90% power,
 **368** at 90% power / 1% level.
 

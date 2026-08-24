@@ -2,9 +2,10 @@
 
 **Janasunani 2.0** — Odisha's unified, AI-powered grievance redressal system.
 A raw grievance (typed text or a scanned document) is **extracted** (OCR),
-**redacted** (PII, in-process by default), **triaged** (spam / duplicate),
-**classified** (category/department), **summarized**, and **routed** to the
-responsible office, ending in a Next.js demo UI.
+**redacted** (PII, in-process by default), **triaged** with advisory low-signal
+and corpus-level duplicate evidence, **classified** (category/department), **summarized**,
+and **routed** to a suggested office, ending in a Next.js demo UI. The system
+never auto-rejects a grievance: officers retain the consequential decisions.
 
 Citizen text leaves the box only through a declared, audited, revocable channel
 (see [ARCHITECTURE.md](docs/ARCHITECTURE.md) "Security invariants"). That replaced
@@ -19,15 +20,14 @@ The repo is one Python package (`janasunani/`) built **phase by phase** (see
   materialization for analytics, document ingestion → S3, the six-stage
   document-processing pipeline, and the AWS infrastructure (an always-on CPU
   box + an on-demand GPU box).
-- **The demo — in progress:** single-grievance inference, hybrid
-  routing, FastAPI serving, and the Next.js demo. On `main`: the serving API in
-  both flavours (mock by default, opt-in real local models behind the same
-  contract), live persistence, the empirical routing crosswalk wired ahead of
-  the ORTPSA mapping tables, the DPIC-branded Next.js frontend, spam scoring
-  and the duplicate index, the intelligence findings (workload, spikes,
-  themes), and the Sarvam benchmark behind egress control. `make up` brings the
-  API and the frontend up together. MLflow helpers are merged but used only by
-  the benchmark harness, not as a registry.
+- **The demo — in progress:** single-grievance inference, hybrid routing,
+  FastAPI serving, and the Next.js demo. The pipeline-quality trunk adds the
+  bounded spam advisory, an optional checksummed actionability scorer, a
+  duplicate index, chronological category and routing evaluation, an opt-in
+  empirical-Bayes incidence router, a summary scorecard, cached Sarvam evidence
+  import, and immutable local model releases. `make up` brings the API and the
+  frontend up together. MLflow is a pre-deploy control plane for evaluation and
+  alias resolution; serving never contacts MLflow or a public model hub.
 
   Per-phase status is in [docs/ROADMAP.md](docs/ROADMAP.md) §2, which is the
   only place it is recorded — code being on `main` is not the same as a phase
@@ -41,6 +41,27 @@ New here? Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) first;
 [docs/ROADMAP.md](docs/ROADMAP.md) is the plan and current status.
 [docs/DELIVERY.md](docs/DELIVERY.md) is the dated plan for the 14 August demo,
 in plain language.
+
+## Pipeline-quality snapshot
+
+The new evaluation system deliberately separates a useful development result
+from a production claim. Every governed report records its input fingerprint,
+split policy, parameters and evidence status; the bundle stays
+`publication_ready=false` until every required release-quality and impact gate
+exists.
+
+| Capability | Current measured evidence | Boundary |
+|---|---|---|
+| Actionability review | 94.74% accuracy; 13/13 non-actionable cases sent to review; 3/44 actionable cases also reviewed (viewed test, n=57) | Binary, frontier-adjudicated development evidence; no `out_of_scope` support; advisory and not release-eligible |
+| Categorization | 46.55% top-1 and 90.89% top-3 agreement (chronological 2024 test, n=3,160) | Agreement with historical labels, not policy correctness; no promoted release artifact |
+| Routing | 45.14% top-1 and 69.04% top-3 agreement (chronological 2025 test, n=208,267) | Agreement with historical destination, not correct authority or citizen outcome |
+| Summary | 55/84 critical facts retained; 8/26 generated drafts usable without edit; 4/26 had residual PII (enriched n=30) | Single-frontier-judge development diagnostic, not officer-confirmed quality |
+| Sarvam OCR | 56 cached paired successful pages; all normalized outputs differed; Sarvam emitted 1.3345× as many characters | Coverage/divergence evidence only; no hand-transcribed OCR accuracy or new paid calls |
+
+The numbers, denominators and limitations are maintained in
+[QUALITY_BENCHMARKS.md](docs/QUALITY_BENCHMARKS.md). The client-facing evidence
+reports are indexed in
+[docs/value-add-report/README.md](docs/value-add-report/README.md).
 
 ## Running the components (today)
 
@@ -222,8 +243,9 @@ Or one piece at a time:
 ```bash
 uv run --extra serving janasunani-api        # mock; http://127.0.0.1:8000, docs at /docs
 
-make models                                  # DVC-pull only the demo model artifacts
-uv run --extra demo janasunani-demo-preflight # check models + OCR binaries are ready
+make models                                  # legacy category/page-type mirrors only
+# Provision local BART via an approved release (see §9) before live startup.
+uv run --extra demo janasunani-demo-preflight # check local models, release + OCR binaries
 uv run --extra demo janasunani-api-live       # real models behind the same contract
 make frontend                                 # Next.js UI on :3000, pointed at the API
 ```
@@ -231,24 +253,40 @@ make frontend                                 # Next.js UI on :3000, pointed at 
 The full endpoint surface the frontend builds against (`POST /grievance`,
 `GET /grievance/{id}`, `GET /history`, `/health`) with a mocked processor
 returning the real response shapes — no models load. The live command (the
-conflict-free `demo` extra) strictly loads local DVC model artifacts and runs
-pytesseract, Presidio, MuRIL, BART, and the crosswalk → mappings → fallback
+conflict-free `demo` extra) resolves each model from an explicit operator
+override, then an active immutable release, then its local DVC mirror. It makes
+no serving-time MLflow or public-hub call. It runs pytesseract, Presidio,
+MuRIL, BART, bounded advisory triage, and the crosswalk → mappings → fallback
 router behind the same contract, persisting each submission to `live_grievances`
 when `OLTP_DB_URL` is set. `/health` reports `{"processor":"pipeline"}` once
-warm-up finishes; the mock returns `routing.method: "mock"` and the UI badges it
-as such.
+warm-up finishes; detailed model-release, router and triage readiness is exposed
+by preflight. The mock returns `routing.method: "mock"` and the UI badges it as
+such.
+
+Live triage runs after redaction. `JANASUNANI_TRIAGE=bounded` is the default;
+`model` adds the checksummed binary actionability advisory when available and
+falls back safely; `off` disables triage explicitly. `JANASUNANI_ROUTER=incidence`
+opts into the checksummed historical-incidence router. Neither model changes the
+never-auto-reject policy, and historical routing evidence is not a jurisdiction
+decision.
 Full step-by-step bring-up (preflight → Postgres/migrations → launch → health →
 submit): **[docs/DEMO.md](docs/DEMO.md)**.
 Contract details: [janasunani/serving/README.md](janasunani/serving/README.md).
 Frontend: [frontend/README.md](frontend/README.md).
 
-### 8 · Benchmark and the Sarvam head-to-head
+### 8 · Governed quality benchmarks and the Sarvam comparison
 
 ```bash
 uv run python scripts/benchmark_pipeline.py          # per-stage latency, ticket-clustered SE
 uv run janasunani-evaluate-sarvam --input <dir> --out outputs/sarvam --dry-run
 uv run janasunani-evaluate-benchmark                 # → outputs/benchmark/ (Table 2)
 uv run janasunani-evaluate-benchmark --check         # validate existing outputs, regenerate nothing
+
+uv run dvc repro --single-item actionability-local-candidate-benchmark
+uv run dvc repro --single-item categorization-historical-benchmark
+uv run dvc repro --single-item routing-historical-benchmark
+uv run dvc repro --single-item summary-development-benchmark
+uv run dvc repro --single-item full-benchmark-bundle
 ```
 
 `--dry-run` renders and runs pytesseract only: no Sarvam call, no spend. Dropping
@@ -257,6 +295,36 @@ it sends citizen text off the box through the audited egress channel in
 to an audit DB and enforces the run's rate and spend limits. Read
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) "Security invariants" before the
 first real run.
+
+The final DVC stage writes `outputs/benchmark/full_benchmark.json` and `.md`.
+It is a governance bundle, not a leaderboard: missing officer-confirmed release
+sets and measured workflow/citizen outcomes intentionally keep publication
+readiness false. See [QUALITY_BENCHMARKS.md](docs/QUALITY_BENCHMARKS.md) for the
+exact stage commands, schemas and claim boundaries. Existing Sarvam evidence
+can be imported to MLflow with `janasunani-import-sarvam-evidence` without an
+API call; importing evidence does not upgrade it to OCR-accuracy evidence.
+
+### 9 · Materialize and switch an immutable model release
+
+Copy [deploy/model-release.example.json](deploy/model-release.example.json) and
+replace **every** review placeholder. Never run the example unchanged.
+
+```bash
+uv run janasunani-model-release materialize \
+  --spec <approved-release.json> \
+  --release-root models/releases \
+  --activate
+
+uv run --extra demo janasunani-demo-preflight --strict
+
+# rollback: activate a previously materialized, checksum-valid manifest
+uv run janasunani-model-release activate \
+  models/releases/<old-release>/release-manifest.json
+```
+
+MLflow resolves reviewed aliases only during materialization. The immutable
+manifest and local artifact hashes are the runtime contract. Full provenance,
+override precedence and rollback semantics: [MODELS.md](docs/MODELS.md).
 
 ### Tests (the gate for every change)
 
@@ -294,6 +362,15 @@ The GPU box is a `gpu_box_count = 0/1` toggle (~$1/hr while up).
   walkthrough on the laptop stack.
 - [docs/PERFORMANCE.md](docs/PERFORMANCE.md) — measured numbers, with the
   commit and date each was measured against.
+- [docs/QUALITY_BENCHMARKS.md](docs/QUALITY_BENCHMARKS.md) — governed
+  actionability, category, routing, summary, PII and Sarvam evidence, including
+  development/release boundaries.
+- [docs/MODELS.md](docs/MODELS.md) — model inventory, parameterizations,
+  immutable releases, local resolution and rollback.
+- [docs/IMPACT_METRICS.md](docs/IMPACT_METRICS.md) — the metric registry linking
+  model evidence to officer workflow and citizen outcomes.
+- [docs/value-add-report/README.md](docs/value-add-report/README.md) — long
+  evidence report, short IAS brief and prospective capability brief.
 - [docs/FINDINGS.md](docs/FINDINGS.md) — the five reproducible findings for the
   demonstration.
 - [docs/PII_GOLD_ENSEMBLE.md](docs/PII_GOLD_ENSEMBLE.md) — the ensemble-gold

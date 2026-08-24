@@ -196,8 +196,10 @@ api --> oltp:5432 (compose network; existing container/volume, untouched)
   docker-compose.yml's header comment).
 - **Models/data**: host bind-mounts (`../models`, `../data/interim`,
   `../data/raw/janasunani-mappings`, all `:ro`) — never baked into the `api`
-  image. A new deploy doesn't re-pull model weights; a model update is a
-  separate `dvc pull` on the box.
+  image. A new deploy doesn't re-pull model weights. Approved releases are
+  materialized separately into `models/releases` and activated atomically;
+  legacy DVC mirrors remain the final local fallback. Serving never resolves an
+  MLflow alias or downloads public model weights.
 - **GHCR is private**: the box authenticates with a `read:packages`-scoped
   PAT (§"One-time box setup" below), not a public pull.
 - **Reproducibility**: `api`/`frontend` are pinned to the full 40-char
@@ -237,7 +239,31 @@ cp proxy.env.example proxy.env && chmod 600 proxy.env
 docker run --rm caddy:2-alpine caddy hash-password --plaintext '<a real password>'
 ```
 
-**Verify the box before the first deploy**, with `--strict`:
+**Materialize the reviewed model release before the first strict deploy.** Copy
+[`model-release.example.json`](../deploy/model-release.example.json) to a
+protected operator file and replace every placeholder; never run the example
+unchanged.
+
+```bash
+cd ~/janasunani
+uv run janasunani-model-release materialize \
+  --spec <approved-release.json> \
+  --release-root models/releases \
+  --activate
+```
+
+When a spec uses a registry alias, MLflow is used only by this pre-deploy
+control-plane command. Roll back by
+activating a previously materialized manifest after its checksums validate:
+
+```bash
+uv run janasunani-model-release activate \
+  models/releases/<old-release>/release-manifest.json
+```
+
+The full manifest contract is in [MODELS.md](MODELS.md).
+**Verify the box before the first deploy**, with `--strict`, after activating
+the approved release:
 
 ```bash
 cd ~/janasunani
@@ -257,15 +283,19 @@ store` check as of #88, which opens a real, timeout-bounded connection when
 OLTP_DB_URL is set, so a wrong password/host/port here fails this command
 directly rather than passing quietly. Without `--strict` three checks report
 `WARN` rather than failing, because each one leaves the demo *running* —
-which is exactly why they are easy to miss:
+which is exactly why they are easy to miss. The current advisory set is:
 
 | Check | What you get if it is not OK |
 |---|---|
 | `routing mappings` | every response carries `method:"fallback"`; departments are illustrative, not real |
+| `model release` | no approved active manifest, checksum drift, or an operator override shadowing pinned bytes |
+| `router` | requested incidence artifact unavailable; safe crosswalk/mapping fallback remains |
+| `triage` | requested actionability artifact unavailable; bounded/off fallback is reported |
 | `history lake` | `/history` returns an empty page, indistinguishable from "no results" |
 | `oltp store` | `InMemoryResultStore`: submissions return 201 and vanish on restart |
 
-`--strict` makes all three fatal. Use it here and after any `dvc pull`, so a
+`--strict` makes every advisory warning fatal. Use it here and after any model
+release activation or DVC pull, so a
 box that is merely *up* is not mistaken for a box that is *ready*. Local
 `make up` deliberately runs without it.
 

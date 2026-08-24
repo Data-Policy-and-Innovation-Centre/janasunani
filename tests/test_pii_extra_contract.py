@@ -92,12 +92,26 @@ def test_dvc_sample_runs_each_stage_in_its_compatible_extra():
         "data/raw/documents-sample"
     }
     assert {_option(command, "--models") for command in commands} == {"models"}
+    assert commands[0][0] == (
+        "JANASUNANI_FORMAT_CLASSIFIER_ARTIFACT="
+        "models/format_classifier/page_split_v3.0_doc_split.pkl"
+    )
 
     assert set(pipeline_sample["deps"]) >= {
         "janasunani/pipeline/stages/format_classifier",
         "janasunani/pipeline/stages/ocr_extraction",
         "janasunani/pipeline/stages/pii_tagger.py",
     }
+
+
+@pytest.mark.parametrize(
+    "stage_name",
+    ["actionability-adjudication-prepare", "actionability-adjudication-finalize"],
+)
+def test_actionability_adjudication_tracks_shared_taxonomy(stage_name):
+    stage = yaml.safe_load(DVC_PATH.read_text())["stages"][stage_name]
+
+    assert "janasunani/inference/actionability.py" in stage["deps"]
 
 
 def test_dvc_sample_lock_command_matches_the_stage_definition():

@@ -1288,6 +1288,14 @@ def test_demo_rehearsal_script_covers_required_phases():
     assert "exit 1" in text
 
 
+def test_demo_rehearsal_accepts_an_unavailable_advisory_triage_score():
+    """A supported unscored abstention must not make the live smoke fail."""
+    text = REHEARSAL_SH_PATH.read_text()
+    assert 'score_value = spam.get("spam_score")' in text
+    assert "if score_value is None:" in text
+    assert 'spam.get("decision") != "abstained"' in text
+
+
 def test_e2e_pipeline_script_covers_required_steps():
     """The Tier-3 wrapper must invoke the pipeline on a non-PII fixture, export,
     materialize, and optionally curl the rehearsal checks — and must never

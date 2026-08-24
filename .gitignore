@@ -213,6 +213,23 @@ data/output/*
 !data/interim/*.dvc
 !data/processed/*.dvc
 !data/external/*.dvc
+!data/external/sarvam_cached_v1/
+data/external/sarvam_cached_v1/*
+!data/external/sarvam_cached_v1/*.dvc
+!data/external/sarvam_cached_v1/provenance.json
+!data/external/actionability_frontier_v1/
+!data/external/categorization_historical_v1/
+data/external/categorization_historical_v1/*
+!data/external/categorization_historical_v1/*.dvc
+!data/external/categorization_historical_v1/*.provenance.json
+!data/external/summary_development_v1/
+data/external/summary_development_v1/*
+!data/external/summary_development_v1/*.dvc
+!data/external/summary_development_v1/provenance.json
+!data/external/summary_development_v1/*.provenance.json
+data/external/actionability_frontier_v1/*
+!data/external/actionability_frontier_v1/*.dvc
+!data/external/actionability_frontier_v1/*.provenance.json
 # Provenance sidecars for gold/draft artifacts: versions, checksums and span
 # counts only, written by scripts/rederive_pii_draft.py. They exist to be read
 # in review, so they belong in git. Never put citizen text in one.
@@ -223,10 +240,13 @@ outputs/*
 !outputs/tables/
 !outputs/reports/
 !outputs/findings/
+!outputs/benchmark/
 outputs/figures/*
 outputs/tables/*
 outputs/reports/*
 outputs/findings/*
+outputs/benchmark/*
+!outputs/benchmark/*.dvc
 !data/raw/.gitkeep
 !data/clean/.gitkeep
 !data/interim/.gitkeep

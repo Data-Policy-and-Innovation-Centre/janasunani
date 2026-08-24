@@ -18,6 +18,7 @@ from typing import Any, Callable, Optional, Protocol
 from janasunani.config import DEFAULT_OLTP_DB_URL, MODELS_DIR, Settings
 from janasunani.inference.ocr import OcrQualityError, OcrResult
 from janasunani.inference.timing import NullTimer, StageTimer, TimingSink
+from janasunani.pipeline.spam import is_content_free_abuse
 from janasunani.pipeline.stages.page_type_classifier import PAGE_TYPE_CLASS_BY_LABEL
 from janasunani.routing.provider import RoutingProvider, router_from_env, router_status
 from janasunani.serving.schemas import (
@@ -26,6 +27,7 @@ from janasunani.serving.schemas import (
     GrievanceResult,
     PIIEntity,
     RedactionResult,
+    RoutingResult,
 )
 from janasunani.serving.triage import (
     TriageProvider,
@@ -50,6 +52,31 @@ SUPPORTED_DOCUMENT_SUFFIXES = frozenset(
 # see PHASE-8C.md): the first real-model demo targets English, so a non-English
 # summary would otherwise be a hallucinated BART guess over unsupported input.
 UNSUPPORTED_LANGUAGE_SUMMARY = "Summary unavailable for non-English submission."
+LOW_SIGNAL_SUMMARY = (
+    "Summary not generated for a low-signal submission; officer review requested."
+)
+
+
+def _low_signal_manual_route(district: Optional[str]) -> RoutingResult:
+    """Abstain from automated routing while keeping the submission reviewable.
+
+    A bounded spam heuristic is not validated to select a department.  When it
+    identifies the exact content-free regression case, send the submission to
+    the generic grievance-cell intake with zero confidence instead of feeding a
+    fabricated ``Uncategorized`` label into whichever automated router is live.
+    """
+
+    from janasunani.routing.rules import FALLBACK_DEPT, FALLBACK_DESIGNATION
+
+    district_name = " ".join((district or "").split()) or "State"
+    return RoutingResult(
+        dept=FALLBACK_DEPT,
+        office=f"Public Grievance Cell, {district_name}",
+        designation=FALLBACK_DESIGNATION,
+        escalation_authority=f"Collectorate, {district_name}",
+        confidence=0.0,
+        method="fallback",
+    )
 
 
 class InferenceInputError(ValueError):
@@ -197,13 +224,18 @@ class PipelineGrievanceProcessor:
                 redacted_text=redacted_text,
                 entities=pii_entities,
             )
+            classifier_text = (
+                redacted_text if extraction.source == "text" else model_text_source
+            )
             submitted_on = self._now()
             with timer.stage("triage"):
                 try:
-                    # The provider is intentionally called after redaction, never on
-                    # raw OCR or typed citizen text.  Its result is advisory only.
+                    # The provider receives the same redacted grievance-bearing
+                    # text as the downstream models. For documents this excludes
+                    # identification, bill, and miscellaneous pages; raw OCR and
+                    # typed citizen text never reach triage.
                     triage = self._triage_provider.assess(
-                        redacted_text=redaction.redacted_text,
+                        redacted_text=classifier_text,
                         district=district,
                         submitted_on=submitted_on,
                     )
@@ -216,17 +248,36 @@ class PipelineGrievanceProcessor:
                     )
                     triage = unavailable_triage()
 
-            classifier_text = (
-                redacted_text if extraction.source == "text" else model_text_source
-            )
             with timer.stage("detect_language"):
                 language = self._detect_language(classifier_text)
                 is_english = self._is_english_compatible(classifier_text)
-            if is_english:
+            bounded_no_grievance_review = (
+                triage.spam.decision == "review"
+                and triage.spam.reason_code == "low_signal_no_grievance"
+            )
+            observed_content_free_regression = (
+                bounded_no_grievance_review
+                and is_content_free_abuse(classifier_text)
+            )
+            if observed_content_free_regression:
+                # Triage runs on the redacted model input before downstream
+                # models. A named, content-free regression does not need model
+                # calls, and a language-detector guess must not become the
+                # explanation for why no summary was produced. Broader bounded-
+                # spam reviews stay advisory and continue through the normal
+                # category/routing path; only this exact regression takes manual
+                # intake.
+                category = "Uncategorized"
+                summary = LOW_SIGNAL_SUMMARY
+                with timer.stage("route"):
+                    routing = _low_signal_manual_route(district)
+            elif is_english:
                 with timer.stage("categorize"):
                     category = self._categorizer.predict(classifier_text)
                 with timer.stage("summarize"):
                     summary = self._summarizer.summarize(classifier_text)
+                with timer.stage("route"):
+                    routing = self._router.route(category=category, district=district)
             else:
                 # Same gate as the categorizer: BART is only warmed for the
                 # English demo target, and would otherwise hallucinate a summary
@@ -234,8 +285,8 @@ class PipelineGrievanceProcessor:
                 # document paths share this single check).
                 category = "Uncategorized"
                 summary = UNSUPPORTED_LANGUAGE_SUMMARY
-            with timer.stage("route"):
-                routing = self._router.route(category=category, district=district)
+                with timer.stage("route"):
+                    routing = self._router.route(category=category, district=district)
 
             result = GrievanceResult(
                 id=grievance_id,
@@ -327,6 +378,12 @@ def _guard_page_type_predict(
 
 
 def _detect_language(text: str) -> str:
+    # langdetect is unstable on very short strings (the observed regression
+    # labelled "i am an idiot" as Welsh).  Abstain until there is enough text
+    # for a language label to be meaningful; actionability/low-signal triage
+    # still runs before this on the redacted input.
+    if not isinstance(text, str) or len(text.strip()) < 30:
+        return "unknown"
     try:
         from langdetect import DetectorFactory, detect
 
@@ -336,12 +393,19 @@ def _detect_language(text: str) -> str:
         return "unknown"
 
 
+def _usable_model_file(path: Path) -> bool:
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
 def _require_model_artifact(candidates: tuple[Path, ...], component: str) -> None:
-    if not any(path.is_file() for path in candidates):
+    if not any(_usable_model_file(path) for path in candidates):
         shown = " | ".join(str(path) for path in candidates)
         raise RuntimeError(
-            f"missing local {component} artifact: {shown}. Run `dvc pull` "
-            "for the mirrored models before starting the live API."
+            f"missing local {component} artifact or artifact is empty: {shown}. "
+            "Run `dvc pull` for the mirrored models before starting the live API."
         )
 
 
@@ -435,7 +499,37 @@ def _resolve_models_root(models_dir: str | Path | None) -> Path:
     return Path(configured_dir).expanduser() if configured_dir else MODELS_DIR
 
 
-def _required_model_files(root: Path) -> list[tuple[tuple[Path, ...], str]]:
+def _resolved_model_dirs(
+    root: Path,
+    *,
+    verified_artifacts: dict[tuple[Path, str], Path] | None = None,
+) -> tuple[Path, Path, Path]:
+    """Resolve operator override -> pinned release -> DVC for live models."""
+
+    from janasunani.tracking.artifacts import resolve_artifact
+
+    unresolved = root / ".unresolved"
+    categorizer = resolve_artifact(
+        "categorizer", models_dir=root, verified_artifacts=verified_artifacts
+    ) or (unresolved / "categorizer")
+    page_type = resolve_artifact(
+        "page_type_classifier",
+        models_dir=root,
+        verified_artifacts=verified_artifacts,
+    ) or (unresolved / "page_type_classifier")
+    if not (page_type / "config.json").is_file():
+        page_type = page_type / "vit_type_classifier"
+    summarizer = resolve_artifact(
+        "summarizer", models_dir=root, verified_artifacts=verified_artifacts
+    ) or (unresolved / "summarizer")
+    return categorizer, page_type, summarizer
+
+
+def _required_model_files(
+    root: Path,
+    *,
+    resolved_dirs: tuple[Path, Path, Path] | None = None,
+) -> list[tuple[tuple[Path, ...], str]]:
     """The mandatory local model artifacts, as (candidate-paths, component).
 
     Single source of truth shared by `build_processor` (which hard-requires
@@ -456,8 +550,9 @@ def _required_model_files(root: Path) -> list[tuple[tuple[Path, ...], str]]:
     holds tokenizer *settings*, so a mirror with just the config still crashes
     in `AutoTokenizer.from_pretrained`.
     """
-    categorizer_dir = root / "categorizer"
-    page_type_dir = root / "page_type_classifier" / "vit_type_classifier"
+    categorizer_dir, page_type_dir, summarizer_dir = (
+        resolved_dirs if resolved_dirs is not None else _resolved_model_dirs(root)
+    )
     return [
         ((categorizer_dir / "config.json",), "categorizer config"),
         (
@@ -490,6 +585,22 @@ def _required_model_files(root: Path) -> list[tuple[tuple[Path, ...], str]]:
             (page_type_dir / "preprocessor_config.json",),
             "page-type image processor",
         ),
+        ((summarizer_dir / "config.json",), "summarizer config"),
+        (
+            (
+                summarizer_dir / "model.safetensors",
+                summarizer_dir / "pytorch_model.bin",
+            ),
+            "summarizer weights",
+        ),
+        (
+            (
+                summarizer_dir / "tokenizer.json",
+                summarizer_dir / "vocab.json",
+            ),
+            "summarizer tokenizer",
+        ),
+        ((summarizer_dir / "merges.txt",), "summarizer merges"),
     ]
 
 
@@ -583,7 +694,11 @@ def _routing_mappings_check() -> DependencyCheck:
     return DependencyCheck("routing mappings", True, detail, required=False)
 
 
-def _router_check() -> DependencyCheck:
+def _router_check(
+    root: Path,
+    *,
+    verified_artifacts: dict[tuple[Path, str], Path] | None = None,
+) -> DependencyCheck:
     """Which routing rung will actually answer the first live submission.
 
     ``_routing_mappings_check`` above covers the CSV masters, which are the
@@ -594,25 +709,99 @@ def _router_check() -> DependencyCheck:
     PERFORMANCE.md recorded exactly that state on 7 August.
     """
     try:
-        name, ok, detail = router_status()
+        name, ok, detail = router_status(
+            models_dir=root,
+            verified_artifacts=verified_artifacts,
+        )
     except Exception as exc:  # pragma: no cover - defensive; never raise
         return DependencyCheck("router", False, f"unavailable: {exc}", required=False)
     return DependencyCheck(f"router ({name})", ok, detail, required=False)
 
 
-def _triage_check() -> DependencyCheck:
+def _triage_check(
+    root: Path,
+    *,
+    verified_artifacts: dict[tuple[Path, str], Path] | None = None,
+) -> DependencyCheck:
     """Which spam scorer is live, and whether it is learned or heuristic.
 
     Reported so the distinction cannot be lost between the code and the
-    narrative: what ships today is ``spam-v1-bounded``, a deterministic
-    cascade, and a demo that calls it a trained model is claiming #74 without
-    having built it.
+    narrative: the bounded ``spam-v1.1-bounded`` cascade remains the safe
+    fallback, while an optional checksummed actionability model is a separate
+    advisory output. Neither may block a submission.
     """
     try:
-        name, ok, detail = triage_status()
+        name, ok, detail = triage_status(
+            models_dir=root,
+            verified_artifacts=verified_artifacts,
+        )
     except Exception as exc:  # pragma: no cover - defensive; never raise
         return DependencyCheck("triage", False, f"unavailable: {exc}", required=False)
     return DependencyCheck(f"triage ({name})", ok, detail, required=False)
+
+
+def _model_release_check(
+    *, verified_artifacts: dict[tuple[Path, str], Path] | None = None
+) -> DependencyCheck:
+    """Expose the active immutable model release without revealing endpoints.
+
+    Serving never resolves MLflow aliases here. This check only reads the
+    local active pointer/manifest, validates every pinned local artifact, and
+    reports immutable versions plus short checksums for operator visibility.
+    """
+    try:
+        from janasunani.tracking.release import (
+            active_manifest_path,
+            load_manifest,
+            resolve_manifest_artifact,
+        )
+        from janasunani.tracking.artifacts import artifact_override_is_usable
+
+        path = active_manifest_path()
+        if path is None:
+            return DependencyCheck(
+                "model release",
+                False,
+                "no active immutable release manifest; using operator/DVC resolution",
+                required=False,
+            )
+        manifest = load_manifest(path)
+        versions = []
+        shadowed = []
+        for name in sorted(manifest.models):
+            model = manifest.models[name]
+            if artifact_override_is_usable(name):
+                shadowed.append(name)
+            if model.artifact_path is not None:
+                resolve_manifest_artifact(
+                    name,
+                    manifest_path=path,
+                    verified_artifacts=verified_artifacts,
+                )
+                identity = f"sha256:{model.artifact_sha256[:12]}"
+            else:
+                identity = "authorized-hosted"
+            versions.append(f"{name}@{model.version} ({identity})")
+    except Exception as exc:  # pragma: no cover - defensive; never raise
+        return DependencyCheck(
+            "model release", False, f"invalid active release: {exc}", required=False
+        )
+    if shadowed:
+        return DependencyCheck(
+            "model release",
+            False,
+            f"release_id={manifest.release_id}; operator override shadows "
+            f"manifest model(s): {', '.join(shadowed)}; effective served bytes "
+            "must be verified separately; "
+            + ", ".join(versions),
+            required=False,
+        )
+    return DependencyCheck(
+        "model release",
+        True,
+        f"release_id={manifest.release_id}; " + ", ".join(versions),
+        required=False,
+    )
 
 
 # The exact columns janasunani/serving/history.py's LakeHistory.search()
@@ -772,13 +961,19 @@ def preflight(models_dir: str | Path | None = None) -> list[DependencyCheck]:
     for a missing dependency; each check is reported as `ok=False` instead.
     """
     root = _resolve_models_root(models_dir)
+    verified_artifacts: dict[tuple[Path, str], Path] = {}
+    resolved_dirs = _resolved_model_dirs(
+        root, verified_artifacts=verified_artifacts
+    )
     checks = [
         DependencyCheck(
             component,
-            any(path.is_file() for path in candidates),
+            any(_usable_model_file(path) for path in candidates),
             " | ".join(str(path) for path in candidates),
         )
-        for candidates, component in _required_model_files(root)
+        for candidates, component in _required_model_files(
+            root, resolved_dirs=resolved_dirs
+        )
     ]
 
     def _binary_check(name: str, probe: Callable[[], bool], detail: str) -> None:
@@ -800,8 +995,13 @@ def preflight(models_dir: str | Path | None = None) -> list[DependencyCheck]:
     # OLTP_DB_URL is explicitly set: it opens a real, timeout-bounded
     # connection (_OLTP_PROBE_TIMEOUT_S) rather than just checking presence.
     checks.append(_routing_mappings_check())
-    checks.append(_router_check())
-    checks.append(_triage_check())
+    checks.append(_model_release_check(verified_artifacts=verified_artifacts))
+    checks.append(
+        _router_check(root, verified_artifacts=verified_artifacts)
+    )
+    checks.append(
+        _triage_check(root, verified_artifacts=verified_artifacts)
+    )
     checks.append(_lake_check())
     checks.append(_oltp_check())
     return checks
@@ -827,10 +1027,15 @@ def build_processor(
     ``create_app`` already uses for its providers.
     """
     root = _resolve_models_root(models_dir)
-    categorizer_dir = root / "categorizer"
-    page_type_dir = root / "page_type_classifier" / "vit_type_classifier"
+    verified_artifacts: dict[tuple[Path, str], Path] = {}
+    resolved_dirs = _resolved_model_dirs(
+        root, verified_artifacts=verified_artifacts
+    )
+    categorizer_dir, page_type_dir, summarizer_dir = resolved_dirs
 
-    for candidates, component in _required_model_files(root):
+    for candidates, component in _required_model_files(
+        root, resolved_dirs=resolved_dirs
+    ):
         _require_model_artifact(candidates, component)
     _require_ocr_dependencies()
 
@@ -842,7 +1047,7 @@ def build_processor(
 
     from janasunani.pipeline.stages.summarizer import Summarizer
 
-    summarizer = Summarizer()
+    summarizer = Summarizer(summarizer_dir)
 
     from janasunani.pipeline.stages.categorizer.model import GrievanceCategorizer
 
@@ -881,11 +1086,23 @@ def build_processor(
         detect_pii=detect_pii_spans,
         categorizer=categorizer,
         summarizer=summarizer,
-        router=router if router is not None else router_from_env(),
+        router=(
+            router
+            if router is not None
+            else router_from_env(
+                models_dir=root,
+                verified_artifacts=verified_artifacts,
+            )
+        ),
         is_english_compatible=_is_english,
         detect_language=_detect_language,
         triage_provider=(
-            triage_provider if triage_provider is not None else triage_provider_from_env()
+            triage_provider
+            if triage_provider is not None
+            else triage_provider_from_env(
+                models_dir=root,
+                verified_artifacts=verified_artifacts,
+            )
         ),
         timing_sink=timing_sink,
     )

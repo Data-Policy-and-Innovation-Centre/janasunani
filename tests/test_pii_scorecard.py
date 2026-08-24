@@ -1,7 +1,10 @@
 import json
 
+import pytest
+
 from janasunani.evaluation.pii_scorecard import (
     _normalize_language,
+    main,
     render_scorecard,
     score_per_language,
 )
@@ -57,3 +60,45 @@ def test_render_includes_dsi_reference_and_missed_rate(tmp_path):
     assert "missed" in text.lower()
     assert "80.56%" in text or "80.6" in text
     assert "low power" in text.lower() or "thin slice" in text.lower()
+
+
+def test_cli_writes_json_and_markdown_in_one_run(tmp_path):
+    gold = _write_gold(
+        tmp_path,
+        [
+            {
+                "id": "p1",
+                "text": "Ramesh",
+                "entities": [{"start": 0, "end": 6, "entity": "NAME"}],
+                "language": "en",
+            }
+        ],
+    )
+    json_out = tmp_path / "scorecard.json"
+    markdown_out = tmp_path / "scorecard.md"
+    assert main(["--gold", str(gold), "--json-out", str(json_out), "--out", str(markdown_out)]) == 0
+    assert "english" in json.loads(json_out.read_text())
+    assert "PII scorecard" in markdown_out.read_text()
+
+
+def test_required_analyzer_failure_does_not_publish_zero_recall(tmp_path, monkeypatch):
+    gold = _write_gold(
+        tmp_path,
+        [
+            {
+                "id": "p1",
+                "text": "Ramesh",
+                "entities": [{"start": 0, "end": 6, "entity": "NAME"}],
+            }
+        ],
+    )
+
+    def fail_analyzer(*_args, **_kwargs):
+        raise RuntimeError("analyzer unavailable")
+
+    monkeypatch.setattr(
+        "janasunani.pipeline.pii_eval.score_examples", fail_analyzer
+    )
+
+    with pytest.raises(RuntimeError, match="analyzer unavailable"):
+        score_per_language(gold, require_analyzer=True)

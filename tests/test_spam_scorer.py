@@ -2,11 +2,14 @@
 
 import pathlib
 
+import pytest
+
 from janasunani.pipeline import spam
 from janasunani.pipeline.spam import (
     SPAM_REASONS,
     SPAM_VERSION,
     _parse_slice,
+    is_content_free_abuse,
     score_spam,
 )
 
@@ -50,6 +53,33 @@ def test_low_signal_no_grievance():
     s = score_spam("no specific grievance")
     assert s.spam_reason == "low_signal_no_grievance"
     assert s.spam_score >= 0.5
+
+
+def test_observed_irrelevant_insult_is_not_misreported_as_only_too_short():
+    score = score_spam("i am an idiot")
+
+    assert score.spam_reason == "low_signal_no_grievance"
+    assert any(
+        evidence.kind == "pattern" and evidence.observed == "irrelevant_abuse"
+        for evidence in score.evidence
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["I am an idiot.", "you are useless!", "She is a fool", "they are stupid"],
+)
+def test_content_free_abuse_predicate_matches_bounded_scorer(text):
+    assert is_content_free_abuse(text)
+    assert score_spam(text).spam_reason == "low_signal_no_grievance"
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["The officer called me stupid", "I am unable to get water", "useless road repair"],
+)
+def test_content_free_abuse_predicate_does_not_match_grievance_context(text):
+    assert not is_content_free_abuse(text)
 
 
 def test_low_signal_details_inadequate():
@@ -129,6 +159,6 @@ def test_is_repetition_collapsed_param():
     assert s_false.spam_reason == "clean"
 
 
-def test_spam_score_v1_version():
+def test_spam_score_version():
     s = score_spam("clean text " * 10)
-    assert s.method == "spam-v1-bounded"
+    assert s.method == "spam-v1.1-bounded"

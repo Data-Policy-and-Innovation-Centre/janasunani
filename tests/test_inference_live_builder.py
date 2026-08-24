@@ -28,6 +28,14 @@ from janasunani.inference.service import (  # noqa: E402
 )
 from janasunani.pipeline.stages.ocr_extraction import page_renderer  # noqa: E402
 from janasunani.serving.api import create_app  # noqa: E402
+from janasunani.tracking.release import (  # noqa: E402
+    RELEASE_MANIFEST_ENV_VAR,
+    ModelRelease,
+    artifact_sha256,
+    new_manifest,
+    write_manifest,
+)
+from janasunani.tracking import release as release_tracking  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -50,14 +58,251 @@ def _write_dummy_model_artifacts(root: Path) -> None:
     categorizer_dir = root / "categorizer"
     categorizer_dir.mkdir(parents=True)
     (categorizer_dir / "config.json").write_text("{}")
-    (categorizer_dir / "label_encoder_ROS_wDOCS_english.pkl").write_bytes(b"")
-    (categorizer_dir / "model.safetensors").write_bytes(b"")
+    (categorizer_dir / "label_encoder_ROS_wDOCS_english.pkl").write_bytes(b"fixture")
+    (categorizer_dir / "model.safetensors").write_bytes(b"fixture")
     (categorizer_dir / "tokenizer.json").write_text("{}")
     page_type_dir = root / "page_type_classifier" / "vit_type_classifier"
     page_type_dir.mkdir(parents=True)
     (page_type_dir / "config.json").write_text("{}")
-    (page_type_dir / "model.safetensors").write_bytes(b"")
+    (page_type_dir / "model.safetensors").write_bytes(b"fixture")
     (page_type_dir / "preprocessor_config.json").write_text("{}")
+    summarizer_dir = root / "summarizer"
+    summarizer_dir.mkdir(parents=True)
+    (summarizer_dir / "config.json").write_text("{}")
+    (summarizer_dir / "model.safetensors").write_bytes(b"fixture")
+    (summarizer_dir / "tokenizer.json").write_text("{}")
+    (summarizer_dir / "merges.txt").write_text("#version: 0.2")
+
+
+def _write_dummy_live_release(tmp_path: Path, monkeypatch) -> list[Path]:
+    release_dir = tmp_path / "release-1"
+    artifacts_dir = release_dir / "artifacts"
+    _write_dummy_model_artifacts(artifacts_dir)
+    artifact_paths = [
+        artifacts_dir / "categorizer",
+        artifacts_dir / "page_type_classifier",
+        artifacts_dir / "summarizer",
+    ]
+    models = {
+        path.name: ModelRelease(
+            name=path.name,
+            provider="local",
+            trust_tier="local",
+            version="1",
+            artifact_path=path.relative_to(release_dir).as_posix(),
+            artifact_sha256=artifact_sha256(path),
+        )
+        for path in artifact_paths
+    }
+    manifest_path = release_dir / "release-manifest.json"
+    write_manifest(
+        manifest_path,
+        new_manifest(release_id="release-1", git_sha="a" * 40, models=models),
+    )
+    monkeypatch.setenv(RELEASE_MANIFEST_ENV_VAR, str(manifest_path))
+    return artifact_paths
+
+
+def _record_artifact_hashes(monkeypatch) -> list[Path]:
+    hashed: list[Path] = []
+    real_artifact_sha256 = release_tracking.artifact_sha256
+
+    def recording_artifact_sha256(path: Path) -> str:
+        hashed.append(path)
+        return real_artifact_sha256(path)
+
+    monkeypatch.setattr(
+        release_tracking, "artifact_sha256", recording_artifact_sha256
+    )
+    return hashed
+
+
+def test_preflight_reports_immutable_release_versions_without_hosted_endpoint(
+    tmp_path, monkeypatch
+):
+    release_dir = tmp_path / "release-1"
+    artifact = release_dir / "artifacts" / "actionability"
+    artifact.mkdir(parents=True)
+    (artifact / "model.joblib").write_bytes(b"weights")
+    manifest = new_manifest(
+        release_id="release-1",
+        git_sha="a" * 40,
+        models={
+            "actionability": ModelRelease(
+                name="actionability",
+                provider="local_sklearn",
+                trust_tier="local",
+                version="12",
+                artifact_path="artifacts/actionability",
+                artifact_sha256=artifact_sha256(artifact),
+            ),
+            "sarvam_digitise": ModelRelease(
+                name="sarvam_digitise",
+                provider="sarvam",
+                trust_tier="authorized_hosted",
+                version="observed-2026-08-01",
+                endpoint="https://secret-provider.example/jobs",
+            ),
+        },
+    )
+    manifest_path = release_dir / "release-manifest.json"
+    write_manifest(manifest_path, manifest)
+    monkeypatch.setenv(RELEASE_MANIFEST_ENV_VAR, str(manifest_path))
+
+    release_check = next(check for check in preflight(tmp_path) if check.name == "model release")
+
+    assert release_check.ok is True
+    assert "release_id=release-1" in release_check.detail
+    assert "actionability@12" in release_check.detail
+    assert "sarvam_digitise@observed-2026-08-01" in release_check.detail
+    assert "secret-provider" not in release_check.detail
+
+
+def test_preflight_reports_checksum_drift_in_active_release(tmp_path, monkeypatch):
+    release_dir = tmp_path / "release-1"
+    artifact = release_dir / "artifacts" / "actionability"
+    artifact.mkdir(parents=True)
+    model_file = artifact / "model.joblib"
+    model_file.write_bytes(b"weights")
+    manifest_path = release_dir / "release-manifest.json"
+    write_manifest(
+        manifest_path,
+        new_manifest(
+            release_id="release-1",
+            git_sha="a" * 40,
+            models={
+                "actionability": ModelRelease(
+                    name="actionability",
+                    provider="local_sklearn",
+                    trust_tier="local",
+                    version="12",
+                    artifact_path="artifacts/actionability",
+                    artifact_sha256=artifact_sha256(artifact),
+                )
+            },
+        ),
+    )
+    model_file.write_bytes(b"drifted")
+    monkeypatch.setenv(RELEASE_MANIFEST_ENV_VAR, str(manifest_path))
+
+    release_check = next(check for check in preflight(tmp_path) if check.name == "model release")
+
+    assert release_check.ok is False
+    assert "checksum mismatch" in release_check.detail
+
+
+def test_preflight_marks_manifest_unhealthy_when_operator_override_shadows_it(
+    tmp_path, monkeypatch
+):
+    release_dir = tmp_path / "release-1"
+    artifact = release_dir / "artifacts" / "actionability"
+    artifact.mkdir(parents=True)
+    (artifact / "model.joblib").write_bytes(b"release-weights")
+    manifest_path = release_dir / "release-manifest.json"
+    write_manifest(
+        manifest_path,
+        new_manifest(
+            release_id="release-1",
+            git_sha="a" * 40,
+            models={
+                "actionability": ModelRelease(
+                    name="actionability",
+                    provider="local_sklearn",
+                    trust_tier="local",
+                    version="12",
+                    artifact_path="artifacts/actionability",
+                    artifact_sha256=artifact_sha256(artifact),
+                )
+            },
+        ),
+    )
+    override = tmp_path / "operator-override"
+    override.write_bytes(b"different-weights")
+    monkeypatch.setenv(RELEASE_MANIFEST_ENV_VAR, str(manifest_path))
+    monkeypatch.setenv("JANASUNANI_ACTIONABILITY_ARTIFACT", str(override))
+
+    release_check = next(
+        check for check in preflight(tmp_path) if check.name == "model release"
+    )
+
+    assert release_check.ok is False
+    assert "operator override shadows" in release_check.detail
+    assert "actionability" in release_check.detail
+    assert str(override) not in release_check.detail
+
+
+def test_preflight_ignores_unusable_operator_override(tmp_path, monkeypatch):
+    release_dir = tmp_path / "release-1"
+    artifact = release_dir / "artifacts" / "actionability"
+    artifact.mkdir(parents=True)
+    (artifact / "model.joblib").write_bytes(b"release-weights")
+    manifest_path = release_dir / "release-manifest.json"
+    write_manifest(
+        manifest_path,
+        new_manifest(
+            release_id="release-1",
+            git_sha="a" * 40,
+            models={
+                "actionability": ModelRelease(
+                    name="actionability",
+                    provider="local_sklearn",
+                    trust_tier="local",
+                    version="12",
+                    artifact_path="artifacts/actionability",
+                    artifact_sha256=artifact_sha256(artifact),
+                )
+            },
+        ),
+    )
+    monkeypatch.setenv(RELEASE_MANIFEST_ENV_VAR, str(manifest_path))
+    monkeypatch.setenv(
+        "JANASUNANI_ACTIONABILITY_ARTIFACT", str(tmp_path / "missing-override")
+    )
+
+    release_check = next(
+        check for check in preflight(tmp_path) if check.name == "model release"
+    )
+
+    assert release_check.ok is True
+    assert "operator override shadows" not in release_check.detail
+    assert "actionability@12" in release_check.detail
+
+
+def test_preflight_hashes_each_live_release_artifact_once(tmp_path, monkeypatch):
+    artifact_paths = _write_dummy_live_release(tmp_path, monkeypatch)
+    hashed = _record_artifact_hashes(monkeypatch)
+    monkeypatch.setattr(service.shutil, "which", lambda _binary: "/usr/bin/fake")
+    monkeypatch.setattr(page_renderer, "POPPLER_PATH", None)
+
+    release_check = next(
+        check for check in preflight(tmp_path / "unused-dvc-root")
+        if check.name == "model release"
+    )
+
+    assert release_check.ok is True
+    assert sorted(hashed) == sorted(artifact_paths)
+
+
+def test_build_processor_hashes_each_live_release_artifact_once(
+    tmp_path, monkeypatch
+):
+    artifact_paths = _write_dummy_live_release(tmp_path, monkeypatch)
+    hashed = _record_artifact_hashes(monkeypatch)
+
+    class _StopAfterArtifactChecks(Exception):
+        pass
+
+    def stop_after_artifact_checks() -> None:
+        raise _StopAfterArtifactChecks
+
+    monkeypatch.setattr(
+        service, "_require_ocr_dependencies", stop_after_artifact_checks
+    )
+
+    with pytest.raises(_StopAfterArtifactChecks):
+        build_processor(tmp_path / "unused-dvc-root")
+
+    assert sorted(hashed) == sorted(artifact_paths)
 
 
 def test_build_processor_fails_closed_when_local_models_are_missing(tmp_path):
@@ -88,8 +333,8 @@ def test_build_processor_fails_closed_when_only_tokenizer_config_present(tmp_pat
     categorizer_dir = tmp_path / "categorizer"
     categorizer_dir.mkdir(parents=True)
     (categorizer_dir / "config.json").write_text("{}")
-    (categorizer_dir / "model.safetensors").write_bytes(b"")
-    (categorizer_dir / "label_encoder_ROS_wDOCS_english.pkl").write_bytes(b"")
+    (categorizer_dir / "model.safetensors").write_bytes(b"fixture")
+    (categorizer_dir / "label_encoder_ROS_wDOCS_english.pkl").write_bytes(b"fixture")
     (categorizer_dir / "tokenizer_config.json").write_text("{}")  # settings only
 
     with pytest.raises(
@@ -107,6 +352,18 @@ def test_preflight_flags_partial_mirror_missing_weights(tmp_path, monkeypatch):
     monkeypatch.setattr(page_renderer, "POPPLER_PATH", None)
 
     by_name = {c.name: c.ok for c in preflight(tmp_path)}
+
+    assert by_name["categorizer weights"] is False
+    assert by_name["categorizer config"] is True
+
+
+def test_preflight_flags_zero_byte_model_weights(tmp_path, monkeypatch):
+    _write_dummy_model_artifacts(tmp_path)
+    (tmp_path / "categorizer" / "model.safetensors").write_bytes(b"")
+    monkeypatch.setattr(service.shutil, "which", lambda _binary: "/usr/bin/fake")
+    monkeypatch.setattr(page_renderer, "POPPLER_PATH", None)
+
+    by_name = {check.name: check.ok for check in preflight(tmp_path)}
 
     assert by_name["categorizer weights"] is False
     assert by_name["categorizer config"] is True

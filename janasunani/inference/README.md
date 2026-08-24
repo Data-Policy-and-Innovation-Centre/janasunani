@@ -57,24 +57,36 @@ error). Then:
    extracted text; spans map `PIISpan(entity,start,end,score)` →
    `PIIEntity(entity,start,end)`. On the document path each selected page is
    redacted **before** being joined for the models.
-4. **Classification & summary** — run over the **redacted** text (PII never
+4. **Advisory triage** — runs only over the **redacted** text. The bounded
+   provider is the default; an optional checksummed binary actionability model
+   can ask for officer review. Neither rejects or changes routing. Content-free
+   abuse suppresses generated category/summary output instead of inventing an
+   answer.
+5. **Classification & summary** — run over the **redacted** text (PII never
    reaches the models). `langdetect` sets `language`; the same English gate the
    categorizer uses decides whether MuRIL + BART run, or the non-English
    fallback (`category="Uncategorized"`, a fixed "summary unavailable" string)
    applies — BART is only warmed/validated for the English demo target and
    would otherwise hallucinate over unsupported input.
-5. **Routing** — `DEFAULT_ROUTER.route(category=…, district=…)` → `RoutingResult`
-   straight into the frozen schema. Without the DVC-mirrored ORTPSA mappings
-   this degrades to `method="fallback"` (see the routing crosswalk gap — the
-   masters carry no category→department FK; deferred post-demo).
+6. **Routing** — the selected provider returns `RoutingResult` straight into
+   the frozen schema. Default routing tries the empirical crosswalk before
+   mappings and generic fallback. `JANASUNANI_ROUTER=incidence` opts into a
+   checksummed empirical-Bayes artifact and safely falls through when it cannot
+   provide evidence. Both learned paths describe historical destination, not
+   correct jurisdiction or outcomes.
 
 ## Strict warm start (`build_processor`) + `preflight`
 
 `build_processor` is **fail-closed**: it hard-requires the locally mirrored
 model artifacts and the OCR system binaries, then imports and warms page-type →
 summarizer → categorizer → Presidio → OCR/router. Any missing artifact, absent
-binary, failed public BART download, or Presidio init error **aborts startup** —
+binary, failed local BART load, or Presidio init error **aborts startup** —
 it never substitutes the mock.
+
+Models resolve in the same order used by preflight: component-specific operator
+override → active immutable release manifest → local DVC mirror. Runtime imports
+no MLflow client and performs no model-network lookup. Remote model IDs require
+the explicit `JANASUNANI_ALLOW_REMOTE_MODELS=1` development opt-in.
 
 `preflight()` reports the **same** requirements without loading a single weight
 (milliseconds, not minutes), so an operator can confirm a box is demo-ready
@@ -86,6 +98,7 @@ fast check can never disagree with what real startup loads. Requirements:
 |---|---|
 | categorizer | `config.json`; `model.safetensors` \| `pytorch_model.bin`; `tokenizer.json` \| `vocab.txt`; `label_encoder_…pkl` |
 | page-type | `config.json`; `model.safetensors` \| `pytorch_model.bin`; `preprocessor_config.json` |
+| summarizer | `config.json`; `model.safetensors` \| `pytorch_model.bin`; tokenizer vocabulary/config |
 | OCR binaries | `tesseract` (resolved as the backend does — `TESSERACT_CMD`/PATH/bundled), `pdfinfo` + `pdftoppm` (poppler) |
 
 Models root: `JANASUNANI_MODELS_DIR`, else the package `MODELS_DIR`. The Odia
@@ -115,12 +128,15 @@ document with no grievance-bearing pages. A page-type **model** bug caught
 mid-OCR is wrapped (`_PageTypeModelError`) so it is never mistaken for a corrupt
 document — genuine model/runtime failures propagate as **5xx**.
 
+Preflight also reports advisory model-release, router, triage, lake and OLTP
+checks. Missing/shadowed release state is a warning normally and a failure under
+`--strict`; no operator override path is disclosed.
+
 ## macOS guards (`serve.py`)
 
 On `darwin`, before any inference import: `OMP_NUM_THREADS=1` (torch/xgboost/
-spaCy OpenMP collision in one arm64 process) and `HF_HUB_DISABLE_XET=1` (the
-Rust `hf_xet` backend can wedge the first BART download on macOS). The Linux CPU
-box is untouched.
+spaCy OpenMP collision in one arm64 process) and `HF_HUB_DISABLE_XET=1` (a guard
+for the explicit remote-model development mode). The Linux CPU box is untouched.
 
 ## Tests
 

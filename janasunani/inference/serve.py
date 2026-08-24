@@ -14,11 +14,6 @@ import sys
 # OpenMP initialization. This must run before any inference imports.
 if sys.platform == "darwin":
     os.environ.setdefault("OMP_NUM_THREADS", "1")
-    # The summarizer downloads facebook/bart-large-cnn from the HF hub on first
-    # run. The Rust `hf_xet` transfer backend can hang on a dispatch semaphore
-    # on macOS *after* the bytes land, wedging startup indefinitely. Fall back
-    # to plain HTTPS locally; the Linux CPU box (where Xet works) is untouched.
-    os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
 from janasunani.inference.service import (  # noqa: E402
     build_processor,

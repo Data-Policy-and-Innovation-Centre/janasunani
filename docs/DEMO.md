@@ -14,7 +14,9 @@ GHCR → box rollout of this same API (Docker images, CI, one-time box setup),
 see [DEPLOY.md §4 "Automated demo deploy"](DEPLOY.md#4--automated-demo-deploy-ci--ghcr--box).
 
 > **Fast path — `make`.** The `Makefile` wraps every step below:
-> `make models` (scoped DVC pull) · `make preflight` · `make up` (throwaway
+> `make models` (legacy category/page-type mirrors only) · materialize an
+> approved release or provision the remaining local artifacts · `make preflight`
+> · `make up` (throwaway
 > Postgres + API + frontend, waits for `processor: pipeline` before starting the
 > UI, one `Ctrl-C` stops both) · `make down` (tear down by port). `make api`/
 > `make up` provision and migrate the local Postgres for you — if you point
@@ -38,7 +40,8 @@ see [DEPLOY.md §4 "Automated demo deploy"](DEPLOY.md#4--automated-demo-deploy-c
 
 | Dependency | How to get it | Checked by |
 |---|---|---|
-| Model artifacts under `models/` (categorizer, page-type ViT) | `dvc pull models/categorizer.dvc models/page_type_classifier/vit_type_classifier.dvc` | `janasunani-demo-preflight` |
+| Mandatory local model artifacts (categorizer, page-type ViT, BART summarizer) | Prefer an approved immutable release; `make models` pulls only the two legacy DVC mirrors | `janasunani-demo-preflight` |
+| Approved release manifest (strict deploy) | Follow [MODELS.md](MODELS.md#serving-different-versions-safely); never run the example spec unchanged | preflight `model release` check |
 | `tesseract` binary | `brew install tesseract` / `apt-get install tesseract-ocr` | preflight |
 | Odia (`ori`) traineddata | `brew install tesseract-lang` / `apt-get install tesseract-ocr-ori` | **manual** — `tesseract --list-langs \| grep ori` (preflight checks only the binary) |
 | Poppler (`pdfinfo` **and** `pdftoppm`) | `brew install poppler` / `apt-get install poppler-utils` | preflight |
@@ -47,13 +50,13 @@ see [DEPLOY.md §4 "Automated demo deploy"](DEPLOY.md#4--automated-demo-deploy-c
 
 > **Do not run an unqualified `dvc pull`** on a demo box — the workspace also
 > DVC-tracks the raw SQL dump and document samples (real grievance PII). Pull
-> only the model targets above (plus the routing mappings,
+> only approved model targets (plus the routing mappings,
 > `data/raw/janasunani-mappings.dvc`, if you want `method: "rules"` routing).
 
-The summarizer downloads `facebook/bart-large-cnn` (~1.6 GB) from the Hugging
-Face hub **on first startup** — unlike the categorizer/page-type models it is
-not DVC-mirrored. Pre-warm it once on a good connection so the demo itself
-doesn't stall on a cold download (see [§6 Known limitations](#6-known-limitations)).
+Production startup never downloads a model. The summarizer must resolve from an
+operator override, an active checksum-valid release or its local DVC mirror.
+A mutable remote model ID is permitted only with the explicit
+`JANASUNANI_ALLOW_REMOTE_MODELS=1` development opt-in.
 
 ---
 
@@ -67,7 +70,9 @@ reports which OLTP store will be selected:
 uv run --extra demo janasunani-demo-preflight
 ```
 
-Exits non-zero if any dependency is missing. Expected output when ready:
+Exits non-zero if a required model/binary is missing. Advisory release, router,
+triage, lake and OLTP checks are warnings normally and failures under `--strict`.
+Expected output includes:
 
 ```
 [OK  ] categorizer config: .../models/categorizer/config.json
@@ -77,8 +82,12 @@ Exits non-zero if any dependency is missing. Expected output when ready:
 [OK  ] page-type config: .../vit_type_classifier/config.json
 [OK  ] page-type weights: .../vit_type_classifier/model.safetensors | .../pytorch_model.bin
 [OK  ] page-type image processor: .../vit_type_classifier/preprocessor_config.json
+[OK  ] summarizer config/weights/tokenizer: ...
 [OK  ] tesseract: OCR text-extraction binary
 [OK  ] pdfinfo/pdftoppm: PDF page renderer (poppler)
+[OK  ] model release: active release ...
+[OK  ] router: ...
+[OK  ] triage: ...
 [INFO] OLTP: explicit URL set -> DatabaseResultStore (persistent)
 ```
 
@@ -176,15 +185,15 @@ for evaluation/retraining (see [ROADMAP.md](ROADMAP.md)):
   DVC-tracked routing mappings are loaded; the router is designed to degrade
   gracefully rather than fail. Load the mappings for a full `method: "rules"`
   demo.
-- **PII recall is limited on Indian names** — Presidio's `en_core_web_sm`
-  model misses many person names (e.g. it redacted a phone number but not the
-  submitter's name in one text sample). This is exactly what the PII gold
-  labeling + `eval_results.jsonl` scoring is meant to quantify before real
-  citizen text flows through.
-- **BART is fetched from the public HF hub at startup**, not from a DVC
-  mirror. On macOS the Rust `hf_xet` transfer backend can hang *after* the
-  download completes; `serve.py` sets `HF_HUB_DISABLE_XET=1` on darwin to
-  avoid it. Pre-warm the model (or mirror it) for a hands-off box demo.
+- **PII evidence is incomplete.** The development scorecard measures recall,
+  but precision and required language/source slices are not release-ready.
+- **No reviewed production release is active by default.** Local immutable
+  release and rollback machinery exists, but an operator must approve and
+  materialize the exact artifacts before strict preflight can pass.
+- **Triage is advisory.** `spam-v1.1-bounded` is the default. Setting
+  `JANASUNANI_TRIAGE=model` loads the checksummed binary actionability candidate
+  when available and otherwise falls back safely; neither mode rejects, closes
+  or reroutes a grievance.
 - **Non-English submissions** skip the summarizer and are marked
   `Uncategorized` — the first real-model demo targets English.
 

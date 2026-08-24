@@ -13,6 +13,8 @@ Two properties matter here and neither is about the current implementations:
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import hashlib
+import json
 
 import pytest
 
@@ -26,6 +28,7 @@ from janasunani.routing.provider import (
 )
 from janasunani.serving.schemas import RoutingResult, SpamReview, TriageResult
 from janasunani.serving.triage import (
+    ActionabilityTriageProvider,
     TRIAGE_BOUNDED,
     TRIAGE_ENV_VAR,
     TRIAGE_MODEL,
@@ -142,7 +145,8 @@ def test_triage_off_reports_unavailable_rather_than_clean():
 
 
 def test_triage_model_falls_back_to_bounded_when_no_artifact_resolves(monkeypatch):
-    monkeypatch.delenv("JANASUNANI_SPAM_SCORER_ARTIFACT", raising=False)
+    monkeypatch.delenv("JANASUNANI_ACTIONABILITY_ARTIFACT", raising=False)
+    monkeypatch.setenv("JANASUNANI_MODELS_DIR", "/nonexistent-for-this-test")
     provider = triage_provider_from_env(TRIAGE_MODEL)
     assert isinstance(provider, UnwiredTriageProvider)
 
@@ -169,15 +173,16 @@ def test_triage_status_says_the_shipped_scorer_is_heuristic(monkeypatch):
 
 def test_triage_status_flags_model_configured_without_an_artifact(monkeypatch):
     monkeypatch.setenv(TRIAGE_ENV_VAR, TRIAGE_MODEL)
-    monkeypatch.delenv("JANASUNANI_SPAM_SCORER_ARTIFACT", raising=False)
+    monkeypatch.delenv("JANASUNANI_ACTIONABILITY_ARTIFACT", raising=False)
+    monkeypatch.setenv("JANASUNANI_MODELS_DIR", "/nonexistent-for-this-test")
     name, ok, detail = triage_status()
     assert name == TRIAGE_BOUNDED
     assert ok is False
-    assert "no scorer artifact resolved" in detail
+    assert "no actionability artifact resolved" in detail
 
 
 def test_resolve_learned_scorer_raises_artifact_absent_when_nothing_resolves(monkeypatch):
-    monkeypatch.delenv("JANASUNANI_SPAM_SCORER_ARTIFACT", raising=False)
+    monkeypatch.delenv("JANASUNANI_ACTIONABILITY_ARTIFACT", raising=False)
     monkeypatch.setenv("JANASUNANI_MODELS_DIR", "/nonexistent-for-this-test")
     with pytest.raises(ScorerArtifactAbsent):
         _resolve_learned_scorer()
@@ -186,9 +191,9 @@ def test_resolve_learned_scorer_raises_artifact_absent_when_nothing_resolves(mon
 def test_resolve_learned_scorer_raises_loader_unimplemented_when_an_artifact_exists(
     tmp_path, monkeypatch
 ):
-    artifact = tmp_path / "spam_scorer"
+    artifact = tmp_path / "actionability"
     artifact.write_bytes(b"not a real model, just needs to be a usable path")
-    monkeypatch.setenv("JANASUNANI_SPAM_SCORER_ARTIFACT", str(artifact))
+    monkeypatch.setenv("JANASUNANI_ACTIONABILITY_ARTIFACT", str(artifact))
     with pytest.raises(ScorerLoaderUnimplemented):
         _resolve_learned_scorer()
 
@@ -203,17 +208,17 @@ def test_triage_status_distinguishes_absent_artifact_from_unimplemented_loader(
     Collapsing both into "no scorer artifact resolved" sends an operator to
     fix the wrong thing.
     """
-    artifact = tmp_path / "spam_scorer"
+    artifact = tmp_path / "actionability"
     artifact.write_bytes(b"not a real model, just needs to be a usable path")
     monkeypatch.setenv(TRIAGE_ENV_VAR, TRIAGE_MODEL)
-    monkeypatch.setenv("JANASUNANI_SPAM_SCORER_ARTIFACT", str(artifact))
+    monkeypatch.setenv("JANASUNANI_ACTIONABILITY_ARTIFACT", str(artifact))
 
     name, ok, detail = triage_status()
     assert name == TRIAGE_BOUNDED
     assert ok is False
-    assert "loader is not implemented" in detail
+    assert "could not be loaded" in detail
     # Distinct from the absent-artifact wording covered by the test above.
-    assert "no scorer artifact resolved" not in detail
+    assert "no actionability artifact resolved" not in detail
 
 
 def test_triage_provider_falls_back_to_bounded_when_the_loader_is_unimplemented(
@@ -224,12 +229,211 @@ def test_triage_provider_falls_back_to_bounded_when_the_loader_is_unimplemented(
     Only the diagnostic in `triage_status` needs to tell them apart; a live
     submission must reach the bounded scorer either way, never an error.
     """
-    artifact = tmp_path / "spam_scorer"
+    artifact = tmp_path / "actionability"
     artifact.write_bytes(b"not a real model, just needs to be a usable path")
-    monkeypatch.setenv("JANASUNANI_SPAM_SCORER_ARTIFACT", str(artifact))
+    monkeypatch.setenv("JANASUNANI_ACTIONABILITY_ARTIFACT", str(artifact))
 
     provider = triage_provider_from_env(TRIAGE_MODEL)
     assert isinstance(provider, UnwiredTriageProvider)
+
+
+class FixedActionabilityClassifier:
+    classes_ = (
+        "actionable", "underspecified", "irrelevant", "out_of_scope",
+        "policy_blocked",
+    )
+
+    def predict_proba(self, texts):
+        del texts
+        return [[0.05, 0.05, 0.8, 0.05, 0.05]]
+
+
+class FixedBinaryActionabilityClassifier:
+    classes_ = ("actionable", "review_required")
+
+    def predict_proba(self, texts):
+        return [[0.1, 0.9] for _ in texts]
+
+
+def _write_actionability_artifact(path):
+    import joblib
+
+    path.mkdir()
+    model = path / "classifier.joblib"
+    joblib.dump(FixedActionabilityClassifier(), model)
+    digest = hashlib.sha256(model.read_bytes()).hexdigest()
+    (path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "artifact_format": 1,
+                "taxonomy_version": "actionability-v1",
+                "labels": list(FixedActionabilityClassifier.classes_),
+                "method": "fixed-test",
+                "review_threshold": 0.7,
+                "model_file": model.name,
+                "model_sha256": digest,
+            }
+        )
+    )
+
+
+def _write_binary_actionability_artifact(path):
+    import joblib
+
+    path.mkdir()
+    model = path / "classifier.joblib"
+    joblib.dump(FixedBinaryActionabilityClassifier(), model)
+    digest = hashlib.sha256(model.read_bytes()).hexdigest()
+    (path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "artifact_format": 2,
+                "objective": "actionable_vs_officer_review",
+                "taxonomy_version": "actionability-v1",
+                "labels": ["actionable", "review_required"],
+                "method": "fixed-binary-test",
+                "review_threshold": 0.7,
+                "model_file": model.name,
+                "model_sha256": digest,
+            }
+        )
+    )
+
+
+def test_triage_model_loads_actionability_without_replacing_bounded_spam(
+    tmp_path, monkeypatch
+):
+    artifact = tmp_path / "actionability"
+    _write_actionability_artifact(artifact)
+    monkeypatch.setenv("JANASUNANI_ACTIONABILITY_ARTIFACT", str(artifact))
+
+    provider = triage_provider_from_env(TRIAGE_MODEL)
+    assert isinstance(provider, ActionabilityTriageProvider)
+    result = provider.assess(
+        redacted_text="nothing to report this is a demo entry",
+        district=None,
+        submitted_on=datetime.now(UTC),
+    )
+
+    assert result.actionability is not None
+    assert result.actionability.predicted_label == "irrelevant"
+    assert result.actionability.decision == "review"
+    assert result.spam.spam_reason is not None
+
+
+def test_triage_model_serves_binary_review_without_fabricating_reason(tmp_path, monkeypatch):
+    artifact = tmp_path / "actionability"
+    _write_binary_actionability_artifact(artifact)
+    monkeypatch.setenv("JANASUNANI_ACTIONABILITY_ARTIFACT", str(artifact))
+
+    result = triage_provider_from_env(TRIAGE_MODEL).assess(
+        redacted_text="please review this request",
+        district=None,
+        submitted_on=datetime.now(UTC),
+    )
+
+    assert result.actionability is not None
+    assert result.actionability.decision == "review"
+    assert result.actionability.predicted_label == "review_required"
+    assert result.actionability.objective == "actionable_vs_officer_review"
+
+
+def test_triage_model_resolves_the_configured_models_root(tmp_path, monkeypatch):
+    artifact = tmp_path / "actionability"
+    _write_binary_actionability_artifact(artifact)
+    monkeypatch.delenv("JANASUNANI_ACTIONABILITY_ARTIFACT", raising=False)
+    monkeypatch.delenv("JANASUNANI_MODELS_DIR", raising=False)
+    monkeypatch.delenv("JANASUNANI_RELEASE_MANIFEST", raising=False)
+    monkeypatch.delenv("JANASUNANI_RELEASE_ROOT", raising=False)
+    monkeypatch.setenv(TRIAGE_ENV_VAR, TRIAGE_MODEL)
+
+    provider = triage_provider_from_env(TRIAGE_MODEL, models_dir=tmp_path)
+    name, ok, detail = triage_status(models_dir=tmp_path)
+
+    assert isinstance(provider, ActionabilityTriageProvider)
+    assert name == TRIAGE_MODEL
+    assert ok is True
+    assert "checksummed actionability artifact validated" in detail
+    assert "deserialization is deferred" in detail
+
+
+def test_triage_status_validates_without_deserializing_model_weights(
+    tmp_path, monkeypatch
+):
+    artifact = tmp_path / "actionability"
+    _write_binary_actionability_artifact(artifact)
+    monkeypatch.setenv(TRIAGE_ENV_VAR, TRIAGE_MODEL)
+    monkeypatch.setenv("JANASUNANI_ACTIONABILITY_ARTIFACT", str(artifact))
+
+    def reject_deserialization(*_args, **_kwargs):
+        raise AssertionError("preflight must not deserialize model weights")
+
+    monkeypatch.setattr("joblib.load", reject_deserialization)
+
+    name, ok, _detail = triage_status()
+
+    assert name == TRIAGE_MODEL
+    assert ok is True
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid"),
+    [
+        ("method", ""),
+        ("review_threshold", "0.7"),
+        ("review_threshold", -0.1),
+        ("review_threshold", 1.1),
+    ],
+)
+def test_triage_status_rejects_invalid_scorer_metadata(
+    tmp_path, monkeypatch, field, invalid
+):
+    artifact = tmp_path / "actionability"
+    _write_binary_actionability_artifact(artifact)
+    manifest_path = artifact / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest[field] = invalid
+    manifest_path.write_text(json.dumps(manifest))
+    monkeypatch.setenv(TRIAGE_ENV_VAR, TRIAGE_MODEL)
+    monkeypatch.setenv("JANASUNANI_ACTIONABILITY_ARTIFACT", str(artifact))
+
+    name, ok, detail = triage_status()
+
+    assert name == TRIAGE_BOUNDED
+    assert ok is False
+    assert "could not be loaded or validated" in detail
+
+
+def test_actionability_failure_preserves_one_bounded_spam_assessment(monkeypatch):
+    class BrokenActionabilityScorer:
+        def score(self, text):
+            del text
+            raise RuntimeError("model failed")
+
+    calls = 0
+
+    def counted_spam(text):
+        nonlocal calls
+        calls += 1
+        del text
+        return SpamReview(
+            decision="abstained",
+            reason_code="clean",
+            spam_score=0.0,
+            spam_reason="clean",
+            method="test",
+        )
+
+    monkeypatch.setattr("janasunani.serving.triage.score_spam_review", counted_spam)
+    result = ActionabilityTriageProvider(BrokenActionabilityScorer()).assess(
+        redacted_text="ordinary grievance",
+        district=None,
+        submitted_on=datetime.now(UTC),
+    )
+
+    assert calls == 1
+    assert result.actionability is None
+    assert result.spam.reason_code == "clean"
 
 
 # --- a broken learned scorer must never reach the citizen -------------------

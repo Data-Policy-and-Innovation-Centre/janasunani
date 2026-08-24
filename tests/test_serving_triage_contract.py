@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from janasunani.serving.schemas import (
+    ActionabilityReview,
     ClassificationResult,
     DuplicateReview,
     DuplicateSignal,
@@ -132,6 +133,70 @@ def test_low_signal_abstention_is_visible_and_has_a_deterministic_reason_code():
     assert reserved_review.decision == "review"
 
 
+@pytest.mark.parametrize("bad_probability", [float("nan"), float("inf"), True])
+def test_actionability_probabilities_must_be_finite_numeric_values(bad_probability):
+    probabilities = {
+        "actionable": 0.2,
+        "underspecified": 0.2,
+        "irrelevant": 0.2,
+        "out_of_scope": 0.2,
+        "policy_blocked": 0.2,
+    }
+    probabilities["irrelevant"] = bad_probability
+
+    with pytest.raises(ValidationError, match="finite"):
+        ActionabilityReview(
+            decision="review",
+            predicted_label="irrelevant",
+            confidence=0.2,
+            probabilities=probabilities,
+            method="local-test",
+        )
+
+
+def test_actionability_confidence_rejects_boolean_values():
+    with pytest.raises(ValidationError, match="confidence"):
+        ActionabilityReview(
+            decision="abstained",
+            predicted_label="actionable",
+            confidence=True,
+            probabilities={
+                "actionable": 1.0,
+                "underspecified": 0.0,
+                "irrelevant": 0.0,
+                "out_of_scope": 0.0,
+                "policy_blocked": 0.0,
+            },
+            method="local-test",
+        )
+
+
+def test_binary_actionability_contract_requests_review_without_a_reason_label():
+    result = ActionabilityReview(
+        decision="review",
+        predicted_label="review_required",
+        confidence=0.8,
+        probabilities={"actionable": 0.2, "review_required": 0.8},
+        method="tfidf-review-v1",
+        objective="actionable_vs_officer_review",
+    )
+
+    assert result.predicted_label == "review_required"
+    assert "underspecified" not in result.probabilities
+
+
+def test_binary_actionability_contract_rejects_fabricated_reason_probabilities():
+    with pytest.raises(ValidationError, match="selected objective"):
+        ActionabilityReview(
+            decision="review",
+            predicted_label="underspecified",
+            confidence=0.8,
+            probabilities={"actionable": 0.2, "review_required": 0.8},
+            method="tfidf-review-v1",
+            objective="actionable_vs_officer_review",
+        )
+
+
 def test_low_signal_advisory_records_ocr_quality_evidence_but_still_abstains():
     collapsed = low_signal_advisory("repeat this phrase " * 30)
     ordinary = low_signal_advisory(
@@ -150,6 +215,34 @@ def test_low_signal_advisory_records_ocr_quality_evidence_but_still_abstains():
     # Bounded scorer now populates spam_score/spam_reason on the advisory path as well
     assert collapsed.spam_score is not None
     assert 0.0 <= collapsed.spam_score <= 1.0
+
+
+def test_bounded_spam_review_rejects_boolean_score_and_conflicting_reason():
+    base = {
+        "decision": "review",
+        "reason_code": "low_signal_no_grievance",
+        "spam_score": 0.78,
+        "spam_reason": "low_signal_no_grievance",
+        "evidence": ({"kind": "repetition_collapse", "observed": False},),
+        "method": "test",
+    }
+    with pytest.raises(ValidationError, match="numeric"):
+        SpamReview(**{**base, "spam_score": True})
+    with pytest.raises(ValidationError, match="must match"):
+        SpamReview(**{**base, "spam_reason": "length_too_short"})
+
+
+def test_unavailable_spam_review_discards_legacy_fabricated_clean_score():
+    review = SpamReview(
+        decision="abstained",
+        reason_code="advisory_provider_unavailable",
+        spam_score=0.0,
+        spam_reason="clean",
+        method="unavailable",
+    )
+
+    assert review.spam_score is None
+    assert review.spam_reason is None
 
 
 def test_unwired_live_triage_is_explicitly_abstained_pending_validation():

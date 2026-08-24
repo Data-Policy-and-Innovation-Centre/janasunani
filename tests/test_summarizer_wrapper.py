@@ -6,8 +6,33 @@ Summarizer class logic: loading once, threading cached handles, and the
 short-input guard.
 """
 
+import pytest
+
 from janasunani.pipeline.stages import summarizer as summarizer_module
-from janasunani.pipeline.stages.summarizer import MIN_SUMMARY_LENGTH, Summarizer
+from janasunani.pipeline.stages.summarizer import (
+    ALLOW_REMOTE_MODELS_ENV_VAR,
+    MIN_SUMMARY_LENGTH,
+    MODEL_NAME,
+    Summarizer,
+    _resolve_model_source,
+)
+
+
+def test_summarizer_requires_local_artifact_by_default(tmp_path, monkeypatch):
+    monkeypatch.setenv("JANASUNANI_MODELS_DIR", str(tmp_path / "missing"))
+    monkeypatch.delenv("JANASUNANI_SUMMARIZER_ARTIFACT", raising=False)
+    monkeypatch.delenv(ALLOW_REMOTE_MODELS_ENV_VAR, raising=False)
+
+    with pytest.raises(RuntimeError, match="no local summarizer artifact"):
+        _resolve_model_source()
+
+
+def test_summarizer_remote_model_is_explicit_development_mode(tmp_path, monkeypatch):
+    monkeypatch.setenv("JANASUNANI_MODELS_DIR", str(tmp_path / "missing"))
+    monkeypatch.delenv("JANASUNANI_SUMMARIZER_ARTIFACT", raising=False)
+    monkeypatch.setenv(ALLOW_REMOTE_MODELS_ENV_VAR, "1")
+
+    assert _resolve_model_source() == (MODEL_NAME, False)
 
 
 def test_summarize_loads_model_once_and_threads_cached_handles(monkeypatch):

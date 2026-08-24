@@ -107,6 +107,7 @@ def run_ocr_extraction(config: PipelineConfig) -> None:
         backend=backend,
         work_items=work_items,
         db_path=config.db_path,
+        models_dir=config.models_dir,
         n_workers=config.n_workers,
         sarvam_enabled=config.sarvam_enabled,
     )
@@ -189,7 +190,12 @@ _worker_ds_model: Any = None
 _worker_sarvam: Any = None
 
 
-def _worker_init(backend: str, sarvam_enabled: bool = False, db_path: Path | None = None) -> None:
+def _worker_init(
+    backend: str,
+    sarvam_enabled: bool = False,
+    db_path: Path | None = None,
+    models_dir: Path | None = None,
+) -> None:
     """Per-worker initializer.
 
     For deepseek, loads the GPU model (slow, multi-GB) once per worker.
@@ -200,7 +206,7 @@ def _worker_init(backend: str, sarvam_enabled: bool = False, db_path: Path | Non
 
     if backend == "deepseek":
         from .deepseek_backend import load_model
-        _worker_ds_tokenizer, _worker_ds_model = load_model()
+        _worker_ds_tokenizer, _worker_ds_model = load_model(models_dir=models_dir)
     elif backend == "sarvam":
         if db_path is None:
             raise ValueError("Sarvam OCR requires the pipeline audit database path")
@@ -396,6 +402,7 @@ def _run(
     backend: str,
     work_items: list[dict[str, Any]],
     db_path: Path,
+    models_dir: Path,
     n_workers: int | None,
     sarvam_enabled: bool = False,
 ) -> None:
@@ -407,7 +414,7 @@ def _run(
         n_items=n,
         n_workers=n_workers,
         initializer=_worker_init,
-        initargs=(backend, sarvam_enabled, db_path),
+        initargs=(backend, sarvam_enabled, db_path, models_dir),
     )
 
     # For serial execution, the executor's __init__ already ran _worker_init.

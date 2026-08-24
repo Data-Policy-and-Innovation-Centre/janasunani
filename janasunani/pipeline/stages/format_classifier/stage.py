@@ -35,6 +35,7 @@ from .features import (
     suppress_stderr,
 )
 from .model import FormatClassifier
+from .resolution import resolve_model_path
 from loguru import logger
 
 # Avoid pdf2image's pixel-bomb DoS protection blocking large but legitimate
@@ -80,6 +81,11 @@ PAGE_ID_LENGTH = 16
 MODEL_NAME = "format_classifier_v3"
 
 
+def _resolve_model_path(config: PipelineConfig) -> Path:
+    """Backward-compatible private seam; use resolution.resolve_model_path."""
+    return resolve_model_path(config)
+
+
 # ---------------------------------------------------------------------------
 # Public entry point — called by pipeline.py
 # ---------------------------------------------------------------------------
@@ -90,17 +96,10 @@ def run_format_classifier(config: PipelineConfig) -> None:
     Reads input files from config.input_dir (or config.file_list if set),
     classifies each page, and writes results to config.db_path.
 
-    The trained model is loaded from the first .pkl file in
-    config.models_dir / "format_classifier".
+    The exact trained model is selected by operator override, immutable release
+    manifest, or an unambiguous one-file DVC mirror.
     """
-    model_dir = config.models_dir / "format_classifier"
-    candidates = sorted(model_dir.glob("*.pkl"))
-    if not candidates:
-        raise FileNotFoundError(
-            f"no .pkl model found in {model_dir}. "
-            "Place the trained format classifier there."
-        )
-    model_path = candidates[0]
+    model_path = _resolve_model_path(config)
 
     _run(
         db_path=config.db_path,

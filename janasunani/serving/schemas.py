@@ -22,6 +22,7 @@ Changing a field here is an API break — coordinate with the frontend.
 from __future__ import annotations
 
 from datetime import datetime
+import math
 from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -184,7 +185,7 @@ class OcrQualityEvidence(BaseModel):
 class SpamReview(BaseModel):
     """Officer-review state for the bounded low-signal scorer.
 
-    The bounded scorer (pipeline/spam.py, spam-v1-bounded) emits
+    The bounded scorer (pipeline/spam.py, spam-v1.1-bounded) emits
     ``spam_score`` in [0,1] + ``spam_reason`` in the 5-value set with
     evidence, advisory only (never blocks submission).  The provider
     remains unavailable outside a scored path: ``advisory_provider_unavailable``
@@ -231,9 +232,22 @@ class SpamReview(BaseModel):
 
         if not isinstance(value, dict):
             return value
+        if isinstance(value.get("spam_score"), bool):
+            raise ValueError("spam_score must be a numeric value")
         legacy_decision = value.get("decision")
         if legacy_decision not in {"flagged", "not_scored", "abstained"}:
             return value
+        if (
+            legacy_decision == "abstained"
+            and value.get("reason_code") == "advisory_provider_unavailable"
+        ):
+            # The old unavailable fallback incorrectly serialized a zero score
+            # and ``clean`` reason. Persisted responses must remain readable,
+            # but neither value is evidence that screening ran.
+            normalized = dict(value)
+            normalized.pop("spam_score", None)
+            normalized.pop("spam_reason", None)
+            return normalized
         if legacy_decision == "abstained" and "reason_code" in value:
             # New contract: abstained with any valid reason_code keeps its score
             return value
@@ -269,8 +283,7 @@ class SpamReview(BaseModel):
                     raise ValueError("review requires auditable low-signal evidence")
                 # spam_score/reason coherence when present
                 if self.spam_reason is not None and self.spam_reason != self.reason_code:
-                    # allow reason_code to mirror spam_reason for bounded path
-                    pass
+                    raise ValueError("bounded spam reason_code must match spam_reason")
                 if self.spam_score is not None and not (0.0 <= self.spam_score <= 1.0):
                     raise ValueError("spam_score must be in [0,1]")
                 return self
@@ -283,6 +296,91 @@ class SpamReview(BaseModel):
         # clean and advisory abstentions are allowed with or without score
         if self.spam_score is not None and not (0.0 <= self.spam_score <= 1.0):
             raise ValueError("spam_score must be in [0,1]")
+        return self
+
+
+class ActionabilityReview(BaseModel):
+    """Additive, advisory assessment over redacted text.
+
+    It is deliberately separate from ``SpamReview``: an underspecified case,
+    an irrelevant message, an out-of-scope grievance, and a policy-blocked
+    grievance need different officer actions.  When governed gold cannot
+    support those reasons, the binary objective emits only ``review_required``
+    instead of inventing one. No value in this object changes whether the
+    citizen's submission is accepted.
+    """
+
+    decision: Literal["review", "abstained"]
+    predicted_label: Literal[
+        "actionable",
+        "review_required",
+        "underspecified",
+        "irrelevant",
+        "out_of_scope",
+        "policy_blocked",
+    ]
+    confidence: float = Field(ge=0.0, le=1.0)
+    probabilities: dict[
+        Literal[
+            "actionable",
+            "review_required",
+            "underspecified",
+            "irrelevant",
+            "out_of_scope",
+            "policy_blocked",
+        ],
+        float,
+    ]
+    method: str = Field(min_length=1)
+    objective: Literal[
+        "five_class_reason", "actionable_vs_officer_review"
+    ] = "five_class_reason"
+    taxonomy_version: Literal["actionability-v1"] = "actionability-v1"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_boolean_probabilities(cls, value):
+        if isinstance(value, dict):
+            if isinstance(value.get("confidence"), bool):
+                raise ValueError("actionability confidence must be a finite numeric value")
+            probabilities = value.get("probabilities")
+            if isinstance(probabilities, dict) and any(
+                isinstance(probability, bool) for probability in probabilities.values()
+            ):
+                raise ValueError("actionability probabilities must be finite numeric values")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_advisory_contract(self) -> "ActionabilityReview":
+        expected = (
+            {"actionable", "review_required"}
+            if self.objective == "actionable_vs_officer_review"
+            else {
+                "actionable",
+                "underspecified",
+                "irrelevant",
+                "out_of_scope",
+                "policy_blocked",
+            }
+        )
+        if set(self.probabilities) != expected:
+            raise ValueError("probabilities must cover the selected actionability objective")
+        if self.predicted_label not in expected:
+            raise ValueError("predicted_label must belong to the selected objective")
+        if any(
+            isinstance(value, bool)
+            or not math.isfinite(value)
+            or value < 0.0
+            or value > 1.0
+            for value in self.probabilities.values()
+        ):
+            raise ValueError("actionability probabilities must be finite and in [0,1]")
+        if abs(sum(self.probabilities.values()) - 1.0) > 1e-6:
+            raise ValueError("actionability probabilities must sum to one")
+        if abs(self.probabilities[self.predicted_label] - self.confidence) > 1e-9:
+            raise ValueError("confidence must match predicted_label probability")
+        if self.decision == "review" and self.predicted_label == "actionable":
+            raise ValueError("actionable predictions cannot request extra review")
         return self
 
 
@@ -305,6 +403,7 @@ class TriageResult(BaseModel):
             reason_code="live_review_disabled_pending_redacted_adjudication",
         )
     )
+    actionability: Optional[ActionabilityReview] = None
 
     @model_validator(mode="before")
     @classmethod

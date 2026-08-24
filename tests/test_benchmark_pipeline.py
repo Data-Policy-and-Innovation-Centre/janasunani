@@ -98,13 +98,23 @@ def test_compute_stage_stats_has_required_keys():
     times = [0.5, 0.6, 0.55, 0.7, 0.52]
     tickets = ["T1", "T1", "T2", "T2", "T3"]
     stats = compute_stage_stats(times, tickets)
-    for key in ["mean_seconds", "se_seconds", "n_clusters", "p50", "p95", "n"]:
+    for key in [
+        "mean_seconds",
+        "se_seconds",
+        "n_clusters",
+        "p50",
+        "p90",
+        "p95",
+        "throughput_per_second",
+        "n",
+    ]:
         assert key in stats
     assert stats["n"] == 5
     assert stats["n_clusters"] == 3
     assert stats["mean_seconds"] == pytest.approx(sum(times) / 5)
     assert stats["se_seconds"] >= 0
     assert stats["p50"] > 0
+    assert stats["p50"] <= stats["p90"] <= stats["p95"]
     assert stats["p95"] >= stats["p50"]
     assert stats["min_seconds"] <= stats["mean_seconds"] <= stats["max_seconds"]
 
@@ -135,6 +145,9 @@ def test_synthesize_documents_counts_and_deterministic():
     n_img_actual = sum(1 for d in docs if d["document_bytes"] is not None)
     assert n_text_actual == 5
     assert n_img_actual == 3
+    image_docs = [row for row in docs if row["document_bytes"] is not None]
+    assert all(b"/Contents" in row["document_bytes"] for row in image_docs)
+    assert all(b"District Collector" in row["document_bytes"] for row in image_docs)
 
 
 def test_run_benchmark_standard_variant_basic():
@@ -146,11 +159,18 @@ def test_run_benchmark_standard_variant_basic():
     assert result["warm_discarded"] is True
     # n_measured = n_docs * (repeats - 1) when warm discarded
     assert result["n_measured"] == 6 * 2
+    assert result["attempts"] == 18
+    assert result["completed_attempts"] == 18
+    assert result["failed_attempts"] == 0
+    assert {"text", "document"} <= set(result["input_paths"])
+    assert result["input_paths"]["text"]["e2e"]["n"] == 8
+    assert result["input_paths"]["document"]["e2e"]["n"] == 4
+    assert result["environment"]["python"]
     assert "stages" in result
     for key in ALL_KEYS:
         assert key in result["stages"]
         stage = result["stages"][key]
-        for k in ["mean_seconds", "se_seconds", "n_clusters", "p50", "p95"]:
+        for k in ["mean_seconds", "se_seconds", "n_clusters", "p50", "p90", "p95"]:
             assert k in stage
         # All clusters should be n_docs (each ticket is its own cluster)
         assert stage["n_clusters"] == 6
@@ -216,6 +236,60 @@ def test_run_benchmark_with_fake_processor_factory():
     assert result["stages"]["e2e"]["n"] == 6
 
 
+def test_real_processor_failures_are_counted_without_polluting_timings():
+    class IntermittentProcessor:
+        _timing_sink = None
+
+        def __init__(self):
+            self.calls = 0
+
+        def process(self, **kwargs):
+            self.calls += 1
+            if self.calls == 2:
+                self._timing_sink({"redact": 99.0, "e2e": 99.0})
+                raise RuntimeError("synthetic failure")
+            self._timing_sink({"redact": 0.1, "e2e": 0.2, "ok": 1.0})
+
+    result = run_benchmark(
+        variant="standard",
+        n_text=2,
+        n_image=0,
+        repeats=2,
+        discard_warm=False,
+        processor_factory=lambda _variant: IntermittentProcessor(),
+    )
+
+    assert result["attempts"] == 4
+    assert result["completed_attempts"] == 3
+    assert result["failed_attempts"] == 1
+    assert result["failures_by_error"] == {"RuntimeError": 1}
+    assert result["n_measured"] == 3
+    assert result["stages"]["redact"]["n"] == 3
+    assert result["stages"]["redact"]["mean_seconds"] == pytest.approx(0.1)
+
+
+def test_real_processor_stage_names_are_preserved():
+    class TimedProcessor:
+        _timing_sink = None
+
+        def process(self, **kwargs):
+            self._timing_sink(
+                {"redact": 0.1, "categorize": 0.2, "e2e": 0.4, "ok": 1.0}
+            )
+
+    result = run_benchmark(
+        variant="standard",
+        n_text=1,
+        n_image=0,
+        repeats=2,
+        discard_warm=False,
+        processor_factory=lambda _variant: TimedProcessor(),
+    )
+    assert result["stages"]["redact"]["n"] == 2
+    assert result["stages"]["categorize"]["mean_seconds"] == pytest.approx(0.2)
+    assert "ok" not in result["stages"]
+
+
 def test_latency_json_payload_single_variant(tmp_path):
     result = run_benchmark(variant="standard", n_text=3, n_image=0, repeats=2, discard_warm=False, seed=7)
     payload = latency_json_payload(result)
@@ -223,6 +297,8 @@ def test_latency_json_payload_single_variant(tmp_path):
     assert "stages" in payload
     assert "variants" in payload
     assert "standard" in payload["variants"]
+    assert payload["schema_version"] == "janasunani.pipeline-latency/v1"
+    assert payload["publication_ready"] is False
     # Stages should have all required keys
     assert "e2e" in payload["stages"]
     assert "mean_seconds" in payload["stages"]["e2e"]
@@ -236,6 +312,152 @@ def test_latency_json_payload_multi_variant(tmp_path):
     assert "standard" in payload["variants"]
     assert "sarvam_digitise" in payload["variants"]
     assert payload["n_variants"] == 2
+    assert payload["schema_version"] == "janasunani.pipeline-latency/v1"
+    assert payload["publication_ready"] is False
+
+
+def test_identified_real_latency_run_is_publication_ready():
+    result = run_benchmark(
+        variant="standard",
+        n_text=1,
+        n_image=1,
+        repeats=2,
+        discard_warm=False,
+        processor_factory=lambda _variant: type(
+            "Processor",
+            (),
+            {
+                "_timing_sink": None,
+                "process": lambda self, **kwargs: self._timing_sink(
+                    {"redact": 0.1, "e2e": 0.2, "ok": 1.0}
+                ),
+            },
+        )(),
+    )
+    result["benchmark_context"] = {
+        "host_label": "release-host",
+        "model_release_id": "model-release-1",
+    }
+
+    payload = latency_json_payload(result)
+
+    assert payload["publication_ready"] is True
+    assert payload["temperature_e2e"]["cold"]["n"] == 1
+    assert payload["temperature_e2e"]["warm"]["n"] == 3
+
+    result["git_sha"] = None
+    assert latency_json_payload(result)["publication_ready"] is False
+    result["git_sha"] = "abc1234"
+    result["benchmark_context"]["host_label"] = "   "
+    assert latency_json_payload(result)["publication_ready"] is False
+
+
+def test_real_latency_with_failure_is_not_publication_ready():
+    calls = 0
+
+    class SometimesFailingProcessor:
+        _timing_sink = None
+
+        def process(self, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("benchmark failure")
+            self._timing_sink({"redact": 0.1, "e2e": 0.2, "ok": 1.0})
+
+    result = run_benchmark(
+        variant="standard",
+        n_text=1,
+        n_image=1,
+        repeats=2,
+        discard_warm=False,
+        processor_factory=lambda _variant: SometimesFailingProcessor(),
+    )
+    result["benchmark_context"] = {
+        "host_label": "release-host",
+        "model_release_id": "model-release-1",
+    }
+
+    assert result["failed_attempts"] == 1
+    assert latency_json_payload(result)["publication_ready"] is False
+
+
+def test_real_latency_without_document_path_is_not_publication_ready():
+    result = run_benchmark(
+        variant="standard",
+        n_text=1,
+        n_image=0,
+        repeats=2,
+        discard_warm=False,
+        processor_factory=lambda _variant: type(
+            "Processor",
+            (),
+            {
+                "_timing_sink": None,
+                "process": lambda self, **kwargs: self._timing_sink(
+                    {"redact": 0.1, "e2e": 0.2, "ok": 1.0}
+                ),
+            },
+        )(),
+    )
+    result["benchmark_context"] = {
+        "host_label": "release-host",
+        "model_release_id": "model-release-1",
+    }
+
+    assert latency_json_payload(result)["publication_ready"] is False
+
+
+def test_real_latency_without_warm_sample_is_not_publication_ready():
+    result = run_benchmark(
+        variant="standard",
+        n_text=1,
+        n_image=0,
+        repeats=1,
+        discard_warm=False,
+        processor_factory=lambda _variant: type(
+            "Processor",
+            (),
+            {
+                "_timing_sink": None,
+                "process": lambda self, **kwargs: self._timing_sink(
+                    {"redact": 0.1, "e2e": 0.2, "ok": 1.0}
+                ),
+            },
+        )(),
+    )
+    result["benchmark_context"] = {
+        "host_label": "release-host",
+        "model_release_id": "model-release-1",
+    }
+
+    assert latency_json_payload(result)["publication_ready"] is False
+
+
+def test_temperature_aggregates_have_one_cold_request_per_processor():
+    result = run_benchmark(
+        variant="standard",
+        n_text=2,
+        n_image=0,
+        repeats=2,
+        discard_warm=False,
+        processor_factory=lambda _variant: type(
+            "Processor",
+            (),
+            {
+                "_timing_sink": None,
+                "process": lambda self, **kwargs: self._timing_sink(
+                    {"redact": 0.1, "e2e": 0.2, "ok": 1.0}
+                ),
+            },
+        )(),
+    )
+
+    assert result["temperature_e2e"]["cold"]["n"] == 1
+    assert result["temperature_e2e"]["warm"]["n"] == 3
+    assert result["temperature_definition"]["cold"].startswith(
+        "first successful request"
+    )
 
 
 def test_write_latency_json_creates_file(tmp_path):
@@ -248,13 +470,15 @@ def test_write_latency_json_creates_file(tmp_path):
     assert "stages" in data
     assert data["variant"] == "standard"
     assert "e2e" in data["stages"]
-    # Check JSON has mean/se/p50/p95 per stage
+    # Check JSON has mean/se/p50/p90/p95 per stage
     for stage_key in ALL_KEYS:
         entry = data["stages"][stage_key]
         assert "mean_seconds" in entry
         assert "se_seconds" in entry
         assert "p50" in entry
+        assert "p90" in entry
         assert "p95" in entry
+        assert "throughput_per_second" in entry
         assert "n_clusters" in entry
 
 
@@ -351,6 +575,25 @@ def test_cli_multi_variants(tmp_path):
     assert "variants" in data
     assert "standard" in data["variants"]
     assert "sarvam_digitise" in data["variants"]
+
+
+def test_real_sarvam_variant_is_rejected_until_it_is_wired(tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        bench_mod.main(
+            [
+                "--variant",
+                "sarvam_digitise",
+                "--n-docs",
+                "1",
+                "--n-image-docs",
+                "0",
+                "--repeats",
+                "2",
+                "--output",
+                str(tmp_path / "latency.json"),
+            ]
+        )
+    assert exc.value.code == 2
 
 
 def test_cli_no_warm_discard(tmp_path):
@@ -465,6 +708,7 @@ def test_benchmark_end_to_end_structure_matches_output_spec(tmp_path):
         assert "se_seconds" in s, f"missing se_seconds for {stage}"
         assert "n_clusters" in s, f"missing n_clusters for {stage}"
         assert "p50" in s, f"missing p50 for {stage}"
+        assert "p90" in s, f"missing p90 for {stage}"
         assert "p95" in s, f"missing p95 for {stage}"
     # n_measured matches e2e.n when warm discarded
     assert data["n_measured"] == data["stages"]["e2e"]["n"]

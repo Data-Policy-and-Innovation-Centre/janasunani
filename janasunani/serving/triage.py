@@ -2,27 +2,27 @@
 
 Live submissions are scored over redacted text only (never raw
 ``complaints.grievance``).  The spam signal is bounded
-(pipeline/spam.py, spam-v1-bounded) — repetition collapse, length, and
+(pipeline/spam.py, spam-v1.1-bounded) — repetition collapse, length, and
 low-signal patterns — and is advisory only (never blocks submission).
 Duplicate matching remains slice-scoped and unavailable live.
 
-**What ships today is heuristic, not learned.** ``spam-v1-bounded`` is a
-cascade of deterministic rules. The learned scorer is #74. This module holds
-the seam that lets one replace the other without touching a call site, and
-``triage_status`` exists so a demo narrative cannot quietly describe the
-heuristic as a trained model.
+The default spam guard remains a deterministic cascade.  ``model`` adds the
+separate five-class actionability scorer over the same redacted text; it does
+not replace the bounded spam evidence and cannot block a submission.
 """
 
 from __future__ import annotations
 
 import os
 from datetime import datetime
+from pathlib import Path
 from typing import Optional, Protocol
 
 from loguru import logger
 
 from janasunani.pipeline.ocr_quality import is_repetition_collapsed
 from janasunani.serving.schemas import (
+    ActionabilityReview,
     DuplicateReview,
     OcrQualityEvidence,
     SpamReview,
@@ -67,11 +67,11 @@ class LearnedScorerUnresolved(RuntimeError):
 
 
 class ScorerArtifactAbsent(LearnedScorerUnresolved):
-    """No ``spam_scorer`` artifact resolves yet. Expected until #74 ships one."""
+    """No ``actionability`` artifact resolves yet."""
 
 
 class ScorerLoaderUnimplemented(LearnedScorerUnresolved):
-    """An artifact resolves, but nothing loads it into a ``SpamScorer`` yet.
+    """A retained compatibility diagnostic for an unusable scorer loader.
 
     A programming gap, not an operational one: supplying an artifact cannot
     fix this by itself.
@@ -103,8 +103,6 @@ def unavailable_triage() -> TriageResult:
         spam=SpamReview(
             decision="abstained",
             reason_code="advisory_provider_unavailable",
-            spam_score=0.0,
-            spam_reason="clean",
             method="unavailable",
         ),
     )
@@ -234,7 +232,48 @@ class ScoredTriageProvider:
         return TriageResult(spam=spam)
 
 
-def triage_provider_from_env(value: str | None = None) -> TriageProvider:
+class ActionabilityTriageProvider:
+    """Run bounded spam plus a local advisory actionability artifact."""
+
+    def __init__(self, scorer) -> None:
+        self._scorer = scorer
+
+    def assess(
+        self,
+        *,
+        redacted_text: str,
+        district: Optional[str],
+        submitted_on: datetime,
+    ) -> TriageResult:
+        del district, submitted_on
+        try:
+            spam = score_spam_review(redacted_text)
+        except Exception:
+            return unavailable_triage()
+        try:
+            assessment = self._scorer.score(redacted_text)
+            actionability = ActionabilityReview(
+                decision=assessment.decision,
+                predicted_label=assessment.predicted_label,
+                confidence=assessment.confidence,
+                probabilities=dict(assessment.probabilities),
+                method=assessment.method,
+                objective=assessment.objective,
+                taxonomy_version=assessment.taxonomy_version,
+            )
+        except Exception:
+            # Preserve the bounded scorer if the learned artifact fails on an
+            # individual request; absence of actionability is explicit None.
+            return TriageResult(spam=spam)
+        return TriageResult(spam=spam, actionability=actionability)
+
+
+def triage_provider_from_env(
+    value: str | None = None,
+    *,
+    models_dir: Path | None = None,
+    verified_artifacts: dict[tuple[Path, str], Path] | None = None,
+) -> TriageProvider:
     """Select a triage provider by environment, never raising.
 
     Unset keeps the shipped bounded scorer. ``off`` disables advisory triage.
@@ -248,7 +287,10 @@ def triage_provider_from_env(value: str | None = None) -> TriageProvider:
         return OffTriageProvider()
     if configured == TRIAGE_MODEL:
         try:
-            scorer = _resolve_learned_scorer()
+            scorer = _resolve_learned_scorer(
+                models_dir=models_dir,
+                verified_artifacts=verified_artifacts,
+            )
         except ScorerArtifactAbsent:
             logger.warning(
                 "{}={} but no learned scorer artifact resolved; using the bounded scorer",
@@ -258,13 +300,13 @@ def triage_provider_from_env(value: str | None = None) -> TriageProvider:
             return UnwiredTriageProvider()
         except ScorerLoaderUnimplemented:
             logger.warning(
-                "{}={} but a scorer artifact resolved and no loader is "
-                "implemented yet (#74); using the bounded scorer",
+                "{}={} but the actionability artifact could not be loaded; "
+                "using the bounded scorer",
                 TRIAGE_ENV_VAR,
                 TRIAGE_MODEL,
             )
             return UnwiredTriageProvider()
-        return ScoredTriageProvider(scorer)
+        return ActionabilityTriageProvider(scorer)
     logger.warning(
         "{}={!r} is not one of {}; using the bounded scorer",
         TRIAGE_ENV_VAR,
@@ -274,54 +316,93 @@ def triage_provider_from_env(value: str | None = None) -> TriageProvider:
     return UnwiredTriageProvider()
 
 
-def _resolve_learned_scorer() -> "SpamScorer":
+def _resolve_learned_scorer(
+    *,
+    models_dir: Path | None = None,
+    verified_artifacts: dict[tuple[Path, str], Path] | None = None,
+):
     """Resolve a trained scorer artifact.
 
-    Raises rather than returning ``None`` so the two ways this can fail stay
-    distinguishable to callers: :class:`ScorerArtifactAbsent` when no
-    artifact resolves (expected until #74 ships one -- an operator fixes this
-    by publishing an artifact) and :class:`ScorerLoaderUnimplemented` when one
-    resolves but nothing loads it yet (a programming gap -- no artifact fixes
-    this). Collapsing both into ``None`` is what let a status probe tell an
-    operator to go fix an artifact that was never the problem.
-
-    Split out so the selection logic above is testable without a model, and so
-    the day a learned scorer lands there is one function to fill in.
+    Absence and structural/load failure remain distinct operator states, while
+    both degrade to the bounded advisory scorer on the request path.
     """
+    artifact = _resolve_actionability_artifact(
+        models_dir=models_dir,
+        verified_artifacts=verified_artifacts,
+    )
+    try:
+        from janasunani.inference.actionability import load_actionability_scorer
+
+        return load_actionability_scorer(artifact)
+    except Exception as exc:
+        raise ScorerLoaderUnimplemented(
+            "the actionability artifact is present but could not be loaded"
+        ) from exc
+
+
+def _resolve_actionability_artifact(
+    *,
+    models_dir: Path | None = None,
+    verified_artifacts: dict[tuple[Path, str], Path] | None = None,
+) -> Path:
     from janasunani.tracking.artifacts import resolve_artifact
 
-    if resolve_artifact("spam_scorer") is None:
-        raise ScorerArtifactAbsent("no spam_scorer artifact resolved")
-    raise ScorerLoaderUnimplemented(
-        "a spam scorer artifact is present but no loader is implemented yet"
+    artifact = resolve_artifact(
+        "actionability",
+        models_dir=models_dir,
+        verified_artifacts=verified_artifacts,
     )
+    if artifact is None:
+        raise ScorerArtifactAbsent("no actionability artifact resolved")
+    return artifact
 
 
-def triage_status() -> tuple[str, bool, str]:
+def triage_status(
+    *,
+    models_dir: Path | None = None,
+    verified_artifacts: dict[tuple[Path, str], Path] | None = None,
+) -> tuple[str, bool, str]:
     """Report ``(name, ok, detail)`` for preflight without scoring anything."""
     configured = os.environ.get(TRIAGE_ENV_VAR, "").strip().lower() or TRIAGE_BOUNDED
     if configured == TRIAGE_OFF:
         return (TRIAGE_OFF, True, "advisory triage disabled by configuration")
     if configured == TRIAGE_MODEL:
         try:
-            _resolve_learned_scorer()
+            artifact = _resolve_actionability_artifact(
+                models_dir=models_dir,
+                verified_artifacts=verified_artifacts,
+            )
+            from janasunani.inference.actionability import (
+                validate_actionability_artifact,
+            )
+
+            try:
+                validate_actionability_artifact(artifact)
+            except Exception as exc:
+                raise ScorerLoaderUnimplemented(
+                    "the actionability artifact is present but could not be validated"
+                ) from exc
         except ScorerArtifactAbsent:
             return (
                 TRIAGE_BOUNDED,
                 False,
-                f"{TRIAGE_ENV_VAR}=model but no scorer artifact resolved; "
+                f"{TRIAGE_ENV_VAR}=model but no actionability artifact resolved; "
                 f"serving the bounded heuristic scorer ({SPAM_VERSION})",
             )
         except ScorerLoaderUnimplemented:
             return (
                 TRIAGE_BOUNDED,
                 False,
-                f"{TRIAGE_ENV_VAR}=model and a scorer artifact resolved, but "
-                "its loader is not implemented yet (#74) -- publishing "
-                "another artifact will not fix this; serving the bounded "
+                f"{TRIAGE_ENV_VAR}=model and an actionability artifact resolved, but "
+                "it could not be loaded or validated; serving the bounded "
                 f"heuristic scorer ({SPAM_VERSION})",
             )
-        return (TRIAGE_MODEL, True, "learned scorer artifact resolved")
+        return (
+            TRIAGE_MODEL,
+            True,
+            "checksummed actionability artifact validated; model deserialization "
+            "is deferred to processor startup",
+        )
     if configured not in SUPPORTED_TRIAGE_PROVIDERS:
         return (
             TRIAGE_BOUNDED,

@@ -218,26 +218,37 @@ checks = [
     ("classification" in data and "category" in (data.get("classification") or {}), "classification.category"),
     ("summary" in data, "summary"),
     ("routing" in data and "method" in (data.get("routing") or {}), "routing.method"),
-    ("triage" in data and "spam" in (data.get("triage") or {}) and "spam_score" in (data["triage"].get("spam") or {}), "triage.spam.spam_score"),
+    ("triage" in data and "spam" in (data.get("triage") or {}), "triage.spam"),
 ]
 missing = [label for ok, label in checks if not ok]
 if missing:
     print(f"missing fields: {missing}", file=sys.stderr)
     print(json.dumps(data, indent=2)[:2000], file=sys.stderr)
     sys.exit(1)
-# spam_score in [0,1]
-try:
-    score = float(data["triage"]["spam"]["spam_score"])
-    assert 0 <= score <= 1, f"spam_score out of [0,1]: {score}"
-except Exception as e:
-    print(f"spam_score invalid: {e}", file=sys.stderr)
-    sys.exit(1)
+# A provider-unavailable advisory abstention has no score.  Require a bounded
+# score when one is returned, but do not mistake absent screening for a failed
+# submission; triage is advisory and must never block a citizen's filing.
+spam = data["triage"]["spam"]
+score_value = spam.get("spam_score")
+if score_value is None:
+    if spam.get("decision") != "abstained":
+        print("unscored triage must be an abstention", file=sys.stderr)
+        sys.exit(1)
+    score_label = "unavailable"
+else:
+    try:
+        score = float(score_value)
+        assert 0 <= score <= 1, f"spam_score out of [0,1]: {score}"
+    except Exception as e:
+        print(f"spam_score invalid: {e}", file=sys.stderr)
+        sys.exit(1)
+    score_label = str(score)
 # routing.method must not be mock
 method = data["routing"]["method"]
 if method == "mock":
     print(f"routing.method is mock — expected learned|rules|fallback", file=sys.stderr)
     sys.exit(1)
-print(f"submit ok: id={data.get('id')} routing.method={method} spam_score={score}")
+print(f"submit ok: id={data.get('id')} routing.method={method} spam_score={score_label}")
 PY
   then
     fail "POST /grievance response failed shape validation"

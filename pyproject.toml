@@ -156,8 +156,15 @@ janasunani-demo-preflight = "janasunani.inference.serve:preflight_main"
 janasunani-spam-score = "janasunani.pipeline.spam:main"
 janasunani-spam-scorecard = "janasunani.evaluation.spam_scorecard:main"
 janasunani-evaluate-benchmark = "janasunani.evaluation.benchmark_report:main"
+janasunani-build-benchmark-bundle = "janasunani.evaluation.benchmark_bundle:main"
 janasunani-evaluate-sarvam = "janasunani.evaluation.sarvam_evaluate:main"
 janasunani-build-sarvam-sample = "janasunani.evaluation.sarvam_sample_builder:main"
+janasunani-evaluate-routing = "janasunani.evaluation.historical:main"
+janasunani-model-release = "janasunani.tracking.materialize:main"
+janasunani-evaluate-summary = "janasunani.evaluation.summary:main"
+janasunani-evaluate-categorization = "janasunani.evaluation.categorization:main"
+janasunani-audit-actionability-labels = "janasunani.evaluation.weak_labels:main"
+janasunani-import-sarvam-evidence = "janasunani.evaluation.sarvam_cached:main"
 
 [build-system]
 requires = ["hatchling"]
