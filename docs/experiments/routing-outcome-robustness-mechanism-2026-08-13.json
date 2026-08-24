@@ -1,0 +1,83 @@
+{
+  "generated_at": "2026-08-13",
+  "seed_check": {
+    "model": "gbm",
+    "identical_across_seeds": true,
+    "subsample": 1.0,
+    "max_features": null
+  },
+  "results": [
+    {
+      "name": "R8_actionable_and_acted",
+      "rmse_flow": 1.2362292373108585,
+      "rmse_noflow": 1.2900616493161439,
+      "delta": 0.053832412005285324,
+      "delta_eval_se": 0.023547575394595975,
+      "n_train": 129456,
+      "n_val": 147553,
+      "dropped_covariates": [],
+      "model": "gbm",
+      "note": "reintroduces post-treatment conditioning on C, nothing else",
+      "delta_fit_se": 0.01795604595504172,
+      "delta_fit_draws": [
+        0.06011880956688942,
+        0.03401813372826323,
+        0.07180970409546505,
+        0.04706231040345732,
+        0.05774800941370084,
+        0.02324250054879773
+      ],
+      "delta_over_eval_se": 2.2861127357358217,
+      "delta_over_fit_se": 2.998010371552329
+    },
+    {
+      "name": "R5_drop_office",
+      "rmse_flow": 1.2305134877395916,
+      "rmse_noflow": 1.2247171641916879,
+      "delta": -0.0057963235479037145,
+      "delta_eval_se": 0.016569300394562524,
+      "n_train": 302863,
+      "n_val": 454232,
+      "dropped_covariates": [
+        "office_code"
+      ],
+      "model": "gbm",
+      "note": "tests whether office-flow collinearity explains the collapse",
+      "delta_fit_se": null,
+      "delta_fit_draws": [],
+      "delta_over_eval_se": -0.349823070973224
+    },
+    {
+      "name": "R6_drop_pending_code",
+      "rmse_flow": 1.2356397121392815,
+      "rmse_noflow": 1.2333254788930113,
+      "delta": -0.0023142332462702253,
+      "delta_eval_se": 0.006706460729668337,
+      "n_train": 302863,
+      "n_val": 454232,
+      "dropped_covariates": [
+        "pending_code"
+      ],
+      "model": "gbm",
+      "note": "pending_with_id is the holder at closure, so post-treatment",
+      "delta_fit_se": null,
+      "delta_fit_draws": [],
+      "delta_over_eval_se": -0.34507519533103626
+    },
+    {
+      "name": "R7_ridge",
+      "rmse_flow": 1.1825535801560034,
+      "rmse_noflow": 1.2085396664881416,
+      "delta": 0.02598608633213817,
+      "delta_eval_se": 0.0036369874070207695,
+      "n_train": 302863,
+      "n_val": 454232,
+      "dropped_covariates": [],
+      "model": "ridge",
+      "note": "the better out-of-sample model, previously unablated",
+      "delta_fit_se": null,
+      "delta_fit_draws": [],
+      "delta_over_eval_se": 7.1449481188675925
+    }
+  ]
+}

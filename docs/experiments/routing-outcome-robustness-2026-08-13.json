@@ -1,0 +1,87 @@
+{
+  "generated_at": "2026-08-13",
+  "seed_check": {
+    "model": "gbm",
+    "identical_across_seeds": true,
+    "subsample": 1.0,
+    "max_features": null
+  },
+  "results": [
+    {
+      "name": "R0_binary_completers",
+      "rmse_flow": 1.2401970697336482,
+      "rmse_noflow": 1.2775384569764197,
+      "delta": 0.03734138724277147,
+      "delta_eval_se": 0.018499652315320907,
+      "n_train": 162639,
+      "n_val": 166628,
+      "dropped_covariates": [],
+      "model": "gbm",
+      "note": "reproduces the 11 Aug configuration",
+      "delta_fit_se": 0.005923156768548449,
+      "delta_fit_draws": [
+        0.0448372315034804,
+        0.029760300509720672,
+        0.036882128898226396,
+        0.03304789344019188,
+        0.04187572544837992,
+        0.032076244234161555
+      ],
+      "delta_over_eval_se": 2.018491299528173,
+      "delta_over_fit_se": 6.304305069393343
+    },
+    {
+      "name": "R1_actionable_completers",
+      "rmse_flow": 1.2337019629616572,
+      "rmse_noflow": 1.2333254788930113,
+      "delta": -0.00037648406864598805,
+      "delta_eval_se": 0.008495732609201239,
+      "n_train": 302863,
+      "n_val": 454232,
+      "dropped_covariates": [],
+      "model": "gbm",
+      "note": "population only: binary correct -> three-state actionable",
+      "delta_fit_se": null,
+      "delta_fit_draws": [],
+      "delta_over_eval_se": -0.04431449128215733
+    },
+    {
+      "name": "R2_actionable_restricted",
+      "rmse_flow": 1.2337019629616572,
+      "rmse_noflow": 1.2333254788930113,
+      "delta": -0.00037648406864598805,
+      "delta_eval_se": 0.008495732609201239,
+      "n_train": 302863,
+      "n_val": 454232,
+      "dropped_covariates": [],
+      "model": "gbm",
+      "note": "adds the restricted target, still unweighted",
+      "delta_fit_se": null,
+      "delta_fit_draws": [],
+      "delta_over_eval_se": -0.04431449128215733
+    },
+    {
+      "name": "R3_actionable_restricted_ipcw",
+      "rmse_flow": 1.2337019629616572,
+      "rmse_noflow": 1.2333254788930113,
+      "delta": -0.00037648406864598805,
+      "delta_eval_se": 0.008495732609201239,
+      "n_train": 302863,
+      "n_val": 454232,
+      "dropped_covariates": [],
+      "model": "gbm",
+      "note": "adds censoring weights; the current configuration",
+      "delta_fit_se": 0.015494173460607432,
+      "delta_fit_draws": [
+        0.026726025232107764,
+        0.002231056810157339,
+        0.02003681252594003,
+        -0.008191003364760086,
+        -0.01294280975222284,
+        0.006112158526936362
+      ],
+      "delta_over_eval_se": -0.04431449128215733,
+      "delta_over_fit_se": -0.024298428670826846
+    }
+  ]
+}

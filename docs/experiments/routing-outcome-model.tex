@@ -1,0 +1,2270 @@
+% Routing outcome model --- flow-aware, officer-observable
+% Branch: muse/routing-experiments. Experimental; not near main.
+% Audience: first-year graduate econometrics.
+% Body = the routing problem. Appendices = foundations, proved.
+% Prerequisites are taken from ../probability (Mohanty, "Basic mathematics for
+% statistics and economics"); Appendix A says exactly what is assumed.
+% Compile: latexmk -pdf routing-outcome-model.tex
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs,amsmath,amssymb,amsthm,hyperref,graphicx,xcolor,longtable,enumitem}
+\hypersetup{colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue}
+
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{assumption}{Assumption}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{example}[theorem]{Example}
+\theoremstyle{remark}
+\newtheorem*{remark*}{Remark}
+
+\DeclareMathOperator*{\argmin}{arg\,min}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator{\Var}{Var}
+\DeclareMathOperator{\Cov}{Cov}
+\DeclareMathOperator{\Corr}{Corr}
+\newcommand{\E}{\mathbb E}
+\newcommand{\Prob}{\mathbb P}
+\newcommand{\indep}{\perp\!\!\!\perp}
+\newcommand{\one}[1]{\mathbf 1\{#1\}}
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\notbuilt}{\textcolor{red}{\textbf{[not built]}}}
+\newcommand{\probrepo}{\textsc{bmse}}
+
+\title{Outcome-Based Routing of Public Grievances\\
+\large Minimising disposal time subject to a correctness constraint:\\
+estimand, identification, and estimation}
+\author{Janasunani 2.0 --- DPIC}
+\date{13 August 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A citizen files a grievance; an officer decides where to send it; some weeks or months later
+it closes. This document asks whether that routing decision can be made better --- faster
+disposal, no loss of correctness --- using only information the officer already has on screen
+at the moment of assignment.
+
+The body is about the routing problem. Section~\ref{sec:setup} fixes notation and gets the
+outcome definition right: closing a grievance \emph{correctly} and \emph{helping the
+petitioner} are different events, and both differ again from the case merely being closed.
+Section~\ref{sec:estimand} converts the policy question into a constrained optimisation over
+decision rules, and explains why the natural first formulation --- ``time to disposal among
+correctly disposed cases'' --- conditions on a post-treatment variable and must be replaced.
+Section~\ref{sec:ident} states the identifying assumptions, argues for each in this
+institutional setting, and assembles the estimating equation. Section~\ref{sec:est} builds the
+estimator in five layers and says which statistical model estimates which nuisance function,
+and why. Sections~\ref{sec:policy}--\ref{sec:interfere} cover policy learning, diagnostics,
+sensitivity, and the queueing interference a routing policy necessarily creates.
+Section~\ref{sec:evidence} reports what has been computed.
+
+The general theory is in the appendices, stated and proved.
+Appendix~\ref{app:prereq} lists exactly what is taken as known from the companion \probrepo{}
+reference, and what is not. Appendix~\ref{app:semipar} sets out the semiparametric vocabulary
+--- models, parameters as functionals, target versus nuisance, influence functions, the
+efficiency bound, Neyman orthogonality --- on which everything after it rests.
+Appendix~\ref{app:causal} proves causal identification and double robustness,
+Appendix~\ref{app:censor} handles censoring, Appendix~\ref{app:estlemmas} collects the
+estimation lemmas, and Appendix~\ref{app:sens} develops the sensitivity model.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+%=====================================================================
+\section{The problem}\label{sec:intro}
+%=====================================================================
+
+\subsection{Institutional setting}
+
+Odisha's Janasunani system receives citizen grievances --- a pension not disbursed, a ration
+card refused, a road not repaired, a boundary dispute. Each is created in an electronic
+register, assigned to an office, possibly forwarded along a chain of officers, and eventually
+closed with a disposal remark. The register records the creation date, the closure date, the
+text of the closing remark, a flag for whether the beneficiary benefited, and the full chain
+of officers who held the file.
+
+Routing today is historical. The production rule sends a grievance to
+\[
+\argmax_{d}\ \Prob(\text{department}=d \mid \text{category}, \text{district}),
+\]
+that is, to wherever cases of this type have gone before. This has a specific blind spot: it
+learns where cases \emph{were} sent, never where they were \emph{handled well}. A department
+that receives every land dispute in a district and resolves none of them is, to this rule,
+exactly the right destination.
+
+\subsection{Why the obvious objective is wrong}
+
+The first instinct is to minimise time to closure. This fails, instructively.
+
+Closure is an action the officer controls directly. A grievance can be closed at any moment by
+recording that it has been disposed. If the objective rewards short durations without
+qualification, the optimal behaviour under that objective is to close every case immediately
+without doing anything. This is not hypothetical: the most common closing remark in the system
+records disposal with no action claimed.
+
+The objective must therefore be conditional in some way on the work having been done. Making
+that precise is most of the content of \S\ref{sec:outcome} and \S\ref{sec:estimand}. The short
+version: we minimise expected duration \emph{subject to a constraint} that correctness not
+deteriorate, rather than minimising duration \emph{among} the cases that came out correct.
+That is the difference between a well-posed causal question and one that conditions on the
+future.
+
+\subsection{Why this setting is unusually favourable}
+
+Routing studies are usually hopeless observationally, because the assigner knows things the
+analyst does not, and those things drive both assignment and outcome. Here the situation is
+better for a concrete institutional reason: the assigning officer works from a screen, and we
+have the screen.
+
+The officer sees the grievance text, the category and subcategory, the district and block, the
+mode of filing, whether documents are attached, the scheme tag, the current backlog of the
+candidate destination, and that destination's recent performance. All of it is in the
+database. This does not make unconfoundedness true, but it changes what one must believe for
+it to be true: not ``no unobserved case characteristics'' but ``no unwritten judgement''.
+Section~\ref{sec:ident} makes this precise and \S\ref{sec:sens} quantifies how much unwritten
+judgement would be needed to overturn a conclusion.
+
+%=====================================================================
+\section{Setup}\label{sec:setup}
+%=====================================================================
+
+\subsection{Units and sampling}
+
+The unit is a grievance, indexed $i=1,\dots,n$, arriving at calendar time $t_{0i}$. We treat
+grievances as a sample from a population distribution $P$. The sample is not i.i.d.\ in a
+strict sense --- grievances arriving in the same district in the same period share shocks ---
+and \S\ref{sec:variance} handles that through clustering rather than by pretending otherwise.
+
+\subsection{Covariates}\label{sec:covariates}
+
+$X_i \in \mathcal X$ collects everything observable at $t_{0i}$, of four kinds:
+
+\begin{enumerate}[leftmargin=*]
+\item \textbf{Case characteristics}: category, subcategory, district, block, mode of filing,
+whether supporting documents are attached, the redacted grievance text, a disability flag, the
+scheme tag.
+\item \textbf{The citizen's intake choice}: the coarse office selected when filing. This is
+\emph{not} the treatment --- the citizen chooses it, not the officer --- but it predicts both
+routing and outcome, so it belongs in $X$.
+\item \textbf{Congestion}: the backlog $Q_r(t_{0i})$ of each candidate destination role $r$ at
+the moment of assignment. This is the number on the officer's dashboard, and
+\S\ref{sec:backlog} constructs it.
+\item \textbf{Trailing performance}: for each candidate destination, its median duration and
+action rate over the preceding 90 days, computed strictly from cases closed before $t_{0i}$.
+\end{enumerate}
+
+The point-in-time restriction on items 3 and 4 is not a technicality. A feature computed from
+the future would let the model use information the officer could not have had, which breaks
+both the interpretation --- we are evaluating a rule the officer could have followed --- and
+the identification, since \S\ref{sec:ident} requires $X$ to be pre-treatment.
+
+\subsubsection{Measuring the backlog}\label{sec:backlog}
+
+``Backlog'' is ambiguous and the obvious implementations are wrong in instructive ways.
+
+\paragraph{What we want.} $Q_r(t)$ should be the number the officer would see on looking at
+role $r$'s queue at instant $t$: files that have arrived with $r$ and not yet left. Two
+quantifiers need pinning down. \emph{Whose} queue --- an individual officer's or the role's?
+We use the role, because the treatment is a role sequence (Definition~\ref{def:flow}) and an
+individual officer's identity is not something the policy selects. And \emph{left} how ---
+closed, or forwarded onward? Either departure frees the officer, so both count.
+
+\paragraph{Custody intervals.} The register stores no queue length, so it must be
+reconstructed. The raw material is the action history, which records for each event the
+ticket, the timestamp, and the acting user. Mapping the acting user to a role gives, for each
+ticket, a sequence of custody events; between consecutive events the ticket sits with one
+role. For ticket $j$ with custody events at times $u_{j,1}<u_{j,2}<\dots$ held by roles
+$r_{j,1},r_{j,2},\dots$, define the half-open custody interval
+\[
+I_{j,k} = \bigl[\,u_{j,k},\ \min(u_{j,k+1},\ \text{closure}_j)\,\bigr),
+\]
+with the first interval beginning at the assignment date rather than the first action. Then
+\begin{equation}
+Q_r(t) = \#\bigl\{(j,k) : r_{j,k}=r,\ t\in I_{j,k}\bigr\}.
+\label{eq:Q}
+\end{equation}
+Capacity is trailing throughput, $\text{cap}_r(t)=\#\{$departures from role $r$ in
+$[t-90,t)\}$, so $Q_r(t)/\text{cap}_r(t)$ has units of days of work outstanding --- the
+quantity entering \eqref{eq:micro}, and comparable across roles of very different size.
+
+\paragraph{Two traps.} First, \eqref{eq:Q} must be evaluated using only events dated before
+$t$. The membership test $t\in I_{j,k}$ looks like it consults the future, since the interval's
+right endpoint may lie after $t$; it does not, because the officer at $t$ needs to know only
+that \emph{no departure has happened yet}, which is observable at $t$. The equivalent
+backward-looking form --- arrived before $t$, no departure event before $t$ --- is the one to
+implement and the one to state when defending the point-in-time claim.
+
+Second, and more dangerous: a naive implementation writes the condition as
+\code{assigned\_on <= t AND t < resolved\_on}. For a grievance never resolved,
+\code{resolved\_on} is null, the comparison evaluates to null rather than true, and the ticket
+silently drops out. Since unresolved tickets \emph{are} the backlog, this undercounts $Q$
+exactly where $Q$ is largest, and worst in the periods of heaviest congestion. The condition
+must treat a null closure as ``still open''.
+
+\paragraph{Status.} $Q_r(t)$ and the trailing-performance features are specified here and
+\notbuilt. The implemented design matrix has case characteristics, the intake office, the
+flow-derived columns and time effects, but no congestion measure and no trailing performance.
+This is not cosmetic: \S\ref{sec:ident} justifies unconfoundedness on the ground that $X$
+reproduces the officer's screen, and congestion is on the screen. It is also a textbook
+confounder --- a busy office is both slower and plausibly routed to differently --- so its
+omission biases the flow comparison in an unknown direction.
+
+\subsection{Treatment: the flow}\label{sec:flow}
+
+The register contains a field recording the citizen's intake office --- eight coarse values
+such as ``Collector'' or ``Office of Chief Minister''. It separately contains
+\code{vchAllEscUser}, a comma-separated list of the internal identifiers of every officer who
+held the file. These are not the same thing and not even close: of the 693,691 grievances filed
+at ``Collector'', only 12.8\% are ever actually pending with a Collector. A policy that
+reranked the intake label would be optimising the citizen's guess.
+
+\begin{definition}[Flow]\label{def:flow}
+Decode each user identifier in \code{vchAllEscUser} to that user's role, via the user--role and
+role--name master tables. The \emph{flow} of grievance $i$ is the resulting role sequence,
+written as a template string: \code{6,8} denotes Secretary$\to$Chief Minister's Office,
+\code{1,5} denotes BDO$\to$Collector.
+\end{definition}
+
+The treatment is $A_i\in\mathcal A$, the flow.
+
+\emph{Why roles and not users.} There are 2,747 distinct user identifiers in the chains.
+Treating each as a treatment level would make every comparison a comparison of individuals,
+with no overlap and no hope of positivity. Collapsing to roles gives 1,318 distinct sequences,
+a few hundred with meaningful support, while preserving what differs between routings: which
+\emph{kind} of officer handles the case, and how many hands it passes through.
+
+\emph{Why the whole sequence.} Each additional link is a physical handoff: the file is
+re-queued, re-read, re-prioritised. Sequence length is a treatment component with a direct
+mechanical effect on duration, not merely a label; \S\ref{sec:micro} models it.
+
+\begin{definition}[Admissible set]\label{def:admissible}
+$\mathcal A(x)\subseteq\mathcal A$ is the set of flows assignable to a grievance with
+covariates $x$: the intersection of (i) \emph{support} --- the flow was used at least
+$\underline m$ times for this category--district cell in the training period; (ii)
+\emph{structural feasibility} --- each consecutive role pair is an edge in the forwarding graph
+derived from the escalation master tables, so the routing is administratively permitted; (iii)
+\emph{jurisdiction} --- the entry role belongs to an office competent for the category.
+\end{definition}
+
+Restriction (ii) matters for deployment and is cheap to check: a statistically attractive flow
+that no officer is authorised to execute is not a policy.
+
+\subsection{The outcome, done carefully}\label{sec:outcome}
+
+This subsection determines what the entire analysis means.
+
+\subsubsection{What the register records}
+
+At closure the officer selects or types a remark. Six standardised remarks account for about
+64\% of closures and form a ladder: disposed with no action claimed; disposed with appropriate
+action; disposed with the beneficiary benefited. A separate boolean field independently flags
+petitioner benefit. The remaining 36\% carry free or semi-standard text.
+
+\subsubsection{Three states, not two}\label{sec:threestate}
+
+The tempting definition is binary: a disposal is \emph{correct} if action was claimed or the
+petitioner benefited, incorrect otherwise. This is wrong, in a direction that matters.
+
+Consider the most frequent non-standard closing remarks.
+
+\begin{table}[h]
+\centering
+\caption{Non-standard closing remarks occurring at least 1,000 times. Aggregate counts only.}
+\label{tab:offladder}
+\begin{tabular}{lr@{\qquad}lr}
+\toprule
+Remark & Cases & Remark & Cases\\
+\midrule
+as reported & 90,061 & not within purview of this cell & 8,344\\
+complaint details inadequate & 39,823 & needs a government policy decision & 8,337\\
+documents not attached & 28,851 & advised to attend joint hearing & 10,999\\
+already taken up / taken up earlier & 21,025 & thanks for the suggestions & 4,769\\
+no specific grievance & 16,196 & address not given & 4,086\\
+duplicate copy & 15,928 & details not legible & 2,110\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Read the officer's behaviour off that table. A duplicate copy of an existing grievance; a
+complaint with no documents attached; a matter outside the cell's jurisdiction; a request
+requiring a policy decision the office cannot make. In every one the officer \emph{did the
+right thing} by closing the file, and no action was available. Summing the unambiguous
+categories gives roughly 144,700 cases --- about 12\% of all resolved grievances --- correctly
+closed and scored as failures by the binary definition.
+
+Worse, the mislabelling is not random with respect to duration. Establishing that a case is a
+duplicate is fast. The binary definition therefore removes from the ``correct'' group a large
+set of cases that are both correctly handled and quick --- precisely the group a speed analysis
+most needs.
+
+\begin{definition}[Actionability and action]\label{def:threestate}
+For grievance $i$ define
+\[
+S_i=\one{\text{the grievance is actionable}},\qquad
+C_i=\one{\text{substantive action was taken}}.
+\]
+$S_i=0$ means no action was available to any officer: duplicate, out of jurisdiction,
+insufficient information, requires a policy change. $C_i$ is defined only where $S_i=1$. The
+three states are $(S=0)$, $(S=1,C=1)$ and $(S=1,C=0)$; the failure the system exists to reduce
+is the last.
+\end{definition}
+
+\begin{remark*}[Measurement, and what decided it]
+Both $S$ and $C$ are read from the closing remark. Table~\ref{tab:offladder}'s templates plus
+the six standard remarks and six further high-frequency strings cover 85.1\% of resolved
+closures by exact match; the remainder is free text and is left undetermined rather than
+guessed.
+
+The assignments were not decided by reading the wording, which is ambiguous exactly where it
+matters. They rest on two structural facts measured over all 1{,}209{,}144 resolved grievances:
+screened-out cases run 1.01--1.17 handoffs and close in 1--6 days, while handled cases run
+2.18--2.90 handoffs and close in 42--138. The separation is total; nothing high-volume falls
+between.
+
+That evidence settles ``as reported'', the most common non-standard remark at 90{,}061 cases and
+present in six of the seven intake offices. The closure dropdown photographed in the field record
+lists a longer benefit-claiming template beside it, which suggested reading the short string as a
+truncation of the long one. \emph{The corpus refutes that}: both longer strings occur fewer than
+1{,}000 times and are effectively absent, so there is no co-occurrence to argue from. What the
+profile does show is that the case was worked --- 2.18 handoffs and a 78-day median, the longest
+of any large template --- while the remark declines to say whether action followed. It is
+therefore $S=1$ with $C$ undetermined, a fourth bucket the binary label has nowhere to put, and
+it accounts for 7.45\% of resolved grievances.
+\end{remark*}
+
+\subsubsection{Why \texorpdfstring{$S$}{S} may be conditioned on and \texorpdfstring{$C$}{C} may not}\label{sec:S-pretreatment}
+
+This is the crux, and it justifies the estimand of \S\ref{sec:estimand}.
+
+$S$ is a property of the grievance. Whether a filing duplicates an earlier one, names a specific
+complaint, or falls within the cell's jurisdiction does not depend on which officer receives it.
+Formally $S_i(a)=S_i$ for all $a$: the potential values of $S$ do not vary with treatment. A
+variable with no treatment effect is, for identification purposes, a pre-treatment covariate,
+and conditioning on it is harmless.
+
+$C$ is different. Whether substantive action gets taken is precisely what routing is supposed to
+influence, so $C_i(a)$ genuinely varies in $a$. Conditioning on $C=1$ conditions on a
+post-treatment variable, and the subpopulation $\{i:C_i(a)=1\}$ is a different set of grievances
+for different $a$ --- a \emph{principal stratum}. Comparing mean duration across flows
+\emph{within} that set compares different populations, and the comparison has no causal
+interpretation even under perfect randomisation.
+
+\begin{example}[Why stratum conditioning fails]\label{ex:stratum}
+Suppose flow $a$ takes action on every case, quick and slow alike, while flow $a'$ takes action
+only on the easy cases and abandons the hard ones. Then $\E[T(a')\mid C(a')=1]$ is computed over
+easy cases only and can be far below $\E[T(a)\mid C(a)=1]$, even though $a$ is better on every
+case individually. The comparison rewards $a'$ for shirking.
+\end{example}
+
+The design below therefore conditions on $S$ and treats $C$ as an outcome to be constrained,
+never as a conditioning event.
+
+\subsection{Duration and censoring}\label{sec:duration}
+
+Let $T_i\ge0$ be days from creation to closure. Data are extracted at a snapshot date, so
+grievances still open then have unobserved $T_i$. Let $D_i$ be the censoring time --- days from
+arrival to snapshot. Censoring here is \emph{administrative}: $D_i$ is a deterministic function
+of the arrival date and the snapshot date. That is a favourable structure, because it makes
+Assumption~\ref{ass:censor} credible rather than hopeful.
+
+Censoring is severe in recent cohorts:
+
+\begin{center}
+\begin{tabular}{lrrr}
+\toprule
+Creation year & Grievances & Censored & Rate\\
+\midrule
+2021 & 51,254 & 1,060 & 2.1\%\\
+2022 & 136,902 & 3,098 & 2.3\%\\
+2023 & 264,666 & 9,842 & 3.7\%\\
+2024 & 667,286 & 61,692 & 9.2\%\\
+2025 & 251,180 & 86,452 & 34.4\%\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+A completers-only analysis of the 2025 cohort admits a grievance only if it closed within a few
+months, so the analysed subsample is selected on speed and the estimated mean duration is biased
+downward by construction.
+
+\begin{definition}[Restricted duration]\label{def:rmst}
+Fix a horizon $L>0$ (we use $L=365$ days). The restricted duration is $Y_i=\min(T_i,L)$; the
+target is the restricted mean $\E[Y]$.
+\end{definition}
+
+Three reasons this is right. It is identified from data on $[0,L]$ alone with no parametric tail
+assumption. It is measured in days, so ``the policy saves $\Delta$ days per grievance'' is
+literally true. And it equals the area under the survival curve up to $L$
+(Lemma~\ref{lem:rmst-area}), which supplies both a nonparametric estimator and a clear picture
+of the quantity.
+
+%=====================================================================
+\section{The estimand}\label{sec:estimand}
+%=====================================================================
+
+\subsection{Potential outcomes and the two functionals}
+
+For each admissible flow $a$, imagine the values realised were grievance $i$ routed through $a$:
+$Y_i(a)=\min(T_i(a),L)\in[0,L]$ and $C_i(a)\in\{0,1\}$. We observe the realised flow $A_i$ and,
+subject to censoring, the outcomes at that flow.
+
+Restrict attention to actionable grievances, $S=1$. For a flow $a$ and covariate value $x$
+define
+\begin{equation}
+m_a(x)\equiv\E\bigl[Y(a)\mid X=x,\,S=1\bigr],
+\qquad
+p_a(x)\equiv\Prob\bigl(C(a)=1\mid X=x,\,S=1\bigr).
+\label{eq:nuisance}
+\end{equation}
+In words: $m_a(x)$ is how long an actionable grievance like $x$ would take if routed through
+$a$, counting \emph{all} such grievances and not only those that end well; $p_a(x)$ is how
+likely substantive action is. Both are ordinary conditional expectations over a fixed
+population, with no post-treatment conditioning anywhere.
+
+\subsection{Target and nuisance}\label{sec:nuisance-def}
+
+The functions in \eqref{eq:nuisance}, together with the propensity $e_a(x)$ and censoring
+curve $G(t\mid x,a)$ of \S\ref{sec:ident}, are \emph{nuisance functions}: infinite-dimensional
+objects that appear in the identification formula for the target but are not themselves of
+interest. Nobody wants to know $e_a(x)$, the probability that history would have sent a
+grievance like $x$ down flow $a$; that is a description of past bureaucratic habit, not a
+policy question. It enters only because the target cannot be written down without it.
+
+The distinction is not bookkeeping --- it determines how accurately each object must be
+estimated, and hence which statistical models are admissible for each
+(\S\ref{sec:models}). Appendix~\ref{app:semipar} sets out the vocabulary: parametric,
+nonparametric and semiparametric models, parameters as functionals, influence functions, the
+efficiency bound, and why a target may be estimated at $\sqrt n$ while the nuisances it
+depends on are not.
+
+\subsection{Decision rules and their values}
+
+\begin{definition}[Decision rule]\label{def:rule}
+A decision rule is a map $\delta:\mathcal X\to\mathcal A$ with $\delta(x)\in\mathcal A(x)$. Write
+$\mathcal D$ for the set of such rules.
+\end{definition}
+
+$\delta$ is a \emph{function}, not an action: it is the routing protocol, and it is what gets
+estimated, evaluated and deployed. The action for a particular grievance is $\delta(x)$. This is
+why the value functionals take $\delta$ as their argument.
+
+\begin{definition}[Policy values]\label{def:values}
+$V_T(\delta)=\E[Y(\delta(X))\mid S=1]$ and $V_C(\delta)=\E[C(\delta(X))\mid S=1]$.
+\end{definition}
+
+$V_T$ is average restricted duration under the rule; $V_C$ is the fraction of actionable
+grievances on which action is taken. The historical rule $\delta_{\text{hist}}$ is what the
+bureaucracy actually did, and its values are the observed population means.
+
+\subsection{The optimisation problem}
+
+\begin{definition}[Constrained optimal rule]\label{def:optimal}
+\begin{equation}
+\delta^\star=\argmin_{\delta\in\mathcal D}V_T(\delta)
+\qquad\text{subject to}\qquad
+V_C(\delta)\ \ge\ V_C(\delta_{\text{hist}}).
+\label{eq:program}
+\end{equation}
+\end{definition}
+
+Read the constraint as the regulator's instruction: \emph{you may reorganise routing to go
+faster, but not at the price of taking action less often.} The estimand is the value of solving
+the program,
+\begin{equation}
+\Delta\equiv V_T(\delta_{\text{hist}})-V_T(\delta^\star),
+\label{eq:Delta}
+\end{equation}
+in days saved per actionable grievance, always reported with the realised slack
+$V_C(\delta^\star)-V_C(\delta_{\text{hist}})\ge0$.
+
+\subsection{Reduction to a pointwise rule}
+
+Optimising over a function space sounds daunting; it is not, because both functionals are
+expectations of pointwise quantities. Define, for $\tau\in[0,1]$,
+\begin{equation}
+\delta_\tau(x)=\argmin_{a\in\mathcal A(x):\,p_a(x)\ge\tau}m_a(x),
+\label{eq:pointwise}
+\end{equation}
+with the convention that if no $a$ meets the constraint then
+$\delta_\tau(x)=\argmax_{a\in\mathcal A(x)}p_a(x)$.
+
+\begin{proposition}[Both values rise with $\tau$]\label{prop:mono}
+$V_C(\delta_\tau)$ and $V_T(\delta_\tau)$ are both nondecreasing in $\tau$.
+\end{proposition}
+
+\begin{proof}
+Appendix~\ref{app:mono}.
+\end{proof}
+
+\begin{corollary}[The calibrated floor]\label{cor:feasible}
+Let $\mathcal T$ be a finite grid containing $0$ and define
+\begin{equation}
+\tau^\star=\min\bigl\{\tau\in\mathcal T:\ V_C(\delta_\tau)\ \ge\ V_C(\delta_{\text{hist}})\bigr\},
+\label{eq:taustar}
+\end{equation}
+whenever that set is nonempty. Then $\delta_{\tau^\star}$ is feasible for \eqref{eq:program} and
+attains the smallest $V_T$ among feasible rules on the grid.
+\end{corollary}
+
+\begin{proof}
+Appendix~\ref{app:mono}.
+\end{proof}
+
+\begin{remark*}
+Proposition~\ref{prop:mono} is the whole economics of the constraint: raising the correctness
+floor buys correctness and costs speed, so the calibrated $\tau^\star$ sits exactly where the
+constraint first binds. A \emph{larger} $\tau$ than \eqref{eq:taustar} is not conservative ---
+it forfeits speed for correctness the regulator did not ask for --- and a smaller one is
+infeasible. Fixing $\tau$ at a conventional value, or at zero, and reporting $\Delta$ as though
+the constraint had been imposed is a common and consequential error: at $\tau=0$ the constraint
+set is everything and \eqref{eq:pointwise} collapses to unconstrained duration minimisation, the
+gameable objective \S\ref{sec:intro} warned about.
+\end{remark*}
+
+%=====================================================================
+\section{Identification}\label{sec:ident}
+%=====================================================================
+
+The estimand is written in potential outcomes, which are not observed. The general theory that
+recovers such quantities from observational data is in Appendix~\ref{app:causal}; this section
+states the assumptions it needs, argues for each in this setting, and assembles the estimating
+equation.
+
+\subsection{The assumptions, and what they mean here}
+
+\begin{assumption}[Consistency and no interference]\label{ass:consistency}
+If $A_i=a$ then $Y_i=Y_i(a)$ and $C_i=C_i(a)$; and $Y_i(a)$ does not depend on the treatments
+assigned to other units.
+\end{assumption}
+
+The first clause is innocuous --- it says a flow means the same thing whoever receives it, which
+the role-template construction of Definition~\ref{def:flow} is designed to make true. The second
+is substantively \emph{false} in a queueing system, and \S\ref{sec:interfere} treats it at
+length rather than assuming it away.
+
+\begin{assumption}[Unconfoundedness given the officer's screen]\label{ass:unconf}
+For all $a\in\mathcal A(x)$:\quad $\bigl(Y(a),C(a)\bigr)\indep A\mid X,\ S=1$.
+\end{assumption}
+
+This is the assumption carrying the weight, and it is only as good as $X$. The covariate list of
+\S\ref{sec:covariates} was constructed to reproduce the officer's screen, so that what remains
+unobserved is narrow and nameable: routing-private discretion at $t_0$ (``I know this
+applicant''), and post-routing shocks (staff leave, a protest, a data-entry backlog). What $U$
+is \emph{not} is omitted case difficulty --- difficulty is on the form, and the form is in $X$.
+That is a materially better position than the typical routing study, and it is what makes the
+sensitivity analysis of \S\ref{sec:sens} interpretable rather than ritual.
+
+The claim is only as strong as the implementation, however. Congestion is on the screen and is
+currently absent from the fitted $X$ (\S\ref{sec:backlog}), so any present estimate invokes
+Assumption~\ref{ass:unconf} on a strictly smaller information set than the argument for it
+describes.
+
+\begin{assumption}[Positivity]\label{ass:positivity}
+There is $\epsilon>0$ with $e_a(x)\equiv\Prob(A=a\mid X=x,S=1)\ge\epsilon$ for all $x$ and all
+$a\in\mathcal A(x)$.
+\end{assumption}
+
+This is the binding constraint in practice. Positivity fails at the flow level in thin cells,
+which is what the support floor of Definition~\ref{def:admissible}(i) and the effective sample
+size diagnostic of \S\ref{sec:diag} are for. When it fails, the response is to coarsen the
+treatment --- back off from flow to department --- not to extrapolate.
+
+\begin{assumption}[Independent censoring]\label{ass:censor}
+$D\indep T\mid X,A,S=1$, and $\Prob(D>L\mid X,A,S=1)\ge\epsilon_D>0$.
+\end{assumption}
+
+Here administrative censoring earns its keep: $D$ is determined by the arrival date, which is in
+$X$, so the conditional independence is close to definitional. The second clause requires that
+grievances of every type have had a full $L$ days of exposure --- which is why one does not
+evaluate on the newest cohort.
+
+\subsection{What the assumptions buy}
+
+\begin{corollary}[Identification of the estimand]\label{cor:identified}
+Under Assumptions~\ref{ass:consistency}--\ref{ass:censor}, the nuisance functions
+\eqref{eq:nuisance} satisfy
+\[
+m_a(x)=\E[Y\mid X=x,A=a,S=1],
+\qquad
+p_a(x)=\Prob(C=1\mid X=x,A=a,S=1),
+\]
+the policy values satisfy $V_T(\delta)=\E[m_{\delta(X)}(X)\mid S=1]$ and
+$V_C(\delta)=\E[p_{\delta(X)}(X)\mid S=1]$, and consequently $\Delta$ in \eqref{eq:Delta} is a
+functional of the observed-data distribution.
+\end{corollary}
+
+\begin{proof}
+The first display is Theorem~\ref{thm:adjust} applied to $Y$ and to $C$; the second is
+Corollary~\ref{cor:value}; censoring is handled by Theorem~\ref{thm:ipcw}. All are proved in
+Appendices~\ref{app:causal}--\ref{app:censor}.
+\end{proof}
+
+Corollary~\ref{cor:identified} gives \emph{one} route to the estimand, through the outcome
+model. Appendix~\ref{app:causal} develops two more --- inverse-probability weighting
+(Theorem~\ref{thm:ipw}) and the augmented combination (Theorem~\ref{thm:dr}) --- with different
+failure modes. The estimator of \S\ref{sec:est} uses the third.
+
+\subsection{The estimating equation}
+
+Stacking the augmented representation with the censoring weights gives the score used
+throughout:
+\begin{equation}
+\boxed{\;
+\psi_i(\delta)
+=\hat m_{\delta(X_i)}(X_i)
++\frac{\one{A_i=\delta(X_i)}\ R_i}
+      {\hat e_{\delta(X_i)}(X_i)\ \hat G\bigl(Y_i\mid X_i,A_i\bigr)}
+\Bigl(Y_i-\hat m_{\delta(X_i)}(X_i)\Bigr)\;}
+\label{eq:score}
+\end{equation}
+where $R_i=\one{D_i\ge Y_i}$ indicates that the restricted duration was observed. Then
+$\hat V_T(\delta)=n_S^{-1}\sum_{i:S_i=1}\psi_i(\delta)$. In words: \emph{start with the model's
+prediction for the action the rule would take; on those grievances where history happened to
+take that same action, correct the prediction by the observed error, scaled up in inverse
+proportion to how often that action was taken and how likely the case was to have been observed
+at all.}
+
+By Theorem~\ref{thm:dr} the estimator is consistent if the outcome model is right, or if
+\emph{both} the propensity and censoring models are right. Replacing $Y$ by $C$ and dropping the
+censoring factor gives the corresponding estimator of $V_C$, which is what
+Corollary~\ref{cor:feasible} needs to calibrate $\tau$.
+
+%=====================================================================
+\section{Estimation}\label{sec:est}
+%=====================================================================
+
+We build the estimator in layers, each motivated by a defect in the previous one.
+
+\subsection{Layer 1: outcome regression}\label{sec:layer1}
+
+Corollary~\ref{cor:value} suggests the plug-in
+$\hat V^{\text{DM}}_T(\delta)=n_S^{-1}\sum_{i:S_i=1}\hat m_{\delta(X_i)}(X_i)$.
+
+To evaluate this we must compute $\hat m_a(x)$ at a flow the grievance did \emph{not} receive.
+That is a design requirement on the feature encoding, and it is easy to violate: if features are
+built per dataset --- for instance by encoding categories as positions in a per-sample level
+index --- then $\hat m$ is not a well-defined function of $(x,a)$ and the counterfactual
+evaluation is meaningless. The encoding must fix one mapping from raw values to model inputs,
+estimated once on the training sample and applied unchanged everywhere, with the flow entering
+as an explicit argument that can be varied while $x$ is held fixed.
+
+\emph{What goes wrong with only Layer 1.} Nothing checks $\hat m$. If the model errs in a way
+correlated with which flows $\delta$ selects --- and it will, because $\delta$ selects flows
+precisely where $\hat m$ is small, so selection targets the model's negative errors --- the
+value estimate inherits the bias with no diagnostic.
+
+\subsection{Layer 2: weighting}
+
+Theorem~\ref{thm:ipw} suggests instead
+$\hat V^{\text{IPW}}_T(\delta)=n_S^{-1}\sum_{i:S_i=1}\one{A_i=\delta(X_i)}\hat e_{\delta(X_i)}(X_i)^{-1}Y_i$,
+which uses no outcome model. Its defect is variance: the summand is zero except where history
+agreed with the policy, and there it is inflated by $1/\hat e$. If a flow is rare, a handful of
+grievances carry the entire estimate.
+
+\subsection{Layer 3: augmentation}
+
+Combining them gives \eqref{eq:score}, with the guarantee of Theorem~\ref{thm:dr}. The
+augmentation is a \emph{residual}, mean-zero when the model is right, so Layer 3 reduces to
+Layer 1 in the favourable case and to a corrected Layer 2 otherwise.
+
+\subsubsection{Hájek normalisation}
+
+The weights $w_i=\one{A_i=\delta(X_i)}R_i/(\hat e\,\hat G)$ do not average to one in finite
+samples. Dividing by their mean rather than by $n$ gives the self-normalised form
+\begin{equation}
+\hat V^{\text{SN}}_T(\delta)
+=\frac1{n_S}\sum_{i:S_i=1}\hat m_{\delta(X_i)}(X_i)
++\frac{\sum_{i:S_i=1}w_i\bigl(Y_i-\hat m_{\delta(X_i)}(X_i)\bigr)}{\sum_{i:S_i=1}w_i}.
+\label{eq:hajek}
+\end{equation}
+This is consistent for the same limit, since the weights converge to mean one, but has bounded
+influence: one observation with tiny $\hat e$ moves \eqref{eq:hajek} by at most the residual
+range, whereas in the unnormalised form it can move the estimate without limit.
+
+\begin{remark*}[What not to do]
+It is tempting to control variance by truncating the \emph{score} $\psi_i$ to a plausible range.
+That is not variance reduction but bias: the truncation point interacts with the propensity draw
+and the estimator converges to nothing in particular. Trim the \emph{weights} --- equivalently
+bound $\hat e$ away from zero, an explicit and reportable restriction of the target population
+--- or self-normalise. Never truncate the score.
+\end{remark*}
+
+\subsection{Layer 4: cross-fitting}\label{sec:crossfit}
+
+Corollary~\ref{cor:rates} promises that slow-converging nuisances are tolerable, but the
+argument has a gap: if $\hat m$ is estimated on the same observations at which it is evaluated,
+the two are dependent and an empirical-process term need not vanish. Historically this was
+handled by requiring the nuisance estimator to lie in a Donsker class --- a complexity
+restriction modern ensembles violate. Cross-fitting removes the requirement entirely
+(Proposition~\ref{prop:crossfit}): partition into $K$ folds, fit the nuisances outside each fold,
+evaluate the score inside it,
+\begin{equation}
+\hat V_T(\delta)=\frac1K\sum_{k=1}^K\frac1{|I_k|}\sum_{i\in I_k}\psi_i\bigl(\delta;\hat\eta^{(-k)}\bigr).
+\label{eq:crossfit}
+\end{equation}
+It costs a constant factor in computation and nothing in rate, and should be regarded as
+mandatory whenever the nuisances are estimated flexibly.
+
+\subsection{Layer 5: which model estimates what}\label{sec:models}
+
+The theory is agnostic about how $\hat m,\hat e,\hat p,\hat G$ are obtained. The choices are not
+arbitrary, and the reasons differ by nuisance.
+
+\begin{table}[h]
+\centering
+\caption{Nuisance functions, model class, and rationale.}
+\label{tab:models}
+\begin{tabular}{p{2.2cm}p{3.1cm}p{8.5cm}}
+\toprule
+Function & Estimator & Why\\
+\midrule
+$m_a(x)$ \newline duration &
+Ridge on $\log(1+T)$ \emph{and} gradient boosting; both reported &
+Enters the score as the direct term and inside the residual. Misspecification is tolerable by
+Theorem~\ref{thm:dr}, but a \emph{smoother} $m$ reduces the burden carried by $e$. The two
+classes bracket the bias--variance trade-off: ridge imposes additive linear structure in the log
+scale, boosting imposes none. Reporting both is a specification check --- if $\Delta$ moves
+materially between them, functional form is doing the work and must be defended.\\
+\addlinespace
+$p_a(x)$ \newline action taken &
+Penalised logistic or gradient-boosted classifier, with isotonic calibration &
+Used only through the threshold $p_a(x)\ge\tau$, so what matters is ranking and
+\emph{calibration near $\tau$}, not global fit. An uncalibrated classifier makes $\tau$
+uninterpretable, hence the isotonic step.\\
+\addlinespace
+$e_a(x)$ \newline propensity &
+Hierarchical multinomial logistic: department, then flow within department &
+Appears in a denominator, so tail behaviour dominates. Tree ensembles produce poorly calibrated
+extreme probabilities --- exactly the wrong failure mode. A penalised parametric model with
+explicit shrinkage toward the marginal is safer, and the hierarchy matches the institutional
+structure while pooling thin cells.\\
+\addlinespace
+$G(t\mid x,a)$ \newline censoring &
+Kaplan--Meier within coarse strata, or Cox on $X$ &
+Censoring is administrative, so $G$ is nearly a deterministic function of the arrival date.
+Little is gained by flexibility and the stratified estimator is transparent.\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Where ridge enters}
+
+The duration model in the log scale is
+\[
+\log(1+T_i)=\beta'\phi(X_i)+\alpha_{d(i)}+\gamma_{r_0(i)}+\lambda\,n_{\text{esc},i}
++\theta\,\frac{Q_{r_0}(t_{0i})}{\text{cap}_{r_0}}+\varepsilon_i,
+\]
+with department and entry-role fixed effects, chain length, and normalised congestion. Ridge
+rather than ordinary least squares because the design carries many high-cardinality categorical
+effects, and the $\ell_2$ penalty shrinks thinly-supported levels toward zero, which is exactly
+the partial pooling one wants. The coefficients are interpretable: $\lambda$ is the proportional
+cost of an additional handoff, $\gamma_{r_0}$ ranks entry roles by speed. Both are structural
+quantities in \eqref{eq:micro}, so the linear specification is not merely convenient --- it is
+the estimating equation the mechanism implies.
+
+\subsubsection{Where gradient boosting enters}
+
+Boosting is used for $m$ as the unrestricted comparison. It can represent interactions the
+additive form cannot --- that an extra handoff costs more for land disputes than for pension
+cases, or that congestion binds only above a threshold. Corollary~\ref{cor:rates} with
+cross-fitting makes its use legitimate despite its slow rate.
+
+It must be selected on out-of-sample criteria, and it will not always win. Here the ridge is in
+fact the better out-of-sample model (\S\ref{sec:ev-fit}), which is diagnostic rather than
+embarrassing: it says flow effects are close to additive in logs, as \eqref{eq:micro} predicts,
+and argues for the interpretable model in deployment with boosting retained as the check.
+
+\subsection{Retransformation: the smearing correction}\label{sec:smear}
+
+The duration model is fitted on $\log(1+T)$ but the estimand is on the day scale. Naive
+exponentiation is wrong: by Lemma~\ref{lem:jensen-retrans},
+$\E[1+T\mid x]=e^{\mu(x)}\E[e^\varepsilon\mid x]\ge e^{\mu(x)}$, so $\exp(\hat\mu(x))-1$
+estimates something closer to a conditional \emph{median} than a mean.
+
+\begin{definition}[Smearing estimator]\label{def:smear}
+With residuals $\hat\varepsilon_i$ from the log-scale fit, set
+$\hat s=n^{-1}\sum_ie^{\hat\varepsilon_i}$ and estimate $\hat m(x)=\hat s\,e^{\hat\mu(x)}-1$.
+\end{definition}
+
+$\hat s$ requires no distributional assumption beyond homoskedasticity on the log scale; under
+heteroskedasticity compute it within strata. In this application uncorrected predictions
+understate the mean by roughly 25--30 days (\S\ref{sec:ev-provisional}), so the correction is not
+optional --- and an uncorrected direct term inside \eqref{eq:score} forces the augmentation to
+absorb the entire retransformation gap, inflating its variance for no reason.
+
+\subsection{Variance and inference}\label{sec:variance}
+
+Since \eqref{eq:score} is (approximately) an influence function, the asymptotic variance of
+$\hat V_T(\delta)$ is $\Var(\psi(O))/n$, estimated by the sample variance of the $\psi_i$ ---
+valid under i.i.d.\ sampling, which does not hold here.
+
+Grievances in the same district and year share administrative shocks: a staff vacancy, an
+election, a flood. Let $g(i)$ index the district--year cluster; the cluster-robust variance is
+\[
+\hat\Var\bigl(\hat V_T\bigr)=\frac1{n^2}\sum_g\Bigl(\sum_{i\in g}(\psi_i-\bar\psi)\Bigr)^{\!2},
+\]
+equivalently obtained by resampling whole clusters. By Lemma~\ref{lem:cluster} the inflation
+over the i.i.d.\ variance is approximately $1+(\bar n_g-1)\rho$ with $\rho$ the within-cluster
+correlation; with hundreds of grievances per cluster even $\rho=0.01$ doubles the standard
+error. Ignoring clustering would materially overstate precision.
+
+%=====================================================================
+\section{Learning the rule}\label{sec:policy}
+%=====================================================================
+
+So far $\delta$ was fixed and we estimated its value. But $\delta^\star$ must itself be learned,
+which introduces a bias easy to miss.
+
+\subsection{The winner's curse}
+
+The empirical rule is $\hat\delta(x)=\argmin_a\hat m_a(x)$ over the constrained set. The
+$\argmin$ selects the flow whose \emph{estimate} is smallest, which is systematically the flow
+whose estimate is most negatively biased: by Lemma~\ref{lem:winner},
+$\E[\min_a\hat m_a]\le\min_a\E[\hat m_a]$. The gap grows with the noise in $\hat m$ and with the
+number of candidates, so a policy allowed to choose among many thinly-supported templates will
+look better than it is for purely statistical reasons.
+
+\emph{Sample splitting.} Learn $\hat\delta$ on one partition and evaluate $\hat V_T(\hat\delta)$
+on another. The evaluation fold sees $\hat\delta$ as a fixed function, so
+Corollary~\ref{cor:value} applies unmodified and the winner's curse does not bite. This composes
+with cross-fitting: use nested folds, or fit nuisances and policy on complementary folds.
+
+\emph{Restricting the candidate set.} The support floor in Definition~\ref{def:admissible} is
+not only about positivity; it also limits the number of candidates and hence the selection bias.
+Empirically, restricting to the three most-used admissible flows per cell costs little
+achievable value while roughly doubling overlap (\S\ref{sec:ev-provisional}) --- a favourable
+trade.
+
+\subsection{Calibrating the constraint}\label{sec:tau}
+
+Corollary~\ref{cor:feasible} requires computing $\tau^\star$ in \eqref{eq:taustar}. Sweep $\tau$
+over a grid; for each $\tau$ form $\delta_\tau$ by \eqref{eq:pointwise}; estimate
+$V_C(\delta_\tau)$ by the analogue of \eqref{eq:score} with $C$ in place of $Y$; take the
+\emph{smallest} $\tau$ meeting the constraint. Report the entire curve
+$\tau\mapsto\bigl(\hat V_T(\delta_\tau),\hat V_C(\delta_\tau)\bigr)$: it is the
+speed--correctness frontier, far more informative than any single point on it.
+
+\subsection{From a rule to a deployable policy}
+
+Every selected flow must be reachable in the forwarding graph,
+Definition~\ref{def:admissible}(ii). And the rule should degrade gracefully, falling back from
+flow-level to department-level routing wherever the diagnostics of \S\ref{sec:diag} show
+insufficient support.
+
+%=====================================================================
+\section{Diagnostics}\label{sec:diag}
+%=====================================================================
+
+\subsection{Overlap and effective sample size}
+
+The augmentation in \eqref{eq:score} is a weighted average over the subsample where
+$A_i=\delta(X_i)$. Its reliability is governed not by $n$ but by the Kish effective sample size
+$\text{ESS}=(\sum_iw_i)^2/\sum_iw_i^2$, which by Lemma~\ref{lem:ess} is the sample size an
+unweighted mean would need to match its variance.
+
+Report $\text{ESS}/n$ for every arm. A value of $0.05$ means the correction term carries the
+precision of a study one-twentieth the size, and any claim resting on it must be qualified
+accordingly. Where $\text{ESS}/n$ falls below a pre-registered threshold, back off to the
+coarser department-level treatment, where overlap is far better.
+
+\subsection{Calibration}
+
+$\hat e$ appears in a denominator and $\hat p$ in a threshold, so both need calibration, not
+merely discrimination. Report reliability diagrams and the Brier decomposition. A model with
+excellent AUC and poor calibration is actively harmful here.
+
+\subsection{Falsification}
+
+Two checks with known answers. \emph{Negative control}: run the pipeline with the outcome
+replaced by something routing cannot affect --- the day of the week of filing. A non-zero
+estimated effect indicates residual confounding or a leak in feature construction.
+\emph{Placebo flows}: permute flow labels within category--district cells and confirm the
+estimated $\Delta$ collapses to zero.
+
+%=====================================================================
+\section{Sensitivity to unmeasured confounding}\label{sec:sens}
+%=====================================================================
+
+Assumption~\ref{ass:unconf} is not testable. The honest response is to quantify how badly it
+would have to fail, which the marginal sensitivity model of Appendix~\ref{app:sens} does: a
+parameter $\Gamma\ge1$ bounds how much an unmeasured factor may change the odds of receiving a
+given flow, \emph{beyond everything on the officer's screen}, with $\Gamma=1$ recovering
+unconfoundedness.
+
+For each $\Gamma$ one computes the extremal values of $\hat V_T(\delta)$ over all weight
+functions consistent with the model (Proposition~\ref{prop:msm-bounds}). The reportable summary
+is the \emph{breakdown point}: the smallest $\Gamma$ at which the interval for $\Delta$ first
+contains zero. This converts an untestable assumption into a claim a domain expert can argue
+with: \emph{name a case characteristic, visible to the officer but absent from
+\S\ref{sec:covariates}, that would shift the odds of the faster routing by a factor of
+$\Gamma$.} Because $X$ is designed to be the officer's screen, a large breakdown point is
+genuinely reassuring and a small one genuinely alarming.
+
+%=====================================================================
+\section{Interference: the queue}\label{sec:interfere}
+%=====================================================================
+
+Assumption~\ref{ass:consistency} asserted no interference, which in a queueing system is false.
+If the policy sends many grievances to one popular Secretary, that Secretary's backlog rises and
+every case routed there --- including cases the policy did not move --- slows down. As defined,
+$V_T(\delta)$ is then a partial-equilibrium object: it answers ``what if this one grievance had
+been routed differently'', not ``what if the whole system adopted this rule''.
+
+\subsection{A structural model of duration}\label{sec:micro}
+
+The interference has a specific shape, which suggests how to price it. Decompose
+\begin{equation}
+T_i=\underbrace{\text{wait}\!\left(\frac{Q_{r_0}(t_{0i})}{\text{cap}_{r_0}}\right)}_{\text{queueing delay}}
++\underbrace{\sum_{j=1}^{n_{\text{esc}}}h\bigl(r_j,\text{match}_{ij}\bigr)}_{\text{handling}}
++\underbrace{(n_{\text{esc}}-1)\,h_0}_{\text{handoff cost}}
++\ \varepsilon_i .
+\label{eq:micro}
+\end{equation}
+Only the first term carries interference, and it does so through a scalar state variable
+$Q_r(t)$ per role --- the quantity \S\ref{sec:backlog} constructs. Note that \eqref{eq:micro} is
+also the justification for the linear specification of \S\ref{sec:models}: the additive
+structure in levels motivates an additive approximation in logs, with $\lambda$ estimating $h_0$
+in proportional terms.
+
+\subsection{Equilibrium evaluation by replay}
+
+Simulate the arrival stream chronologically. For each grievance draw a counterfactual duration
+$Y_i(\delta(X_i))=\hat m_{\delta(X_i)}(X_i)+U_i$ with $U_i$ resampled from the fitted residuals
+within a category--district stratum; route it by $\delta$; update $Q_r(t)$ for the entry role,
+releasing capacity as cases complete. The resulting $\Delta_{\text{sim}}$ accounts for
+congestion and will be smaller than the partial-equilibrium $\Delta$ whenever $\delta$
+concentrates load. The gap between them \emph{is} the interference correction, and reporting
+both is more informative than either.
+
+A practical variant imposes the load constraint directly in \eqref{eq:pointwise}: forbid the
+policy from raising any role's utilisation by more than a set percentage on any day. This
+sacrifices some value for a guarantee that the estimated gain does not rest on congestion
+effects the model may understate.
+
+%=====================================================================
+\section{Evidence}\label{sec:evidence}
+%=====================================================================
+
+This section reports what has been computed, organised by how much each result depends on the
+design decisions above. Sections~\ref{sec:ev-measure}--\ref{sec:ev-fit} report findings that
+stand on their own; \S\ref{sec:ev-provisional} reports policy estimates that do \emph{not} yet
+estimate the estimand, and says why.
+
+\subsection{The corpus}
+
+\begin{table}[h]
+\centering
+\caption{Corpus and chronological splits. ``$C=1$ (binary)'' applies the two-state label of
+\S\ref{sec:threestate} that the design replaces; it is shown because every model below was
+fitted on it.}
+\label{tab:corpus}
+\begin{tabular}{lrrrr}
+\toprule
+Split & Grievances & Resolved & $C=1$ (binary) & Censored\\
+\midrule
+Train 2021--23 & 452,822 & 438,822 & 162,639 & 3.1\%\\
+Validation 2024 & 667,286 & 605,594 & 166,628 & 9.2\%\\
+Test 2025 & 251,180 & 164,728 & 34,328 & 34.4\%\\
+\midrule
+Total & 1,371,288 & 1,209,144 & 363,595 & ---\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Measurement}\label{sec:ev-measure}
+
+These are counting exercises over the register. They depend on no modelling choice, and each is
+load-bearing for a design decision made earlier.
+
+\paragraph{The treatment is recoverable (\S\ref{sec:flow}).} Every one of the 1,344,908
+escalation chains present in the register decodes to a role sequence; a further 26,380
+grievances carry no chain at all, an absent treatment rather than a decoding failure. The chains
+use 2,747 distinct user identifiers and collapse to 1,318 role templates over 1,047
+category--district cells. After the support floor, 676 cells carry an admissible set, drawing on
+111 templates when restricted to the three most common per cell and 266 unrestricted.
+
+\begin{table}[h]
+\centering
+\caption{Flow census. $n_{\text{esc}}$ is the number of officers who held the file.}
+\label{tab:census}
+\begin{tabular}{lr@{\qquad\qquad}lr}
+\toprule
+$n_{\text{esc}}$ & Chains & Most common templates & Chains\\
+\midrule
+1 & 232,676 & \code{1,5} BDO$\to$Collector & 418,839\\
+2 & 664,144 & \code{6} Secretary & 91,838\\
+3 & 171,279 & \code{5} Collector & 87,922\\
+4 & 242,601 & \code{1,5,6,8} BDO$\to$Collector$\to$Secretary$\to$CMO & 81,195\\
+5 & 31,667 & \code{1,37,5,6} & 59,829\\
+6--8 & 2,541 & \code{28,5} & 49,126\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{The intake label is not the treatment.} If the citizen's coarse office choice
+determined handling there would be no routing decision to optimise.
+
+\begin{center}
+\begin{tabular}{lrr}
+\toprule
+Intake office & Grievances & Ever pending with a Collector\\
+\midrule
+Collector & 693,691 & 12.8\%\\
+Departments & 280,305 & 3.9\%\\
+Office of Chief Minister & 217,253 & 49.9\%\\
+Chief Secretary & 33,037 & 32.7\%\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{The binary label is mismeasured (\S\ref{sec:threestate}).}
+Table~\ref{tab:ladder-evidence} is the evidence for the three-state design. The two rungs the
+binary label scores as failures are together 74.8\% of closures, and Table~\ref{tab:offladder}
+showed a large part of the second consists of correct closures of non-actionable cases. The
+benefit flag also cuts across the rungs rather than agreeing with them: 9.2\% of no-action
+closures carry it, while only 70.5\% of closures on the benefit rung do. The binary label is
+already a blend of two imperfectly agreeing signals.
+
+\begin{table}[h]
+\centering
+\caption{Disposal ladder over 1,209,144 resolved grievances.}
+\label{tab:ladder-evidence}
+\begin{tabular}{lrrrrr}
+\toprule
+Closing rung & Count & Share & Median $T$ & Mean $T$ & Flagged benefited\\
+\midrule
+no action claimed & 472,782 & 39.1\% & 46 & 93.9 & 9.2\%\\
+non-standard text & 432,222 & 35.7\% & 25 & 71.1 & 3.7\%\\
+with appropriate action & 280,887 & 23.2\% & 54 & 96.7 & 6.2\%\\
+beneficiary benefited & 23,253 & 1.9\% & 44 & 98.7 & 70.5\%\\
+\midrule
+Binary $C=1$ & 363,595 & 30.1\% & 54 & 99.5 & ---\\
+Binary $C=0$ & 845,549 & 69.9\% & 36 & 80.9 & ---\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Note the last two rows. Under the binary label, ``correct'' disposals are \emph{slower} than
+``incorrect'' ones by 18 days at the median. That is the entire problem in one line: the fastest
+way to close a grievance is not to work on it, so an unconstrained speed objective would learn
+exactly the wrong policy, and the correctness constraint of \eqref{eq:program} is not a
+formality.
+
+\paragraph{Handoffs cost time (\S\ref{sec:micro}).} Table~\ref{tab:nesc-evidence} supports the
+$(n_{\text{esc}}-1)h_0$ term in \eqref{eq:micro}: the median roughly doubles between a two-link
+and a four-link chain. Beyond four links the pattern is non-monotone on a few thousand cases and
+then a few hundred --- a sample-size artefact rather than a reversal.
+
+\begin{table}[h]
+\centering
+\caption{Duration by chain length, within binary $C=1$.}
+\label{tab:nesc-evidence}
+\begin{tabular}{lrrrrrrr}
+\toprule
+$n_{\text{esc}}$ & 1 & 2 & 3 & 4 & 5 & 6 & 7\\
+\midrule
+Cases & 12,321 & 224,452 & 48,791 & 71,471 & 6,167 & 385 & 8\\
+Median $T$ & 37 & 42 & 68 & 98 & 76 & 83 & 133\\
+Mean $T$ & 87.6 & 83.8 & 123.3 & 131.6 & 129.7 & 122.7 & 186.4\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+This table also illustrates the identification problem the design must handle and cannot settle
+on its own: harder cases are escalated further, so part of the gradient is selection rather than
+mechanism. Separating them is what conditioning on $X$ is for, and what \S\ref{sec:sens} probes.
+
+\subsection{Model fit}\label{sec:ev-fit}
+
+\begin{table}[h]
+\centering
+\caption{Root mean squared error on $\log(1+Y)$, fitted on the actionable population
+($S=1$) with the restricted outcome and censoring weights.}
+\label{tab:fit}
+\begin{tabular}{lccc}
+\toprule
+& Train 2021--23 & Validation 2024 & Test 2025\\
+\midrule
+$\hat m$ ridge & 1.174 & \textbf{1.183} & 1.288\\
+$\hat m$ gradient boosting & 0.926 & 1.234 & 1.345\\
+$\hat m$ boosting, flow features removed & 0.979 & 1.233 & 1.309\\
+$\hat m$ ridge, flow features removed & --- & 1.209 & ---\\
+\midrule
+$\hat p$ AUC, uncalibrated & 0.924 & 0.775 & 0.764\\
+$\hat p$ AUC, isotonic & 0.918 & 0.782 & 0.760\\
+$\hat p$ ECE, uncalibrated & 0.040 & 0.122 & 0.110\\
+$\hat p$ ECE, isotonic & 0.130 & --- & \textbf{0.070}\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Fitted quantities are not comparable with the previous version of this table, which used the
+binary $C=1$ population and an unweighted completers-only target. The isotonic calibration is
+fitted on validation, so its validation ECE is in-sample and reported as ``---''; the test
+column is the out-of-sample figure.
+
+\emph{The flexible model loses out of sample.} Boosting beats ridge by 0.25 in sample and loses
+by 0.05 on validation. This is the empirical content of the claim in \S\ref{sec:models} that
+flow effects are close to additive in the log scale, as \eqref{eq:micro} predicts. It argues for
+the interpretable model in deployment, and is a reminder that ``use the most flexible learner''
+is not an argument --- Corollary~\ref{cor:rates} requires accuracy, not flexibility.
+
+\emph{Whether flow carries predictive signal depends on the learner, and the earlier answer to
+this question was contaminated.} An earlier version of this section reported that removing the
+flow features cost $0.038$ on validation and called it ``real, modest''. Both the number and
+the reading need replacing.
+
+Under the corrected design the boosting ablation is $+0.0003$ --- nothing --- while the ridge
+ablation is $+0.0260$ against a cluster-bootstrap standard error of $0.0036$, or seven standard
+errors. The asymmetry is interpretable rather than contradictory: a boosted tree can reconstruct
+the flow nonparametrically from district, block and category, so the explicit flow columns are
+redundant to it; an additive model in the encoded features cannot, so the same columns carry
+real information. Any claim that ``the flow does not predict duration'' is a claim about a
+learner and must not be restated as a claim about routing.
+
+The $0.038$ itself was largely an artefact. Table~\ref{tab:ablation} decomposes it.
+
+\begin{table}[h]
+\centering
+\caption{Where the flow-ablation gap comes from. $\Delta$ is
+RMSE$_{\text{no flow}}-$RMSE$_{\text{flow}}$ on validation; each rung changes one thing.
+Standard errors resample whole district--year clusters.}
+\label{tab:ablation}
+\begin{tabular}{llccc}
+\toprule
+Population & Target & $\Delta$ & (eval SE) & (fit SE)\\
+\midrule
+binary $C=1$, completers & $\log(1+T)$ & $+0.0373$ & 0.0185 & 0.0059\\
+actionable $S=1$, completers & $\log(1+T)$ & $-0.0004$ & 0.0085 & ---\\
+actionable $S=1$ & $\log(1+Y)$ & $-0.0004$ & 0.0085 & ---\\
+actionable $S=1$, IPCW & $\log(1+Y)$ & $-0.0004$ & 0.0085 & 0.0155\\
+\midrule
+actionable \emph{and} $C=1$, IPCW & $\log(1+Y)$ & $+0.0538$ & 0.0235 & 0.0180\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The whole movement is the population. The restricted outcome and the censoring weights change
+$\Delta$ not at all, which is expected rather than suspicious: every actionable row is resolved
+(\S\ref{sec:status}), so $\min(T,L)$ and the capped duration coincide, and the training split is
+3.1\% censored so its weights are almost exactly one. Those corrections move the \emph{evaluated}
+restricted mean a great deal and the fitted model not at all.
+
+The last row is the diagnosis. Adding $C=1$ back to the actionable population --- changing
+nothing else --- restores the gap and exceeds the original. Conditioning on a variable the flow
+affects opens a non-causal path between flow and duration, so within that subsample the flow
+genuinely is predictive, through selection rather than mechanism. This is
+Example~\ref{ex:stratum} showing up as a measurement, and it is the clearest evidence in this
+document that the principal-stratum error is not a theoretical scruple.
+
+\emph{The correctness model is usable and is now calibrated.} Validation AUC $0.775$ is adequate
+discrimination, and the train--validation gap ($0.924$ to $0.775$) still indicates overfitting.
+Since $\hat p$ enters only through the threshold $p_a(x)\ge\tau$, calibration near $\tau$ is the
+property that matters; isotonic recalibration on held-out rows reduces test expected calibration
+error from $0.110$ to $0.070$ while leaving discrimination essentially unchanged, as a monotone
+transformation must.
+
+\subsection{Policy estimates}\label{sec:ev-provisional}
+
+\begin{table}[h]
+\centering
+\caption{Policy values on the actionable population, restricted mean at $L=365$ with censoring
+weights, ridge $\hat m$ with smearing, $\tau=0$. $\Delta_{\text{DM}}$ is the direct-method
+contrast, $\Delta_{\text{DR}}$ the augmented one. ``Eligible'' restricts to the three most
+common admissible templates per cell.}
+\label{tab:provisional}
+\begin{tabular}{lrrrrrr}
+\toprule
+Candidate set & $V_{\text{DM}}$ & $V_{\text{DR}}$ & $\Delta_{\text{DM}}$ & $\Delta_{\text{DR}}$ & (SE) & ESS/$n$\\
+\midrule
+\multicolumn{7}{l}{\emph{Validation 2024, $n=454{,}232$, IPCW restricted mean 93.5 days}}\\
+historical & 107.35 & 93.54 & --- & --- & --- & ---\\
+eligible & 96.77 & 73.46 & 10.57 & 20.09 & 7.01 & 0.080\\
+unrestricted & 93.25 & 70.09 & 14.09 & 23.45 & 7.99 & 0.051\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Four of the six gaps that separated the previous version of this table from \eqref{eq:Delta} are
+now closed: the population is $S=1$ rather than the binary $C=1$ subset, the outcome is the
+restricted mean with censoring weights rather than completers only, predictions are smeared back
+to the day scale, and the nuisances are estimated on 2021--23 and evaluated on 2024, which
+supplies the independence cross-fitting exists to provide by a stronger route than fold rotation.
+
+The correction to the censored cohort is visible where it was predicted to be. The realised
+restricted mean on validation is 93.5 days against a completers-only 84.5; on the 2025 cohort,
+which is 34.4\% censored, it is 49.7 against 37.2. The earlier reading that ``realised mean $T$
+is 40.6 days against 93.1 on 2024'' was the selection artefact it was suspected of being.
+
+\paragraph{What this establishes.} $\Delta_{\text{DR}}$ is positive on both candidate sets at
+roughly three standard errors, so historical routing is not duration-optimal on the actionable
+population. The structural reading survives the corrections: restricting from the unrestricted
+to the top-three candidate set costs 3.4 days of estimated gain while raising the match rate
+from 0.376 to 0.536, so most of the available improvement is reachable within the commonest
+flows. ESS$/n$ between 0.051 and 0.080 confirms that flow-level positivity, not sample size, is
+the binding statistical constraint.
+
+\paragraph{What it does not establish, and this is the more important half.} Three things.
+
+\emph{The correctness constraint does not resolve.} The historical rate is 0.3868 over the
+381{,}436 rows where $C$ is determined. Against that floor the two estimators disagree
+qualitatively: the direct method puts the speed-optimising policy at 0.3530, which fails, and
+the augmented estimator at 0.4335, which clears it comfortably. $\tau^\star$ is therefore not
+identified by this run, and no claim that the policy preserves correctness may be made from it.
+Reporting only the augmented figure would be selecting the estimator that gives the convenient
+answer.
+
+\emph{The direct and augmented arms still disagree about duration}, by 9.5 days on the eligible
+arm. Smearing was expected to close this gap and narrowed it only slightly, so the residual is
+not retransformation. Until it is explained, the two arms bracket the answer rather than
+agreeing on it.
+
+\emph{Two gaps remain open.} Congestion and trailing performance are still absent from $X$
+(\S\ref{sec:backlog}), so Assumption~\ref{ass:unconf} is invoked on a smaller information set
+than the argument for it describes, with unknown direction. And $S$ is read from the closing
+remark, so it is observable only at closure: the actionable population is conditioned on
+resolution, and a grievance still open past the horizon is excluded even though $\min(T,L)$ is
+already known for it exactly. IPCW corrects for differential speed among cases that closed; it
+cannot restore cases whose $S$ was never observed.
+
+The honest summary is that the sign is now well supported on a defensible population, the
+magnitude is bracketed between 10.6 and 23.5 days rather than estimated, and the constraint that
+would make any of it a recommendation is unresolved.
+
+%=====================================================================
+\section{Implementation status}\label{sec:status}
+%=====================================================================
+
+\begin{table}[h]
+\centering
+\caption{Design components against what exists in
+\code{janasunani/experiments/routing\_outcome/}.}
+\label{tab:status}
+\begin{tabular}{p{6.0cm}p{7.8cm}}
+\toprule
+Component & Status\\
+\midrule
+Flow decoding (Def.~\ref{def:flow}) & Built.\\
+Shared feature encoding; counterfactual evaluation of $\hat m_a(x)$ (\S\ref{sec:layer1}) & Built.\\
+$\hat m$: ridge and gradient boosting & Built.\\
+$\hat p$: action classifier & Built, isotonically calibrated on held-out rows.\\
+$\hat e$: propensity & Built as empirical category--district shares only; the hierarchical model of Table~\ref{tab:models} is \notbuilt.\\
+Augmented score, Hájek normalisation, ESS, cluster bootstrap & Built.\\
+Three-state outcome $S,C$ (Def.~\ref{def:threestate}) & Built, for 85.1\% of resolved closures. See the two rows below.\\
+Restricted mean and censoring weights (Def.~\ref{def:rmst}, Thm.~\ref{thm:ipcw}) & Built.\\
+Smearing (\S\ref{sec:smear}) & Built, per stratum.\\
+Cross-fitting (\S\ref{sec:crossfit}) & Supplied by the chronological split: nuisances are fitted on 2021--23 and evaluated on 2024--25, so evaluation rows are out of period rather than merely out of fold.\\
+Sample splitting for the rule (\S\ref{sec:policy}) & Built as an option; the winner's curse is priced rather than assumed away.\\
+$\tau$ calibration (Cor.~\ref{cor:feasible}) & Built. \emph{Does not resolve}: the direct and augmented estimators disagree about whether the constraint binds (\S\ref{sec:ev-provisional}).\\
+\midrule
+$S$ for unresolved grievances & \notbuilt. \emph{Highest priority.} $S$ is read from the closing remark, so the actionable population is conditioned on resolution and a case still open past the horizon is dropped although $\min(T,L)$ is known for it. \S\ref{sec:S-pretreatment} licenses predicting $S$ from pre-treatment covariates; nothing does so.\\
+Adjudication of the remaining closing remarks & \notbuilt. 14.9\% of resolved closures leave $S$ undetermined and a further 7.5\% leave $C$ undetermined.\\
+Congestion $Q_r(t)$ and trailing performance in $X$ (\S\ref{sec:backlog}) & \notbuilt. Weakens Assumption~\ref{ass:unconf} materially.\\
+Hierarchical propensity (Table~\ref{tab:models}) & \notbuilt.\\
+Sensitivity analysis (\S\ref{sec:sens}) & \notbuilt.\\
+Queue replay (\S\ref{sec:interfere}) & \notbuilt.\\
+Negative-control and placebo checks (\S\ref{sec:diag}) & \notbuilt.\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%=====================================================================
+\section{Summary}\label{sec:conc}
+%=====================================================================
+
+A grievance is a job arriving at a bureaucracy of heterogeneous servers, and the assignment is
+made by an officer whose entire information set is recorded. That last fact is what makes the
+problem tractable: unconfoundedness given the officer's screen is a claim about unwritten
+judgement, not about unobserved case difficulty --- provided the screen is actually reproduced
+in $X$, which \S\ref{sec:backlog} shows is not yet the case.
+
+The design has four moving parts, each chosen to avoid a specific failure:
+
+\begin{enumerate}[leftmargin=*]
+\item \textbf{A three-state outcome} (\S\ref{sec:threestate}), because a binary
+correct/incorrect split scores the correct closure of a duplicate as a failure, and does so
+disproportionately among fast cases.
+\item \textbf{A constrained rather than conditional estimand} (\S\ref{sec:estimand}), because
+conditioning on correctness conditions on a post-treatment variable and compares different
+populations across flows (Example~\ref{ex:stratum}).
+\item \textbf{An augmented, censoring-weighted, cross-fitted estimator}
+(\S\S\ref{sec:ident}--\ref{sec:est}), because outcome regression alone is unchecked, weighting
+alone is unstable, censored durations are selected on speed, and flexible nuisances require
+sample splitting to be legitimate.
+\item \textbf{Explicit accounting for selection in the rule and for congestion}
+(\S\S\ref{sec:policy}, \ref{sec:interfere}), because an $\argmin$ over noisy estimates flatters
+itself, and a routing policy changes the queues it routes into.
+\end{enumerate}
+
+Given Assumptions~\ref{ass:consistency}--\ref{ass:censor}, $\Delta$ is a functional of the
+observed-data distribution (Corollary~\ref{cor:identified}), and Theorem~\ref{thm:dr} says the
+estimator tolerates misspecification in either the outcome or the treatment model. What remains
+is measurement --- above all the three-state outcome and the backlog --- and the estimation
+machinery of Table~\ref{tab:status}.
+
+\appendix
+\newpage
+
+%=====================================================================
+\section{Prerequisites}\label{app:prereq}
+%=====================================================================
+
+Everything in the appendices is proved from the following, which are taken as known. References
+are to the companion \probrepo{} --- Y.\ Mohanty, \emph{Basic mathematics for statistics and
+economics}, the \code{probability} repository --- which develops them from measure-theoretic
+foundations.
+
+\begin{enumerate}[leftmargin=*]
+\item \textbf{Measure and integration.} Measure spaces, the Lebesgue integral, monotone and
+dominated convergence, and Fubini--Tonelli for product measures. \probrepo{}, \emph{Measures},
+\emph{Integration}, \emph{Product measures}.
+\item \textbf{$L^p$ spaces and inequalities.} The $L^p$ norms; Hölder's inequality (\probrepo{},
+\emph{Spaces of functions}, \code{prop:generalizedHolder}) and its $p=q=2$ case Cauchy--Schwarz
+(\code{cor:holdersInequality}, \code{prop:innerCauchySchwarz}); Minkowski
+(\code{thm:minkowskiInequality}); completeness of $L^p$ (\code{thm:completenessLp}).
+\item \textbf{Jensen's inequality} for a convex function and a probability measure. \probrepo{},
+\emph{Spaces of functions}, \code{thm:jensenInequality}. Used in
+Lemmas~\ref{lem:jensen-retrans} and \ref{lem:winner}.
+\item \textbf{Markov's and Chebyshev's inequalities.} \probrepo{}, \emph{Integration},
+\code{prop:markovInequality}. Used in Proposition~\ref{prop:crossfit}.
+\item \textbf{$L^2$ as a Hilbert space, orthogonal projection, and Riesz representation.}
+\probrepo{}, \emph{Spaces of functions}, \code{cor:L2Hilbert}, \code{thm:projectionThm},
+\code{cor:orthProjection}, \code{thm:rieszRep}. This is the foundation for conditional
+expectation below, and the whole of \S\ref{app:eif} is an application of it: the tangent space
+is a closed subspace, the gradient is a Riesz representer, and the efficient influence function
+is an orthogonal projection.
+\item \textbf{Absolute continuity and Radon--Nikodym derivatives.} The relation $\nu\ll\mu$;
+the Radon--Nikodym theorem; the change-of-measure corollary; and the calculus of the derivatives
+--- chain rule, sum rule, inverse rule. \probrepo{}, \emph{Differentiation},
+\code{def:absoluteContinuityMeasures}, \code{thm:radonNikodym}, \code{cor:radonNikodymIntegral},
+\code{prop:RadonNikodymFacts}. Used throughout \S\ref{app:eif} and restated in
+\S\ref{app:notation}.
+\item \textbf{Independence and product structure.} \probrepo{}, \emph{Independence}.
+\item \textbf{Convergence in distribution, the central limit theorem, and Slutsky's theorem.}
+Used in Proposition~\ref{prop:ral-clt}. The corresponding \probrepo{} chapters
+(\emph{Laws of large numbers}, \emph{Central limit theorems}) are present but not yet
+developed, so these are taken as standard.
+\item \textbf{Directional derivatives of a functional.} Used in Definition~\ref{def:pathwise}
+and Definition~\ref{def:neyman}, both of which differentiate a real-valued map along a
+one-parameter family. \probrepo{}, \emph{Differentiation}, reserves
+\S\code{sec:differentiation} for differentiation in normed vector spaces, but that section is
+not yet written. Nothing beyond the one-variable derivative is actually needed: every such
+derivative below is $\frac{d}{dt}$ of a real function of the real parameter $t$, taken at
+$t=0$. The Gateaux language is a name for that operation, not an extension of it.
+\end{enumerate}
+
+\subsection{Notation: integrals and likelihood ratios}\label{app:notation}
+
+Two conventions are fixed here. The first is an abuse of notation this document declines to use;
+the second is item 6 of the list above, restated in the form in which \S\ref{app:eif} needs it.
+
+\textbf{Integrals against a measure.} Many references write the Lebesgue integral of a function
+$f$ against a measure $\mu$ as $\int f\,d\mu$. There is no object $d\mu$ in that expression:
+$\int\cdot\,d\mu$ is a single indivisible symbol for the integral with respect to $\mu$, the $d$
+inherited by analogy from Riemann's $\int f(x)\,dx$ and carrying no meaning of its own. In
+particular it is unrelated to the $d$ of differential forms, which the resemblance invites and
+which plays no part anywhere in this document. \probrepo{} avoids it too, writing the integral as
+$\bar\mu(f)$ --- the measure applied to the function, which is what it is --- and reserving
+$\int f\,d\mu$ for the remark that introduces Radon--Nikodym derivatives, where it is labelled
+``traditional notation''.
+
+Here the measure being integrated against is a probability measure at every occurrence, so the
+integral is an expectation and the expectation is what is written: $\bar P(f)=\E_P[f(O)]$. The
+symbol $\int$ is reserved for ordinary integration against length on the real line, as in
+$\int_0^Lg(t)\,dt$ (Lemma~\ref{lem:rmst-area}), where $dt$ does mark a variable of integration.
+
+\textbf{Likelihood ratios.} Write $Q\ll P$ when $Q$ is absolutely continuous with respect to $P$,
+meaning $P(B)=0$ forces $Q(B)=0$ (\probrepo{}, \emph{Differentiation},
+\code{def:absoluteContinuityMeasures}, where the relation is written $Q<<P$). For $\sigma$-finite
+$Q,P$ the Radon--Nikodym theorem (\code{thm:radonNikodym}) says $Q\ll P$ holds if and only if
+there is a nonnegative measurable function, unique up to $P$-null sets, reproducing $Q$ as an
+average against $P$; and its corollary (\code{cor:radonNikodymIntegral}) converts that into the
+change-of-measure rule. In the notation of this document, that function --- written $dQ/dP$ and
+called the \emph{Radon--Nikodym derivative}, or in this context the \emph{likelihood ratio} of
+$Q$ to $P$ --- is characterised by
+\begin{equation}
+Q(B)=\E_P\left[\one{O\in B}\,\frac{dQ}{dP}(O)\right]\ \text{ for every measurable }B,
+\qquad\text{equivalently}\qquad
+\E_Q[f]=\E_P\left[f\,\frac{dQ}{dP}\right]
+\label{eq:rn}
+\end{equation}
+for every $f$ integrable under $Q$. The second identity is the only use made of densities below.
+
+Two remarks, both from \probrepo{}. First, $dQ/dP$ is a derivative only in a stretched sense ---
+it is not defined as a limit of ratios except against Lebesgue measure --- and what earns it the
+Leibniz notation is that it obeys the expected calculus (\code{prop:RadonNikodymFacts}): a chain
+rule $\frac{dR}{dP}=\frac{dR}{dQ}\frac{dQ}{dP}$ when $R\ll Q\ll P$, a sum rule, and
+$\frac{dP}{dQ}=(\frac{dQ}{dP})^{-1}$ when the two measures are mutually absolutely continuous.
+The chain rule is what lets a path be reparameterised in \S\ref{app:eif} without recomputing
+anything. Second, the reference measure is written explicitly and is always the fixed $P$ below;
+a bare $dP$ never appears.
+
+Because these ratios get differentiated again with respect to a path parameter, and stacking
+$\partial/\partial t$ on top of $dQ/dP$ is unreadable, they are given a letter: $L\equiv dQ/dP$.
+Every statement about $L$ below is a statement about the function characterised by
+\eqref{eq:rn}.
+
+\subsection{Conditional expectation}\label{app:condexp}
+
+One prerequisite is used constantly below and is not yet developed in \probrepo{}, so it is
+stated here. For $Y\in L^1(\Omega,\mathcal F,\Prob)$ and a sub-$\sigma$-algebra
+$\mathcal G\subseteq\mathcal F$, the conditional expectation $\E[Y\mid\mathcal G]$ is the
+$\Prob$-a.s.\ unique $\mathcal G$-measurable integrable random variable satisfying
+$\E\bigl[\one{G}\,\E[Y\mid\mathcal G]\bigr]=\E\bigl[\one{G}\,Y\bigr]$ for every $G\in\mathcal G$
+--- averaging the conditional expectation over any event that $\mathcal G$ can resolve gives the
+same answer as averaging $Y$ itself. Existence
+follows from the Radon--Nikodym theorem, or for $Y\in L^2$ from orthogonal projection onto the
+closed subspace of $\mathcal G$-measurable square-integrable functions (item 5 above). Three
+properties are used without further comment:
+
+\begin{enumerate}[leftmargin=*]
+\item \textbf{Tower property.} For $\mathcal H\subseteq\mathcal G$,
+$\E\bigl[\E[Y\mid\mathcal G]\bigm|\mathcal H\bigr]=\E[Y\mid\mathcal H]$; in particular
+$\E\bigl[\E[Y\mid X]\bigr]=\E[Y]$.
+\item \textbf{Taking out what is known.} If $Z$ is $\mathcal G$-measurable and $ZY$ integrable,
+$\E[ZY\mid\mathcal G]=Z\,\E[Y\mid\mathcal G]$.
+\item \textbf{Independence.} If $Y\indep\mathcal G$ then $\E[Y\mid\mathcal G]=\E[Y]$.
+\end{enumerate}
+
+Throughout the appendices we work conditional on $S=1$ and suppress it from the notation.
+
+%=====================================================================
+\section{Parametric, nonparametric, and semiparametric models}\label{app:semipar}
+%=====================================================================
+
+This appendix fixes the vocabulary used throughout: what a statistical model is, what a
+parameter is when the model is not parametric, what makes something a nuisance, and what
+``efficient'' means. Nothing here is specific to routing.
+
+\subsection{Models}
+
+\begin{definition}[Statistical model]\label{def:model}
+A \emph{statistical model} is a set $\mathcal P$ of candidate probability distributions for
+the observed data $O$. The data are assumed drawn from some $P\in\mathcal P$, and the
+analyst's assumptions are exactly the restrictions that define $\mathcal P$.
+\end{definition}
+
+Models are classified by how they are indexed.
+
+\begin{itemize}[leftmargin=*]
+\item \textbf{Parametric.} $\mathcal P=\{P_\theta:\theta\in\Theta\}$ with
+$\Theta\subseteq\mathbb R^d$ finite-dimensional. Example: $O\sim\mathcal N(\mu,\sigma^2)$,
+$\theta=(\mu,\sigma^2)$. Everything about $P$ is determined by $d$ numbers.
+\item \textbf{Nonparametric.} $\mathcal P$ is all distributions on the sample space, subject
+only to mild regularity (moments, absolute continuity). No finite-dimensional index exists.
+\item \textbf{Semiparametric.} $\mathcal P$ is indexed by a pair $(\theta,\eta)$ with
+$\theta\in\mathbb R^d$ finite-dimensional and $\eta$ infinite-dimensional. The classical
+example is the Cox model, where the coefficient vector is $\theta$ and the baseline hazard is
+$\eta$.
+\end{itemize}
+
+The word ``semiparametric'' is also used, more loosely and more usefully for our purposes, for
+any problem in which \emph{the model is large but the quantity of interest is
+finite-dimensional}. That is our situation exactly: we assume nothing about the shape of the
+distribution of $(X,A,Y)$ --- the model is nonparametric --- yet the object we report,
+$\Delta$, is a single number. The tension between a rich model and a low-dimensional target is
+what the rest of this appendix is about.
+
+\subsection{Parameters as functionals}
+
+In a parametric model, ``the parameter'' is the index $\theta$. In a nonparametric model there
+is no index, so the word must be redefined.
+
+\begin{definition}[Parameter, target]\label{def:functional}
+A \emph{parameter} of the model $\mathcal P$ is a map $\psi:\mathcal P\to\mathbb R^k$. The
+\emph{target} is the parameter one wishes to report.
+\end{definition}
+
+Thus $V_T(\delta)=\E_P\bigl[m_{\delta(X)}(X)\bigr]$ is a parameter in this sense: a rule assigning
+a number to each candidate distribution. This viewpoint is not pedantry. It makes the question
+``how well can this be estimated?'' well posed even when the model has no finite-dimensional
+index, because one can ask how much $\psi(P)$ moves as $P$ is perturbed --- which is exactly
+what \S\ref{app:eif} does.
+
+\begin{definition}[Nuisance]\label{def:nuisance}
+Given a target $\psi$, a \emph{nuisance} is any further component of $P$ required to evaluate
+$\psi$ but not itself reported. A \emph{nuisance parameter} is finite-dimensional; a
+\emph{nuisance function} is not.
+\end{definition}
+
+The vocabulary is inherited from parametric statistics: testing a hypothesis about a normal
+mean $\mu$, the variance $\sigma^2$ must be dealt with and is never the object of inference.
+Here the same logic applies to whole functions --- $m_a(\cdot)$, $e_a(\cdot)$, $G(\cdot)$.
+
+\subsection{Why the split matters}\label{app:whysplit}
+
+Three consequences run through the whole document, and they are the reason the estimator is
+built as it is.
+
+\begin{enumerate}[leftmargin=*]
+\item \emph{Accuracy requirements are weaker for nuisances than for the target.} We need the
+target estimated consistently at $\sqrt n$ with a valid confidence interval. We do \emph{not}
+need the nuisances good in any absolute sense --- only good enough that their errors do not
+contaminate the target. Theorem~\ref{thm:dr} makes ``good enough'' precise and the answer is
+remarkably weak: the bias is the \emph{product} of two errors, so each may converge at the
+slow rate $n^{-1/4}$ (Corollary~\ref{cor:rates}).
+\item \emph{Hence flexible machine learning is admissible for nuisances.} A gradient-boosted
+ensemble has no $\sqrt n$ theory and no usable standard errors, which would disqualify it if it
+were estimating the target. As a nuisance estimator it is fine, provided it is cross-fitted
+(Proposition~\ref{prop:crossfit}). This is the entire licence for \S\ref{sec:models}.
+\item \emph{Robustness is stated in terms of which nuisance is wrong.} ``Doubly robust'' means
+precisely: consistent if the outcome nuisance is right \emph{or} the treatment nuisance is
+right. The guarantee is meaningful only because the two are separate objects with separate
+failure modes.
+\end{enumerate}
+
+\begin{remark*}
+A decision rule $\delta$ is emphatically \emph{not} a nuisance. It is the deliverable --- the
+protocol that would be adopted --- and it is judged by different criteria: interpretability,
+administrative feasibility, stability. None of those matter for $\hat m$ or $\hat e$. Rule of
+thumb: if a component would appear in the deployed system it is not a nuisance; if it exists
+only inside the estimator, it is.
+\end{remark*}
+
+\subsection{Influence functions}\label{app:eif}
+
+Two questions have one answer. \emph{How accurately can $\psi$ be estimated at all, by any
+method whatever?} And \emph{what does the error of a particular estimator look like when $n$ is
+large?} The object that answers both is the influence function. The term carries two meanings
+--- one attached to a functional, one to an estimator --- which are ordinarily introduced
+together and left to merge. They are taken separately here and then connected, because the
+document uses both.
+
+\paragraph{Differentiating a functional.}
+A parameter is a map $\psi:\mathcal P\to\mathbb R$ (Definition~\ref{def:functional}). Asking how
+hard it is to estimate is asking how fast $\psi$ moves when $P$ moves: if two distributions are
+nearly indistinguishable from $n$ observations but assign very different values to $\psi$, then
+no procedure can reliably tell those values apart. That is a statement about a derivative. So we
+must differentiate a function whose argument is a probability measure --- and $\mathcal P$ has
+no coordinates to differentiate along. The standard device is to restrict to one-dimensional
+families through $P$ and differentiate along each one.
+
+\begin{definition}[Path and score]\label{def:path}
+A \emph{path} through $P\in\mathcal P$ is a family $\{P_t:|t|<\epsilon\}\subseteq\mathcal P$ with
+$P_0=P$ and $P_t\ll P$ for each $t$ --- so that the Radon--Nikodym theorem
+(Appendix~\ref{app:prereq}, item 6) supplies the likelihood ratios $L_t\equiv dP_t/dP$
+characterised by \eqref{eq:rn} --- such that $L_0=1$ and $L_t$ admits a derivative
+\[
+h(o)\ \equiv\ \left.\frac{\partial}{\partial t}\log L_t(o)\right|_{t=0}
+\]
+lying in $L^2(P)$. The function $h$ is the \emph{score} of the path.
+\end{definition}
+
+Read $h$ as the direction of travel: it records, for each possible observation $o$, the
+proportional rate at which the model reweights $o$ as $t$ moves off zero. Since
+$P_t$ is a probability measure, \eqref{eq:rn} with $B$ the whole space gives $\E_P[L_t]=1$ for
+every $t$; differentiating at $t=0$ and using $\partial_tL_t=L_t\,\partial_t\log L_t$ gives
+$\E_P[h]=0$. Every score therefore lies in
+\[
+L^2_0(P)\ \equiv\ \bigl\{h\in L^2(P):\E_P[h]=0\bigr\},
+\]
+a closed subspace of $L^2(P)$ and hence itself a Hilbert space under
+$\langle f,g\rangle=\E_P[fg]$ (Appendix~\ref{app:prereq}, item 5). A mean-zero direction is one
+that shifts weight around without creating any, which is what keeps total probability at one.
+
+One construction supplies all the paths needed below: for bounded $h$ with $\E_P[h]=0$, take the
+\emph{tilted path}
+\begin{equation}
+L_t(o)=1+t\,h(o),
+\qquad\text{that is,}\qquad
+P_t(B)=\E_P\bigl[\one{O\in B}\bigl(1+t\,h(O)\bigr)\bigr],
+\label{eq:tiltpath}
+\end{equation}
+which is a probability measure for $|t|<1/\|h\|_\infty$: it is nonnegative by the bound, and has
+total mass $\E_P[1+th]=1$ because $\E_P[h]=0$. Its score is $h$, since
+$\partial_t\log(1+th)|_{t=0}=h$. Every bounded mean-zero direction is therefore achievable, as
+long as the tilted measure stays inside $\mathcal P$. Which directions survive that requirement
+is exactly where the model's assumptions show up.
+
+\begin{definition}[Tangent space]\label{def:tangent}
+The \emph{tangent space} $\dot{\mathcal P}(P)\subseteq L^2_0(P)$ is the closed linear span of the
+scores of all paths through $P$ that remain in $\mathcal P$.
+\end{definition}
+
+Two extremes bracket every case.
+
+\begin{itemize}[leftmargin=*]
+\item \textbf{Nonparametric model.} $\mathcal P$ is unrestricted, so \eqref{eq:tiltpath} stays in
+the model for every bounded mean-zero $h$, and those are dense in $L^2_0(P)$. The tangent space
+is all of $L^2_0(P)$: $P$ may be perturbed in every direction.
+\item \textbf{Parametric model} $\{P_\theta:\theta\in\Theta\subseteq\mathbb R^d\}$, with
+$P=P_{\theta_0}$ and $L_\theta\equiv dP_\theta/dP$. The only paths are
+curves $t\mapsto P_{\theta(t)}$ in $\Theta$, whose scores are, by the chain rule, linear
+combinations of the $d$ coordinate scores $\partial\log L_\theta/\partial\theta_j$ evaluated at
+$\theta_0$ --- the classical score vector of maximum-likelihood theory. The tangent space is
+their $d$-dimensional span.
+\end{itemize}
+
+The tangent space is the geometry of what has been assumed: the more $\mathcal P$ is restricted,
+the fewer directions remain, and the smaller $\dot{\mathcal P}(P)$. Everything about the
+assumptions-versus-precision trade-off follows from that one sentence.
+
+\begin{definition}[Pathwise differentiability, gradient]\label{def:pathwise}
+$\psi$ is \emph{pathwise differentiable} at $P$ if there exists $\varphi\in L^2_0(P)$ with
+\begin{equation}
+\left.\frac{d}{dt}\psi(P_t)\right|_{t=0}=\E_P\bigl[\varphi(O)\,h(O)\bigr]
+\label{eq:pathwise}
+\end{equation}
+for every path through $P$ in $\mathcal P$, $h$ being that path's score. Any such $\varphi$ is a
+\emph{gradient} of $\psi$ at $P$.
+\end{definition}
+
+Unpacked, \eqref{eq:pathwise} says two things. The derivative along a path depends on the path
+only through its score --- so the score is a legitimate notion of ``direction''. And the map
+$h\mapsto\frac{d}{dt}\psi(P_t)|_{t=0}$ is a bounded linear functional on the tangent space. The
+Riesz representation theorem (Appendix~\ref{app:prereq}, item 5) says every such functional on a
+Hilbert space is an inner product against a fixed element, and that element is the gradient. So
+pathwise differentiability is not an exotic requirement: given that the derivative exists and
+depends boundedly on the direction, a gradient exists automatically. This is the sense in which
+$\varphi$
+\emph{is} the derivative of $\psi$ at $P$: not a number, but the vector representing the
+directional derivative in all directions at once.
+
+Nothing so far makes the gradient unique. It is not, and the way it fails is the whole point.
+
+\begin{proposition}[Canonical gradient]\label{prop:canonical}
+Let $\psi$ be pathwise differentiable at $P$ with gradient $\varphi$. Then
+\begin{enumerate}[leftmargin=*,label=(\roman*)]
+\item $\tilde\varphi\in L^2_0(P)$ is a gradient if and only if
+$\tilde\varphi-\varphi\perp\dot{\mathcal P}(P)$;
+\item exactly one gradient lies in $\dot{\mathcal P}(P)$, namely the orthogonal projection
+$\varphi^{\mathrm{eff}}=\Pi\bigl(\varphi\mid\dot{\mathcal P}(P)\bigr)$;
+\item $\E_P[(\varphi^{\mathrm{eff}})^2]\le\E_P[\tilde\varphi^2]$ for every gradient
+$\tilde\varphi$, with equality only when $\tilde\varphi=\varphi^{\mathrm{eff}}$.
+\end{enumerate}
+\end{proposition}
+
+\begin{proof}
+(i) Two gradients reproduce the same derivative against every score, so
+$\E[(\tilde\varphi-\varphi)h]=0$ for all $h$ in a spanning set of $\dot{\mathcal P}(P)$, hence
+for all of it by linearity and continuity of the inner product; conversely, adding to $\varphi$
+anything orthogonal to the tangent space changes no such inner product, so \eqref{eq:pathwise}
+still holds.
+
+(ii) The projection onto a closed subspace exists and is unique (Appendix~\ref{app:prereq}, item
+5), and $\varphi-\varphi^{\mathrm{eff}}\perp\dot{\mathcal P}(P)$ by construction, so
+$\varphi^{\mathrm{eff}}$ is a gradient by (i). If two gradients both lay in
+$\dot{\mathcal P}(P)$, their difference would be both in the tangent space, being a difference of
+its elements, and orthogonal to it by (i); the only such element is $0$.
+
+(iii) Write $\tilde\varphi=\varphi^{\mathrm{eff}}+(\tilde\varphi-\varphi^{\mathrm{eff}})$. The
+second term is orthogonal to $\dot{\mathcal P}(P)$ by (i) and the first lies in it, so Pythagoras
+gives $\|\tilde\varphi\|^2=\|\varphi^{\mathrm{eff}}\|^2+\|\tilde\varphi-\varphi^{\mathrm{eff}}\|^2$,
+and the cross term vanishes only when the two coincide.
+\end{proof}
+
+\begin{remark*}
+In a nonparametric model $\dot{\mathcal P}(P)=L^2_0(P)$, the projection in (ii) is the identity,
+and the gradient is unique --- there is nothing to choose. That is our situation
+(\S\ref{app:semipar}), so throughout this document ``the'' influence function is well defined
+and the qualifier ``efficient'' adds no content. The distinction matters only when a model is
+genuinely restricted, which is precisely when a gradient can be improved by projecting away the
+part of it the model forbids.
+\end{remark*}
+
+\paragraph{Where the name comes from.}
+Take the contamination path $P_t=(1-t)P+t\,\delta_o$, where $\delta_o$ places all its mass on
+the single point $o$: a fraction $t$ of the population is replaced by copies of one observation.
+It is not literally of the form \eqref{eq:tiltpath}. If $P$ has no atom at $o$ then $\delta_o$ is
+not merely outside the reach of $P$ but mutually singular with it (\probrepo{},
+\emph{Differentiation}, \code{def:mutualSingularity}): the two measures concentrate on disjoint
+sets, $\{o\}$ and its complement. So $\delta_o\not\ll P$, no likelihood ratio exists, and
+Definition~\ref{def:path} does not apply --- the Lebesgue decomposition of $P_t$ relative to $P$
+(\code{thm:lebesgueDecomposition}) has a singular part of size $t$ that never becomes a density.
+What survives is the derivative itself: $t\mapsto\psi(P_t)$ is an ordinary real function of a
+real variable, and for the functionals here it is differentiable at $t=0$ regardless. Taking that
+derivative gives the formula that \eqref{eq:pathwise} would have produced,
+\begin{equation}
+\varphi(o)=\lim_{t\downarrow0}\frac{\psi\bigl((1-t)P+t\,\delta_o\bigr)-\psi(P)}{t}.
+\label{eq:hampel}
+\end{equation}
+The gradient evaluated at $o$ is the effect on the parameter of contaminating the population with
+an infinitesimal mass of observations at $o$: the \emph{influence} of an observation at $o$,
+which is where the name and Hampel's original robustness motivation come from. An influence
+function with a heavy tail is an estimator that a few observations can move --- exactly what the
+overlap diagnostics of \S\ref{sec:diag} watch for, since a small $\hat e$ makes
+\eqref{eq:score} large at that point. Equation~\eqref{eq:hampel} is also the practical recipe for
+computing one: write $\psi$ as an explicit functional of $P$, substitute the contaminated law,
+differentiate at $t=0$.
+
+\begin{example}[The mean]\label{ex:if-mean}
+$\psi(P)=\E_P[Y]$. Along \eqref{eq:tiltpath}, the change-of-measure rule \eqref{eq:rn} gives
+$\psi(P_t)=\E_{P_t}[Y]=\E_P[Y\,L_t]=\E_P\bigl[Y(1+th)\bigr]=\E_P[Y]+t\,\E_P[Yh]$,
+so the derivative at $t=0$ is
+$\E_P[Yh]=\E_P\bigl[(Y-\E_P[Y])h\bigr]$, the second equality using $\E_P[h]=0$. Comparing with
+\eqref{eq:pathwise}, $\varphi(O)=Y-\E_P[Y]$. The sample mean then satisfies
+\eqref{eq:asymplinear} below exactly, with a remainder that is identically zero, and its variance
+is $\Var_P(Y)$ --- which by Proposition~\ref{prop:canonical} and the remark above is the bound.
+No estimator of a population mean improves on the sample mean when nothing is assumed.
+\end{example}
+
+\begin{example}[Policy value]\label{ex:if-value}
+For $\psi(P)=V_T(\delta)=\E[Y(\delta(X))]$ in the nonparametric model, identified under
+Assumptions~\ref{ass:consistency}--\ref{ass:positivity} and with no censoring, the gradient is
+\[
+\varphi(O)=\psi\bigl(O;m^\ast,e^\ast,\delta\bigr)-V_T(\delta),
+\]
+the augmented score \eqref{eq:aipw} centred at the estimand. The computation is
+\eqref{eq:hampel} applied to the adjustment formula of Theorem~\ref{thm:adjust}; the inverse
+propensity appears because contaminating at $o$ perturbs the conditional law of $A$ given $X$ as
+well as that of $Y$ given $(X,A)$, and the augmentation term is what corrects for the second
+channel. This is the reason \eqref{eq:score} has the shape it does.
+\end{example}
+
+\paragraph{Influence functions of estimators.}
+The second sense of the term describes not a functional but a procedure.
+
+\begin{definition}[Asymptotically linear estimator]\label{def:ral}
+An estimator $\hat\psi$ of $\psi(P)$ is \emph{asymptotically linear} with \emph{influence
+function} $\varphi$ if $\E_P[\varphi(O)]=0$, $\E_P[\varphi(O)^2]<\infty$, and
+\begin{equation}
+\sqrt n\bigl(\hat\psi-\psi(P)\bigr)=\frac1{\sqrt n}\sum_{i=1}^n\varphi(O_i)+R_n,
+\qquad R_n\ \xrightarrow{\ \Prob\ }\ 0 .
+\label{eq:asymplinear}
+\end{equation}
+It is \emph{regular} if its limit distribution is unchanged under local perturbations of $P$
+--- a condition that excludes pathological superefficient estimators such as Hodges'.
+\end{definition}
+
+The content of \eqref{eq:asymplinear} is that a possibly complicated estimator, built by fitting
+models and solving equations, behaves in large samples like a simple average of a fixed function
+of one observation at a time. Everything about its first-order behaviour is then read off that
+function.
+
+\begin{proposition}\label{prop:ral-clt}
+If $\hat\psi$ is asymptotically linear with influence function $\varphi$, then
+$\sqrt n(\hat\psi-\psi(P))\rightsquigarrow\mathcal N\bigl(0,\E_P[\varphi(O)^2]\bigr)$.
+\end{proposition}
+
+\begin{proof}
+The leading term of \eqref{eq:asymplinear} is a normalised sum of i.i.d.\ mean-zero,
+finite-variance random variables, so the central limit theorem gives convergence to
+$\mathcal N(0,\E[\varphi^2])$; the remainder converges to zero in probability, so Slutsky's
+theorem leaves the limit unchanged.
+\end{proof}
+
+Proposition~\ref{prop:ral-clt} is why influence functions are the right currency: the
+asymptotic variance of an asymptotically linear estimator \emph{is} the second moment of its
+influence function. It is also the justification for the variance estimator of
+\S\ref{sec:variance} --- once the score \eqref{eq:score} is recognised as an influence
+function, the sample variance of the scores estimates the asymptotic variance directly, with
+no delta method.
+
+\begin{remark*}[The two senses agree]
+If $\hat\psi$ is regular and asymptotically linear with influence function $\varphi$ in the sense
+of Definition~\ref{def:ral}, then $\varphi$ is a gradient of $\psi$ at $P$ in the sense of
+Definition~\ref{def:pathwise}. This is the one result quoted rather than proved here --- it needs
+local asymptotic normality and Le Cam's third lemma, neither of which is developed in
+\probrepo{}; see van der Vaart, \emph{Asymptotic Statistics}, Ch.~25. It is what licenses the
+single word for the two definitions, and it is what makes a lower bound on the variance of
+gradients a lower bound over estimators. Nothing proved below depends on it.
+\end{remark*}
+
+\begin{definition}[Efficient influence function, efficiency bound]\label{def:bound}
+The \emph{efficient influence function} (EIF) of $\psi$ in $\mathcal P$ at $P$ is the canonical
+gradient $\varphi^{\mathrm{eff}}$ of Proposition~\ref{prop:canonical}(ii). Its variance
+$\E_P[(\varphi^{\mathrm{eff}})^2]$ is the \emph{semiparametric efficiency bound} for $\psi$ in
+$\mathcal P$.
+\end{definition}
+
+By the remark above and Proposition~\ref{prop:canonical}(iii), no regular asymptotically linear
+estimator has asymptotic variance below the bound: its influence function is a gradient, and
+every gradient is at least as variable as the canonical one. This is the infinite-dimensional
+analogue of the Cramér--Rao inequality, and the practical consequence is that an estimator built
+from the EIF is optimal, so the search for a better one may stop.
+
+\begin{corollary}[Assumptions buy precision]\label{cor:nested}
+Let $\mathcal P_1\subseteq\mathcal P_2$ be two models containing $P$, in both of which $\psi$ is
+pathwise differentiable at $P$. Then the efficiency bound for $\psi$ in $\mathcal P_1$ is no
+larger than the bound in $\mathcal P_2$.
+\end{corollary}
+
+\begin{proof}
+Fewer paths lie in $\mathcal P_1$ than in $\mathcal P_2$, so
+$\dot{\mathcal P}_1(P)\subseteq\dot{\mathcal P}_2(P)$ and \eqref{eq:pathwise} is a weaker
+requirement in $\mathcal P_1$: any gradient in $\mathcal P_2$ is a gradient in $\mathcal P_1$. In
+particular $\varphi_2^{\mathrm{eff}}$ is a gradient in $\mathcal P_1$, so
+Proposition~\ref{prop:canonical}(iii) applied within $\mathcal P_1$ gives
+$\E[(\varphi_1^{\mathrm{eff}})^2]\le\E[(\varphi_2^{\mathrm{eff}})^2]$.
+\end{proof}
+
+That is the formal statement of the trade-off between assumptions and precision, and it cuts
+the way one would hope: assuming more can only tighten the achievable interval, and the
+nonparametric bound --- our case --- is the most conservative of all. It is the price paid for
+the credibility argued in \S\ref{sec:ident}, and it is a price, not a free choice.
+
+\paragraph{From an influence function to an estimator.}
+Gradients are not only a yardstick; they tell one how to build the estimator. The plug-in
+$\psi(\hat P)$ formed from a flexible fit is generally not $\sqrt n$-consistent, because the
+regularisation that makes $\hat P$ a good density estimate biases the functional. Pathwise
+differentiability supplies the correction. For a second distribution $\bar P$, expanding $\psi$
+along the path from $\bar P$ to $P$ and collecting the first-order term gives the \emph{von Mises
+expansion}
+\begin{equation}
+\psi(\bar P)-\psi(P)=-\E_P\bigl[\varphi(O;\bar P)\bigr]+R_2(\bar P,P),
+\label{eq:vonmises}
+\end{equation}
+where $\varphi(\cdot;\bar P)$ is the gradient evaluated at $\bar P$ and $R_2$ collects terms of
+second order in $\bar P-P$. Rearranging and replacing the unknown $\E_P$ by the sample average
+gives the \emph{one-step estimator}
+\begin{equation}
+\hat\psi=\psi(\hat P)+\frac1n\sum_{i=1}^n\varphi\bigl(O_i;\hat P\bigr):
+\label{eq:onestep}
+\end{equation}
+fit, then add the empirical mean of the estimated influence function. Its error is the average of
+$\varphi(O_i;P)$, an empirical-process term, and $R_2$ --- and $R_2$ being second order is what
+makes the whole construction work.
+
+The estimator of this document is exactly \eqref{eq:onestep}. Take $\psi(\hat P)$ to be the
+outcome-regression plug-in $n^{-1}\sum_i\hat m_{\delta(X_i)}(X_i)$ and $\varphi$ the gradient of
+Example~\ref{ex:if-value}; the two plug-in terms cancel and what remains is the average of the
+augmented score \eqref{eq:aipw}. The three pieces then line up:
+
+\begin{itemize}[leftmargin=*]
+\item $R_2$ in \eqref{eq:vonmises} \emph{is} the product bias \eqref{eq:productbias} of
+Theorem~\ref{thm:dr}, which is why that bias is a product of two nuisance errors rather than a
+sum;
+\item the empirical-process term is what cross-fitting controls
+(Proposition~\ref{prop:crossfit});
+\item and the statement that $R_2$ has no first-order part is Neyman orthogonality
+(\S\ref{app:neyman}).
+\end{itemize}
+
+Double robustness, orthogonality, and the second-order remainder in \eqref{eq:vonmises} are one
+property described three ways, and the reason to prefer this estimator is that it is built from
+the gradient rather than in spite of it.
+
+The score \eqref{eq:score} used in this document is the EIF for the policy value in the
+nonparametric model with censoring, up to the martingale augmentation noted after
+Theorem~\ref{thm:ipcw}. That is a stronger reason to use it than double robustness alone.
+
+\subsection{Neyman orthogonality}\label{app:neyman}
+
+There is a compact way to say why the product-bias form of Theorem~\ref{thm:dr} is not a
+coincidence.
+
+\begin{definition}[Neyman orthogonality]\label{def:neyman}
+Let $\psi(O;\eta)$ be an estimating score depending on nuisances $\eta$, with $\eta^\ast$ the
+truth. The score is \emph{Neyman-orthogonal} if the Gateaux derivative of $\E[\psi(O;\eta)]$
+with respect to $\eta$, evaluated at $\eta^\ast$, vanishes in every direction:
+\[
+\left.\frac{\partial}{\partial t}\,\E\bigl[\psi\bigl(O;\eta^\ast+t(\eta-\eta^\ast)\bigr)\bigr]\right|_{t=0}=0
+\qquad\text{for all admissible }\eta .
+\]
+\end{definition}
+
+\begin{proposition}[The augmented score is Neyman-orthogonal]\label{prop:neyman}
+The score \eqref{eq:aipw} satisfies Definition~\ref{def:neyman} in $\eta=(m,e)$.
+\end{proposition}
+
+\begin{proof}
+Take the path $m_t=m^\ast+t\,\Delta m$ and $e_t=e^\ast+t\,\Delta e$. Substituting into the
+product-bias identity \eqref{eq:productbias} of Theorem~\ref{thm:dr},
+\[
+\E\bigl[\psi(O;m_t,e_t,\delta)\bigr]-\psi(P)
+=\E\left[t\,\Delta m_{\delta}\left(1-\frac{e^\ast_\delta}{e^\ast_\delta+t\,\Delta e_\delta}\right)\right]
+=\E\left[t\,\Delta m_{\delta}\cdot\frac{t\,\Delta e_\delta}{e^\ast_\delta+t\,\Delta e_\delta}\right],
+\]
+which is $t^2$ times a term bounded near $t=0$ by positivity. Differentiating at $t=0$ gives
+zero.
+\end{proof}
+
+So the bias is second order in the nuisance error: first-order insensitivity is exactly what
+permits slowly-converging nuisance estimators, and Corollary~\ref{cor:rates} is the quantitative
+version. Orthogonality, double robustness, and the product-bias identity are three descriptions
+of one property.
+
+\subsection{Donsker classes, and why cross-fitting replaces them}\label{app:donsker}
+
+One more piece of vocabulary appears in \S\ref{sec:crossfit}.
+
+\begin{definition}[Donsker class]\label{def:donsker}
+A class $\mathcal F$ of functions is $P$-Donsker if the empirical process
+$f\mapsto n^{-1/2}\sum_i\{f(O_i)-\E f\}$ converges weakly, as a process indexed by
+$\mathcal F$, to a tight Gaussian limit. Sufficient conditions restrict the complexity of
+$\mathcal F$, for instance a finite bracketing-entropy integral.
+\end{definition}
+
+The classical route to asymptotic normality with estimated nuisances requires
+$\hat\eta$ to lie, with probability tending to one, in a fixed Donsker class. That is a genuine
+restriction: it holds for parametric and smoothly-constrained nonparametric estimators, and
+fails for adaptively-tuned ensembles, whose effective complexity grows with the sample.
+
+Proposition~\ref{prop:crossfit} shows the requirement is avoidable. By fitting $\hat\eta$ on
+data independent of the fold where the score is evaluated, one conditions on $\hat\eta$ and the
+empirical process degenerates to a sum of i.i.d.\ terms with a fixed function --- for which no
+complexity control is needed at all. The cost is a constant factor in computation; the benefit
+is that any consistent nuisance estimator becomes admissible.
+
+%=====================================================================
+\section{Causal identification}\label{app:causal}
+%=====================================================================
+
+Let $O=(X,A,Y)$ be one observation and let Assumptions~\ref{ass:consistency}--\ref{ass:positivity}
+hold. Write $e_a(x)=\Prob(A=a\mid X=x)$ and $m_a(x)=\E[Y\mid X=x,A=a]$.
+
+\begin{theorem}[Adjustment formula]\label{thm:adjust}
+For any fixed $a$, $\ \E[Y(a)]=\E\bigl[\E[Y\mid X,A=a]\bigr]$, so $m_a(x)$ identifies
+$\E[Y(a)\mid X=x]$.
+\end{theorem}
+
+\begin{proof}
+Fix $x$ with $a\in\mathcal A(x)$; positivity guarantees $\Prob(A=a\mid X=x)>0$, so the
+conditional expectation is well defined. Then
+\[
+\E[Y\mid X=x,A=a]
+\;\overset{(i)}{=}\;\E[Y(a)\mid X=x,A=a]
+\;\overset{(ii)}{=}\;\E[Y(a)\mid X=x],
+\]
+where $(i)$ is consistency --- on the event $A=a$ the observed $Y$ \emph{is} $Y(a)$, so the two
+random variables agree pointwise there --- and $(ii)$ is unconfoundedness, since given $X$ the
+event $A=a$ is independent of $Y(a)$ and property 3 of Appendix~\ref{app:condexp} applies.
+Taking expectations over $X$ and using the tower property,
+\[
+\E[Y(a)]=\E\bigl[\E[Y(a)\mid X]\bigr]=\E\bigl[\E[Y\mid X,A=a]\bigr].\qedhere
+\]
+\end{proof}
+
+\begin{corollary}[Value of a deterministic rule]\label{cor:value}
+For any $\delta\in\mathcal D$, $\ \E[Y(\delta(X))]=\E\bigl[m_{\delta(X)}(X)\bigr]$.
+\end{corollary}
+
+\begin{proof}
+Condition on $X=x$. Since $\delta$ is a deterministic function, $\delta(x)$ is a fixed element of
+$\mathcal A(x)$, so $\E[Y(\delta(X))\mid X=x]=\E[Y(\delta(x))\mid X=x]=m_{\delta(x)}(x)$ by the
+display in the proof of Theorem~\ref{thm:adjust}. The tower property finishes it.
+\end{proof}
+
+\begin{theorem}[Inverse-probability representation]\label{thm:ipw}
+For any $\delta\in\mathcal D$,
+$\ \E[Y(\delta(X))]=\E\left[\dfrac{\one{A=\delta(X)}}{e_{\delta(X)}(X)}\,Y\right]$.
+\end{theorem}
+
+\begin{proof}
+Let $W=\one{A=\delta(X)}/e_{\delta(X)}(X)$ and condition on $X$. Since $\delta(X)$ and
+$e_{\delta(X)}(X)$ are $X$-measurable, property 2 of Appendix~\ref{app:condexp} lets us pull the
+denominator out:
+\begin{align*}
+\E[WY\mid X]
+&= \frac{1}{e_{\delta(X)}(X)}\sum_{a\in\mathcal A(X)}\Prob(A=a\mid X)\,\one{a=\delta(X)}\,\E[Y\mid X,A=a]\\
+&= \frac{\Prob(A=\delta(X)\mid X)}{e_{\delta(X)}(X)}\ \E[Y\mid X,A=\delta(X)]
+\;=\; m_{\delta(X)}(X),
+\end{align*}
+because only the term $a=\delta(X)$ survives the indicator and the ratio is $1$ by definition of
+$e$. Positivity bounds the denominator away from zero, so $WY$ is integrable. Taking expectations
+over $X$ and applying Corollary~\ref{cor:value} gives the claim.
+\end{proof}
+
+Theorems~\ref{thm:adjust} and \ref{thm:ipw} give two identification routes with disjoint failure
+modes: the first needs $m$, the second needs $e$. The next result combines them so that only one
+need be correct.
+
+\begin{definition}[Augmented score]\label{def:aipw}
+For candidate nuisance functions $m$ and $e$ --- not necessarily the true ones ---
+\begin{equation}
+\psi(O;m,e,\delta)
+= m_{\delta(X)}(X)
++ \frac{\one{A=\delta(X)}}{e_{\delta(X)}(X)}\Bigl(Y-m_{\delta(X)}(X)\Bigr).
+\label{eq:aipw}
+\end{equation}
+\end{definition}
+
+\begin{theorem}[Double robustness]\label{thm:dr}
+Let $m^\ast,e^\ast$ be the true nuisance functions. For any $m$ and any $e$ bounded below,
+\begin{equation}
+\E\bigl[\psi(O;m,e,\delta)\bigr]-\E[Y(\delta(X))]
+=\E\left[\Bigl(m_{\delta(X)}(X)-m^\ast_{\delta(X)}(X)\Bigr)
+\left(1-\frac{e^\ast_{\delta(X)}(X)}{e_{\delta(X)}(X)}\right)\right].
+\label{eq:productbias}
+\end{equation}
+Consequently the score is unbiased for the policy value if \emph{either} $m=m^\ast$ \emph{or}
+$e=e^\ast$.
+\end{theorem}
+
+\begin{proof}
+Abbreviate $m_\delta=m_{\delta(X)}(X)$ and similarly for $m^\ast_\delta,e_\delta,e^\ast_\delta$;
+all four are $X$-measurable. Condition on $X$ and evaluate the augmentation term, using property
+2 of Appendix~\ref{app:condexp} to extract $1/e_\delta$ and $m_\delta$:
+\begin{align*}
+\E\left[\frac{\one{A=\delta}}{e_\delta}\bigl(Y-m_\delta\bigr)\Bigm| X\right]
+&= \frac{1}{e_\delta}\ \E\bigl[\one{A=\delta}\,(Y-m_\delta)\bigm| X\bigr]\\
+&= \frac{1}{e_\delta}\ \Prob(A=\delta\mid X)\ \E\bigl[Y-m_\delta\bigm| X, A=\delta\bigr]\\
+&= \frac{e^\ast_\delta}{e_\delta}\ \bigl(m^\ast_\delta-m_\delta\bigr),
+\end{align*}
+where the last step uses $\E[Y\mid X,A=\delta]=m^\ast_\delta$ (Theorem~\ref{thm:adjust}). Hence
+\[
+\E[\psi\mid X]
+= m_\delta+\frac{e^\ast_\delta}{e_\delta}\bigl(m^\ast_\delta-m_\delta\bigr)
+= m^\ast_\delta+\bigl(m_\delta-m^\ast_\delta\bigr)\left(1-\frac{e^\ast_\delta}{e_\delta}\right),
+\]
+the second equality being algebra. Taking expectations over $X$ and subtracting
+$\E[Y(\delta(X))]=\E[m^\ast_\delta]$ from Corollary~\ref{cor:value} gives \eqref{eq:productbias}.
+If $m=m^\ast$ the first factor of the integrand vanishes identically; if $e=e^\ast$ the second
+does.
+\end{proof}
+
+\begin{corollary}[Rate double robustness]\label{cor:rates}
+Suppose $\hat e\ge\epsilon$ and let $r_m,r_e$ be sequences such that, with probability tending to
+one, $\|\hat m-m^\ast\|_{L_2(P)}\le r_m$ and $\|\hat e-e^\ast\|_{L_2(P)}\le r_e$. Then on that
+event the bias \eqref{eq:productbias} is at most $\epsilon^{-1}r_mr_e$ in absolute value.
+The bias is therefore negligible after the $\sqrt n$ scaling of \eqref{eq:asymplinear} whenever
+$\sqrt n\,r_mr_e\to0$, that is, whenever the product of the two rates vanishes faster than
+$n^{-1/2}$. It suffices, in particular, that each nuisance converge slightly faster than
+$n^{-1/4}$; the exact rate $n^{-1/4}$ for both leaves the scaled bias bounded but not vanishing,
+so a little margin is needed.
+\end{corollary}
+
+\begin{proof}
+Under the lower bound $e\ge\epsilon$ we have $|1-e^\ast/e|=|e-e^\ast|/e\le|e-e^\ast|/\epsilon$.
+Cauchy--Schwarz (Appendix~\ref{app:prereq}, item 2) applied to \eqref{eq:productbias} gives
+$|\E[\psi]-\E[Y(\delta(X))]|\le\epsilon^{-1}\|\hat m-m^\ast\|_{L_2}\|\hat e-e^\ast\|_{L_2}$.
+\end{proof}
+
+\begin{remark*}
+The $n^{-1/4}$ threshold is the whole practical content of the theorem, and it is worth stating
+without symbols: each nuisance may be estimated at a rate far slower than the $n^{-1/2}$ demanded
+of the target, because only the \emph{product} of the two errors enters the bias. That is the
+licence for the flexible estimators of \S\ref{sec:models}, and it is why a modest improvement in
+one nuisance can be traded against a deterioration in the other.
+\end{remark*}
+
+\begin{proposition}[Cross-fitting]\label{prop:crossfit}
+Partition the sample into $K$ folds $I_1,\dots,I_K$, fit $\hat\eta^{(-k)}$ on the data outside
+$I_k$, and form \eqref{eq:crossfit}. Then the empirical-process remainder
+$|I_k|^{-1/2}\sum_{i\in I_k}\bigl\{f(O_i)-\E f\bigr\}$, with
+$f=\psi(\cdot;\hat\eta^{(-k)})-\psi(\cdot;\eta^\ast)$, converges to zero in probability under
+consistency of $\hat\eta^{(-k)}$ alone --- no complexity restriction on the estimator class is
+required.
+\end{proposition}
+
+\begin{proof}
+Condition on the out-of-fold data. Then $f$ is a fixed deterministic function, and the
+$\{O_i\}_{i\in I_k}$ are i.i.d.\ draws from $P$ independent of it. Hence the conditional mean of
+the display is zero, and its conditional variance is
+$\Var\bigl(f(O)\bigr)\le\E[f(O)^2]=\|f\|_{L_2(P)}^2$, which converges to zero in probability as
+$\hat\eta^{(-k)}\to\eta^\ast$. Chebyshev's inequality (Appendix~\ref{app:prereq}, item 4) gives,
+for any $t>0$, $\Prob\bigl(|\,\cdot\,|>t\mid\text{out-of-fold}\bigr)\le\|f\|^2_{L_2(P)}/t^2$,
+which tends to zero in probability; bounded convergence removes the conditioning. Averaging over
+the $K$ folds preserves the conclusion.
+\end{proof}
+
+\begin{remark*}
+Without cross-fitting, $f$ depends on the same observations at which it is evaluated, the
+conditional-mean-zero step fails, and one must instead control $\sup_{\eta\in\mathcal H}|\cdot|$
+over a class $\mathcal H$ containing $\hat\eta$ --- which is what a Donsker condition buys, and
+what ensembles do not satisfy.
+\end{remark*}
+
+%=====================================================================
+\section{Censoring}\label{app:censor}
+%=====================================================================
+
+\begin{lemma}[Restricted mean as an area]\label{lem:rmst-area}
+For $T\ge0$ and $L>0$, $\ \E[\min(T,L)]=\int_0^L\Prob(T>t)\,dt$.
+\end{lemma}
+
+\begin{proof}
+For fixed $\omega$, $\int_0^L\one{T(\omega)>t}\,dt$ equals $T(\omega)$ if $T(\omega)\le L$ and
+$L$ otherwise, i.e.\ exactly $\min(T(\omega),L)$. The integrand is nonnegative and jointly
+measurable, so Tonelli (Appendix~\ref{app:prereq}, item 1) permits exchanging the integral with
+the expectation:
+$\E[\min(T,L)]=\E\int_0^L\one{T>t}\,dt=\int_0^L\Prob(T>t)\,dt$.
+\end{proof}
+
+Let $D$ be the censoring time, $Y=\min(T,L)$, $R=\one{D\ge Y}$ the indicator that $Y$ is
+observed, and $G(t\mid x,a)=\Prob(D\ge t\mid X=x,A=a)$.
+
+\begin{theorem}[Inverse-probability-of-censoring weighting]\label{thm:ipcw}
+Under Assumptions~\ref{ass:consistency}--\ref{ass:censor}, for any $a$,
+\[
+\E[Y(a)]=\E\left[\frac{R\ \one{A=a}}{e_a(X)\ G\bigl(Y\mid X,a\bigr)}\ Y\right].
+\]
+\end{theorem}
+
+\begin{proof}
+First recover the complete-data conditional mean. Condition on $(X,A,Y)$. Because $Y$ is a
+function of $T$ and $D\indep T\mid(X,A)$ by Assumption~\ref{ass:censor},
+\[
+\E[R\mid X,A,Y]=\Prob(D\ge Y\mid X,A,Y)=\Prob(D\ge t\mid X,A)\Big|_{t=Y}=G(Y\mid X,A),
+\]
+where substituting the realised value of $Y$ is legitimate precisely because $D$ is
+conditionally independent of $T$ and hence of $Y$. Since $Y\le L$, Assumption~\ref{ass:censor}
+gives $G(Y\mid X,A)\ge\epsilon_D>0$, so the ratio below is integrable. Using property 2 of
+Appendix~\ref{app:condexp} to extract the $(X,A,Y)$-measurable factor $Y/G(Y\mid X,A)$,
+\[
+\E\left[\frac{R\,Y}{G(Y\mid X,A)}\Bigm| X,A\right]
+=\E\left[\frac{Y}{G(Y\mid X,A)}\,\E[R\mid X,A,Y]\Bigm| X,A\right]
+=\E[Y\mid X,A].
+\]
+The left-hand side is a functional of observed data alone. Substituting it for
+$\E[Y\mid X,A=a]$ in Theorem~\ref{thm:ipw} yields the statement.
+\end{proof}
+
+\begin{remark*}[Efficiency]
+The score \eqref{eq:score} is the efficient influence function for the policy value in the
+censored model \emph{if} one additionally augments over the censoring martingale: an extra term
+that accumulates $G(u)^{-1}\E[Y\mid T>u,X,A]$ against the increments of the censoring
+counting-process martingale $M^D$ over $u\in[0,L]$, correcting for misspecification of $G$ at
+each point along the way rather than only at the observed exit time. Omitting it costs
+efficiency, not consistency, when $G$ is correct. Since censoring here
+is administrative and $G$ nearly known, the omission is defensible.
+\end{remark*}
+
+%=====================================================================
+\section{Estimation lemmas}\label{app:estlemmas}
+%=====================================================================
+
+\subsection{Monotonicity of the constrained rule}\label{app:mono}
+
+Recall $F_\tau(x)=\{a\in\mathcal A(x):p_a(x)\ge\tau\}$ and $\delta_\tau$ from
+\eqref{eq:pointwise}.
+
+\begin{proof}[Proof of Proposition~\ref{prop:mono}]
+Fix $x$ and take $\tau'>\tau$, so $F_{\tau'}(x)\subseteq F_\tau(x)$.
+
+\emph{Correctness rises.} Suppose $F_{\tau'}(x)\ne\emptyset$ and write $a_\tau=\delta_\tau(x)$,
+$a_{\tau'}=\delta_{\tau'}(x)$. Either $a_\tau\in F_{\tau'}(x)$, in which case $a_\tau$ minimises
+$m$ over $F_\tau(x)$ and lies in the subset $F_{\tau'}(x)$, hence also minimises $m$ over
+$F_{\tau'}(x)$, so $a_{\tau'}=a_\tau$ up to ties and the two $p$ values coincide; or
+$a_\tau\notin F_{\tau'}(x)$, in which case $p_{a_\tau}(x)<\tau'\le p_{a_{\tau'}}(x)$. Either way
+$p_{\delta_{\tau'}(x)}(x)\ge p_{\delta_\tau(x)}(x)$. If $F_{\tau'}(x)=\emptyset$ the convention
+selects the maximiser of $p$ over $\mathcal A(x)$, which dominates every alternative.
+
+\emph{Duration rises.} Minimising a fixed function over a smaller set gives a weakly larger
+minimum:
+$m_{\delta_{\tau'}(x)}(x)=\min_{a\in F_{\tau'}(x)}m_a(x)\ge\min_{a\in F_\tau(x)}m_a(x)=m_{\delta_\tau(x)}(x)$,
+and when $F_{\tau'}(x)=\emptyset$ the $p$-maximiser is weakly slower still.
+
+Both inequalities hold pointwise in $x$; monotonicity of the expectation, together with
+Corollary~\ref{cor:value} applied to $Y$ and to $C$, transfers them to $V_T$ and $V_C$.
+\end{proof}
+
+\begin{proof}[Proof of Corollary~\ref{cor:feasible}]
+Feasibility is the defining property of the set in \eqref{eq:taustar}. By
+Proposition~\ref{prop:mono}, $V_C(\delta_\tau)$ is nondecreasing, so the feasible grid points
+form an upper set $\{\tau\in\mathcal T:\tau\ge\tau^\star\}$. Also by
+Proposition~\ref{prop:mono}, $V_T(\delta_\tau)$ is nondecreasing, so among those points $V_T$ is
+smallest at the smallest, namely $\tau^\star$.
+\end{proof}
+
+\subsection{Retransformation}
+
+\begin{lemma}[Retransformation bias]\label{lem:jensen-retrans}
+Let $\log(1+T)=\mu(x)+\varepsilon$ with $\E[\varepsilon\mid x]=0$. Then
+$\E[1+T\mid x]=e^{\mu(x)}\E[e^\varepsilon\mid x]\ge e^{\mu(x)}$, with strict inequality unless
+$\varepsilon$ is degenerate.
+\end{lemma}
+
+\begin{proof}
+$1+T=e^{\mu(x)+\varepsilon}$, and $e^{\mu(x)}$ is $x$-measurable, so property 2 of
+Appendix~\ref{app:condexp} gives $\E[1+T\mid x]=e^{\mu(x)}\E[e^\varepsilon\mid x]$. Jensen's
+inequality (Appendix~\ref{app:prereq}, item 3) applied to the convex map $u\mapsto e^u$ gives
+$\E[e^\varepsilon\mid x]\ge e^{\E[\varepsilon\mid x]}=e^0=1$, with equality only if
+$\varepsilon$ is a.s.\ constant, since $u\mapsto e^u$ is strictly convex.
+\end{proof}
+
+\subsection{The winner's curse}
+
+\begin{lemma}[Optimistic bias of a plug-in minimum]\label{lem:winner}
+For any integrable random variables $\hat m_1,\dots,\hat m_K$,
+$\ \E\bigl[\min_a\hat m_a\bigr]\le\min_a\E[\hat m_a]$.
+\end{lemma}
+
+\begin{proof}
+For each fixed index $a_0$, $\min_a\hat m_a\le\hat m_{a_0}$ pointwise, so monotonicity of the
+expectation gives $\E[\min_a\hat m_a]\le\E[\hat m_{a_0}]$. As this holds for every $a_0$ it
+holds for the minimising one. (Equivalently: $(u_1,\dots,u_K)\mapsto\min_au_a$ is concave, and
+Jensen's inequality for concave functions applies.)
+\end{proof}
+
+\subsection{Effective sample size}
+
+\begin{lemma}[Kish]\label{lem:ess}
+Let $Y_1,\dots,Y_n$ be i.i.d.\ with variance $\sigma^2$ and let $w_i\ge0$ be fixed weights, not
+all zero. Then $\Var\bigl(\sum_iw_iY_i/\sum_iw_i\bigr)=\sigma^2/\text{ESS}$ with
+$\text{ESS}=(\sum_iw_i)^2/\sum_iw_i^2$.
+\end{lemma}
+
+\begin{proof}
+By independence, $\Var(\sum_iw_iY_i)=\sigma^2\sum_iw_i^2$; dividing by the square of the
+constant $\sum_iw_i$ gives $\sigma^2\sum_iw_i^2/(\sum_iw_i)^2$. Setting this equal to
+$\sigma^2/n_{\text{eff}}$ and solving identifies $n_{\text{eff}}=\text{ESS}$. Cauchy--Schwarz
+gives $\text{ESS}\le n$, with equality iff all weights are equal.
+\end{proof}
+
+\subsection{Clustered variance}
+
+\begin{lemma}[Design effect]\label{lem:cluster}
+Suppose the sample consists of $G$ clusters of common size $\bar n_g$, that
+$\Var(\psi_i)=\sigma^2$ for all $i$, and that $\Corr(\psi_i,\psi_j)=\rho$ for $i\ne j$ in the
+same cluster and $0$ across clusters. Then
+$\Var(\bar\psi)=\frac{\sigma^2}{n}\bigl[1+(\bar n_g-1)\rho\bigr]$.
+\end{lemma}
+
+\begin{proof}
+Write $n=G\bar n_g$. Then
+$\Var\bigl(\sum_i\psi_i\bigr)=\sum_i\Var(\psi_i)+\sum_{i\ne j}\Cov(\psi_i,\psi_j)
+=n\sigma^2+G\,\bar n_g(\bar n_g-1)\rho\sigma^2=n\sigma^2[1+(\bar n_g-1)\rho]$,
+since each cluster contributes $\bar n_g(\bar n_g-1)$ ordered within-cluster pairs and
+cross-cluster covariances vanish. Dividing by $n^2$ gives the claim.
+\end{proof}
+
+The bracketed factor is the design effect. With $\bar n_g$ in the hundreds, even $\rho=0.01$
+roughly doubles the variance, which is why \S\ref{sec:variance} clusters by district--year.
+
+%=====================================================================
+\section{The marginal sensitivity model}\label{app:sens}
+%=====================================================================
+
+\begin{definition}[Marginal sensitivity model]\label{def:msm}
+Let $e^\ast_a(x)$ be the propensity given $X$ and $\tilde e_a(x,u)$ the propensity given $X$ and
+an unobserved $U$. For $\Gamma\ge1$ the model asserts
+\[
+\frac1\Gamma\ \le\
+\frac{\tilde e_a(x,u)\big/\bigl(1-\tilde e_a(x,u)\bigr)}
+     {e^\ast_a(x)\big/\bigl(1-e^\ast_a(x)\bigr)}
+\ \le\ \Gamma
+\qquad\text{for all }x,u,a.
+\]
+\end{definition}
+
+$\Gamma$ reads directly: an unmeasured factor may change the odds of receiving a given flow by at
+most a factor $\Gamma$, beyond everything in $X$. $\Gamma=1$ is Assumption~\ref{ass:unconf}.
+
+\begin{proposition}[Extremal bounds]\label{prop:msm-bounds}
+Write the true weight as $\tilde w=1/\tilde e_{\delta(X)}(X,U)$. Under Definition~\ref{def:msm}
+each $\tilde w_i$ is confined to an interval $[\underline w_i,\overline w_i]$ obtained by
+inverting the odds-ratio bounds, and the sharp bounds on the policy value solve
+\[
+\overline V(\Gamma)=\max_{\tilde w\in\mathcal W_\Gamma}
+\frac{\sum_i\tilde w_i\one{A_i=\delta(X_i)}Y_i}{\sum_i\tilde w_i\one{A_i=\delta(X_i)}},
+\qquad
+\underline V(\Gamma)=\min_{\tilde w\in\mathcal W_\Gamma}(\cdot),
+\]
+with $\mathcal W_\Gamma=\prod_i[\underline w_i,\overline w_i]$. Each is a linear-fractional
+program, attains its optimum at a vertex of the box, and the optimal vertex assigns
+$\overline w_i$ to observations with $Y_i$ above the optimised value and $\underline w_i$ to the
+rest.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+The pointwise interval follows by inverting the odds-ratio bounds of Definition~\ref{def:msm}.
+For the program, fix a candidate value $v$ and note that
+$\sum_i\tilde w_i\one{\cdot}(Y_i-v)\ge0$ iff the weighted mean is at least $v$; the left side is
+linear in $\tilde w$, so its maximum over a box is attained by setting $\tilde w_i=\overline w_i$
+when $Y_i>v$ and $\underline w_i$ otherwise. Monotonicity of this maximum in $v$ makes the
+optimal $v$ the unique fixed point, found by sorting on $Y_i$ once and scanning the $n+1$
+candidate thresholds in a single pass, so the cost is that of the sort.
+\end{proof}
+
+The reportable summary is the \emph{breakdown point}
+$\Gamma^\dagger=\inf\{\Gamma:0\in[\underline\Delta(\Gamma),\overline\Delta(\Gamma)]\}$, the
+strength of unmeasured confounding at which the conclusion first fails.
+
+\end{document}
