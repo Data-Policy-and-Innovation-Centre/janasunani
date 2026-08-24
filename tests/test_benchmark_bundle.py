@@ -292,6 +292,30 @@ def test_required_numeric_field_rejects_nonfinite_values(
     assert build_bundle(config, root=tmp_path)["publication_ready"] is False  # type: ignore[arg-type]
 
 
+def test_required_numeric_field_handles_arbitrary_size_integer(tmp_path: Path) -> None:
+    config = _config()
+    config["artifacts"][1]["required_fields"] = {  # type: ignore[index]
+        "metrics.rate": "unit_interval"
+    }
+    results = tmp_path / "results"
+    results.mkdir()
+    for name in ("latency", "quality", "pilot"):
+        payload = {
+            "schema_version": f"test-{name}/v1",
+            "publication_ready": True,
+            "metrics": {"rate": 0.5},
+        }
+        if name == "quality":
+            payload["metrics"]["rate"] = 10**309
+        (results / f"{name}.json").write_text(json.dumps(payload) + "\n")
+
+    bundle = build_bundle(config, root=tmp_path)  # type: ignore[arg-type]
+
+    quality = next(row for row in bundle["artifacts"] if row["id"] == "quality")
+    assert quality["status"] == "incomplete"
+    assert bundle["publication_ready"] is False
+
+
 def _assign_dotted(payload: dict[str, object], path: str, value: object) -> None:
     parts = path.split(".")
     target = payload

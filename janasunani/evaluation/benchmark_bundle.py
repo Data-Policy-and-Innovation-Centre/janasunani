@@ -13,7 +13,7 @@ import json
 import math
 import re
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Sequence, TypeGuard
 
 
 SCHEMA_VERSION = "janasunani-full-benchmark-v1"
@@ -58,6 +58,14 @@ def _lookup(payload: object, dotted_path: str) -> object:
     return current
 
 
+def _is_finite_number(value: object) -> TypeGuard[int | float]:
+    """Accept JSON numbers without coercing arbitrary-size integers to float."""
+
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return not isinstance(value, float) or math.isfinite(value)
+
+
 def _matches_field_schema(payload: object, dotted_path: str, schema: str) -> bool:
     value = _lookup(payload, dotted_path)
     if schema == "array":
@@ -65,11 +73,7 @@ def _matches_field_schema(payload: object, dotted_path: str, schema: str) -> boo
     if schema == "boolean":
         return isinstance(value, bool)
     if schema == "finite_number":
-        return (
-            isinstance(value, (int, float))
-            and not isinstance(value, bool)
-            and math.isfinite(value)
-        )
+        return _is_finite_number(value)
     if schema == "nonempty_array":
         return isinstance(value, list) and bool(value)
     if schema == "nonempty_object":
@@ -85,32 +89,17 @@ def _matches_field_schema(payload: object, dotted_path: str, schema: str) -> boo
     if schema == "nonnegative_integer":
         return isinstance(value, int) and not isinstance(value, bool) and value >= 0
     if schema == "nonnegative_number":
-        return (
-            isinstance(value, (int, float))
-            and not isinstance(value, bool)
-            and math.isfinite(value)
-            and value >= 0
-        )
+        return _is_finite_number(value) and value >= 0
     if schema == "object":
         return isinstance(value, dict)
     if schema == "positive_integer":
         return isinstance(value, int) and not isinstance(value, bool) and value > 0
     if schema == "positive_number":
-        return (
-            isinstance(value, (int, float))
-            and not isinstance(value, bool)
-            and math.isfinite(value)
-            and value > 0
-        )
+        return _is_finite_number(value) and value > 0
     if schema == "sha256":
         return isinstance(value, str) and SHA256_RE.fullmatch(value) is not None
     if schema == "unit_interval":
-        return (
-            isinstance(value, (int, float))
-            and not isinstance(value, bool)
-            and math.isfinite(value)
-            and 0 <= value <= 1
-        )
+        return _is_finite_number(value) and 0 <= value <= 1
     raise AssertionError(f"unvalidated required-field schema: {schema}")
 
 
