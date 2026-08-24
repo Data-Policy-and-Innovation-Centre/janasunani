@@ -465,8 +465,8 @@ citizens rather than filings, you can start asking what the problems *are*.
 ::: {.compare}
 | | Today | With this |
 |---|---|---|
-| **Time** | About 50 preset routes in a flat list, no default, nothing indicating which is better | Routes ranked by how fast they have actually resolved cases like this one. Estimated gap: **11 to 23 days per case** [estimated]{.chip .chip-estimated} n=454,232 |
-| **Performance** | The only available standard is *the same as last time*, so the best any model can do is reproduce current practice | Does the faster routing still get action taken? Two standard tests disagree [open]{.chip .chip-open} |
+| **Time** | About 50 preset routes in a flat list, no default, nothing indicating which is better | No replicated gain. The apparent 2024 advantage became **−2.3 to +0.1 days** under the same augmented estimator in the untouched 2025 period [open]{.chip .chip-open} n=113,535 |
+| **Performance** | The only available standard is *the same as last time*, so the best any model can do is reproduce current practice | A historical ranker is a research prototype, not a recommendation: assignment-time provenance is unresolved and no causal routing gain is established [open]{.chip .chip-open} |
 :::
 
 ::: {.lead}
@@ -474,8 +474,8 @@ We changed the question. Not where do cases like this usually go, but which rout
 :::
 
 ::: notes
-~3 min. This is the most substantial single result in Part 1, so give it the
-time the other three did not need.
+~3 min. This is the most important null result in Part 1, so give it the time
+the other three did not need.
 
 Start with why the obvious version fails. If we train a model on where cases
 went, the ceiling is current practice, including every bad habit in it. A
@@ -485,20 +485,21 @@ showing you an accuracy score for route suggestions: it would measure the wrong
 thing.
 
 Then the second row, which is the honest part. Routing purely for speed would
-find the offices that *close* cases rather than the offices that *solve* them —
-and we know that is a live risk, because closures claiming action take 18 days
-longer than closures claiming none. So the analysis is constrained to preserve
-the rate of real action, and it is that constraint the two tests disagree about.
-One says it holds comfortably, the other says it fails.
+find the offices that *close* cases rather than the offices that *solve* them.
+The 2024 development analysis appeared to show a large advantage, but the same
+augmented comparison on the untouched 2025 period ranged from slightly worse to
+effectively zero. The direct-model gains were not corroborated.
 
-So: the gap is real, the recommendation is not available yet, and what closes it
-is three hundred closed cases read by an officer. That is the fourth ask.
+So: there is no day-saving claim to carry forward. The historical data also do
+not prove that the recorded department is the assignment that was visible when
+the decision was made, and the current actionable population is derived from
+closure records rather than known at intake. Better modelling cannot repair
+those missing facts.
 
-If asked about the four corrections behind the number: recent cases have not had
-time to close, harder cases get escalated further, picking the best of many
-routes flatters the winner, and comparing only cases that came out well compares
-different cases under each choice. All four are handled and each one made the
-number smaller.
+What closes the question is prospective measurement: freeze the eligibility and
+suggestion policy, record the suggestion and officer decision at assignment
+time, and compare outcomes in a bounded trial. A hand-read sample can validate
+the outcome proxy; it cannot estimate a routing effect on its own.
 :::
 
 ---
@@ -511,7 +512,7 @@ number smaller.
 | **Pipeline** | 15 min → 14 s | Redaction: 0 shaped identifiers in 55,544. Category: 90.9% top-3. Summary: weakest, 8/26. Reading: unscored |
 | **Actionability** | judgement → flagged at intake | 13/13 caught, 3/44 false, n=57 |
 | **Deduplication** | handled *n* times → once | 37,299 confirmed repeats; our increment unmeasured |
-| **Routing** | 11–23 days per case | one constraint unresolved |
+| **Routing** | no replicated day-saving estimate | 2025 augmented contrast: −2.3 to +0.1 days; assignment provenance unresolved |
 :::
 
 ::: {.lead}
@@ -1218,7 +1219,7 @@ officer-hours spent registering the 1.2M grievances already resolved — the siz
 ::: {.grid .prose-first}
 | | Can it be proven? |
 |---|---|
-| Citizens wait less | **Yes**, from existing records, once the routing constraint is settled |
+| Citizens wait less | Not from current records. Needs assignment-time logs and a prospective comparison |
 | Where the system is not reaching people | **Yes**, today, against population |
 | Fewer repeat complaints | Almost. Needs safe citizen-to-problem linkage |
 | Cases reach the right office first time | Needs the suggestion-and-override log |
@@ -1246,10 +1247,10 @@ the one we are most sure of, because officers already recognise that work as
 waste.
 
 Then give them time to read the right-hand column before you speak. The pattern is
-the argument of the whole talk: nearly every row is blocked on something small and
-administrative — a log line, three hundred cases read, a timer in a screen — and
-not one row is blocked on a model that does not exist. The software is the part
-that is nearly done.
+the argument of the whole talk: every row is blocked on something specific and
+governable — a log line, an outcome-label audit, a timer in a screen, or a
+prospective comparison — and not one row is blocked on a model that does not
+exist. The software is the part that is nearly done.
 
 Note the second row deliberately. Under-representation is measurable today, with
 no permission and no new instrumentation, and it is arguably the highest
@@ -1272,7 +1273,7 @@ Satisfaction is something a citizen tells you, and nothing asks them.
 | **Let officers check our work** | A few officers review a fixed set of cases we have already scored |
 | **Name one department for a trial** | A bounded rollout with a comparison group |
 | **Log what is suggested and what the officer does** | One entry when a suggestion is shown, one when it is overridden |
-| **Have ~300 closed cases read by hand** | Settles the open routing question. About two days of one officer's time |
+| **Have ~300 closed cases read by hand** | Validates the closure-derived outcome proxy. It does not estimate routing impact by itself |
 :::
 
 ::: {.lead}
@@ -1297,7 +1298,9 @@ on the assignment screen today, labelled as AI-suggested. Nobody knows whether
 it is any good, because nothing records what officers do with it. We are not
 asking to add a model. We are asking to measure the one already there.
 
-Four: three hundred cases, about two days, and the open routing question closes.
+Four: three hundred cases, about two days, to find out whether the closure-derived
+outcome label means what we think it means. That audit improves the measurement;
+the suggestion log and bounded trial are what can answer the routing question.
 
 If the room wants to say yes to the cell but not yet to the four, take that. The
 permissions are worth more with a cell behind them, but they stand alone and the
@@ -1343,8 +1346,9 @@ decision about the trial, not about readiness.
 
 *"What does it cost?"* The four asks cost officer time, not money.
 
-*"Can we quote the 11 to 23 days?"* Not as a saving. As a measured gap with an
-open constraint, and that sentence travels with it.
+*"Can we quote the 11 to 23 days?"* No. It was a development-period contrast
+that did not replicate. The defensible sentence is: no routing gain is
+established on the untouched 2025 period.
 
 *"Is citizen data safe?"* Redaction runs before anything else. Shaped identifiers
 verified absent across a district-year. Names not proven either way.
