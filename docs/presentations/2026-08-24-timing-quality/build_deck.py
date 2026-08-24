@@ -351,13 +351,13 @@ set_text(sh[1], "How fast, and how good")
 add_table(
     s,
     [
-        ["Stage", "How fast", "How good"],
-        ["Read the page", "5.8 s", "not measured"],
-        ["Hide personal details", "0.06 s", "78% of marked items found"],
-        ["Flag for officer review", "under 0.01 s", "caught 13 of 13"],
-        ["Sort into a category", "0.8 s", "right one in the top three, 91%"],
-        ["Draft a summary", "6.6 s", "8 of 26 usable as they stand"],
-        ["Suggest a department", "under 0.01 s", "right one in the top three, 80%"],
+        ["Stage", "How fast", "How good, and on how many"],
+        ["Read the page", "5.8 s", "never measured"],
+        ["Hide personal details", "0.06 s", "found 78% of the items we marked, on 480"],
+        ["Flag for officer review", "under 0.01 s", "caught all 13 needing review, out of 57 cases"],
+        ["Sort into a category", "0.8 s", "right one in its top three, 91% of 3,160"],
+        ["Draft a summary", "6.6 s", "26 drafts read, 8 usable without an edit"],
+        ["Suggest a department", "under 0.01 s", "right one in its top three, 80% of 142,181"],
     ],
     x=0.7, y=2.02, w=11.9, col_w=[4.0, 2.5, 5.4], row_h=0.46, header_h=0.40,
 )
@@ -374,8 +374,8 @@ textbox(
 )
 textbox(
     s,
-    "Speeds are means on a scanned document, n=20. Quality figures come from held-out test "
-    "sets. Sample sizes vary by stage and are in the notes.",
+    "Speeds are means on one scanned document, n=20. Categories are lopsided: always guessing "
+    "the three biggest scores 84%, so the model adds 7 points.",
     x=0.7, y=6.66, w=11.9, h=0.32, size=12, color=SUBTLE, italic=True,
 )
 s.notes_slide.notes_text_frame.text = (
@@ -396,6 +396,19 @@ s.notes_slide.notes_text_frame.text = (
     "MuRIL probe 13/13 against 9/13.\n"
     "Category: top-3 90.89%, top-1 46.55%, n=3,160, chronological 2024 split, "
     "exact-text-group-disjoint, macro-F1 36.5%, ECE 26.4%.\n"
+    "  AGAINST A TRIVIAL BASELINE, computed from the per-class supports in "
+    "outputs/evaluation/categorization_historical_v1.json. The test set is lopsided: Social "
+    "Welfare 1,179, Housing 743, Miscellaneous 724, together 2,646 of 3,160. Always guessing "
+    "the single biggest scores 37.3% against the model's 46.6%, a lift of 9.2 points. Always "
+    "guessing the biggest three scores 83.7% against the model's 90.9%, a lift of 7.2 points. "
+    "Say this if anyone treats 91% as the headline.\n"
+    "  Per class the spread is wide. Best: Land Matters F1 62.4%, Energy 62.3%, Social Welfare "
+    "62.1%. Worst: General 4.6%, Public Utility 11.1%, Financial Assistance 12.1%. "
+    "Miscellaneous has 724 cases and 11.7% recall, because a catch-all class has no signature "
+    "to learn. No class sits at F1 zero.\n"
+    "  The DSI reference of 71.04% for MuRIL is NOT a comparison. It was measured on typed "
+    "subject lines with a different split and issue #127 warns against putting the two side by "
+    "side. We have not re-run that model on this split, so no head-to-head exists.\n"
     "Summary: critical-fact recall 65.48% over 84 facts, 8 of 26 usable unedited, residual PII "
     "in output 4/26 = 15.38%. One judge, not an officer. All four coherent Odia cases were "
     "skipped by an English-only gate.\n"
@@ -411,7 +424,55 @@ s.notes_slide.notes_text_frame.text = (
     "the test year, which is the diagnosis: no overlap to estimate on."
 )
 
-# ══ 5 · The limits ════════════════════════════════════════════════════════════
+# ══ 5 · Routing ═══════════════════════════════════════════════════════════════
+s = clone(prs, A_ROWS3)
+sh = S(s)
+set_text(sh[0], "SUGGESTING A DEPARTMENT")
+set_text(sh[1], "Three rungs, tried in order")
+set_text(sh[3], "Learned from history")
+set_text(sh[4], "5,084 keys built from where past grievances were actually sent. Right department in its top three 80% of the time on a year we held back.")
+set_text(sh[6], "The master tables")
+set_text(sh[7], "The fallback. The department field is empty on all 62 categories, so this rung can only match on an exact name and rarely answers.")
+set_text(sh[9], "A trained model")
+set_text(sh[10], "Off by default. When it cannot answer it falls back to the rungs above rather than guessing.")
+textbox(
+    s,
+    "Every rung learns where grievances were sent. None of them knows where a grievance should go.",
+    x=0.7, y=6.28, w=11.9, h=0.42, size=17, color=MAROON, bold=True,
+)
+s.notes_slide.notes_text_frame.text = (
+    "The ladder is janasunani/routing/provider.py. Three modes: ROUTER_DEFAULT 'crosswalk' is "
+    "the shipped path and runs crosswalk, then mapping tables, then generic fallback; 'rules' "
+    "skips the crosswalk and reproduces pre-#33 behaviour, useful to isolate the crosswalk in "
+    "a comparison; ROUTER_INCIDENCE 'incidence' serves a checksummed empirical-Bayes artifact "
+    "with the same ladder underneath it.\n\n"
+    "RUNG 1, the crosswalk. Artifact janasunani/routing/reference/routing_crosswalk.json: 34 "
+    "by-category keys, 257 by-subcategory, 971 by-category-district, 5,084 on the full key. "
+    "Held-out performance, outputs/evaluation/routing_historical_{informative,all}.json: top-3 "
+    "79.68% and top-1 54.96% on informative categories (n=142,181); 69.04% and 45.14% across "
+    "all eligible (n=208,267). Train 2021-23, validate 2024, final refit on train plus "
+    "validation, test on an untouched 2025. Selected alpha=100 with a one-year history window.\n\n"
+    "RUNG 2, why a fallback is needed at all. The ORTPSA masters carry no category-to-"
+    "department foreign key: intCategoryGrp is NULL on all 62 categories "
+    "(janasunani/routing/crosswalk.py:3, mappings.py:36). MappingRouter can only bridge by "
+    "exact name, which covers a handful of the 62. That absence is the whole reason the "
+    "crosswalk had to be learned from history instead of read off a table.\n\n"
+    "RUNG 3, the trained model. Opt-in via JANASUNANI_ROUTER=incidence, artifact checksummed, "
+    "and IncidenceRoutingProvider falls through to the crosswalk and rules when a lookup "
+    "fails, logging rather than failing silently.\n\n"
+    "THE CAVEAT THAT MATTERS, and it applies to all three rungs. Every one of them measures "
+    "agreement with the historical destination, not jurisdictional correctness. A "
+    "correct-authority adjudication does not exist. Roughly 300 closed cases read by hand "
+    "would settle it.\n\n"
+    "Macro-F1 is weak, 25.2% informative and 19.8% all eligible, and about a dozen departments "
+    "sit at F1 zero. The top-three framing is doing real work here.\n\n"
+    "WITHDRAWN, do not use: the in-sample crosswalk figures 60.9 / 67.5 / 72.8, which are "
+    "resubstitution. And any routing time saving: an estimated 11 to 23 day gain held on "
+    "validation 2024 and failed on the untouched 2025 test year at -2.35 days against a "
+    "standard error of 3.50. Withdrawn 23 August, commits 879c24c and 365e3b4."
+)
+
+# ══ 6 · The limits ════════════════════════════════════════════════════════════
 s = clone(prs, A_NUM3)
 sh = S(s)
 set_text(sh[0], "THE LIMITS")
@@ -439,7 +500,7 @@ s.notes_slide.notes_text_frame.text = (
     "cannot defend, and this deck has to survive the room checking it."
 )
 
-# ══ 6 · Sarvam ════════════════════════════════════════════════════════════════
+# ══ 7 · Sarvam ════════════════════════════════════════════════════════════════
 s = clone(prs, A_TWOGROUP)
 sh = S(s)
 set_text(sh[0], "THE OUTSIDE OPTION: SARVAM")
@@ -505,7 +566,7 @@ s.notes_slide.notes_text_frame.text = (
     "path. Do not quote ₹700; that was priced on the withdrawn 30B model."
 )
 
-# ══ 7 · Closing ═══════════════════════════════════════════════════════════════
+# ══ 8 · Closing ═══════════════════════════════════════════════════════════════
 s = clone(prs, A_CLOSING)
 s.notes_slide.notes_text_frame.text = (
     "Close on the limits, not a summary.\n\n"

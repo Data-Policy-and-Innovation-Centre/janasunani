@@ -40,6 +40,9 @@ QUALITY, with intervals.
 Redaction: overlap recall 0.779, coverage 0.783, exact 0.550 on 480 hand-marked gold spans across 89 pages and 50 documents. Per entity: Aadhaar 0.857 (n=7), phone 0.828 (n=29), name 0.777 (n=404), email 0.750 (n=40). Corpus scan: 0 of 55,544.
 Triage: n=57 held-out, accuracy 94.74% (85.63-98.19), review recall 13/13 = 100% (77.19-100), false-flag rate 3/44 = 6.82% (2.35-18.23). TF-IDF word+char beat a frozen MuRIL probe 13/13 against 9/13.
 Category: top-3 90.89%, top-1 46.55%, n=3,160, chronological 2024 split, exact-text-group-disjoint, macro-F1 36.5%, ECE 26.4%.
+  AGAINST A TRIVIAL BASELINE, computed from the per-class supports in outputs/evaluation/categorization_historical_v1.json. The test set is lopsided: Social Welfare 1,179, Housing 743, Miscellaneous 724, together 2,646 of 3,160. Always guessing the single biggest scores 37.3% against the model's 46.6%, a lift of 9.2 points. Always guessing the biggest three scores 83.7% against the model's 90.9%, a lift of 7.2 points. Say this if anyone treats 91% as the headline.
+  Per class the spread is wide. Best: Land Matters F1 62.4%, Energy 62.3%, Social Welfare 62.1%. Worst: General 4.6%, Public Utility 11.1%, Financial Assistance 12.1%. Miscellaneous has 724 cases and 11.7% recall, because a catch-all class has no signature to learn. No class sits at F1 zero.
+  The DSI reference of 71.04% for MuRIL is NOT a comparison. It was measured on typed subject lines with a different split and issue #127 warns against putting the two side by side. We have not re-run that model on this split, so no head-to-head exists.
 Summary: critical-fact recall 65.48% over 84 facts, 8 of 26 usable unedited, residual PII in output 4/26 = 15.38%. One judge, not an officer. All four coherent Odia cases were skipped by an English-only gate.
 Department: top-3 79.68% / top-1 54.96% on informative categories (n=142,181); 69.04% / 45.14% across all eligible (n=208,267). Untouched 2025 test year. This measures agreement with where cases were historically sent, not jurisdictional correctness.
 
@@ -47,7 +50,23 @@ WITHDRAWN, do not use: the in-sample crosswalk figures 60.9 / 67.5 / 72.8; PII c
 
 If asked about routing time savings: an estimated 11 to 23 day gain held on validation 2024 and failed on the untouched 2025 test year at -2.35 days against a standard error of 3.50. It was withdrawn on 23 August, commits 879c24c and 365e3b4, and four artifacts are archived as do-not-cite. The direct and doubly-robust estimators disagree by 33 days on the test year, which is the diagnosis: no overlap to estimate on.
 
-## Slide 5 — What we cannot measure
+## Slide 5 — Three rungs, tried in order
+
+The ladder is janasunani/routing/provider.py. Three modes: ROUTER_DEFAULT 'crosswalk' is the shipped path and runs crosswalk, then mapping tables, then generic fallback; 'rules' skips the crosswalk and reproduces pre-#33 behaviour, useful to isolate the crosswalk in a comparison; ROUTER_INCIDENCE 'incidence' serves a checksummed empirical-Bayes artifact with the same ladder underneath it.
+
+RUNG 1, the crosswalk. Artifact janasunani/routing/reference/routing_crosswalk.json: 34 by-category keys, 257 by-subcategory, 971 by-category-district, 5,084 on the full key. Held-out performance, outputs/evaluation/routing_historical_{informative,all}.json: top-3 79.68% and top-1 54.96% on informative categories (n=142,181); 69.04% and 45.14% across all eligible (n=208,267). Train 2021-23, validate 2024, final refit on train plus validation, test on an untouched 2025. Selected alpha=100 with a one-year history window.
+
+RUNG 2, why a fallback is needed at all. The ORTPSA masters carry no category-to-department foreign key: intCategoryGrp is NULL on all 62 categories (janasunani/routing/crosswalk.py:3, mappings.py:36). MappingRouter can only bridge by exact name, which covers a handful of the 62. That absence is the whole reason the crosswalk had to be learned from history instead of read off a table.
+
+RUNG 3, the trained model. Opt-in via JANASUNANI_ROUTER=incidence, artifact checksummed, and IncidenceRoutingProvider falls through to the crosswalk and rules when a lookup fails, logging rather than failing silently.
+
+THE CAVEAT THAT MATTERS, and it applies to all three rungs. Every one of them measures agreement with the historical destination, not jurisdictional correctness. A correct-authority adjudication does not exist. Roughly 300 closed cases read by hand would settle it.
+
+Macro-F1 is weak, 25.2% informative and 19.8% all eligible, and about a dozen departments sit at F1 zero. The top-three framing is doing real work here.
+
+WITHDRAWN, do not use: the in-sample crosswalk figures 60.9 / 67.5 / 72.8, which are resubstitution. And any routing time saving: an estimated 11 to 23 day gain held on validation 2024 and failed on the untouched 2025 test year at -2.35 days against a standard error of 3.50. Withdrawn 23 August, commits 879c24c and 365e3b4.
+
+## Slide 6 — What we cannot measure
 
 Do not cut this slide for time. It is the one that makes the rest credible.
 
@@ -61,7 +80,7 @@ Two more we do not claim, if asked: no gain from duplicate detection beyond the 
 
 If someone asks why so little is claimed: because the alternative is claiming things we cannot defend, and this deck has to survive the room checking it.
 
-## Slide 6 — It does more. We have not shown it does better.
+## Slide 7 — It does more. We have not shown it does better.
 
 The provider is Sarvam. Two endpoints, billed separately: digitise at ₹0.50 a page returns text and layout; extract at ₹1.00 a page returns schema-driven fields. Both is ₹1.50. Source: janasunani/evaluation/pricing.py, checked against the Sarvam dashboard 2026-08-07. Our local pipeline is ₹0.00 a page.
 
@@ -87,7 +106,7 @@ GOVERNANCE. Trust tier authorized-external. Authorisation is a GoO-Sarvam MoU wi
 
 COST AT SCALE, projected list price: ₹48,000 to digitise the 96,469-page English corpus, ₹145,000 for both endpoints, ₹8,050 to push 1.37M subjects through the 105B text model. At 10 requests a minute, which does not rise with the plan tier, the full corpus is roughly ten days of continuous calling. It is a measurement instrument, not a backfill path. Do not quote ₹700; that was priced on the withdrawn 30B model.
 
-## Slide 7 — Data, Policy and Innovation Centre
+## Slide 8 — Data, Policy and Innovation Centre
 
 Close on the limits, not a summary.
 
