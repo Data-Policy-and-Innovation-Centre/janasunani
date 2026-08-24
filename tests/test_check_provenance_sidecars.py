@@ -424,20 +424,27 @@ def _frontier_payload():
         "sample": {
             "records": 3,
             "split_counts": {"train": 1, "validation": 1, "test": 1},
-            "sampling": "fixed sample",
+            "sampling": (
+                "five records from each of four opaque weak-label strata plus forty "
+                "previously unlabeled records per split"
+            ),
             "split_policy": "fixed hash split",
             "sha256": "a" * 64,
             "tracking_mode": "direct DVC input",
-            "tracking_reason": "private salt is not versioned",
+            "tracking_reason": (
+                "opaque item identifiers depend on a private salt that is "
+                "intentionally not versioned; treating this as a reproducible stage "
+                "would hide that dependency"
+            ),
         },
         "direct_inputs": {
-            name: {"role": "model output", "sha256": "b" * 64}
-            for name in [
-                "judge_a.jsonl",
-                "judge_b.jsonl",
-                "resolver.jsonl",
-                "resolver_backup.jsonl",
-            ]
+            name: {"role": role, "sha256": "b" * 64}
+            for name, role in {
+                "judge_a.jsonl": "frontier judge A output",
+                "judge_b.jsonl": "frontier judge B output",
+                "resolver.jsonl": "canonical frontier resolver output",
+                "resolver_backup.jsonl": "non-canonical preserved resolver backup",
+            }.items()
         },
         "deterministic_stages": {
             "actionability-adjudication-prepare": [
@@ -468,7 +475,10 @@ def _frontier_payload():
             "manifest": "historical.manifest.json",
             "records": 4,
             "sha256": "d" * 64,
-            "status": "audit only",
+            "status": (
+                "the original benchmark input is retained for auditability but is not "
+                "canonical because it admitted six resolver judgments marked uncertain"
+            ),
         },
         "preserved_nonreproducible_reports": {
             "historical_candidates_strict.json": "e" * 64,
@@ -578,7 +588,9 @@ def test_actionability_frontier_rejects_free_text_lists_without_echoing(
 def _sarvam_payload():
     return {
         "schema_version": "janasunani.sarvam-source-snapshots/v1",
-        "claim_status": "cached provider evidence; not OCR accuracy",
+        "claim_status": (
+            "cached provider evidence; not OCR accuracy evidence and not a release gate"
+        ),
         "privacy": {
             "contains_operational_ticket_and_document_identifiers": True,
             "contains_provider_response_metadata": True,
@@ -588,7 +600,7 @@ def _sarvam_payload():
         "artifacts": {
             "validation_5_page_scorecard.json": {
                 "sha256": "a" * 64,
-                "role": "machine-readable aggregate scorecard",
+                "role": "machine-readable scorecard from the completed validation run",
             }
         },
         "limitations": [
