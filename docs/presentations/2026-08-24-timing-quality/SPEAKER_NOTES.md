@@ -1,6 +1,6 @@
 # Janasunani 2.0 — technical briefing
 
-Speaker notes exported from the deck. Every figure traces to a named artifact.
+Speaker notes exported from the deck.
 
 ## Slide 1 — Janasunani 2.0
 
@@ -50,13 +50,18 @@ WITHDRAWN, do not use: the in-sample crosswalk figures 60.9 / 67.5 / 72.8; PII c
 
 If asked about routing time savings: an estimated 11 to 23 day gain held on validation 2024 and failed on the untouched 2025 test year at -2.35 days against a standard error of 3.50. It was withdrawn on 23 August, commits 879c24c and 365e3b4, and four artifacts are archived as do-not-cite. The direct and doubly-robust estimators disagree by 33 days on the test year, which is the diagnosis: no overlap to estimate on.
 
-## Slide 5 — Three rungs, tried in order
+## Slide 5 — What we ship, and what we could not show
 
 The ladder is janasunani/routing/provider.py. Three modes: ROUTER_DEFAULT 'crosswalk' is the shipped path and runs crosswalk, then mapping tables, then generic fallback; 'rules' skips the crosswalk and reproduces pre-#33 behaviour, useful to isolate the crosswalk in a comparison; ROUTER_INCIDENCE 'incidence' serves a checksummed empirical-Bayes artifact with the same ladder underneath it.
 
 RUNG 1, the crosswalk. Artifact janasunani/routing/reference/routing_crosswalk.json: 34 by-category keys, 257 by-subcategory, 971 by-category-district, 5,084 on the full key. Held-out performance, outputs/evaluation/routing_historical_{informative,all}.json: top-3 79.68% and top-1 54.96% on informative categories (n=142,181); 69.04% and 45.14% across all eligible (n=208,267). Train 2021-23, validate 2024, final refit on train plus validation, test on an untouched 2025. Selected alpha=100 with a one-year history window.
 
-RUNG 2, why a fallback is needed at all. The ORTPSA masters carry no category-to-department foreign key: intCategoryGrp is NULL on all 62 categories (janasunani/routing/crosswalk.py:3, mappings.py:36). MappingRouter can only bridge by exact name, which covers a handful of the 62. That absence is the whole reason the crosswalk had to be learned from history instead of read off a table.
+Below the crosswalk sit the ORTPSA master tables and a generic fallback. They are off this slide because they rarely answer: intCategoryGrp is NULL on all 62 categories, so no category-to-department link exists and MappingRouter can only bridge by exact name. That absence is why the crosswalk had to be learned from history rather than read off a table. Mention it only if someone asks what happens when the crosswalk has no key.
+
+ROW 3, THE OUTCOME MODEL. Design of record is docs/experiments/routing-outcome-model.tex, 42 pages. It asks a different question from the rows above: not where a grievance was sent, but whether sending it elsewhere would have closed it faster without losing whether action was taken.
+  Treatment is the department and the complete role chain chosen together at assignment, the intention to route. Outcome is days to closure capped at 365, with inverse-probability censoring weights so cases still open at the snapshot do not silently drop out. Two estimators are reported separately: a direct outcome model and an augmented, doubly-robust one.
+  Result: validation 2024 gave +26.77 days (SE 4.04). The untouched 2025 test year gave -2.35 (SE 3.50). No routing gain is established and no recommendation is published.
+  Why it failed, if pushed. Positivity breaks: on the test year only 15.6% of cases have the recommended route anywhere in observed support, and effective sample size falls to 7% of n, so the direct estimator is extrapolating into empty cells. The design document also states plainly that its no-interference assumption 'in a queueing system is false' — route everyone to the fast office and it stops being fast. Unconfoundedness is invoked on an information set smaller than the officer's, missing congestion and trailing destination performance. And the test year is a seven-month window being asked about a 365-day outcome, so replication and truncation cannot be separated.
 
 RUNG 3, the trained model. Opt-in via JANASUNANI_ROUTER=incidence, artifact checksummed, and IncidenceRoutingProvider falls through to the crosswalk and rules when a lookup fails, logging rather than failing silently.
 

@@ -428,16 +428,16 @@ s.notes_slide.notes_text_frame.text = (
 s = clone(prs, A_ROWS3)
 sh = S(s)
 set_text(sh[0], "SUGGESTING A DEPARTMENT")
-set_text(sh[1], "Three rungs, tried in order")
+set_text(sh[1], "What we ship, and what we could not show")
 set_text(sh[3], "Learned from history")
 set_text(sh[4], "5,084 keys built from where past grievances were actually sent. Right department in its top three 80% of the time on a year we held back.")
-set_text(sh[6], "The master tables")
-set_text(sh[7], "The fallback. The department field is empty on all 62 categories, so this rung can only match on an exact name and rarely answers.")
-set_text(sh[9], "A trained model")
-set_text(sh[10], "Off by default. When it cannot answer it falls back to the rungs above rather than guessing.")
+set_text(sh[6], "A trained model")
+set_text(sh[7], "Off by default. When it cannot answer it falls back to the learned keys rather than guessing.")
+set_text(sh[9], "Would another route be faster?")
+set_text(sh[10], "We built a full causal model to test it. It showed a gain on one year and nothing on the next, so we withdrew the estimate.")
 textbox(
     s,
-    "Every rung learns where grievances were sent. None of them knows where a grievance should go.",
+    "All of it learns where grievances were sent. None of it knows where one should go.",
     x=0.7, y=6.28, w=11.9, h=0.42, size=17, color=MAROON, bold=True,
 )
 s.notes_slide.notes_text_frame.text = (
@@ -452,11 +452,30 @@ s.notes_slide.notes_text_frame.text = (
     "79.68% and top-1 54.96% on informative categories (n=142,181); 69.04% and 45.14% across "
     "all eligible (n=208,267). Train 2021-23, validate 2024, final refit on train plus "
     "validation, test on an untouched 2025. Selected alpha=100 with a one-year history window.\n\n"
-    "RUNG 2, why a fallback is needed at all. The ORTPSA masters carry no category-to-"
-    "department foreign key: intCategoryGrp is NULL on all 62 categories "
-    "(janasunani/routing/crosswalk.py:3, mappings.py:36). MappingRouter can only bridge by "
-    "exact name, which covers a handful of the 62. That absence is the whole reason the "
-    "crosswalk had to be learned from history instead of read off a table.\n\n"
+    "Below the crosswalk sit the ORTPSA master tables and a generic fallback. They are off "
+    "this slide because they rarely answer: intCategoryGrp is NULL on all 62 categories, so no "
+    "category-to-department link exists and MappingRouter can only bridge by exact name. That "
+    "absence is why the crosswalk had to be learned from history rather than read off a table. "
+    "Mention it only if someone asks what happens when the crosswalk has no key.\n\n"
+    "ROW 3, THE OUTCOME MODEL. Design of record is docs/experiments/routing-outcome-model.tex, "
+    "42 pages. It asks a different question from the rows above: not where a grievance was "
+    "sent, but whether sending it elsewhere would have closed it faster without losing whether "
+    "action was taken.\n"
+    "  Treatment is the department and the complete role chain chosen together at assignment, "
+    "the intention to route. Outcome is days to closure capped at 365, with inverse-probability "
+    "censoring weights so cases still open at the snapshot do not silently drop out. Two "
+    "estimators are reported separately: a direct outcome model and an augmented, "
+    "doubly-robust one.\n"
+    "  Result: validation 2024 gave +26.77 days (SE 4.04). The untouched 2025 test year gave "
+    "-2.35 (SE 3.50). No routing gain is established and no recommendation is published.\n"
+    "  Why it failed, if pushed. Positivity breaks: on the test year only 15.6% of cases have "
+    "the recommended route anywhere in observed support, and effective sample size falls to 7% "
+    "of n, so the direct estimator is extrapolating into empty cells. The design document also "
+    "states plainly that its no-interference assumption 'in a queueing system is false' — route "
+    "everyone to the fast office and it stops being fast. Unconfoundedness is invoked on an "
+    "information set smaller than the officer's, missing congestion and trailing destination "
+    "performance. And the test year is a seven-month window being asked about a 365-day "
+    "outcome, so replication and truncation cannot be separated.\n\n"
     "RUNG 3, the trained model. Opt-in via JANASUNANI_ROUTER=incidence, artifact checksummed, "
     "and IncidenceRoutingProvider falls through to the crosswalk and rules when a lookup "
     "fails, logging rather than failing silently.\n\n"
