@@ -549,6 +549,8 @@ help:
 	@echo "  make deck-clean      Remove the rendered deck (slides.html)"
 	@echo "  make deck-check      Report slides whose content runs off the bottom"
 	@echo "  make deck-shots      Screenshot every slide to outputs/deck-shots/"
+	@echo "  make deck-assets     Rebuild the generated components (map, query mock)"
+	@echo "  make deck-fallbacks  Re-shoot the static images shown if scripts fail"
 	@echo "  make box-paths       Show resolved local and Box paths"
 	@echo "  make status          Show what has changed"
 	@echo "  make infra           Read-only health pass over the cloud infra"
@@ -656,7 +658,7 @@ docs/%.docx: docs/%.md scripts/md_to_docx.py
 docs-clean:
 	rm -f $(DOC_TARGETS)
 
-.PHONY: deck deck-list deck-clean deck-check deck-shots
+.PHONY: deck deck-list deck-clean deck-check deck-shots deck-assets deck-fallbacks
 
 # --- Slide decks (Quarto + reveal.js) ---------------------------------------
 #
@@ -718,13 +720,37 @@ deck-list:
 # needed only when someone is working on a deck, and it drags a browser with it.
 # `uv run --with` installs it for the one command. First use also needs
 #   uv run --with playwright playwright install chromium
-DECK_SHOT = uv run --with playwright python scripts/screenshot_deck.py $(call sh_quote,$(DECK_DIR))
+#
+# --no-project is load-bearing, not tidiness. screenshot_deck.py imports nothing
+# but the standard library and playwright, so resolving the project environment
+# buys nothing and costs everything: it drags the whole ML dependency tree,
+# including a spacy model fetched from a GitHub release, and a checking tool that
+# fails because a model download timed out is a checking tool nobody runs.
+DECK_SHOT = uv run --no-project --with playwright python scripts/screenshot_deck.py $(call sh_quote,$(DECK_DIR))
 
 deck-check:
 	@$(DECK_SHOT) --check
 
 deck-shots:
 	@$(DECK_SHOT)
+
+# The generated components of the value-add deck: the dot map and the query
+# mock. Both read only committed aggregates, so this never touches `data/` --
+# regenerating those aggregates is a separate, deliberate step (see
+# assets/data/README.md).
+#
+# Use the project environment because the map imports the centrally governed
+# DPIC chart palette. Both scripts still read committed aggregates only.
+deck-assets:
+	uv run python scripts/build_deck_map.py --deck $(call sh_quote,$(DECK_DIR))
+	uv run python scripts/build_deck_nlq.py --deck $(call sh_quote,$(DECK_DIR))
+
+# Static pictures of the three interactive components, shown if their scripts
+# fail. Needs a rendered deck to shoot, so: make deck && make deck-fallbacks &&
+# make deck (the second render embeds the new images).
+deck-fallbacks:
+	uv run --no-project --with playwright python scripts/build_deck_fallbacks.py \
+	  --deck $(call sh_quote,$(DECK_DIR))
 
 deck-clean:
 	rm -rf $(call sh_quote,$(DECK_DIR))/slides.html $(call sh_quote,$(DECK_DIR))/slides_files

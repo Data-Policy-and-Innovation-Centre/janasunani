@@ -504,31 +504,51 @@ $presentation-heading-font-weight: 600;
   font-family: "Inter", sans-serif;
 }
 
-/*-- Odisha district hotspot map ------------------------------------------
-    Outlines are pre-projected at build time by scripts/build_deck_map.py, so
-    this is plain inline SVG: no projection library, no deck.gl, no network,
-    and nothing to fail in a room with no wifi.                            */
+/*-- Odisha complaint dot map ---------------------------------------------
+    Outlines and dot positions are pre-projected at build time by
+    scripts/build_deck_map.py, so this is plain inline SVG: no projection
+    library, no deck.gl, no network, and nothing to fail in a room with no wifi.
+
+    Colour is the theme and dot AREA is the count. The district outlines are
+    deliberately faint: they are a reference frame for reading the dots, not a
+    second data channel competing with them.                                */
 .reveal .hotspot { margin: 0.15em auto 0; max-width: 100%; }
 .reveal .hs-controls {
-  display: flex; align-items: center; justify-content: space-between;
-  font-size: 0.46em; margin-bottom: 0.25em;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.42em; margin-bottom: 0.2em;
 }
-.reveal .hs-seg { display: inline-flex; border: 1px solid #DAD6CC; border-radius: 8px; overflow: hidden; }
-.reveal .hs-seg button {
+.reveal .hs-chips { display: inline-flex; flex-wrap: wrap; gap: 0.3em; justify-content: center; }
+.reveal .hs-chips button {
   font: inherit; font-family: "Inter", sans-serif; cursor: pointer;
-  padding: 0.4em 0.9em; border: 0; background: transparent; color: #6B6862;
+  display: inline-flex; align-items: center; gap: 0.4em;
+  padding: 0.3em 0.7em; border: 1px solid #DAD6CC; border-radius: 999px;
+  background: transparent; color: #6B6862;
 }
-.reveal .hs-seg button.active { background: #8B1524; color: #FAF9F5; font-weight: 700; }
-.reveal .hs-legend { display: inline-flex; align-items: center; gap: 4px; color: #6B6862; }
-.reveal .hs-legend i { width: 26px; height: 9px; display: inline-block; }
-.reveal .hs-lk { margin: 0 5px; }
+.reveal .hs-chips button i {
+  width: 0.72em; height: 0.72em; border-radius: 50%;
+  background: var(--c, #6B6862); display: inline-block;
+}
+// The "all themes" chip has no single colour, so it shows a neutral ring rather
+// than borrowing one theme's colour and implying a default.
+.reveal .hs-chips button i.hs-all { background: transparent; border: 2px solid #6B6862; }
+.reveal .hs-chips button.active {
+  border-color: #141413; color: #141413; font-weight: 700;
+  background: rgba(20, 20, 19, 0.05);
+}
 
-.reveal .hs-map { width: 100%; max-height: 66vh; display: block; margin: 0 auto; }
-.reveal .hs-d {
-  stroke: #FAF9F5; stroke-width: 1.1; cursor: pointer;
-  transition: fill 0.25s ease;
+.reveal .hs-map { width: 100%; max-height: 68vh; display: block; margin: 0 auto; }
+.reveal .hs-d { fill: #F2F0E9; stroke: #DAD6CC; stroke-width: 1; }
+.reveal .hs-dot {
+  fill-opacity: 0.72;
+  stroke: #FAF9F5;
+  stroke-width: 1;
+  cursor: pointer;
+  transition: fill-opacity 0.25s ease, stroke-width 0.15s ease;
 }
-.reveal .hs-d:hover { stroke: #141413; stroke-width: 2; }
+.reveal .hs-dot:hover { fill-opacity: 0.95; stroke: #141413; stroke-width: 2; }
+// Filtered out rather than removed: keeping the muted dots on screen preserves
+// the sense of how much else is going on in that district.
+.reveal .hs-dot.hs-mute { fill-opacity: 0.07; }
 .reveal .hs-readout {
   text-align: center; font-size: 0.46em; color: #141413;
   margin-top: 0.2em; min-height: 1.4em;
@@ -662,3 +682,153 @@ $presentation-heading-font-weight: 600;
   font-weight: 700;
   padding-top: 0.55em;
 }
+
+/*-- Tables whose first column is prose, not a label ----------------------
+    `.grid` and `.compare` treat column one as an axis label: uppercase, letter
+    spaced and `white-space: nowrap`, which is right for "TIME" and "PERFORMANCE"
+    and wrong for a full question. Without this the long cells refuse to wrap,
+    run under column two and collide with it.
+
+    Add `.prose-first` beside `.grid` when column one carries sentences.        */
+.reveal .prose-first table td:first-child {
+  font-family: inherit;
+  font-size: 1em;
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: normal;
+  font-weight: 600;
+}
+.reveal .prose-first table td:first-child,
+.reveal .prose-first table th:first-child { width: 38%; }
+
+/*-- An ordered "ask this" block ------------------------------------------
+    Three questions in sequence, where the order is the content. Used on the
+    open-versus-bought slide, where the instinctive first question (who owns the
+    learning) is actually the second.                                        */
+.reveal .asks {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5em 1.1em;
+  max-width: 96%;
+  margin: 0.7em auto 0;
+  padding: 0.6em 0.9em;
+  font-size: 0.5em;
+  text-align: left;
+  border-left: 4px solid #8B1524;
+  background: rgba(139, 21, 36, 0.06);
+}
+.reveal .asks p { margin: 0; flex: 1 1 28%; color: #141413; }
+.reveal .asks p strong { color: #8B1524; }
+// Quarto wraps `[Ask in this order]{.asks-h}` in a paragraph, so the flex child
+// is the <p> and not the span -- sizing the span does nothing. Claim the row on
+// the paragraph.
+.reveal .asks p:first-child { flex: 0 0 100%; }
+.reveal .asks-h {
+  font-family: "Inter", sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 0.8em;
+  color: #8B1524;
+}
+
+/*-- The cell's remit, four columns ---------------------------------------
+    Four questions the Grievance Intelligence Cell exists to answer. Equal
+    weight deliberately: the fourth ("can we tell if it works") is the one that
+    justifies a standing capability rather than a contract, so it must not read
+    as an afterthought tacked onto three real ones.                          */
+.reveal .cell {
+  display: flex;
+  gap: 0.7em;
+  align-items: stretch;
+  max-width: 98%;
+  margin: 0.7em auto 0;
+  font-size: 0.6em;
+  text-align: left;
+}
+.reveal .cell-col {
+  flex: 1;
+  padding: 0.9em 0.9em;
+  border-top: 3px solid #8B1524;
+  background: #F2F0E9;
+  border-radius: 0 0 8px 8px;
+}
+.reveal .cell-col p { margin: 0 0 0.5em 0; color: #141413; line-height: 1.35; }
+.reveal .cell-col p:last-child { margin-bottom: 0; }
+.reveal .cell-h {
+  display: block;
+  font-family: "Inter", sans-serif;
+  font-weight: 700;
+  color: #8B1524;
+  font-size: 1.05em;
+  line-height: 1.25;
+  margin-bottom: 0.2em;
+}
+
+// A big number that has to share its slide with a table. The full 3.2em is
+// sized to be the only thing on screen.
+.reveal .bignum.bignum-compact { font-size: 2.1em; margin: 0; }
+.reveal .bignum.bignum-compact + .bignum-sub { font-size: 0.62em; margin-bottom: 0.3em; }
+
+/*-- The natural-language query mock --------------------------------------
+    Three panels: the question, the structured form it parses into, and the
+    answer. Generated by scripts/build_deck_nlq.py so the answers are computed
+    from the same aggregate as the map rather than typed.
+
+    The middle panel is deliberately shown as code. It is the one place in the
+    deck where a technical artifact belongs on screen, because the design
+    decision -- the model fills in a form, it never writes the query itself --
+    is only legible if you can see the form.                                 */
+.reveal .nlq { max-width: 98%; margin: 0.3em auto 0; font-size: 0.5em; text-align: left; }
+.reveal .nlq-chips { display: flex; flex-wrap: wrap; gap: 0.35em; justify-content: center; margin-bottom: 0.6em; }
+.reveal .nlq-chips button {
+  font: inherit; font-family: "Inter", sans-serif; cursor: pointer;
+  padding: 0.35em 0.8em; border: 1px solid #DAD6CC; border-radius: 999px;
+  background: transparent; color: #6B6862;
+}
+.reveal .nlq-chips button.active { background: #8B1524; border-color: #8B1524; color: #FAF9F5; font-weight: 700; }
+
+.reveal .nlq-stage { display: flex; align-items: stretch; gap: 0.5em; }
+.reveal .nlq-panel {
+  flex: 1; border: 1px solid #DAD6CC; border-radius: 10px;
+  background: #FFFFFF; padding: 0.7em 0.8em; min-width: 0;
+}
+.reveal .nlq-ans { background: rgba(139, 21, 36, 0.05); border-color: rgba(139, 21, 36, 0.35); }
+.reveal .nlq-h {
+  font-family: "Inter", sans-serif; text-transform: uppercase;
+  letter-spacing: 0.09em; font-size: 0.68em; color: #6B6862; margin-bottom: 0.5em;
+}
+.reveal .nlq-arrow { align-self: center; color: #8B1524; font-size: 1.3em; }
+.reveal .nlq-q { font-size: 1.05em; color: #141413; line-height: 1.35; }
+.reveal .nlq-form pre {
+  margin: 0; background: transparent; border: 0; box-shadow: none;
+  font-family: "SFMono-Regular", Menlo, monospace; font-size: 0.62em;
+  line-height: 1.3; color: #4A4A46; white-space: pre; overflow: hidden;
+}
+
+.reveal .nlq-row { display: flex; align-items: center; gap: 0.5em; margin-bottom: 0.32em; }
+.reveal .nlq-lab { flex: 0 0 38%; color: #141413; }
+.reveal .nlq-bar { flex: 1; height: 0.62em; background: #F2F0E9; border-radius: 2px; }
+.reveal .nlq-bar i { display: block; height: 100%; background: #8B1524; border-radius: 2px; }
+.reveal .nlq-val {
+  flex: 0 0 22%; text-align: right; color: #8B1524; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.reveal .nlq-unit { color: #6B6862; font-size: 0.82em; margin-top: 0.4em; }
+
+/*-- Static fallbacks for the interactive components ----------------------
+    The replay, the dot map and the query mock all need JavaScript. If scripts
+    are blocked, or a component throws before it finishes wiring itself up, the
+    slide would be blank in front of the room with no recovery.
+
+    So each component ships a picture of itself and shows that by DEFAULT. Its
+    own script adds `.live` as its last statement, which swaps the picture for
+    the real thing. Defaulting to the image rather than to the component is the
+    whole point: a script that dies halfway still leaves something on screen,
+    which `<noscript>` alone would not catch.
+
+    Regenerate the images with scripts/build_deck_fallbacks.py after changing
+    how any of them looks.                                                   */
+.reveal .fb img { width: 100%; display: block; border-radius: 8px; }
+.reveal .fb-host:not(.live) > *:not(.fb) { display: none; }
+.reveal .fb-host.live > .fb { display: none; }

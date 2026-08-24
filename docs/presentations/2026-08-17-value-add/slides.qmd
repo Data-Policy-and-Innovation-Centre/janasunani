@@ -1,6 +1,6 @@
 ---
 title: "Janasunani 2.0"
-subtitle: "Processing and intelligence: what changes, and what it is worth"
+subtitle: "What automation can do, how to tell whether it works, and who should own it"
 author: "Data, Policy & Innovation Centre"
 date: "2026-08-17"
 date-format: "D MMMM YYYY"
@@ -14,17 +14,34 @@ date-format: "D MMMM YYYY"
 #   Format options live in _quarto.yml, not here (document YAML overrides
 #   project profiles in Quarto and cannot be flipped later).
 #
-#   SHAPE. Two dimensions of impact, then what they add up to.
-#     Part 1  Processing    the pipeline, actionability, dedup, routing.
-#                           Each one on the same two axes: TIME and PERFORMANCE,
-#                           status quo beside prototype, in the same `.compare`
-#                           table every time. The repetition is the argument.
-#     Part 2  Intelligence  today the officer gets resolved/pending counts.
-#                           We offer two questions: what are people complaining
-#                           about (hotspots, spikes, real-time at the desk) and
-#                           who is complaining (gender, geography, channel).
-#                           Campaigns are where the two meet.
-#     Part 3  Together      what the two dimensions are worth, and the ask.
+#   POSTURE. DPIC is not a supplier. There is an MoU with the Government of
+#   Odisha, no product, no licence, no fee and no stake in any decision taken in
+#   this room. That is not a courtesy line, it is the load-bearing premise: the
+#   specific models are interchangeable and mostly uninteresting, and what only
+#   an independent party can offer is the measurement. Every slide should read as
+#   "here is what is achievable and how you would check it", never as "buy this".
+#
+#   SHAPE. What automation can do, what intelligence makes possible, and who
+#   should own both.
+#     Part 1  Automation     the pipeline, actionability, dedup, routing.
+#                            Each one on the same two axes: TIME and PERFORMANCE,
+#                            status quo beside prototype, in the same `.compare`
+#                            table every time. The repetition is the argument.
+#                            Then three slides that are the real contribution:
+#                            the measurement protocol, the finding that the
+#                            expensive option lost, and the open/proprietary
+#                            tradeoffs.
+#     Part 2  Intelligence   today the officer gets resolved/pending counts.
+#                            Three capabilities: is the system working
+#                            (performance), what is the state learning (systemic
+#                            issues), and can anyone ask it a question.
+#     Part 3  The cell       a Grievance Intelligence Cell owns all of it. The
+#                            four permissions become its first work programme.
+#
+#   NON-TECHNICAL, AND THIS IS A HARD RULE. No model or method names on any
+#   slide: no MuRIL, TF-IDF, SGD, BART, Presidio, EWMA, STL, Poisson. An IAS
+#   officer does not need them and naming them turns a procurement warning into a
+#   technical aside. All of them are welcome in the speaker notes.
 #
 #   TWO MARKING SYSTEMS, ON DELIBERATELY DIFFERENT CHANNELS. They answer
 #   different questions and must never share a colour meaning.
@@ -60,33 +77,84 @@ date-format: "D MMMM YYYY"
 #   structurally perfect and visually broken, and only rendering finds that.
 ---
 
-## The short version {data-menu-title="The short version"}
+## Why we are in the room {data-menu-title="Why we are here"}
+
+::: {.cell}
+::: {.cell-col}
+[What we are]{.cell-h}
+
+A research centre, working under an MoU with the Government of Odisha.
+:::
+
+::: {.cell-col}
+[What we are selling]{.cell-h}
+
+Nothing. No product, no licence, no fee, and no stake in any decision taken in this room.
+:::
+
+::: {.cell-col}
+[What we brought]{.cell-h}
+
+A working proof of concept, and the measurements to judge it by.
+:::
+:::
 
 ::: {.lead}
-We are making a difference on two dimensions, and they are worth different things.
+The specific models do not matter. Being able to tell whether any of them works is the part you cannot buy.
 :::
-
-::: {.grid}
-| | What it means | Where it stands |
-|---|---|---|
-| **Processing** | The six things that happen to a grievance before anyone can act on it | Built and measured. Four components, each faster and each with a number attached |
-| **Intelligence** | What the office can *see* across a million grievances | Barely exists today. The reporting surface is resolved and pending counts |
-:::
-
-Processing makes each case cheaper. Intelligence is the one that changes what
-the government can do at all.
 
 ::: notes
-~90 sec. Set both dimensions in the first minute, and be explicit that they are
-not the same kind of contribution.
+~60 sec, and it must come before any number. It changes how everything after it
+is heard.
 
-Processing is the expected half. It is real, it is measured, and on its own it
-is an efficiency story: the same work, done faster and more consistently.
+Say it plainly. We are not a vendor. There is nothing on sale in this room, we do
+not benefit from a yes and we do not lose from a no, and that is unusual enough
+in a conversation about automation that it is worth thirty seconds of your
+attention.
+
+Then the consequence, which is the actual point: because we have no stake, we
+built the thing *and* measured it honestly, and the measurement is the part that
+survives. Whatever the state eventually runs, whoever builds it, the question
+"how would we know if this works" has to be answered by somebody with no reason
+to flatter the answer.
+
+Do not say the word vendor with any edge on it. The room may contain people with
+supplier relationships and the point lands better as a description of our
+position than as a warning about anyone else's.
+:::
+
+---
+
+## The short version {data-menu-title="The short version"}
+
+::: {.grid}
+| | | Where it stands |
+|---|---|---|
+| **What automation can do** | The steps a grievance goes through before anyone can act on it | Built and measured, four components |
+| **What intelligence makes possible** | What the state can *see* across a million grievances | Barely exists today. The reporting surface is resolved and pending counts |
+| **How you would know** | Whether any of it, ours or anyone's, actually works | The protocol exists. Nothing has been confirmed by an officer |
+:::
+
+::: {.lead}
+Automation makes each case cheaper. Intelligence changes what the state can do at all. The third one is what lets you trust either.
+:::
+
+::: notes
+~90 sec. Three things, and be explicit that they are not the same kind of
+contribution.
+
+Automation is the expected half. It is real, it is measured, and on its own it is
+an efficiency story: the same work, done faster and more consistently.
 
 Intelligence is the half nobody has asked for, because nobody knew it was
 available. A million grievances is a continuous, self-reported, geocoded record
 of what is going wrong across the state, and the system currently uses it to
-count how many are closed. That is the part of this talk worth staying for.
+count how many are closed.
+
+The third is the one that follows from the previous slide, and it is the one to
+land hardest. Everything in the first two columns will eventually be built by
+somebody. The question of whether it works is separate, it is permanent, and it
+needs an answer that does not come from whoever built it.
 
 Do not give any numbers yet. The next twenty minutes are numbers.
 :::
@@ -134,7 +202,7 @@ appendix, and not left for someone to find later.
 
 ---
 
-## Part 1 · Processing {.part data-menu-title="Part 1 · Processing"}
+## Part 1 · What automation can do {.part data-menu-title="Part 1 · Automation"}
 
 ::: {.scorecard}
 ::: {.sq}
@@ -148,7 +216,7 @@ A grievance goes wherever cases like it went before.
 :::
 
 ::: {.add}
-[What we add]{.sc-h}
+[What is achievable]{.sc-h}
 
 Four components, each with a time and a quality number against it.
 
@@ -160,7 +228,8 @@ Every one of them advisory: nothing blocks a filing, nothing assigns itself.
 [pipeline]{.now} [actionability]{.now} [dedup]{.now} [routing]{.now} [issues]{.off} [people]{.off}
 :::
 
-Four components, each on the same two axes: **time** and **performance**.
+Four components on the same two axes, **time** and **performance**. Then how you
+would check any of it.
 
 ::: notes
 ~40 sec. Signpost the structure and then hold to it rigidly: four components,
@@ -174,6 +243,11 @@ the time you reach routing.
 Say now that all four are advisory. It defuses the automation question before it
 is asked, and it is true: a flag never blocks a filing, a category never assigns
 itself, a route is a suggestion.
+
+Frame the whole part as a demonstration of what is achievable rather than a
+product tour, and promise the three slides at the end of it: how we measured, what
+surprised us, and how to think about open versus bought. Those are the ones that
+keep their value after the models are replaced.
 :::
 
 ---
@@ -391,8 +465,8 @@ citizens rather than filings, you can start asking what the problems *are*.
 ::: {.compare}
 | | Today | With this |
 |---|---|---|
-| **Time** | About 50 preset routes in a flat list, no default, nothing indicating which is better | Routes ranked by how fast they have actually resolved cases like this one. Estimated gap: **11 to 23 days per case** [estimated]{.chip .chip-estimated} n=454,232 |
-| **Performance** | The only available standard is *the same as last time*, so the best any model can do is reproduce current practice | Does the faster routing still get action taken? Two standard tests disagree [open]{.chip .chip-open} |
+| **Time** | About 50 preset routes in a flat list, no default, nothing indicating which is better | No replicated gain. The apparent 2024 advantage became **−2.3 to +0.1 days** under the same augmented estimator in the untouched 2025 period [open]{.chip .chip-open} n=113,535 |
+| **Performance** | The only available standard is *the same as last time*, so the best any model can do is reproduce current practice | A historical ranker is a research prototype, not a recommendation: assignment-time provenance is unresolved and no causal routing gain is established [open]{.chip .chip-open} |
 :::
 
 ::: {.lead}
@@ -400,8 +474,8 @@ We changed the question. Not where do cases like this usually go, but which rout
 :::
 
 ::: notes
-~3 min. This is the most substantial single result in Part 1, so give it the
-time the other three did not need.
+~3 min. This is the most important null result in Part 1, so give it the time
+the other three did not need.
 
 Start with why the obvious version fails. If we train a model on where cases
 went, the ceiling is current practice, including every bad habit in it. A
@@ -411,20 +485,21 @@ showing you an accuracy score for route suggestions: it would measure the wrong
 thing.
 
 Then the second row, which is the honest part. Routing purely for speed would
-find the offices that *close* cases rather than the offices that *solve* them —
-and we know that is a live risk, because closures claiming action take 18 days
-longer than closures claiming none. So the analysis is constrained to preserve
-the rate of real action, and it is that constraint the two tests disagree about.
-One says it holds comfortably, the other says it fails.
+find the offices that *close* cases rather than the offices that *solve* them.
+The 2024 development analysis appeared to show a large advantage, but the same
+augmented comparison on the untouched 2025 period ranged from slightly worse to
+effectively zero. The direct-model gains were not corroborated.
 
-So: the gap is real, the recommendation is not available yet, and what closes it
-is three hundred closed cases read by an officer. That is the fourth ask.
+So: there is no day-saving claim to carry forward. The historical data also do
+not prove that the recorded department is the assignment that was visible when
+the decision was made, and the current actionable population is derived from
+closure records rather than known at intake. Better modelling cannot repair
+those missing facts.
 
-If asked about the four corrections behind the number: recent cases have not had
-time to close, harder cases get escalated further, picking the best of many
-routes flatters the winner, and comparing only cases that came out well compares
-different cases under each choice. All four are handled and each one made the
-number smaller.
+What closes the question is prospective measurement: freeze the eligibility and
+suggestion policy, record the suggestion and officer decision at assignment
+time, and compare outcomes in a bounded trial. A hand-read sample can validate
+the outcome proxy; it cannot estimate a routing effect on its own.
 :::
 
 ---
@@ -437,7 +512,7 @@ number smaller.
 | **Pipeline** | 15 min → 14 s | Redaction: 0 shaped identifiers in 55,544. Category: 90.9% top-3. Summary: weakest, 8/26. Reading: unscored |
 | **Actionability** | judgement → flagged at intake | 13/13 caught, 3/44 false, n=57 |
 | **Deduplication** | handled *n* times → once | 37,299 confirmed repeats; our increment unmeasured |
-| **Routing** | 11–23 days per case | one constraint unresolved |
+| **Routing** | no replicated day-saving estimate | 2025 augmented contrast: −2.3 to +0.1 days; assignment provenance unresolved |
 :::
 
 ::: {.lead}
@@ -453,8 +528,167 @@ component is faster and each has a quality number, and every quality number
 rests on a test we ran on ourselves. That is the honest state of Part 1, and it
 converts directly into the first ask.
 
-Then hand over: "that is the efficiency half. The other half is the one I think
-is actually worth your time."
+Then set up the next three slides, which are the part of this section worth
+keeping: "those are our numbers. The next three slides are how we got them, what
+surprised us, and how you would think about buying any of this — and those
+outlive whatever models anyone ends up running."
+:::
+
+---
+
+## How you would check any of this {.add-slide data-menu-title="The measurement"}
+
+::: {.lead}
+The models will be replaced. The way you check them does not have to be.
+:::
+
+::: {.grid .prose-first}
+| Ask of any system, including ours | Why it matters |
+|---|---|
+| **How many cases was it tested on?** | 57 and 3,160 are different kinds of evidence, and both get called "tested" |
+| **Which cases were held back and never looked at?** | A score on cases used to build the thing is not a score |
+| **Were the held-back cases from a later period, or picked at random?** | Random picking lets the future leak into the past |
+| **Could the same complaint sit on both sides?** | Grievances repeat. If a repeat is in both, the system is being marked on cases it has already seen |
+| **How wide is the uncertainty?** | A number without a range hides how little it may rest on |
+| **What result would have made you say it is not ready?** | If there is no such result, nothing was ever at risk |
+
+:::
+
+*Our own answer to the last one: none of what you have just seen is ready. We say so on every slide.* [measured]{.chip .chip-measured}
+
+::: notes
+~2 min, and this is the most portable slide in the deck. Slow down.
+
+Frame it as the thing we can give that a supplier structurally cannot. We built
+these components, and we also built the test that could have failed them. Anyone
+selling a system has a reason not to design that test carefully. We do not.
+
+Walk the six questions as questions, not as our methodology. The officer should
+leave able to use this list in a meeting we are not in. That is the entire point
+of the slide.
+
+The third and fourth are the ones that actually catch people, and they are worth
+a sentence each. Splitting cases at random rather than by date lets a system be
+tested on the same period it learned from, which flatters it. And because the
+same grievance genuinely does get filed more than once, an unsplit repeat means
+the system is graded on an answer it has already been given.
+
+Then our own answer, and do not soften it: nothing here is release-eligible, we
+have said so on every slide, and the last question is the one we would want asked
+of us.
+
+If anyone wants the technical version afterwards: chronological splits January to
+June, July to September, October to December; exact normalised text grouped into
+one split so repetitions cannot leak; Wilson intervals throughout; and the 2024
+test was viewed while improving the harness, which is why we call it
+developmental held-out evidence rather than a release gate.
+:::
+
+---
+
+## The expensive option is not automatically the better one {.add-slide data-menu-title="What surprised us"}
+
+::: {.grid .prose-first}
+| Flagging complaints that need clarification | Large multilingual AI model | Simple word-counting method |
+|---|---|---|
+| **Cases needing clarification, caught** | 9 of 13 | **13 of 13** |
+| **Overall accuracy** | 86% | **95%** |
+:::
+
+On 57 cases. This is a development actionability result, not a replacement for
+the separate production categoriser. [measured]{.chip .chip-measured}
+
+::: {.lead}
+We are not saying simple always wins. We are saying nobody can tell you which wins on Odisha's grievances without testing both on Odisha's grievances.
+:::
+
+::: notes
+~2 min. Short slide, disproportionate value, and the one most likely to be quoted
+back to you later.
+
+Tell it as a story about being wrong. We expected the large multilingual model to
+win, because that is what everyone expects. In this 57-case actionability
+comparison, the simple development candidate caught more of the cases needing
+clarification. This does not replace the separate production categoriser.
+
+Then the transferable point, which is the reason the slide exists. When a
+proposal arrives built on a large model, the size of the model is not evidence
+that it will work here. Odia, administrative vocabulary, short and messy text,
+and a category list specific to this state are all things that make general
+capability a poor predictor of local performance. The only thing that settles it
+is a test on your own records, which is the previous slide.
+
+Careful with the denominator and say it before anyone asks: 57 cases. It is a
+small test. It is enough to say the expensive option did not automatically win;
+it is not enough to say the simple one is better in general, and we are not
+saying that.
+
+Model names if anyone asks, and only if: the large actionability comparison model
+was MuRIL and the simple candidate was TF-IDF. The production categoriser is a
+separate model; none of those implementation details belongs on the slide.
+:::
+
+---
+
+## Open, or bought {.add-slide data-menu-title="Open vs bought"}
+
+::: {.grid .prose-first}
+| | Running it yourself | Buying a hosted service |
+|---|---|---|
+| **Cost** | Fixed. Hardware you already own | Per call. Grows with adoption, and adoption is the goal |
+| **Citizen data** | Never leaves the state's control | Leaves for processing, under whatever the contract says |
+| **Capability today** | Good enough for most of the pipeline | Likely better on Odia and handwriting — we have not proven it either way [open]{.chip .chip-open} |
+| **Reproducibility** | Pinned by checksum. This year's result repeats next year | The model can change behind the same name, without notice |
+| **Switching** | Replace a component | Re-procure |
+| **Can it be adapted to Odisha at all?** | Yes, on the state's own records | Often no. Many offerings are a fixed general model behind a prompt |
+:::
+
+::: {.asks}
+[Ask in this order]{.asks-h}
+
+**1.** Can it be adapted to our categories, our languages, our routing — at all?
+
+**2.** If yes, who owns what our officers' corrections produce?
+
+**3.** If no, what is the plan when it is wrong here in particular?
+:::
+
+*Not a recommendation. This is how to decide, not what to decide.* [open]{.chip .chip-open}
+
+::: notes
+~3 min. Present the table as a decision aid, not a position, and say that out
+loud at the start. If pushed for a recommendation, the honest answer is that it
+depends on the workload and that this table is how to decide.
+
+Spend your time on the last row, because it is the one that is usually got
+backwards. The instinctive question is "who owns the learning if the system
+improves from our officers' corrections". That is a real contract question and it
+should be settled before procurement rather than after — the improvement your
+officers generate is either an asset of the state or an asset of the supplier,
+and nobody negotiates that well afterwards.
+
+But it is the second question, not the first. Ask first whether any adaptation is
+possible at all. A great many offerings resell a general-purpose model that the
+supplier cannot retrain on your data — what is on sale is a fixed model behind a
+carefully written prompt. If that is what it is, "it will learn from your
+officers" is not a feature that can be delivered, and the right question becomes
+what happens when it is systematically wrong in a way that is specific to Odisha,
+because nothing in the arrangement will fix that.
+
+So, three questions in order: can it be adapted to our categories, our languages
+and our routing at all; if yes, who owns what our officers' corrections produce;
+if no, what is the plan when it is wrong here in particular.
+
+On reproducibility, give the concrete version: a hosted model can be updated
+behind a stable name, so an acceptance test passed in March may not describe what
+is running in September. The mitigation is not to avoid hosted services, it is to
+record what answered every call and re-run the test on a schedule — which is a
+job, and it is one of the jobs the cell at the end of this talk would do.
+
+Sarvam belongs here if it comes up: hosted, authorised under an existing
+government MoU, and our planned route for Odia and handwriting. That is a
+deliberate exception made with approval, not an endorsement, and we have not
+proven it is better.
 :::
 
 ---
@@ -473,11 +707,13 @@ Nothing about what the complaints are *about*, or who is making them.
 :::
 
 ::: {.add}
-[What we add]{.sc-h}
+[What is possible]{.sc-h}
 
-**What are people complaining about?** Hotspots, spikes, and a live signal at the officer's desk.
+**Is the system working?** How long cases take, and whether anything was done.
 
-**Who is complaining?** Geography, gender, channel — and who is being missed.
+**What is the state learning?** Where problems are, and what is rising.
+
+**Can anyone ask it?** A question in plain language, not a data request.
 :::
 :::
 
@@ -496,8 +732,8 @@ self-reported, dated and geocoded record of what is going wrong across
 thirty districts, and the only question anyone asks of it is how many are
 closed. Nothing in the reporting surface asks what the complaints are about.
 
-Two questions organise everything after this. What are people complaining about,
-and who is complaining. Say them now and then answer them in order.
+Three questions organise everything after this, and they are the same three that
+become the cell's remit at the end. Say them now and answer them in order.
 
 Both pips fill here. By the end of this section the ledger is complete.
 :::
@@ -541,69 +777,191 @@ would settle it. Say the limit of your own evidence before someone else does.
 
 ---
 
-## What are people complaining about? {.add-slide data-menu-title="What: hotspots"}
+## Is the system working? {.add-slide data-menu-title="1 · Performance"}
 
-{{< include assets/_hotspot-map.qmd >}}
+::: {.compare}
+| | Today | What the record already supports |
+|---|---|---|
+| **Time** | A disposal percentage. No median age, no time to first action, no ageing | All of it, by office, subject and district, from dates already recorded [measured]{.chip .chip-measured} |
+| **Quality** | Nothing. A case closed and a case solved are the same row | Whether the closing officer claimed any action at all [measured]{.chip .chip-measured} 1,209,144 closed cases |
+:::
 
-Where a problem is concentrated is in the record already. It has never been
-drawn. [measured]{.chip .chip-measured}
+::: {.grid .prose-first}
+| How 1.2M grievances were closed | Share | Median days |
+|---|---|---|
+| Closed claiming **no action** | 39.1% | 46 |
+| Closed with wording that fits no standard category | 35.7% | 25 |
+| Closed claiming **appropriate action** | 23.2% | 54 |
+| Closed claiming the citizen **benefited** | 1.9% | 44 |
+:::
+
+::: {.lead}
+Closing a case with action recorded takes longer than closing one without. A percentage that counts both as success cannot see that.
+:::
 
 ::: notes
-~2 min, and this is the moment to slow down and let them look.
+~3 min. This is the first of the three capabilities and it is the one officers
+feel immediately. It is also the most delicate slide in the deck, so set the tone
+before the numbers: this audits the existing report rather than competing with
+it, and nothing here is an accusation about any office.
 
-Say what they are seeing: every grievance carries a district and most carry a
-block, so complaint intensity by place and subject is computable today, for any
-category, over five years. Nothing new was collected to make this.
+Time first, and it is the easy half. Every date needed to compute median age,
+time to first action and ageing is already in the database. None of it is on any
+screen. That is not a data problem, it is a reporting one.
 
-Switch category live if the room is engaged. Water, roads, pensions. The point
-lands harder from the switching than from any single map: it is not a chart
-someone made, it is a question anyone can now ask.
+Then quality, which is the half that does not exist at all today. A case that was
+solved and a case that was closed with "no action possible" are the same row in
+every report. Read the table slowly.
 
-Then the operational sentence: a concentration is not automatically a problem —
-a big district files more of everything. What matters is concentration relative
-to what that place normally files, which is the next slide.
+Land the last line and let it sit. Closures claiming appropriate action run at a
+median of 54 days; closures claiming no action, 46. Doing the work takes longer
+than not doing it, which is obvious when said aloud and invisible in a disposal
+percentage. Any target built on that percentage rewards the faster of the two.
 
-If the projector cannot run it, use the static fallback and say you will send
-the live one round afterwards.
+Do not present this as a discovery about officer behaviour. The wording comes
+from a dropdown, the categories overlap, and a third of closures use text that
+fits no standard category at all. What it establishes is narrower and stronger:
+the state currently has no measure of whether anything was done, and it could
+have one from records it already holds.
+
+If asked about the benefit flag, this is the moment. Closures claiming no action
+carry it more often, 9.2%, than closures claiming appropriate action, 6.2%. The
+two signals disagree and in the wrong direction, which is exactly why we do not
+use the flag to define whether action was taken, and why it should not be
+reported as satisfaction.
 :::
 
 ---
 
-## Concentrated *and* rising is the alert worth having {.add-slide data-menu-title="What: spikes"}
+## What is the state learning? {.add-slide data-menu-title="2 · What: hotspots"}
 
-::: {.visual}
-[Visual · one worked spike, built in three steps]{.vtag}
-A weekly time series for one category in one district, baselined against the
-same period last year. Then, as fragments, the same spike resolved into three
-lines: filings, distinct problems, distinct citizens. Reveal them one at a time.
-[why]{.why} The three lines separating is the whole capability, and it only
-reads as a surprise if the audience sees the single line first. Restyle
-`fig_spike.png`, or rebuild so the fragments can be stepped through live.
-[source]{.src} `janasunani/analytics/findings/spike.py` — EWMA over category × district × week, baselined year-on-year for monsoon seasonality.
-:::
+{{< include assets/_hotspot-map.qmd >}}
 
-A rise in filings can be four hundred citizens about one road, or two hundred
-separate problems. Opposite responses, identical in a count.
-[measured]{.chip .chip-measured}
+All of this is in the record already. It has never been drawn. [measured]{.chip .chip-measured}
 
 ::: notes
-~2 min. Build the spike in three beats and pause between them.
+~2 min, and this is the moment to slow down and let them look.
 
-One: here is a rise, against the same weeks last year rather than last month,
-because monsoon seasonality would otherwise generate a spike every June.
+Say what they are seeing and give the denominator: 1,132,341 filings, all
+thirty districts, 2021 to 2025. Every grievance carries a district and most
+carry a block, so complaint intensity by place and subject is computable today,
+for any category, over five years. Nothing new was collected to make this.
 
-Two: here is that rise split into filings, distinct problems and distinct
-citizens. Let them look at the separation.
+Read the encoding out loud once, because nobody guesses it: each dot is one
+theme in one district, the colour is the theme, and the size is how many. Then
+switch theme live if the room is engaged. Housing, land, police. The point lands
+harder from the switching than from any single view: it is not a chart someone
+made, it is a question anyone can now ask.
 
-Three: the interpretation. If filings rise and distinct problems do not, it is
-one problem being reported by many people, and it needs one fix. If problems
-rise too, something is genuinely deteriorating. If citizens rise but problems do
-not, that is often a campaign — which is not a false alarm, it is a different
-kind of signal, and we come back to it.
+Two honest limits, and volunteer both rather than waiting.
 
-The honest limit: full decomposition needs the dedup index, which is built for
-the demonstration slice and not yet corpus-wide. The spike detection itself runs
-now.
+A dot sits at the middle of a district, not where the complaints are. Block is
+recorded on most filings and block-level dots are the obvious next version; we
+have not built them because it needs boundary data we do not hold. Do not let
+the dot be read as a location.
+
+And a concentration is not automatically a problem, because a big district files
+more of everything. What matters is concentration relative to what that place
+normally files, which is the next slide.
+
+If the projector cannot run it, the slide falls back to a picture of itself
+automatically. Say you will send the live one round afterwards.
+:::
+
+---
+
+## More than usual, for this place, at this time of year {.add-slide data-menu-title="2b · What is rising"}
+
+::: {.grid .prose-first}
+| The question | Why the obvious version fails |
+|---|---|
+| Is this more than usual **for this place**? | A big district files more of everything. Raw counts rank by population |
+| More than usual **at this time of year**? | Drainage complaints rise every June. Against last month, the monsoon is an emergency every year |
+| Is this **new**, or every year? | A place that complains about the same thing each year needs a different answer from one that just started |
+| Is it more **people**, or more **problems**? | Four hundred citizens about one road, or two hundred separate problems. Opposite responses, identical in a count |
+:::
+
+::: {.lead}
+A rise is only news against the right baseline. Three of these four are computable from the record today.
+:::
+
+*The fourth needs the repeat-matching to run across the whole corpus rather than the demonstration slice.* [open]{.chip .chip-open}
+
+::: notes
+~2.5 min. Deliberately a capability slide rather than one worked example, and
+that is a decision worth understanding rather than reversing.
+
+Two reasons. First, the honest one: the strongest rise in our data turns out to
+be a week when every district and every category rose together, which is a system
+event rather than a local story, and putting it up as a district finding would
+invite a correction from anyone who remembers that week. Second, the useful one:
+the four questions are the actual product. Any one spike is a demonstration; the
+questions are what the cell would ask every week.
+
+Walk the four as questions and let each land before the next. The second is the
+one that gets nods, because everyone in the room already knows that June looks
+like a crisis and is not one.
+
+The third is worth the extra twenty seconds because people find it genuinely
+interesting: chronic and acute are different problems. A place that files the
+same complaint every year is a standing failure nobody has fixed. A place that
+has just started is a change worth investigating now.
+
+The fourth is the one that changes what an officer does, which is why it is last.
+Say it as the road example: a stretch of road in one block, four hundred people
+file in a week. That needs a contractor. Two hundred separate problems in the
+same block needs two hundred decisions. Every report you have today shows those
+two as the same number.
+
+Be straight about the limit rather than burying it: separating people from
+problems needs the repeat-matching running corpus-wide, and it currently runs on
+the demonstration slice. Detection of the rise itself runs today.
+
+Method names only if pressed, and only afterwards: exponentially weighted moving
+average with a seasonal residual and a Poisson surprise threshold, per category
+and district and week, baselined same-period-last-year, with contribution
+analysis to decompose which places and subjects drove a rise.
+:::
+
+---
+
+## Can anyone ask it a question? {.add-slide data-menu-title="3 · Ask it"}
+
+{{< include assets/_nl-query.qmd >}}
+
+*The answers are real, computed from the same records as the map. The understanding is canned: four fixed questions, nothing typed, no model running. Specced, not built.* [open]{.chip .chip-open}
+
+::: notes
+~2 min. The third capability, and the one that decides whether any of this gets
+used by people who do not write queries.
+
+Click through two or three presets and let the middle panel do the work. The
+question goes in, the machine fills in a form, the form produces an answer. Say
+plainly that today this question takes a written request to a data team and comes
+back in a fortnight, if it comes back.
+
+Be scrupulous about what is real here, and say it before anyone wonders. The
+answers are genuine, computed from the same 1.1 million filings behind the map.
+The understanding is not: these are four fixed questions and nothing is being
+typed. Nothing is running in this browser. That distinction is exactly the
+discipline the measurement slide argued for, so getting caught overstating it
+here would cost more than the slide is worth.
+
+The middle panel is worth thirty seconds because it is the design decision. The
+model never writes database code. It fills in a form, and a hand-written,
+tested compiler turns the form into a query. So the set of things it can ask is
+bounded by construction: it cannot invent a table, cannot join something it
+should not, and cannot return a number nobody can trace.
+
+If asked why not just point a chatbot at the database, two reasons and both are
+concrete. The space of legal questions across thirty districts and thirty-five
+categories is combinatorial, not a list somebody can write out. And matching a
+question against a bank of stored questions by similarity fails exactly where it
+matters: "water complaints rising in Puri" and "water complaints falling in Puri"
+look nearly identical to that kind of matching and require opposite answers.
+
+Odia matters here and is worth saying: the intended input is a question in plain
+Odia or English, not English only.
 :::
 
 ---
@@ -733,7 +1091,7 @@ rather than collapsed.
 
 ---
 
-## Part 3 · What it adds up to {.part data-menu-title="Part 3 · Together"}
+## Part 3 · Who should own this {.part data-menu-title="Part 3 · Who owns it"}
 
 ::: {.scorecard}
 ::: {.sq}
@@ -745,11 +1103,13 @@ Performance is a disposal percentage over filings.
 :::
 
 ::: {.add}
-[What we add]{.sc-h}
+[What is possible]{.sc-h}
 
-**Processing** makes each case cheaper and more consistent, with a number on every component.
+**Automation** makes each case cheaper and more consistent, with a number on every component.
 
 **Intelligence** makes the corpus answer questions the state cannot currently ask.
+
+Neither survives without somebody whose job is to check that it works.
 :::
 :::
 
@@ -762,104 +1122,170 @@ Performance is a disposal percentage over filings.
 promised in the first minute, and each pip was shown with a number and a
 limitation.
 
-Then set up the last three slides: what we think it is worth, what could be
-measured, and what we need from you.
+Then pose the question this part answers, and pose it as an open one: all of that
+was built by a research centre that will not be here forever. Who owns it, who
+runs it, and who checks it. That is the last four slides.
 :::
 
 ---
 
-## What we expect it to be worth {.open-slide data-menu-title="Expected value"}
+## A Grievance Intelligence Cell {.add-slide data-menu-title="The cell"}
 
-::: {.bignum}
+::: {.cell}
+::: {.cell-col}
+[Is the system working?]{.cell-h}
+
+How long cases actually take, by office and subject
+
+Whether anything was actually done, not just closed
+
+Whether women, rural and paper filers are served equally
+:::
+
+::: {.cell-col}
+[What is the state learning?]{.cell-h}
+
+Where problems concentrate, by place and subject
+
+What is rising more than usual for this place and season
+
+Chronic versus new: the same complaint every year is a different problem
+:::
+
+::: {.cell-col}
+[Can anyone ask it?]{.cell-h}
+
+Questions in plain Odia or English, not a data request
+
+Reports that assemble themselves
+
+Answers in minutes, not a fortnight
+:::
+
+::: {.cell-col}
+[Can we tell if it works?]{.cell-h}
+
+Acceptance testing for any system, ours or a supplier's
+
+Re-testing on a schedule, because hosted models change
+
+Custody of the frozen cases that make any claim checkable
+:::
+:::
+
+::: {.lead}
+A standing capability inside government. We would help build it, support it, and independently check the fourth column.
+:::
+
+::: notes
+~3 min, and this is the slide the talk has been walking towards.
+
+Lead with why a cell and not a contract. Everything shown today is either a
+capability that has to be maintained or a claim that has to be re-checked, and
+both are jobs, not deliverables. A supplier can build a dashboard; nobody but the
+state can own the question of whether the dashboard is telling the truth.
+
+Take the four columns in order and keep each to about thirty seconds. The first
+is the one officers feel immediately: there is currently no measure of how long
+anything takes, and none at all of whether anything was actually done. The second
+is what the last twenty minutes demonstrated. The third is what makes it usable
+by people who do not write queries. The fourth is the one that only exists
+because somebody independent is in the room, and it is the reason we are
+proposing a cell rather than handing over a tool.
+
+Be concrete about DPIC's role and bound it, because the obvious suspicion is that
+we are proposing ourselves a permanent job. We would help stand it up, we would
+support it, and we would independently monitor whether the automation actually
+delivers. We are not asking to run it and we should not run it. The measurement
+has to survive us leaving.
+
+The full remit is wider than twelve lines: reopen rates, case-mix-adjusted office
+comparison, scheme-level feedback, cross-department root cause, under-served
+geographies, the definitions layer. Offer the longer list rather than putting it
+on the slide, and offer to write it up.
+:::
+
+---
+
+## What we could prove {.open-slide data-menu-title="Worth and proof"}
+
+::: {.bignum .bignum-compact}
 201,000–302,000
 :::
 ::: {.bignum-sub}
-officer-hours spent registering the 1.2M grievances already resolved [estimated]{.chip .chip-estimated}
+officer-hours spent registering the 1.2M grievances already resolved — the size of the pot, not a saving [estimated]{.chip .chip-estimated}
 :::
 
-That is the size of the pot. **We are not claiming to save any of it.**
-
-Three things would reduce it, in ascending order of certainty: drafting instead
-of typing; handling a repeat once instead of four times; one assignment decision
-instead of three.
-
-For citizens: shorter waits if the routing result holds, and fewer occasions to
-file the same complaint twice.
-
-::: notes
-~2 min. This section is reasoning, not evidence, and the gutter says so.
-
-Be very careful with the big number and say why. It is arithmetic on an estimate
-officers gave us. It is the denominator, not a saving. It is on the slide because
-any future claim of time saved has to be stated against something.
-
-The ordering is counter-intuitive and worth stating: the largest possible
-effect, checking a draft instead of writing one, is the one we are least sure
-of, because a bad draft is slower than no draft. The smallest, not doing the
-same repeat four times, is the one we are most sure of, because officers already
-recognise that work as waste.
-
-One warning to deliver here. The database records whether a petitioner
-benefited, and it is tempting to report that as satisfaction. It should not be:
-cases closed claiming no action carry that flag more often than cases closed
-claiming appropriate action. Whatever it measures, it is not what its name
-suggests. Satisfaction is something a citizen tells you, and nothing asks them.
-:::
-
----
-
-## Almost everything is nearly measurable {.open-slide data-menu-title="Measurability"}
-
-::: {.grid}
-| | Can we measure it? |
+::: {.grid .prose-first}
+| | Can it be proven? |
 |---|---|
-| Citizens wait less | **Yes**, from existing records, once the routing constraint is settled |
+| Citizens wait less | Not from current records. Needs assignment-time logs and a prospective comparison |
 | Where the system is not reaching people | **Yes**, today, against population |
-| Fewer repeat complaints | Almost — needs safe citizen-to-problem linkage |
+| Fewer repeat complaints | Almost. Needs safe citizen-to-problem linkage |
 | Cases reach the right office first time | Needs the suggestion-and-override log |
 | Officers spend less time per case | Needs timing in the screen and a staffing figure |
 | Citizens are more satisfied | No. Nothing asks them |
 :::
 
 ::: {.lead}
-What blocks these is instrumentation and permission, not software.
+The blocker is instrumentation and permission, not software.
 :::
 
 ::: notes
-~90 sec. Give them time to read the right-hand column before you speak.
+~2.5 min. Two beats: the size of the prize, then what could be proven about it.
 
-The pattern is the argument of the whole talk: nearly every row is blocked on
-something small and administrative — a log line, three hundred cases read, a
-timer in a screen — and not one row is blocked on a model that does not exist.
-The software is the part that is nearly done.
+Be very careful with the big number and say why. It is arithmetic on an estimate
+officers gave us. It is the denominator, not a saving, and we are claiming none
+of it. It is on the slide because any future claim of time saved has to be stated
+against something.
 
-Note the second row deliberately. Under-representation is measurable *today*,
-with no permission and no new instrumentation, and it is arguably the highest
+If asked what would reduce it, three things in ascending order of certainty, and
+the ordering is counter-intuitive: drafting instead of typing is the largest
+possible effect and the one we are least sure of, because a bad draft is slower
+than no draft; handling a repeat once instead of four times is the smallest and
+the one we are most sure of, because officers already recognise that work as
+waste.
+
+Then give them time to read the right-hand column before you speak. The pattern is
+the argument of the whole talk: every row is blocked on something specific and
+governable — a log line, an outcome-label audit, a timer in a screen, or a
+prospective comparison — and not one row is blocked on a model that does not
+exist. The software is the part that is nearly done.
+
+Note the second row deliberately. Under-representation is measurable today, with
+no permission and no new instrumentation, and it is arguably the highest
 public-value number on this slide.
 
-That reframes the ask: not budget, not procurement, not a technology decision.
-Permission to record what is already happening.
+One warning to deliver here. The database records whether a petitioner benefited,
+and it is tempting to report that as satisfaction. It should not be: cases closed
+claiming no action carry that flag more often than cases closed claiming
+appropriate action. Whatever it measures, it is not what its name suggests.
+Satisfaction is something a citizen tells you, and nothing asks them.
 :::
 
 ---
 
-## What we are asking for {.add-slide data-menu-title="The ask"}
+## The cell's first quarter {.add-slide data-menu-title="The ask"}
 
-::: {.grid}
-| Decision | What it involves |
+::: {.grid .prose-first}
+| Four permissions | What it involves |
 |---|---|
 | **Let officers check our work** | A few officers review a fixed set of cases we have already scored |
 | **Name one department for a trial** | A bounded rollout with a comparison group |
 | **Log what is suggested and what the officer does** | One entry when a suggestion is shown, one when it is overridden |
-| **Have ~300 closed cases read by hand** | Settles the open routing question. About two days of one officer's time |
+| **Have ~300 closed cases read by hand** | Validates the closure-derived outcome proxy. It does not estimate routing impact by itself |
 :::
 
 ::: {.lead}
-None of these is a decision about automation.
+None of these is a decision about automation, and none of them costs money. They are what the cell would do first.
 :::
 
 ::: notes
 ~2 min. This is what the meeting is for. Do not hurry it and do not add to it.
+
+Present these as a work programme rather than four favours. That is the whole
+gain from the previous slide: a cell with a first quarter is a proposal, whereas
+four disconnected requests are an imposition.
 
 One: nothing shown today has been confirmed by an officer, so nothing can
 responsibly be recommended for real use, and we are not recommending it.
@@ -872,7 +1298,13 @@ on the assignment screen today, labelled as AI-suggested. Nobody knows whether
 it is any good, because nothing records what officers do with it. We are not
 asking to add a model. We are asking to measure the one already there.
 
-Four: three hundred cases, about two days, and the open routing question closes.
+Four: three hundred cases, about two days, to find out whether the closure-derived
+outcome label means what we think it means. That audit improves the measurement;
+the suggestion log and bounded trial are what can answer the routing question.
+
+If the room wants to say yes to the cell but not yet to the four, take that. The
+permissions are worth more with a cell behind them, but they stand alone and the
+cell can be constituted later.
 
 End on automation and mean it: the flag never blocks a filing, the category never
 assigns itself, the route is a suggestion. Every ask here is about being able to
@@ -914,8 +1346,9 @@ decision about the trial, not about readiness.
 
 *"What does it cost?"* The four asks cost officer time, not money.
 
-*"Can we quote the 11 to 23 days?"* Not as a saving. As a measured gap with an
-open constraint, and that sentence travels with it.
+*"Can we quote the 11 to 23 days?"* No. It was a development-period contrast
+that did not replicate. The defensible sentence is: no routing gain is
+established on the untouched 2025 period.
 
 *"Is citizen data safe?"* Redaction runs before anything else. Shaped identifiers
 verified absent across a district-year. Names not proven either way.
