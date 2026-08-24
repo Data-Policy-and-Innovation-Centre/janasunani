@@ -1011,11 +1011,14 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
                     anchors={
                         "adjudication",
                         "audit",
+                        "backup",
+                        "input",
                         "judge",
                         "model",
                         "output",
                         "resolver",
                         "response",
+                        "third",
                     },
                 )
                 problems += _check_sha256(
@@ -1135,11 +1138,16 @@ def _check_actionability_frontier(payload: dict[str, Any]) -> list[str]:
                 "audit",
                 "benchmark",
                 "development",
+                "evidence",
                 "gold",
                 "historical",
+                "nonreproducible",
                 "only",
                 "preserved",
                 "reproducible",
+                "retained",
+                "source",
+                "superseded",
             },
         )
         problems += _check_nonnegative_int(
@@ -1241,10 +1249,16 @@ def _check_sarvam_snapshots(payload: dict[str, Any]) -> list[str]:
         "artifact",
         "audit",
         "database",
+        "human",
+        "interrupted",
+        "machine",
+        "readable",
+        "run",
         "scorecard",
         "snapshot",
         "source",
         "sqlite",
+        "validation",
     }
     if not isinstance(artifacts, dict):
         problems.append("Sarvam artifacts must be an object")
