@@ -739,12 +739,11 @@ deck-shots:
 # regenerating those aggregates is a separate, deliberate step (see
 # assets/data/README.md).
 #
-# Plain python3, no uv: both scripts import nothing outside the standard
-# library, and that is worth keeping true so rebuilding a slide never waits on
-# dependency resolution.
+# Use the project environment because the map imports the centrally governed
+# DPIC chart palette. Both scripts still read committed aggregates only.
 deck-assets:
-	python3 scripts/build_deck_map.py --deck $(call sh_quote,$(DECK_DIR))
-	python3 scripts/build_deck_nlq.py --deck $(call sh_quote,$(DECK_DIR))
+	uv run python scripts/build_deck_map.py --deck $(call sh_quote,$(DECK_DIR))
+	uv run python scripts/build_deck_nlq.py --deck $(call sh_quote,$(DECK_DIR))
 
 # Static pictures of the three interactive components, shown if their scripts
 # fail. Needs a rendered deck to shoot, so: make deck && make deck-fallbacks &&

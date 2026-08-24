@@ -31,8 +31,9 @@ give this talk at all.
 - [x] `hotspot_map` — **built**, as a generated dot map (`_hotspot-map.qmd`, from
       `scripts/build_deck_map.py`), over 1,132,341 real filings. One dot per
       district per theme: colour is the theme, dot *area* is the count, chips
-      filter. Dots sit at **district centroids**, which is what the geometry in
-      this repo supports. Block would be better — `block` is populated on 82.7%
+      filter. Dots cluster near **district centroids**, with every centre kept
+      inside its source district. That is what the geometry in this repo
+      supports. Block would be better — `block` is populated on 82.7%
       of filings across 461 district-block pairs — but that needs a public
       boundary download and a crosswalk over 427 spellings. **Do not scatter dots
       inside a district outline to look block-level**; it invents precision the
