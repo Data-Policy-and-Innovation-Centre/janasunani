@@ -170,6 +170,24 @@ def _matches_field_schema(
 def _schema_relation_errors(payload: object, schema_version: object) -> list[str]:
     """Validate cross-field invariants that scalar schemas cannot express."""
 
+    errors: list[str] = []
+    if schema_version in {
+        "janasunani.pilot-operational-effects/v1",
+        "janasunani.pilot-citizen-outcomes/v1",
+    }:
+        missing_total = _lookup(payload, "missingness.total")
+        missing_by_reason = _lookup(payload, "missingness.by_reason")
+        if (
+            isinstance(missing_total, int)
+            and not isinstance(missing_total, bool)
+            and missing_total >= 0
+            and _is_nonempty_count_map(missing_by_reason)
+            and missing_total != sum(missing_by_reason.values())
+        ):
+            errors.append(
+                "missingness.total must equal the sum of missingness.by_reason"
+            )
+
     if schema_version == "janasunani.pilot-citizen-outcomes/v1":
         invitations = _lookup(payload, "invitations")
         responses = _lookup(payload, "responses")
@@ -180,8 +198,7 @@ def _schema_relation_errors(payload: object, schema_version: object) -> list[str
             isinstance(value, int) and not isinstance(value, bool) and value >= 0
             for value in counts
         ) or not _is_finite_number(response_rate):
-            return []
-        errors: list[str] = []
+            return errors
         if responses > invitations:
             errors.append("responses must not exceed invitations")
         if satisfaction_n > responses:
@@ -193,16 +210,16 @@ def _schema_relation_errors(payload: object, schema_version: object) -> list[str
         return errors
 
     if schema_version != "janasunani.pipeline-latency/v1":
-        return []
+        return errors
     attempts = _lookup(payload, "attempts")
     completed = _lookup(payload, "completed_attempts")
     failed = _lookup(payload, "failed_attempts")
     values = (attempts, completed, failed)
     if not all(isinstance(value, int) and not isinstance(value, bool) for value in values):
-        return []
+        return errors
     if attempts != completed + failed:
-        return ["attempts must equal completed_attempts plus failed_attempts"]
-    return []
+        errors.append("attempts must equal completed_attempts plus failed_attempts")
+    return errors
 
 
 def _required_field_relation_errors(

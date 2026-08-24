@@ -386,6 +386,56 @@ def test_citizen_outcomes_reconciles_response_counts(
 
 
 @pytest.mark.parametrize(
+    "schema_version",
+    [
+        "janasunani.pilot-operational-effects/v1",
+        "janasunani.pilot-citizen-outcomes/v1",
+    ],
+)
+def test_pilot_missingness_total_must_equal_reason_counts(
+    tmp_path: Path, schema_version: str
+) -> None:
+    config = _config()
+    pilot = config["artifacts"][2]  # type: ignore[index]
+    pilot["schema_version"] = schema_version
+    pilot["required_fields"] = {
+        "missingness.total": "nonnegative_integer",
+        "missingness.by_reason": "nonempty_count_map",
+    }
+    results = tmp_path / "results"
+    results.mkdir()
+    for name in ("latency", "quality"):
+        (results / f"{name}.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": f"test-{name}/v1",
+                    "publication_ready": True,
+                    "metrics": {"n": 1},
+                }
+            )
+            + "\n"
+        )
+    (results / "pilot.json").write_text(
+        json.dumps(
+            {
+                "schema_version": schema_version,
+                "publication_ready": True,
+                "missingness": {"total": 0, "by_reason": {"lost": 5}},
+            }
+        )
+        + "\n"
+    )
+
+    bundle = build_bundle(config, root=tmp_path)  # type: ignore[arg-type]
+
+    pilot_record = next(row for row in bundle["artifacts"] if row["id"] == "pilot")
+    assert pilot_record["status"] == "incomplete"
+    assert pilot_record["completeness_errors"] == [
+        "missingness.total must equal the sum of missingness.by_reason"
+    ]
+
+
+@pytest.mark.parametrize(
     ("schema_version", "effect"),
     [
         ("janasunani.pilot-operational-effects/v1", "first_action"),

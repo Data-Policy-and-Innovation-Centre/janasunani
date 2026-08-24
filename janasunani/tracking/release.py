@@ -26,11 +26,19 @@ ACTIVE_POINTER = "active.json"
 _RELEASE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _GIT_SHA = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
+_DVC_HASH = re.compile(r"^(?:(?:md5|sha256):)?(?:[0-9a-f]{32}|[0-9a-f]{64})(?:\.dir)?$")
 _TRUST_TIERS = frozenset({"local", "authorized_hosted", "experimental"})
 
 
 class ReleaseManifestError(ValueError):
     """The manifest or the artifact it pins is invalid."""
+
+
+def _nonempty_provenance_string(value: object, *, model: str, field: str) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise ReleaseManifestError(
+            f"model {model!r} {field} must be a non-empty string"
+        )
 
 
 def validate_release_identifier(value: object, *, field: str) -> str:
@@ -187,6 +195,24 @@ class ModelRelease:
         parameters = payload.get("parameters")
         if parameters is not None and not isinstance(parameters, Mapping):
             raise ReleaseManifestError(f"model {name!r} parameters must be an object")
+        for field in (
+            "alias",
+            "input_schema_version",
+            "output_schema_version",
+            "dvc_path",
+            "benchmark_run_id",
+            "dataset_id",
+            "gold_id",
+        ):
+            if field in payload:
+                _nonempty_provenance_string(payload[field], model=name, field=field)
+        dvc_hash = payload.get("dvc_hash")
+        if dvc_hash is not None and (
+            not isinstance(dvc_hash, str) or _DVC_HASH.fullmatch(dvc_hash) is None
+        ):
+            raise ReleaseManifestError(
+                f"model {name!r} dvc_hash must be a supported digest"
+            )
         return cls(name=name, **dict(payload))
 
     def as_dict(self) -> dict[str, Any]:

@@ -29,7 +29,7 @@ def _local_model(path, *, version="7"):
         alias="production",
         parameters={"threshold": 0.7},
         dvc_path="models/actionability",
-        dvc_hash="dvc123",
+        dvc_hash="0" * 32,
         benchmark_run_id="run123",
         dataset_id="redacted-gold-v1",
         gold_id="actionability-gold-v1",
@@ -242,6 +242,44 @@ def test_manifest_rejects_malformed_artifact_digest():
     }
 
     with pytest.raises(ReleaseManifestError, match="64 lowercase hex"):
+        ReleaseManifest.from_dict(payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        *(
+            (field, value, f"{field} must be a non-empty string")
+            for field in ("dvc_path", "benchmark_run_id", "dataset_id", "gold_id")
+            for value in (["not-a-string"], {"value": "bad"}, True, 1, "", "  ")
+        ),
+        ("dvc_hash", ["not-a-digest"], "dvc_hash must be a supported digest"),
+        ("dvc_hash", {"value": "bad"}, "dvc_hash must be a supported digest"),
+        ("dvc_hash", True, "dvc_hash must be a supported digest"),
+        ("dvc_hash", 1, "dvc_hash must be a supported digest"),
+        ("dvc_hash", "", "dvc_hash must be a supported digest"),
+        ("dvc_hash", "not-a-digest", "dvc_hash must be a supported digest"),
+    ],
+)
+def test_manifest_rejects_invalid_supplied_provenance_fields(field, value, message):
+    payload = {
+        "schema_version": "janasunani.release/v1",
+        "release_id": "release-1",
+        "created_at": "2026-08-10T10:00:00Z",
+        "git_sha": "a" * 40,
+        "models": {
+            "actionability": {
+                "provider": "local_sklearn",
+                "trust_tier": "local",
+                "version": "1",
+                "artifact_path": "artifacts/actionability",
+                "artifact_sha256": "0" * 64,
+                field: value,
+            }
+        },
+    }
+
+    with pytest.raises(ReleaseManifestError, match=message):
         ReleaseManifest.from_dict(payload)
 
 
