@@ -1,5 +1,6 @@
 """
-Janasunani 2.0 — a seven-slide technical briefing.
+Janasunani 2.0 — an eleven-slide technical briefing (twelve with the optional
+Sarvam category head-to-head).
 
 Built by CLONING slide archetypes out of the GAPG 18 August 2026 reference deck,
 so type, colour, geometry and the footer lockup are that file's own shapes rather
@@ -409,6 +410,12 @@ textbox(
     "so the model adds 9 and 7 points.",
     x=0.7, y=6.52, w=11.9, h=0.26, size=12, color=SUBTLE, italic=True,
 )
+textbox(
+    s,
+    "Document measurements are one draw, Sambalpur 2024, the slice the duplicate index was "
+    "built on. Categorisation, triage and routing are measured on text and records, not documents.",
+    x=0.7, y=6.78, w=11.9, h=0.22, size=11, color=SUBTLE, italic=True,
+)
 s.notes_slide.notes_text_frame.text = (
     "MODEL OPTIONS AT EACH STAGE, if asked what else was tried.\n"
     "  OCR: pytesseract ships because it handles Odia script. DeepSeek-OCR exists in the repo "
@@ -432,6 +439,12 @@ s.notes_slide.notes_text_frame.text = (
     "start 19.4 s. Measured on an arm64 laptop, not the deployment box.\n\n"
     "Four stages (format classifier, page type, pii, spam) were never separately instrumented "
     "and carry n=0. They are omitted rather than shown as zero.\n\n"
+    "PROVENANCE, not yet reflected in the numbers above. A 224-document real-document sample "
+    "(451 pages, 30 categories, nesting the earlier 92-ticket Sarvam sample by ticket id) is "
+    "staged for Sambalpur 2024, the slice the duplicate index was built on. Re-running the "
+    "latency harness (feat/benchmark-real-documents, load_staged_documents) against it was "
+    "deliberately deferred to avoid CPU contention with a concurrent Sarvam evaluation; the n=20 "
+    "synthetic-fixture numbers above are unchanged pending that run.\n\n"
     "QUALITY, with intervals.\n"
     "Redaction: overlap recall 0.779, coverage 0.783, exact 0.550 on 480 hand-marked gold "
     "spans across 89 pages and 50 documents. Per entity: Aadhaar 0.857 (n=7), phone 0.828 "
@@ -671,7 +684,62 @@ s.notes_slide.notes_text_frame.text = (
     "this data cannot detect one."
 )
 
-# ══ 8 · The limits ════════════════════════════════════════════════════════════
+# ══ 8 · What the record can now be asked ══════════════════════════════════════
+s = clone(prs, A_NUM3)
+sh = S(s)
+set_text(sh[0], "WHAT THE RECORD CAN NOW BE ASKED")
+set_text(sh[1], "The dashboards count filings, not problems")
+set_text(sh[3], "Duplicate-adjusted workload.")
+set_text(sh[5], "55,544 filings in the slice are 10,963 distinct problems from 8,560 citizens. The portal reports the first number.")
+set_text(sh[8], "A spike with the cause attached.")
+set_text(sh[10], "Every spike carries filings, distinct problems and distinct citizens. Four hundred citizens on one road and two hundred unrelated problems look identical in a count.")
+set_text(sh[13], "Local issue themes.")
+set_text(sh[15], "Grouped by what complaints are about rather than the category assigned at intake. Concentrated in one place and rising is the alert worth acting on.")
+set_text(sh[16], "If an analyst with database access could produce a number in a day, we do not present it as something the system enables.")
+s.notes_slide.notes_text_frame.text = (
+    "THE HOUSE RULE, janasunani/analytics/README.md. An insight is something the record already "
+    "contained and nobody had queried. A capability is something no existing dashboard could "
+    "produce. Presenting the first as the second is the failure mode, ROADMAP section 5.3. All "
+    "three items on this slide are capabilities: none is a query an analyst with database access "
+    "could run against the existing dashboards in a day.\n\n"
+    "ITEM 1, workload. 55,544 filings in Sambalpur 2024 are 10,963 distinct problems from 8,560 "
+    "citizens. docs/PERFORMANCE.md section 4, production run on the deployment CPU box: ~57 "
+    "minutes on 2 vCPU, 16,138,623 comparison pairs. Re-run attempted locally on this branch "
+    "(janasunani-publish-workload): the only dedup index reachable outside the deployment box is "
+    "a 20-ticket local smoke-test population, which verifies the digest-guard plumbing end to end "
+    "(20 filings, 14 distinct, source_snapshot_id checked) but is not the governed slice, and its "
+    "numbers are not quoted here.\n\n"
+    "ITEM 2, spike. A campaign is not a false spike. Spike detection must not run on de-duplicated "
+    "counts, and every spike is reported as three numbers, filings / distinct problems / distinct "
+    "citizens, never collapsed to one. outputs/findings/spike.md still reads NULL, status 'pending "
+    "dedup index': that is a hardcoded literal in analytics/sql/spike.sql (the spike_decomposition "
+    "view), not a live check, so it reads the same whether or not a dedup index exists. The "
+    "dedup-aware path that does compute real numbers (compute_spike_with_dedup, "
+    "--publish-aggregates) runs, but is not scoped to a district/year before it picks its top "
+    "candidate: on this branch it decomposed a Bargarh 2023 spike against a Sambalpur "
+    "2024-scoped dedup index and silently returned no reduction at all (filings = distinct "
+    "problems = distinct citizens). Filed as tech debt, not fixed on this branch.\n\n"
+    "ITEM 3, themes. janasunani-publish-themes crashed on this slice, ColumnNotFoundError "
+    "'filings', because render_markdown assumed the full theme schema and the 'too few rows in "
+    "this category' early-exit path returns a different one. Fixed on this branch "
+    "(tests/test_themes.py adds coverage for both early-exit shapes). It now reports 'No themes "
+    "computed (insufficient data for themes)' for Housing, Sambalpur 2024, honestly, given only "
+    "20 locally-available redacted records rather than crashing.\n\n"
+    "PROVENANCE DISCIPLINE. janasunani/serving/intelligence.py reports each dashboard panel as "
+    "Recorded or Unavailable with a stated reason, never as a silent zero (tests/"
+    "test_intelligence.py). Marts are portable SQL handed to the department to run for "
+    "themselves (janasunani/analytics/marts.py). Findings emit aggregates only, never a row of "
+    "citizen writing (janasunani/analytics/README.md house rules).\n\n"
+    "FOR CONTEXT IF ASKED. Closure ladder: 472,782 of 776,922 disposed with no action claimed "
+    "(docs/FINDINGS.md), against 1,209,144 total resolved complaints. Confirmed duplicates, the "
+    "manual-process baseline: 37,299 officer-confirmed action rows, 21,117 already-taken-up plus "
+    "16,182 duplicate-copy (docs/PERFORMANCE.md section 4). The MinHash increment is reported "
+    "separately and is never merged into that baseline. An earlier mart run mis-quoted 18,432 "
+    "duplicates from a template-matching defect; docs/PERFORMANCE.md says explicitly not to "
+    "quote it, and this deck does not."
+)
+
+# ══ 9 · The limits ════════════════════════════════════════════════════════════
 s = clone(prs, A_NUM3)
 sh = S(s)
 set_text(sh[0], "THE LIMITS")
@@ -699,7 +767,7 @@ s.notes_slide.notes_text_frame.text = (
     "cannot defend, and this deck has to survive the room checking it."
 )
 
-# ══ 9 · Sarvam ════════════════════════════════════════════════════════════════
+# ══ 10 · Sarvam ═══════════════════════════════════════════════════════════════
 s = clone(prs, A_TWOGROUP)
 sh = S(s)
 set_text(sh[0], "THE OUTSIDE OPTION: SARVAM")
@@ -765,7 +833,7 @@ s.notes_slide.notes_text_frame.text = (
     "path. Do not quote ₹700; that was priced on the withdrawn 30B model."
 )
 
-# ══ 10 · Category head to head (only when measured) ════════════════════════════
+# ══ 11 · Category head to head (only when measured) ═══════════════════════════
 if SARVAM_HEAD_TO_HEAD:
     hh = SARVAM_HEAD_TO_HEAD
     s = clone(prs, A_BARS3)
@@ -795,7 +863,7 @@ if SARVAM_HEAD_TO_HEAD:
     set_text(sh[12], hh["closing"])
     s.notes_slide.notes_text_frame.text = hh.get("notes", "")
 
-# ══ 11 · Closing ═══════════════════════════════════════════════════════════════
+# ══ 12 · Closing ═══════════════════════════════════════════════════════════════
 s = clone(prs, A_CLOSING)
 s.notes_slide.notes_text_frame.text = (
     "Close on the limits, not a summary.\n\n"
