@@ -71,7 +71,32 @@ Macro-F1 is weak, 25.2% informative and 19.8% all eligible, and about a dozen de
 
 WITHDRAWN, do not use: the in-sample crosswalk figures 60.9 / 67.5 / 72.8, which are resubstitution. And any routing time saving: an estimated 11 to 23 day gain held on validation 2024 and failed on the untouched 2025 test year at -2.35 days against a standard error of 3.50. Withdrawn 23 August, commits 879c24c and 365e3b4.
 
-## Slide 6 — What we cannot measure
+## Slide 6 — The estimate did not survive the second year.
+
+Ninety seconds. The table is the argument; do not narrate every row.
+
+Say: on 2024 the two estimators land 2.3 days apart. On 2025 they land 33 apart. Same code, same pipeline, one year later. When a direct and a doubly-robust estimator diverge like that, the divergence measures missing overlap. It is not a choice between two answers.
+
+SOURCES, live 19 August refit. ope_val_ridge.json (n=450,567) and ope_test_ridge.json (n=113,535), both under outputs/experiments/routing_outcome/. Row 1 is delta_direct, 24.50 and 30.53. Row 2 is delta_dr, 26.77 (SE 4.04) and -2.35 (SE 3.50). Row 3 is the historical arm, where v_dr is the observed IPCW mean and v_direct is the model's prediction of it: 97.84 against 93.22 on validation, 108.69 against 49.74 on test. Row 4 is overlap.match_rate, 0.380 and 0.156. Row 5 is censoring_rate_of_split, 0.092 and 0.344.
+
+DO NOT USE routing-outcome-ope-val-ridge-2026-08-13.json. Its validation match rate of 0.536 and its +20.1 belong to the withdrawn run and it sits in docs/experiments/superseded/. Quoting it to dramatise the collapse re-cites the thing we retracted.
+
+'So which estimator do you believe?' Neither, on the test year. The direct one extrapolates into cells where the recommended route was never taken, and row 3 shows it is 118% wrong on the one arm we can check. The doubly-robust one down-weights those cells, leaving an effective sample of 7% of n. The honest statement is that the test year cannot answer the question.
+
+'Is this replication failure or truncation?' They cannot be separated in this design. The snapshot is 2025-07-30, so the cohort has at most seven months against a 365-day outcome and censoring runs 3.1%, 9.2%, 34.4%. Answering it needs a later snapshot, not a better estimator.
+
+'What about a different outcome model?' Boosting instead of ridge gives 12.40 on validation against ridge's 26.77, and 0.15 on test against -2.35. The two families disagree by a factor of two on the year that looked positive and agree on zero for the year that did not. The validation gain was never stable either.
+
+Only if pushed further:
+- No interference is assumed, and the design document says that assumption 'in a queueing system is false'. Route everyone to the fast office and it stops being fast. That bounds any future version of this exercise.
+- Unconfoundedness is invoked on less information than the assigning officer had. Congestion and trailing destination performance are absent from the covariates.
+- Treatment provenance is unresolved. dept_id and vchAllEscUser may record final state rather than the initial assignment.
+
+WITHDRAWN, do not use: any routing time saving, including the 11 to 23 day band. Do not present it as conservative, provisional or pending. There is no estimate.
+
+What we are NOT saying: that routing gains do not exist. We are saying this design on this data cannot detect one.
+
+## Slide 7 — What we cannot measure
 
 Do not cut this slide for time. It is the one that makes the rest credible.
 
@@ -85,7 +110,7 @@ Two more we do not claim, if asked: no gain from duplicate detection beyond the 
 
 If someone asks why so little is claimed: because the alternative is claiming things we cannot defend, and this deck has to survive the room checking it.
 
-## Slide 7 — It does more. We have not shown it does better.
+## Slide 8 — It does more. We have not shown it does better.
 
 The provider is Sarvam. Two endpoints, billed separately: digitise at ₹0.50 a page returns text and layout; extract at ₹1.00 a page returns schema-driven fields. Both is ₹1.50. Source: janasunani/evaluation/pricing.py, checked against the Sarvam dashboard 2026-08-07. Our local pipeline is ₹0.00 a page.
 
@@ -111,7 +136,7 @@ GOVERNANCE. Trust tier authorized-external. Authorisation is a GoO-Sarvam MoU wi
 
 COST AT SCALE, projected list price: ₹48,000 to digitise the 96,469-page English corpus, ₹145,000 for both endpoints, ₹8,050 to push 1.37M subjects through the 105B text model. At 10 requests a minute, which does not rise with the plan tier, the full corpus is roughly ten days of continuous calling. It is a measurement instrument, not a backfill path. Do not quote ₹700; that was priced on the withdrawn 30B model.
 
-## Slide 8 — Data, Policy and Innovation Centre
+## Slide 9 — Data, Policy and Innovation Centre
 
 Close on the limits, not a summary.
 
