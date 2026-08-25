@@ -39,8 +39,25 @@ mapping tables and never touch `data/`.
 `docs/experiments/routing-outcome-model.tex` is the specification. The body is
 the routing problem; the appendices hold the general theory, proved from
 prerequisites taken from the `../probability` reference (Appendix A lists
-exactly which). Read it before changing anything here. The short version of the
-target design:
+exactly which). Its final appendix is the exact as-run estimator specification:
+features, model classes, weights, support restrictions, threshold grid and the
+fit/calibration/evaluation timeline. Read it before changing anything here.
+
+The chronology needs one qualification that “out-of-period evaluation” alone
+misses:
+
+| Period | Statistical role |
+|---|---|
+| 2021–23 | Fit duration models, raw correctness classifier, empirical propensity, feature levels and eligible action sets. |
+| 2024 | Calibrate the correctness classifier isotonically; fit the 2024 censoring curve on the full arrival cohort; compare duration models and run developmental OPE. |
+| 2025 | Fit only the split-specific censoring curve; otherwise use the frozen fitted machinery as the temporal developmental check. |
+
+Thus 2024 is out of period for the raw models but not held out from correctness
+calibration. The 2025 evaluation is after that calibration. `G` is not carried
+forward from 2021–23: administrative censoring is estimated separately on each
+split's full arrival cohort.
+
+The short version of the target design:
 
 - **Latent actionability and its proxy.** `S*` is intake-time actionability, the
   property needed by the causal estimand. The stored `S` column is only
@@ -102,8 +119,10 @@ Built: joint department-chain decoding, the shared train-fitted feature encoder 
 target-encoded GBM duration models, a target-encoded action
 classifier, empirical-share propensities, the augmented IPCW score with Hájek
 normalisation, ESS, a cluster bootstrap, RMST with IPCW, Duan smearing,
-chronological out-of-period evaluation, optional policy sample splitting, and
-a total correctness-floor policy on a common support-restricted population.
+qualified chronological evaluation as described above, optional policy sample
+splitting, and a total correctness-floor policy on a common support-restricted
+population. The optional policy split was not enabled in the headline
+reproduction commands.
 
 Not built, in priority order:
 

@@ -73,7 +73,14 @@ historical R2/R3 equality must not be interpreted.
 
 **Temporal evaluation.** Durations are restricted at a 365-day horizon. The
 policy comparison is limited to declared common support and reports direct and
-augmented estimators separately.
+augmented estimators separately. The duration models, raw correctness model,
+empirical propensity and eligible sets are fitted on 2021–23. The correctness
+model is then isotonically calibrated on labelled 2024 rows, so 2024 is not a
+holdout for correctness calibration even though it is later than the raw fits;
+2025 is the subsequent temporal check. Administrative censoring is estimated
+separately within each split's full arrival cohort rather than carried forward
+from training. The design document's as-run appendix records the exact fitted
+functions, safeguards and evaluation formulas.
 
 | Cohort | Common-support n | Model | Direct Δ | Augmented Δ (SE) | ESS / n |
 |---|---:|---|---:|---:|---:|
