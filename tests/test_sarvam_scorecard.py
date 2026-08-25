@@ -629,3 +629,62 @@ def test_escaped_and_unescaped_spellings_are_not_a_disagreement():
     assert report.category is not None
     assert report.category["sarvam_ambiguous_tickets"] == 0
     assert report.category["sarvam_accuracy"] == 1.0
+
+
+def test_per_category_table_agrees_with_the_headline_on_ambiguity():
+    """The two paths must not disagree about the same ticket.
+
+    They had separate copies of the ticket-collapsing loop. Fixing only the
+    headline left `per_category_table` on first-wins, so a ticket whose page
+    one happened to match gold scored incorrect in the headline and correct in
+    the per-category row for that very category.
+    """
+    from janasunani.evaluation.sarvam_scorecard import (
+        PageRecord,
+        build_scorecard,
+        per_category_table,
+    )
+
+    pages = [
+        # Page one matches gold; page two disagrees. First-wins would call
+        # this correct. It is ambiguous, so both paths must call it wrong.
+        PageRecord(ticket="T1", page_id="T1:1", gold_category="ICDS",
+                   pipeline_category="ICDS", sarvam_category="ICDS"),
+        PageRecord(ticket="T1", page_id="T1:2", gold_category="ICDS",
+                   pipeline_category="ICDS", sarvam_category="Housing"),
+    ]
+
+    headline = build_scorecard(pages).category
+    table = per_category_table(pages)
+
+    assert headline is not None
+    assert headline["sarvam_accuracy"] == 0.0
+    assert headline["sarvam_ambiguous_tickets"] == 1
+    # The per-category row for ICDS must say the same thing.
+    assert table["ICDS"]["sarvam_correct"] == 0
+    assert table["ICDS"]["sarvam_accuracy"] == 0.0
+    # And the pipeline, which agreed across pages, is correct in both.
+    assert headline["pipeline_accuracy"] == 1.0
+    assert table["ICDS"]["pipeline_accuracy"] == 1.0
+
+
+def test_both_paths_share_one_aggregator():
+    """Guard against the duplicate loop coming back."""
+    from janasunani.evaluation.sarvam_scorecard import (
+        PageRecord,
+        aggregate_ticket_categories,
+    )
+
+    pages = [
+        PageRecord(ticket="T1", page_id="T1:1", gold_category="Legal",
+                   pipeline_category="Legal", sarvam_category="Legal"),
+        PageRecord(ticket="T1", page_id="T1:2", gold_category="Legal",
+                   pipeline_category="Traffic", sarvam_category="Legal"),
+    ]
+    agg = aggregate_ticket_categories(pages)
+    assert agg.gold["T1"] == "Legal"
+    assert agg.sarvam["T1"] == "Legal"
+    assert agg.ambiguous_sarvam == set()
+    # The pipeline disagreed with itself across pages.
+    assert agg.pipeline["T1"] is None
+    assert agg.ambiguous_pipeline == {"T1"}

@@ -44,7 +44,7 @@ import unicodedata
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple, Sequence
 
 from janasunani.config import DEMO_SLICE_DISTRICT, DEMO_SLICE_LABEL, DEMO_SLICE_YEAR
 from janasunani.evaluation.stats import (
@@ -404,29 +404,79 @@ def sample_compliance(n_pages: int, slice_label: str | None = None) -> dict[str,
 # Per-category accuracy — the spread that headlines hide
 # ---------------------------------------------------------------------------
 
+class TicketCategories(NamedTuple):
+    """One category per ticket, with the tickets whose pages disagreed."""
+
+    gold: dict[str, str | None]
+    pipeline: dict[str, str | None]
+    sarvam: dict[str, str | None]
+    ambiguous_sarvam: set[str]
+    ambiguous_pipeline: set[str]
+
+
+def aggregate_ticket_categories(pages: Sequence[PageRecord]) -> TicketCategories:
+    """Collapse per-page categories to one value per ticket.
+
+    Category is a property of the grievance, not of a page. Extract is invoked
+    per page (``sarvam_evaluate.py:604``) and schema v2 makes
+    ``grievance_category`` ``required``, so every page must answer — including
+    cover sheets and attachments that have no category to give.
+
+    **Disagreement is recorded, never resolved by position.** Keeping the first
+    non-null answer lets a forced guess on page one mask a correct answer on
+    the grievance-bearing page. Majority is no better: it favours whichever
+    page type is most numerous, usually the attachments. Without knowing which
+    page bears the grievance there is no defensible winner, so a ticket whose
+    pages disagree is returned with ``None`` and named in the ambiguous sets.
+
+    Both the headline metric and ``per_category_table`` must go through this.
+    They had separate copies of this loop, and fixing only one made the
+    per-category rows contradict the headline for the same ticket.
+    """
+    gold: dict[str, str | None] = {}
+    pipeline: dict[str, str | None] = {}
+    sarvam: dict[str, str | None] = {}
+    seen_pipeline: dict[str, set[str]] = defaultdict(set)
+    seen_sarvam: dict[str, set[str]] = defaultdict(set)
+
+    for p in pages:
+        for target, seen, val in [
+            (gold, None, p.gold_category),
+            (pipeline, seen_pipeline, p.pipeline_category),
+            (sarvam, seen_sarvam, p.sarvam_category),
+        ]:
+            key = category_key(val)
+            if seen is not None and key is not None:
+                seen[p.ticket].add(key)
+            if p.ticket not in target:
+                target[p.ticket] = val
+            elif target[p.ticket] is None and val is not None:
+                target[p.ticket] = val
+
+    ambiguous_sarvam = {t for t, vals in seen_sarvam.items() if len(vals) > 1}
+    ambiguous_pipeline = {t for t, vals in seen_pipeline.items() if len(vals) > 1}
+    for ticket in ambiguous_sarvam:
+        sarvam[ticket] = None
+    for ticket in ambiguous_pipeline:
+        pipeline[ticket] = None
+    return TicketCategories(gold, pipeline, sarvam, ambiguous_sarvam, ambiguous_pipeline)
+
+
 def per_category_table(pages: list[PageRecord]) -> dict[str, dict[str, Any]]:
     """Per-category accuracy for pipeline vs Sarvam, grouped by gold label.
 
     One row per gold_category value (e.g. Police 0.85 vs Welfare 0.51).
-    De-duplicated by ticket like the headline metric (one category per
-    ticket). Tickets without a gold label are omitted.
+    De-duplicated by ticket through :func:`aggregate_ticket_categories`, the
+    same path the headline uses, so a ticket cannot be ambiguous in one and
+    correct in the other. Tickets without a gold label are omitted.
 
     Returns mapping category -> {n_tickets, pipeline_accuracy,
     sarvam_accuracy, pipeline_correct, sarvam_correct, difference}.
     """
-    ticket_gold: dict[str, str | None] = {}
-    ticket_pipe: dict[str, str | None] = {}
-    ticket_sarvam: dict[str, str | None] = {}
-    for p in pages:
-        for d, val in [
-            (ticket_gold, p.gold_category),
-            (ticket_pipe, p.pipeline_category),
-            (ticket_sarvam, p.sarvam_category),
-        ]:
-            if p.ticket not in d:
-                d[p.ticket] = val
-            elif d[p.ticket] is None and val is not None:
-                d[p.ticket] = val
+    aggregated = aggregate_ticket_categories(pages)
+    ticket_gold = aggregated.gold
+    ticket_pipe = aggregated.pipeline
+    ticket_sarvam = aggregated.sarvam
     # Group tickets by gold category. The row label is the readable form, so
     # escaped and unescaped spellings of one category are a single row.
     groups: dict[str, list[str]] = defaultdict(list)
@@ -577,53 +627,16 @@ def build_scorecard(
     n_pages = len(pages)
     n_tickets = len({p.ticket for p in pages})
 
-    # Category arm — paired, ticket-clustered. Category is a property of the
-    # grievance, not of a page, so it is de-duplicated to one value per ticket.
-    #
-    # **Disagreement between pages is recorded, never resolved by position.**
-    # This used to keep the first non-null answer and `pass` on any later
-    # value that differed. That was survivable while a page with no grievance
-    # content could return null and let a later page's answer through. Schema
-    # v2 makes `grievance_category` `required`, and Extract is invoked per page
-    # (sarvam_evaluate.py:604), so every page must now answer — including cover
-    # sheets and attachments that have no category to give. First-wins then
-    # lets a forced guess on page one mask a correct answer on the
-    # grievance-bearing page, silently, in the primary outcome.
-    #
-    # Picking a different page is not a fix either: majority favours whichever
-    # page type is most numerous, which for a multi-page grievance is usually
-    # the attachments. Without knowing which page bears the grievance there is
-    # no defensible winner, so a ticket whose pages disagree is marked
-    # ambiguous and excluded from accuracy, with the count reported. The real
-    # fix is to extract once per grievance rather than per page.
-    ticket_gold: dict[str, str | None] = {}
-    ticket_pipe: dict[str, str | None] = {}
-    ticket_sarvam: dict[str, str | None] = {}
-    # ticket -> set of distinct non-null answers seen, per field
-    seen_gold: dict[str, set[str]] = defaultdict(set)
-    seen_pipe: dict[str, set[str]] = defaultdict(set)
-    seen_sarvam: dict[str, set[str]] = defaultdict(set)
-    for p in pages:
-        for d, seen, val in [
-            (ticket_gold, seen_gold, p.gold_category),
-            (ticket_pipe, seen_pipe, p.pipeline_category),
-            (ticket_sarvam, seen_sarvam, p.sarvam_category),
-        ]:
-            key = category_key(val)
-            if key is not None:
-                seen[p.ticket].add(key)
-            if p.ticket not in d:
-                d[p.ticket] = val
-            elif d[p.ticket] is None and val is not None:
-                d[p.ticket] = val
-
-    # A ticket whose pages gave two different answers has no usable value.
-    ambiguous_sarvam = {t for t, vals in seen_sarvam.items() if len(vals) > 1}
-    ambiguous_pipeline = {t for t, vals in seen_pipe.items() if len(vals) > 1}
-    for ticket in ambiguous_sarvam:
-        ticket_sarvam[ticket] = None
-    for ticket in ambiguous_pipeline:
-        ticket_pipe[ticket] = None
+    # Category arm — paired, ticket-clustered. One value per ticket via the
+    # shared aggregator, which records page disagreement rather than resolving
+    # it by position. per_category_table uses the same call, so a ticket cannot
+    # be ambiguous in the headline and correct in the per-category rows.
+    _agg = aggregate_ticket_categories(pages)
+    ticket_gold = _agg.gold
+    ticket_pipe = _agg.pipeline
+    ticket_sarvam = _agg.sarvam
+    ambiguous_sarvam = _agg.ambiguous_sarvam
+    ambiguous_pipeline = _agg.ambiguous_pipeline
 
     # Only tickets with a gold label contribute to paired accuracy
     # Arm-aware: digitise-only does not score category (gold Category requires Extract)
