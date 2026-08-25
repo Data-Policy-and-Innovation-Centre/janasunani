@@ -834,3 +834,65 @@ def test_every_supported_extract_field_type_is_accepted():
             # a separate, already-covered rule, not part of this guard.
             field["properties"] = {"child": {"type": "string", "description": "child field"}}
         _validate_extract_schema({"type": "object", "properties": {"field": field}})
+
+
+def test_unwrap_extract_result_reads_the_live_result_envelope():
+    """GET /doc-ai/v1/job/{id}/results nests the schema fields under `result`.
+
+    Regression for the 2026-08-25 Sambalpur/2024 run: the unwrapper knew
+    `results` (plural list) and `data` but not `result` (singular), so it fell
+    through to returning the envelope. The caller's
+    `payload.get("grievance_category")` then read one level too high, every
+    `sarvam_category` recorded as null, and the scorecard reported 0.000
+    accuracy for a measurement that had never been taken.
+    """
+    from janasunani.evaluation.sarvam_evaluate import _unwrap_extract_result
+
+    envelope = {
+        "job_id": "01a036cc",
+        "type": "extract",
+        "status": "completed",
+        "usage": {"pages": 1},
+        "version": "1",
+        "annotations": {"grievance_category": {"confidence": 0.9}},
+        "source_map": {},
+        "result": {
+            "grievance_category": "Social Welfare",
+            "summary": "Pension not disbursed.",
+            "district": "Sambalpur",
+            "grievance_text": "...",
+        },
+    }
+
+    unwrapped = _unwrap_extract_result(envelope)
+
+    assert unwrapped["grievance_category"] == "Social Welfare"
+    assert unwrapped["district"] == "Sambalpur"
+    # The envelope's own keys must not leak through as if they were fields.
+    assert "annotations" not in unwrapped
+    assert "job_id" not in unwrapped
+
+
+def test_unwrap_extract_result_keeps_the_other_known_shapes():
+    from janasunani.evaluation.sarvam_evaluate import _unwrap_extract_result
+
+    assert _unwrap_extract_result({"results": [{"district": "Sambalpur"}]}) == {
+        "district": "Sambalpur"
+    }
+    assert _unwrap_extract_result({"data": {"district": "Sambalpur"}}) == {
+        "district": "Sambalpur"
+    }
+    assert _unwrap_extract_result([{"district": "Sambalpur"}]) == {"district": "Sambalpur"}
+    assert _unwrap_extract_result({"district": "Sambalpur"}) == {"district": "Sambalpur"}
+    assert _unwrap_extract_result(None) == {}
+
+
+def test_unwrap_extract_result_prefers_result_over_a_stale_sibling():
+    """`result` wins: a response carrying both must not silently pick the other."""
+    from janasunani.evaluation.sarvam_evaluate import _unwrap_extract_result
+
+    both = {
+        "result": {"grievance_category": "Housing"},
+        "data": {"grievance_category": "WRONG"},
+    }
+    assert _unwrap_extract_result(both)["grievance_category"] == "Housing"

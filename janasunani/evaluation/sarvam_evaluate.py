@@ -339,8 +339,25 @@ def _load_metadata_join(
 
 
 def _unwrap_extract_result(payload: Any) -> dict[str, Any]:
-    """Unwrap the various shapes ``adapter.extract`` may return."""
+    """Unwrap the various shapes ``adapter.extract`` may return.
+
+    ``result`` (singular) is the shape the live API actually returns and is
+    checked first. GET /doc-ai/v1/job/{job_id}/results answers with the
+    envelope ``{job_id, type, status, usage, result, annotations, version}``
+    and the schema's fields live under ``result``.
+
+    Omitting it was silent rather than loud: the final ``return payload``
+    fallback handed back the envelope, and the caller's
+    ``payload.get("grievance_category")`` then read one level too high and
+    got ``None``. The 2026-08-25 Sambalpur/2024 run billed 200 Extract pages
+    and recorded ``sarvam_category`` as null on all 198 scored pages for
+    exactly this reason, which scored as 0.000 accuracy rather than as a
+    missing measurement. A shape this function does not recognise must not
+    look like a confident empty answer.
+    """
     if isinstance(payload, dict):
+        if isinstance(payload.get("result"), dict):
+            return payload["result"]
         if "results" in payload and isinstance(payload["results"], list) and payload["results"]:
             first = payload["results"][0]
             if isinstance(first, dict):
