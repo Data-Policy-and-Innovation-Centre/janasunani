@@ -6,7 +6,7 @@ Speaker notes exported from the deck.
 
 _No notes._
 
-## Slide 2 — 1.37 million grievances, one question asked of them
+## Slide 2 — The record has never been read
 
 Sources: docs/ARCHITECTURE.md, docs/ROADMAP.md. Canonical counts verified on both local SQLite and cloud Postgres and must match after any migration change.
 
@@ -16,7 +16,7 @@ DERIVED FIGURE: 162,144 is arithmetic, 1,371,288 minus the 1,209,144 that carry 
 
 Two structural facts behind everything that follows: the portal has never read the grievance text (median 19 words, 61% unique), and there is no citizen key, so every row is an island.
 
-## Slide 3 — One grievance, or all of them at once
+## Slide 3 — Deduplication needs every record at once
 
 The asymmetry is the whole slide. The live path processes one grievance and can never know it duplicates another. Only the batch path compares records against each other.
 
@@ -30,7 +30,7 @@ The freshness gap is by design: GET /grievance/{id} reads the transactional stor
 
 The diagram is architecture.svg in this directory, embedded as vector with a PNG fallback. Edit the SVG, re-run rsvg-convert, re-run this script.
 
-## Slide 4 — How fast, and how good
+## Slide 4 — Six stages, timed and scored
 
 SPEEDS. outputs/benchmark/latency.json, run 2026-08-10T23:14:58Z at git sha 24ab193, is_fake_timing false. Document path, n=20 over 10 clusters. Means: OCR 5.833, summarise 6.550, categorise 0.778, redact 0.055, detect PII 0.021, route 0.00048, triage 0.00026. Summarise plus OCR is 12.383 s of the 13.244 s mean run, 93.5%. End to end: typed p50 0.133 s (n=40), PDF p50 13.661 s (n=20). Live API warm POST median 4.44 s (n=8), cold start 19.4 s. Measured on an arm64 laptop, not the deployment box.
 
@@ -50,7 +50,7 @@ WITHDRAWN, do not use: the in-sample crosswalk figures 60.9 / 67.5 / 72.8; PII c
 
 If asked about routing time savings: an estimated 11 to 23 day gain held on validation 2024 and failed on the untouched 2025 test year at -2.35 days against a standard error of 3.50. It was withdrawn on 23 August, commits 879c24c and 365e3b4, and four artifacts are archived as do-not-cite. The direct and doubly-robust estimators disagree by 33 days on the test year, which is the diagnosis: no overlap to estimate on.
 
-## Slide 5 — What we ship, and what we could not show
+## Slide 5 — The department suggestion is learned from history
 
 The ladder is janasunani/routing/provider.py. Three modes: ROUTER_DEFAULT 'crosswalk' is the shipped path and runs crosswalk, then mapping tables, then generic fallback; 'rules' skips the crosswalk and reproduces pre-#33 behaviour, useful to isolate the crosswalk in a comparison; ROUTER_INCIDENCE 'incidence' serves a checksummed empirical-Bayes artifact with the same ladder underneath it.
 
@@ -71,7 +71,7 @@ Macro-F1 is weak, 25.2% informative and 19.8% all eligible, and about a dozen de
 
 WITHDRAWN, do not use: the in-sample crosswalk figures 60.9 / 67.5 / 72.8, which are resubstitution. And any routing time saving: an estimated 11 to 23 day gain held on validation 2024 and failed on the untouched 2025 test year at -2.35 days against a standard error of 3.50. Withdrawn 23 August, commits 879c24c and 365e3b4.
 
-## Slide 6 — The estimate did not survive the second year.
+## Slide 6 — The estimate did not survive the second year
 
 Ninety seconds. The table is the argument; do not narrate every row.
 
@@ -110,7 +110,7 @@ Two more we do not claim, if asked: no gain from duplicate detection beyond the 
 
 If someone asks why so little is claimed: because the alternative is claiming things we cannot defend, and this deck has to survive the room checking it.
 
-## Slide 8 — It does more. We have not shown it does better.
+## Slide 8 — It does more. We have not shown it does better
 
 The provider is Sarvam. Two endpoints, billed separately: digitise at ₹0.50 a page returns text and layout; extract at ₹1.00 a page returns schema-driven fields. Both is ₹1.50. Source: janasunani/evaluation/pricing.py, checked against the Sarvam dashboard 2026-08-07. Our local pipeline is ₹0.00 a page.
 

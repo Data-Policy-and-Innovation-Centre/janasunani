@@ -1,8 +1,23 @@
 # Janasunani 2.0 — technical briefing, 24 August 2026
 
-Seven slides, 15 to 20 minutes, for a technical audience. What the system is,
-how fast each stage runs, how good each stage is, what we cannot measure, and
-the outside option.
+Nine slides, 15 to 20 minutes, for a technical audience.
+
+The spine escalates: what we built, what we measured, where measurement runs
+out, what sits outside. Routing is the pivot, where the deck stops reporting
+numbers and starts reporting that a number could not be got.
+
+1. Title
+2. The record has never been read
+3. Deduplication needs every record at once
+4. Six stages, timed and scored
+5. The department suggestion is learned from history
+6. The estimate did not survive the second year
+7. What we cannot measure
+8. It does more. We have not shown it does better
+9. Thank you
+
+Slides 5 and 6 are the only pair on one topic, deliberately. Five says what can
+be claimed; six says what was claimed and withdrawn.
 
 | File | What it is |
 |---|---|

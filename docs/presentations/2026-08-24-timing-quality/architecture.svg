@@ -67,8 +67,8 @@
   <path class="flow" d="M 890 182 L 890 204" marker-end="url(#arrow)"/>
 
   <rect class="box" x="540" y="206" width="700" height="76"/>
-  <text class="title" x="560" y="234">Every record compared with every other</text>
-  <text class="body"  x="560" y="257">duplicates · campaigns</text>
+  <text class="title" x="560" y="234">Deduplication: every record against every other</text>
+  <text class="body"  x="560" y="257">duplicate filings · campaigns</text>
   <text class="body"  x="560" y="275">recurring themes · sudden surges</text>
 
   <!-- batch drop to the shared bus -->

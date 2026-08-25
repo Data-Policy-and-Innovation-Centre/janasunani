@@ -295,7 +295,7 @@ s = clone(prs, A_TITLE)
 sh = S(s)
 set_text(sh[0], "TECHNICAL BRIEFING")
 set_text(sh[1], "Janasunani 2.0")
-set_text(sh[2], "How it works, how fast it runs, and how good it is")
+set_text(sh[2], "Reading, sorting and routing 1.37 million grievances")
 set_text(sh[4], "Data, Policy and Innovation Centre")
 set_text(sh[5], "24 August 2026")
 
@@ -303,7 +303,7 @@ set_text(sh[5], "24 August 2026")
 s = clone(prs, A_BARS3)
 sh = S(s)
 set_text(sh[0], "THE RECORD")
-set_text(sh[1], "1.37 million grievances, one question asked of them")
+set_text(sh[1], "The record has never been read")
 set_text(sh[2], "A dated, geocoded record of what is going wrong across thirty districts.")
 rows = [
     (sh[3], sh[4], sh[5], "Complaints filed", "1,371,288", 1.0),
@@ -335,7 +335,7 @@ s.notes_slide.notes_text_frame.text = (
 s = clone_shell(prs, A_ROWS3, keep={0, 1, 11, 12})
 sh = S(s)
 set_text(sh[0], "HOW IT WORKS")
-set_text(sh[1], "One grievance, or all of them at once")
+set_text(sh[1], "Deduplication needs every record at once")
 add_vector_picture(s, PNG, SVG, x=0.7, y=2.08, w=11.9, h=11.9 * 450 / 1280)
 textbox(
     s,
@@ -368,7 +368,7 @@ s.notes_slide.notes_text_frame.text = (
 s = clone_shell(prs, A_ROWS3, keep={0, 1, 11, 12})
 sh = S(s)
 set_text(sh[0], "EVERY STAGE")
-set_text(sh[1], "How fast, and how good")
+set_text(sh[1], "Six stages, timed and scored")
 add_table(
     s,
     [
@@ -449,7 +449,7 @@ s.notes_slide.notes_text_frame.text = (
 s = clone(prs, A_ROWS3)
 sh = S(s)
 set_text(sh[0], "SUGGESTING A DEPARTMENT")
-set_text(sh[1], "What we ship, and what we could not show")
+set_text(sh[1], "The department suggestion is learned from history")
 set_text(sh[3], "Learned from history")
 set_text(sh[4], "5,084 keys built from where past grievances were actually sent. Right department in its top three 80% of the time on a year we held back.")
 set_text(sh[6], "Where it falls back")
@@ -516,7 +516,7 @@ s.notes_slide.notes_text_frame.text = (
 s = clone_shell(prs, A_ROWS3, keep={0, 1, 11, 12})
 sh = S(s)
 set_text(sh[0], "WOULD ANOTHER ROUTE BE FASTER?")
-set_text(sh[1], "The estimate did not survive the second year.")
+set_text(sh[1], "The estimate did not survive the second year")
 textbox(
     s,
     "We tested whether a different department would have closed the case faster.",
@@ -629,7 +629,7 @@ s.notes_slide.notes_text_frame.text = (
 s = clone(prs, A_TWOGROUP)
 sh = S(s)
 set_text(sh[0], "THE OUTSIDE OPTION: SARVAM")
-set_text(sh[1], "It does more. We have not shown it does better.")
+set_text(sh[1], "It does more. We have not shown it does better")
 set_text(sh[2], "What it does")
 set_text(sh[4], "One call at ₹1.50 a page returns the text, a category, a one-line summary and the district.")
 set_text(sh[6], "It reads 22 Indian languages including Odia. Ours reads English.")
