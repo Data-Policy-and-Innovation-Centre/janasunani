@@ -46,6 +46,8 @@ SPEEDS. outputs/benchmark/latency.json, run 2026-08-10T23:14:58Z at git sha 24ab
 
 Four stages (format classifier, page type, pii, spam) were never separately instrumented and carry n=0. They are omitted rather than shown as zero.
 
+PROVENANCE, not yet reflected in the numbers above. A 224-document real-document sample (451 pages, 30 categories, nesting the earlier 92-ticket Sarvam sample by ticket id) is staged for Sambalpur 2024, the slice the duplicate index was built on. Re-running the latency harness (feat/benchmark-real-documents, load_staged_documents) against it was deliberately deferred to avoid CPU contention with a concurrent Sarvam evaluation; the n=20 synthetic-fixture numbers above are unchanged pending that run.
+
 QUALITY, with intervals.
 Redaction: overlap recall 0.779, coverage 0.783, exact 0.550 on 480 hand-marked gold spans across 89 pages and 50 documents. Per entity: Aadhaar 0.857 (n=7), phone 0.828 (n=29), name 0.777 (n=404), email 0.750 (n=40). Corpus scan: 0 of 55,544.
 Triage: n=57 held-out, accuracy 94.74% (85.63-98.19), review recall 13/13 = 100% (77.19-100), false-flag rate 3/44 = 6.82% (2.35-18.23). TF-IDF word+char beat a frozen MuRIL probe 13/13 against 9/13.
@@ -124,7 +126,21 @@ WITHDRAWN, do not use: any routing time saving, including the 11 to 23 day band.
 
 What we are NOT saying: that routing gains do not exist. We are saying this design on this data cannot detect one.
 
-## Slide 8 — What we cannot measure
+## Slide 8 — The dashboards count filings, not problems
+
+THE HOUSE RULE, janasunani/analytics/README.md. An insight is something the record already contained and nobody had queried. A capability is something no existing dashboard could produce. Presenting the first as the second is the failure mode, ROADMAP section 5.3. All three items on this slide are capabilities: none is a query an analyst with database access could run against the existing dashboards in a day.
+
+ITEM 1, workload. 55,544 filings in Sambalpur 2024 are 10,963 distinct problems from 8,560 citizens. docs/PERFORMANCE.md section 4, production run on the deployment CPU box: ~57 minutes on 2 vCPU, 16,138,623 comparison pairs. Re-run attempted locally on this branch (janasunani-publish-workload): the only dedup index reachable outside the deployment box is a 20-ticket local smoke-test population, which verifies the digest-guard plumbing end to end (20 filings, 14 distinct, source_snapshot_id checked) but is not the governed slice, and its numbers are not quoted here.
+
+ITEM 2, spike. A campaign is not a false spike. Spike detection must not run on de-duplicated counts, and every spike is reported as three numbers, filings / distinct problems / distinct citizens, never collapsed to one. outputs/findings/spike.md still reads NULL, status 'pending dedup index': that is a hardcoded literal in analytics/sql/spike.sql (the spike_decomposition view), not a live check, so it reads the same whether or not a dedup index exists. The dedup-aware path that does compute real numbers (compute_spike_with_dedup, --publish-aggregates) runs, but is not scoped to a district/year before it picks its top candidate: on this branch it decomposed a Bargarh 2023 spike against a Sambalpur 2024-scoped dedup index and silently returned no reduction at all (filings = distinct problems = distinct citizens). Filed as tech debt, not fixed on this branch.
+
+ITEM 3, themes. janasunani-publish-themes crashed on this slice, ColumnNotFoundError 'filings', because render_markdown assumed the full theme schema and the 'too few rows in this category' early-exit path returns a different one. Fixed on this branch (tests/test_themes.py adds coverage for both early-exit shapes). It now reports 'No themes computed (insufficient data for themes)' for Housing, Sambalpur 2024, honestly, given only 20 locally-available redacted records rather than crashing.
+
+PROVENANCE DISCIPLINE. janasunani/serving/intelligence.py reports each dashboard panel as Recorded or Unavailable with a stated reason, never as a silent zero (tests/test_intelligence.py). Marts are portable SQL handed to the department to run for themselves (janasunani/analytics/marts.py). Findings emit aggregates only, never a row of citizen writing (janasunani/analytics/README.md house rules).
+
+FOR CONTEXT IF ASKED. Closure ladder: 472,782 of 776,922 disposed with no action claimed (docs/FINDINGS.md), against 1,209,144 total resolved complaints. Confirmed duplicates, the manual-process baseline: 37,299 officer-confirmed action rows, 21,117 already-taken-up plus 16,182 duplicate-copy (docs/PERFORMANCE.md section 4). The MinHash increment is reported separately and is never merged into that baseline. An earlier mart run mis-quoted 18,432 duplicates from a template-matching defect; docs/PERFORMANCE.md says explicitly not to quote it, and this deck does not.
+
+## Slide 9 — What we cannot measure
 
 Do not cut this slide for time. It is the one that makes the rest credible.
 
@@ -138,7 +154,7 @@ Two more we do not claim, if asked: no gain from duplicate detection beyond the 
 
 If someone asks why so little is claimed: because the alternative is claiming things we cannot defend, and this deck has to survive the room checking it.
 
-## Slide 9 — It does more. We have not shown it does better
+## Slide 10 — It does more. We have not shown it does better
 
 The provider is Sarvam. Two endpoints, billed separately: digitise at ₹0.50 a page returns text and layout; extract at ₹1.00 a page returns schema-driven fields. Both is ₹1.50. Source: janasunani/evaluation/pricing.py, checked against the Sarvam dashboard 2026-08-07. Our local pipeline is ₹0.00 a page.
 
@@ -164,7 +180,7 @@ GOVERNANCE. Trust tier authorized-external. Authorisation is a GoO-Sarvam MoU wi
 
 COST AT SCALE, projected list price: ₹48,000 to digitise the 96,469-page English corpus, ₹145,000 for both endpoints, ₹8,050 to push 1.37M subjects through the 105B text model. At 10 requests a minute, which does not rise with the plan tier, the full corpus is roughly ten days of continuous calling. It is a measurement instrument, not a backfill path. Do not quote ₹700; that was priced on the withdrawn 30B model.
 
-## Slide 10 — Data, Policy and Innovation Centre
+## Slide 11 — Data, Policy and Innovation Centre
 
 Close on the limits, not a summary.
 

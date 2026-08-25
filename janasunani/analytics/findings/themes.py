@@ -171,7 +171,15 @@ def render_markdown(tables: dict[str, pl.DataFrame]) -> str:
     themes = tables.get("themes")
     filtered = tables.get("filtered_themes")
     cat = tables.get("category")
-    cat_name = cat.row(0, named=True)["category"] if cat is not None and cat.height else "unknown"
+    if cat is not None and cat.height:
+        cat_name = cat.row(0, named=True)["category"]
+    elif themes is not None and themes.height and "category" in themes.columns:
+        # The early-exit branches (too few rows, insufficient vocabulary) carry
+        # the attempted category on the placeholder "themes" frame instead of a
+        # separate "category" table.
+        cat_name = themes.row(0, named=True)["category"]
+    else:
+        cat_name = "unknown"
     lines = [
         f"## Local issue themes — {cat_name}",
         "",
@@ -181,6 +189,15 @@ def render_markdown(tables: dict[str, pl.DataFrame]) -> str:
     ]
     if themes is None or themes.height == 0:
         lines.append("No themes computed (insufficient data).")
+        return "\n".join(lines)
+    if "filings" not in themes.columns:
+        # compute_themes' early-exit branches (too few rows in the largest
+        # category, or too little vocabulary for TF-IDF) return a one-row
+        # {category, note} frame rather than the full theme schema. Reading
+        # "filings" off that frame is a KeyError, not a NULL, so it must be
+        # caught before the table-rendering loop below.
+        note = themes.row(0, named=True).get("note", "insufficient data")
+        lines.append(f"No themes computed ({note}).")
         return "\n".join(lines)
     lines.append(f"Themes found: **{themes.height}** (min size {MIN_THEME_SIZE}).")
     lines.append(f"Concentrated (≥{CONCENTRATION_THRESHOLD:.0%}) + rising (≥{RISING_THRESHOLD:.1f}×): **{filtered.height if filtered is not None else 0}**.")
