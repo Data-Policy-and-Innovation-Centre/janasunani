@@ -819,8 +819,10 @@ s.notes_slide.notes_text_frame.text = (
     "cases, is a denominator and not a saving. It is the size of the prize, not anything "
     "realised.\n\n"
     "Two more we do not claim, if asked: no gain from duplicate detection beyond the 37,299 "
-    "repeats officers already confirmed, and no accuracy result for the outside option on "
-    "slide 11.\n\n"
+    "repeats officers already confirmed, and no OCR accuracy result for the outside option on "
+    "slide 11. Its latency is measured and its category was graded; it is transcription "
+    "accuracy specifically that has no referee, because divergence never says which system is "
+    "right and no hand-transcribed answer key exists (#53).\n\n"
     "If someone asks why so little is claimed: because the alternative is claiming things we "
     "cannot defend, and this deck has to survive the room checking it."
 )
@@ -835,7 +837,7 @@ set_text(sh[4], "Two calls a page, ₹0.50 to read it and ₹1.00 to pull fields
 set_text(sh[6], "It reads 22 Indian languages including Odia. Ours reads English.")
 set_text(sh[12], "It reads handwriting. Ours does not.")
 set_text(sh[7], "What we measured, on 200 pages of Sambalpur 2024")
-set_text(sh[14], "6 s to read a page, 11 s to extract the fields. Ours reads a page in 5.8 s.")
+set_text(sh[14], "6 s to read a page, 11 s to extract the fields, at ten requests a minute.")
 set_text(sh[16], "The two systems differed on 197 of 198 pages. Sarvam returns 1.6 times the characters.")
 set_text(sh[8], "Different is not better, and using it sends citizen documents outside our control.")
 textbox(
@@ -868,8 +870,11 @@ s.notes_slide.notes_text_frame.text = (
     "result in the egress audit log, outputs/sarvam_run_2026-08-25/sarvam_audit.sqlite, "
     "excluding the later recovery re-reads. Digitise: median 6 s a page, mean 9 s, p90 16 s, "
     "n=200. Extract: median 11 s, mean 13 s, p90 19 s, n=198. Polling is 5 s quantised, so "
-    "treat these as 5 s resolution. Our own OCR is 5.8 s a page on the same class of document, "
-    "so per page there is nothing in it. THROUGHPUT is the real constraint, and note it is two "
+    "treat these as 5 s resolution. DO NOT COMPARE THIS TO OUR 5.8 s. That figure is from an "
+    "n=20 synthetic-fixture run, not from documents, so the two are not the same class of "
+    "input and a per-page comparison between them means nothing. A real-document local "
+    "measurement is #318; until it lands there is no like-for-like latency comparison to make. "
+    "THROUGHPUT is the real constraint, and note it is two "
     "calls a page, not one: --arm both submits digitise and extract separately "
     "(sarvam_evaluate.py:596 and :604), billed ₹0.50 and ₹1.00. So the 10-requests-a-minute "
     "cap, which does not rise with the plan tier, is a ceiling of 5 pages a minute for both "
