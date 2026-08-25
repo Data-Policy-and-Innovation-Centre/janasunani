@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 import sys
+import tracemalloc
 from pathlib import Path, PurePosixPath
 
 import pytest
@@ -179,12 +180,16 @@ def test_load_staged_documents_without_manifest(tmp_path):
     tickets = {d["ticket"] for d in docs}
     assert tickets == {"CMO20241020862", "CMO2024483790"}
     for doc in docs:
-        # Same shape as synthesize_documents(): ticket, text, document_name,
-        # document_bytes, district.
+        # Same shape as synthesize_documents() (ticket, text, document_name,
+        # document_bytes, district) plus document_path. Bytes are not read
+        # here (#308) — document_bytes stays None and document_path carries
+        # the file; _measure_with_processor reads it lazily, one document at
+        # a time, outside every stage timer.
         assert doc["text"] is None
         assert doc["document_name"]
-        assert isinstance(doc["document_bytes"], bytes)
-        assert len(doc["document_bytes"]) > 0
+        assert doc["document_bytes"] is None
+        assert doc["document_path"].is_file()
+        assert len(doc["document_path"].read_bytes()) > 0
         # No manifest present, so district falls back to a stable label
         # rather than crashing or silently using None.
         assert doc["district"] == "unspecified"
@@ -623,8 +628,10 @@ def test_document_sample_digest_stable_across_restage_to_new_path(tmp_path):
 
 
 def test_run_benchmark_over_loaded_real_documents(tmp_path):
-    # The measurement loop needs no change: docs from load_staged_documents
-    # flow through run_benchmark exactly like any other custom doc list.
+    # No processor_factory here, so this exercises the fake timing path,
+    # which never touches document_bytes/document_path — docs from
+    # load_staged_documents flow through run_benchmark exactly like any
+    # other custom doc list.
     _stage_document(tmp_path, "CMO20241020862")
     _stage_document(tmp_path, "CMO2024483790", suffix=".jpeg")
     docs = load_staged_documents(tmp_path)
@@ -633,6 +640,121 @@ def test_run_benchmark_over_loaded_real_documents(tmp_path):
     assert result["n_docs"] == 2
     assert result["stages"]["e2e"]["n"] == 4
     assert {"CMO20241020862", "CMO2024483790"} == set(result["_raw"]["tickets"]["e2e"])
+
+
+# ---------------------------------------------------------------------------
+# #308 — streaming: only one document's bytes resident/read at a time
+# ---------------------------------------------------------------------------
+
+
+def test_load_staged_documents_streams_bytes_bounded_memory(tmp_path):
+    """load_staged_documents() used to call path.read_bytes() for every
+    staged file and hold the whole list before run_benchmark started, so an
+    n-document sample cost roughly n * average_document_size resident on top
+    of the loaded models — ~630 MB for the 627 KB/doc Sambalpur/2024 sample
+    at n=1,000, ~44 GB for the 69,844-document corpus this harness is about
+    to run over (see #308). It now hands back a document_path per document,
+    and the real bytes are read lazily by _measure_with_processor, one
+    document at a time. Build documents large enough that eager loading
+    would clearly show up in peak traced memory, and confirm streaming keeps
+    the peak near a single document's size instead of scaling with n.
+    """
+    n_docs = 8
+    doc_size = 3_000_000  # ~3 MB filler; deterministic, no citizen data
+    filler = b"%PDF-1.4\n" + (b"A" * doc_size)
+    for i in range(n_docs):
+        path = tmp_path / f"CMO2024{i:07d}_complaint_20250715_234307.pdf"
+        path.write_bytes(filler)
+
+    docs = load_staged_documents(tmp_path)
+    assert len(docs) == n_docs
+    # Nothing has been read yet — the loader only records paths.
+    assert all(doc["document_bytes"] is None for doc in docs)
+    assert all(doc["document_path"] is not None for doc in docs)
+
+    class Processor:
+        _timing_sink = None
+
+        def process(self, **kwargs):
+            document_bytes = kwargs["document_bytes"]
+            assert document_bytes is not None
+            assert len(document_bytes) == len(filler)
+            self._timing_sink({"redact": 0.001, "e2e": 0.002, "ok": 1.0})
+
+    tracemalloc.start()
+    try:
+        run_benchmark(
+            variant="standard",
+            docs=docs,
+            repeats=1,
+            discard_warm=False,
+            processor_factory=lambda _variant: Processor(),
+        )
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    # Eager loading (the bug) would resident roughly n_docs * doc_size here
+    # (~24 MB for 8 x 3 MB). Streaming should keep the traced peak within a
+    # small multiple of one document, not scale with the sample size.
+    assert peak < doc_size * 3, (
+        f"peak traced memory {peak} bytes suggests more than one document's "
+        f"bytes were resident at once (n_docs={n_docs}, doc_size={doc_size})"
+    )
+
+
+def test_measure_with_processor_reads_each_document_once_not_per_repeat(tmp_path, monkeypatch):
+    # Bounded reads, not just bounded memory: a document's bytes must be
+    # read once and reused across its repeats, not re-read from disk every
+    # repeat (which would still be correct memory-wise but wasteful I/O).
+    _stage_document(tmp_path, "CMO20241020862")
+    _stage_document(tmp_path, "CMO2024483790", suffix=".jpeg")
+    docs = load_staged_documents(tmp_path)
+
+    read_calls: list[Path] = []
+    original_read_bytes = Path.read_bytes
+
+    def counting_read_bytes(self):
+        read_calls.append(self)
+        return original_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", counting_read_bytes)
+
+    class Processor:
+        _timing_sink = None
+
+        def process(self, **kwargs):
+            self._timing_sink({"redact": 0.001, "e2e": 0.002, "ok": 1.0})
+
+    run_benchmark(
+        variant="standard",
+        docs=docs,
+        repeats=3,
+        discard_warm=False,
+        processor_factory=lambda _variant: Processor(),
+    )
+
+    # 2 documents x 3 repeats: without the fix this would be up to 6 reads
+    # from inside the loop (or reads already done eagerly by the loader).
+    # Reading once per document and reusing it across repeats caps this at 2.
+    assert len(read_calls) == 2
+    assert {p.name for p in read_calls} == {d["document_path"].name for d in docs}
+
+
+def test_run_benchmark_fake_path_never_reads_staged_bytes(tmp_path, monkeypatch):
+    # The fake timing path (no processor_factory) never calls process(), so
+    # it has no use for document bytes at all; the lazy read must not fire
+    # just because a real staged sample happens to be on disk.
+    _stage_document(tmp_path, "CMO20241020862")
+    docs = load_staged_documents(tmp_path)
+
+    def failing_read_bytes(self):
+        raise AssertionError(f"fake timing path must not read {self}")
+
+    monkeypatch.setattr(Path, "read_bytes", failing_read_bytes)
+
+    result = run_benchmark(variant="standard", docs=docs, repeats=2, discard_warm=False)
+    assert result["n_docs"] == 1
 
 
 def test_document_kind_reads_the_doc_not_the_ticket_string():
