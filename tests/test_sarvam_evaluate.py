@@ -1209,9 +1209,9 @@ def test_schema_v2_constrains_the_category_and_drops_district():
     """v1's category had no enum, so the model had nothing to choose from.
 
     The 2026-08-25 Sambalpur/2024 run billed 200 Extract pages and got
-    free-text subject lines back: "Sanction of new AWC buildings" against a
-    gold label of ICDS. It matched gold on 0 of the 11 grievances where it
-    answered at all, which measured the schema rather than the provider.
+    free-text subject lines back — the specific relief each petitioner asked
+    for, not a taxonomy label. It matched gold on 0 of the 11 grievances where
+    it answered at all, which measured the schema rather than the provider.
     """
     from janasunani.evaluation.sarvam_grievance_schema import (
         GRIEVANCE_CATEGORIES,

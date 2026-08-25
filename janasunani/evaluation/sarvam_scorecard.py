@@ -36,6 +36,7 @@ recorded Sarvam markdown fixtures; no live network call is made.
 
 from __future__ import annotations
 
+import html
 import json
 import random
 import re
@@ -120,6 +121,49 @@ def normalize_text(text: str | None) -> str:
     # collapse whitespace (including newlines to single space for comparison)
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+def unescape_label(label: str | None) -> str | None:
+    """Return *label* in its readable form, undoing HTML entity escaping.
+
+    Some ``complaints.category`` values reached the lake double-escaped:
+    ``Scheme & Benefits`` is stored as ``Scheme &amp;amp; Benefits``. Unescaping
+    is applied repeatedly until it reaches a fixed point so both single and
+    double escaping resolve, with a bounded loop so a pathological value cannot
+    spin. Returns ``None`` for a missing or blank label.
+    """
+    if label is None:
+        return None
+    text = unicodedata.normalize("NFC", str(label))
+    for _ in range(3):
+        decoded = html.unescape(text)
+        if decoded == text:
+            break
+        text = decoded
+    text = re.sub(r"\s+", " ", text).strip()
+    return text or None
+
+
+def category_key(label: str | None) -> str | None:
+    """Comparison key for a category label, or ``None`` if there is no label.
+
+    Category accuracy compares a stored gold label against a model's answer.
+    The schema enum offers the readable form (``Scheme & Benefits``), so an
+    exact-equality comparison against the escaped stored form would score every
+    correct prediction for that category as wrong. Comparisons must go through
+    this function rather than ``==`` on the raw strings.
+
+    ``None`` never equals ``None`` for scoring purposes: callers filter on a
+    present gold label first, so a missing prediction cannot match.
+    """
+    cleaned = unescape_label(label)
+    return cleaned.casefold() if cleaned else None
+
+
+def _labels_match(gold: str | None, predicted: str | None) -> bool:
+    """True when *predicted* is the same category as *gold*, ignoring escaping."""
+    gold_key = category_key(gold)
+    return gold_key is not None and gold_key == category_key(predicted)
 
 
 # ---------------------------------------------------------------------------
@@ -383,16 +427,18 @@ def per_category_table(pages: list[PageRecord]) -> dict[str, dict[str, Any]]:
                 d[p.ticket] = val
             elif d[p.ticket] is None and val is not None:
                 d[p.ticket] = val
-    # group tickets by gold category
+    # Group tickets by gold category. The row label is the readable form, so
+    # escaped and unescaped spellings of one category are a single row.
     groups: dict[str, list[str]] = defaultdict(list)
     for ticket, gold in ticket_gold.items():
-        if gold is not None:
-            groups[gold].append(ticket)
+        readable = unescape_label(gold)
+        if readable is not None:
+            groups[readable].append(ticket)
     out: dict[str, dict[str, Any]] = {}
     for category in sorted(groups):
         tickets = groups[category]
-        pipe_correct = [1 if ticket_pipe.get(t) == category else 0 for t in tickets]
-        sarv_correct = [1 if ticket_sarvam.get(t) == category else 0 for t in tickets]
+        pipe_correct = [1 if _labels_match(category, ticket_pipe.get(t)) else 0 for t in tickets]
+        sarv_correct = [1 if _labels_match(category, ticket_sarvam.get(t)) else 0 for t in tickets]
         pipe_acc = sum(pipe_correct) / len(pipe_correct) if pipe_correct else 0.0
         sarv_acc = sum(sarv_correct) / len(sarv_correct) if sarv_correct else 0.0
         out[category] = {
@@ -561,8 +607,12 @@ def build_scorecard(
         cat_tickets = [t for t in ticket_gold if ticket_gold[t] is not None]
         cat_clusters = cat_tickets  # one per ticket
         if cat_tickets:
-            pipe_correct = [1 if ticket_pipe.get(t) == ticket_gold[t] else 0 for t in cat_tickets]
-            sarvam_correct = [1 if ticket_sarvam.get(t) == ticket_gold[t] else 0 for t in cat_tickets]
+            pipe_correct = [
+                1 if _labels_match(ticket_gold[t], ticket_pipe.get(t)) else 0 for t in cat_tickets
+            ]
+            sarvam_correct = [
+                1 if _labels_match(ticket_gold[t], ticket_sarvam.get(t)) else 0 for t in cat_tickets
+            ]
             pipe_rate = sum(pipe_correct) / len(pipe_correct) if pipe_correct else 0.0
             sarvam_rate = sum(sarvam_correct) / len(sarvam_correct) if sarvam_correct else 0.0
             diff = paired_difference(sarvam_correct, pipe_correct, cat_clusters)

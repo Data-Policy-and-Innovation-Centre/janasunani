@@ -110,10 +110,10 @@ GRIEVANCE_CATEGORIES: tuple[str, ...] = (
 #: ``grievance_category`` gains an ``enum``. v1 described it as the
 #: "taxonomy of complaints.grievance_category" and then never said what that
 #: taxonomy was, so the model had nothing to choose from and answered with
-#: free-text subject lines: "Sanction of new AWC buildings" against a gold
-#: label of ICDS, "Revenue & law Order" against Land Matters. It matched gold
-#: on 0 of the 11 grievances where it answered at all, which measured our
-#: schema rather than the provider.
+#: free-text subject lines — the specific relief each petitioner asked for, or
+#: the name of an administrative wing — none of which is a value the taxonomy
+#: takes. It matched gold on 0 of the 11 grievances where it answered at all,
+#: which measured our schema rather than the provider.
 #:
 #: ``district`` is dropped. It is a structured column on ``complaints`` that is
 #: recorded at intake and known with certainty for every grievance, so paying
