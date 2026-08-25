@@ -983,3 +983,50 @@ def test_schema_v2_passes_the_provider_preflight():
 
     _validate_extract_schema(get_schema("v2"))
     _validate_extract_schema(get_schema("v1"))
+
+
+def test_v2_requires_the_category_but_v1_stays_reproducible():
+    """The declared primary outcome must not be optional in v2.
+
+    JSON Schema properties are optional unless listed under `required`, so the
+    enum alone constrains what the model may answer without obliging it to
+    answer at all. The 2026-08-25 run returned a category on 11 of 87
+    grievances; a corrected run must not be able to repeat that and still be
+    well-formed.
+
+    v1 must keep no `required`, or the run it exists to reproduce stops being
+    reproducible.
+    """
+    from janasunani.evaluation.sarvam_grievance_schema import (
+        GRIEVANCE_EXTRACT_SCHEMA_V1,
+        GRIEVANCE_EXTRACT_SCHEMA_V2,
+        get_schema,
+    )
+
+    assert GRIEVANCE_EXTRACT_SCHEMA_V2["required"] == ["grievance_category"]
+    assert get_schema("v2")["required"] == ["grievance_category"]
+
+    # The other two stay optional: a page with no legible prose returning no
+    # grievance_text is a real outcome, not a malformed response.
+    assert "summary" not in GRIEVANCE_EXTRACT_SCHEMA_V2["required"]
+    assert "grievance_text" not in GRIEVANCE_EXTRACT_SCHEMA_V2["required"]
+
+    assert "required" not in GRIEVANCE_EXTRACT_SCHEMA_V1
+    assert "required" not in get_schema("v1")
+
+
+def test_a_response_missing_the_category_is_invalid_under_v2():
+    """Exercise the constraint against a validator, not just the dict shape."""
+    jsonschema = pytest.importorskip("jsonschema")
+
+    from janasunani.evaluation.sarvam_grievance_schema import get_schema
+
+    schema = get_schema("v2")
+    jsonschema.validate({"grievance_category": "ICDS", "summary": "x"}, schema)
+
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({"summary": "x", "grievance_text": "y"}, schema)
+
+    # And the enum still binds what it may say.
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({"grievance_category": "Sanction of new buildings"}, schema)
