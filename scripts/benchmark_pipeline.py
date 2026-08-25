@@ -221,8 +221,12 @@ def _document_kind(doc: Mapping[str, Any]) -> str:
     "document" path to have measurements, and none were ever attributed to
     it. The loader already knows what it built: bytes present means a
     scanned document, text present (and no bytes) means free text.
+    ``document_path`` counts the same as ``document_bytes`` here —
+    ``load_staged_documents`` hands back a path instead of pre-read bytes
+    (see #308) so a document is still a "document" before its bytes are
+    ever read.
     """
-    if doc.get("document_bytes") is not None:
+    if doc.get("document_bytes") is not None or doc.get("document_path") is not None:
         return "document"
     if doc.get("text") is not None:
         return "text"
@@ -383,11 +387,22 @@ def load_staged_documents(
 ) -> list[dict[str, Any]]:
     """Load a real staged document sample for benchmarking.
 
-    Returns the same dict shape as ``synthesize_documents``: ticket, text
-    (always None here — these are scanned documents, not free text),
-    document_name, document_bytes, district. Reading real bytes means the
-    OCR stage actually runs against real scans, unlike the text-only half
-    of the synthetic fixture.
+    Returns dicts shaped like ``synthesize_documents``'s (ticket, text,
+    document_name, document_bytes, district) plus one extra key,
+    ``document_path``. Unlike ``synthesize_documents`` — whose synthetic
+    bytes are already in memory, generated, not read — a staged sample's
+    bytes live on disk, and a real slice-sized draw is large enough that
+    reading every file up front is not free: the staged Sambalpur/2024
+    sample alone averages 627 KB/document, and #308 was filed when a
+    69,844-document, 60 GB corpus made that arithmetic a bounded-RAM problem
+    rather than a theoretical one. So ``document_bytes`` here is always
+    ``None`` and ``document_path`` carries the file instead; the actual read
+    happens later, one document at a time, in
+    ``_measure_with_processor`` — deliberately outside every per-stage
+    timer, so disk I/O is never attributed to a model stage (see that
+    function for where). Reading real bytes (whenever it happens) means the
+    OCR stage actually runs against real scans, unlike the text-only half of
+    the synthetic fixture.
 
     ``directory`` is a flat staging directory of supported document files
     (see ``SUPPORTED_DOCUMENT_SUFFIXES``) named
@@ -486,7 +501,8 @@ def load_staged_documents(
                 "ticket": ticket,
                 "text": None,
                 "document_name": path.name,
-                "document_bytes": path.read_bytes(),
+                "document_bytes": None,
+                "document_path": path,
                 "district": district,
             }
         )
@@ -679,6 +695,23 @@ def _measure_with_processor(
     for doc in docs:
         ticket = doc["ticket"]
         kind = _document_kind(doc)
+        # Resolve this document's bytes once, here — before the per-repeat
+        # loop and its perf_counter() calls below, never inside them. A read
+        # inside the timed region would land inside whichever stage runs
+        # first (ocr) and inflate its measured latency with disk I/O that
+        # has nothing to do with the model (#308). load_staged_documents()
+        # hands back document_path instead of pre-read bytes for exactly
+        # this reason: reading here, one document at a time, keeps at most
+        # one document's bytes resident rather than the whole staged
+        # sample. Read once and reuse for every repeat of this document
+        # (not re-read per repeat) — still outside the timer either way,
+        # but no reason to hit disk more than once for the same file. The
+        # fake path (processor is None) never touches document bytes, so
+        # the read is skipped entirely there.
+        document_bytes = doc.get("document_bytes")
+        document_path = doc.get("document_path")
+        if document_bytes is None and document_path is not None and processor is not None:
+            document_bytes = Path(document_path).read_bytes()
         for r in range(repeats):
             attempts += 1
             is_warm = discard_warm and r == 0
@@ -697,7 +730,7 @@ def _measure_with_processor(
                         ticket_no=ticket,
                         text=doc.get("text"),
                         document_name=doc.get("document_name"),
-                        document_bytes=doc.get("document_bytes"),
+                        document_bytes=document_bytes,
                         district=doc.get("district"),
                     )
                 except Exception as exc:  # noqa: BLE001
