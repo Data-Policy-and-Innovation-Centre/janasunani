@@ -831,7 +831,7 @@ sh = S(s)
 set_text(sh[0], "THE OUTSIDE OPTION: SARVAM")
 set_text(sh[1], "Sarvam: fields returned, latency and divergence")
 set_text(sh[2], "What it does")
-set_text(sh[4], "One call at ₹1.50 a page returns the page text, a category and a summary.")
+set_text(sh[4], "Two calls a page, ₹0.50 to read it and ₹1.00 to pull fields out: text, category, summary.")
 set_text(sh[6], "It reads 22 Indian languages including Odia. Ours reads English.")
 set_text(sh[12], "It reads handwriting. Ours does not.")
 set_text(sh[7], "What we measured, on 200 pages of Sambalpur 2024")
@@ -840,7 +840,7 @@ set_text(sh[16], "The two systems differed on 197 of 198 pages. Sarvam returns 1
 set_text(sh[8], "Different is not better, and using it sends citizen documents outside our control.")
 textbox(
     s,
-    "Capped at ten requests a minute: this run took 166 minutes and the English corpus would take about ten days. "
+    "Capped at ten requests a minute, and two calls a page: this run took 166 minutes and the English corpus would take about thirteen days. "
     "It returned a category on 11 of 87 grievances and matched none, because our v1 schema never listed the categories.",
     x=0.7, y=6.62, w=11.9, h=0.36, size=11, color=SUBTLE, italic=True,
 )
@@ -869,9 +869,13 @@ s.notes_slide.notes_text_frame.text = (
     "excluding the later recovery re-reads. Digitise: median 6 s a page, mean 9 s, p90 16 s, "
     "n=200. Extract: median 11 s, mean 13 s, p90 19 s, n=198. Polling is 5 s quantised, so "
     "treat these as 5 s resolution. Our own OCR is 5.8 s a page on the same class of document, "
-    "so per page there is nothing in it. THROUGHPUT is the real constraint: 10 requests a "
-    "minute does not rise with the plan tier, the run averaged 1.2 pages a minute end to end, "
-    "and the 96,469-page English corpus is roughly ten days of continuous calling.\n\n"
+    "so per page there is nothing in it. THROUGHPUT is the real constraint, and note it is two "
+    "calls a page, not one: --arm both submits digitise and extract separately "
+    "(sarvam_evaluate.py:596 and :604), billed ₹0.50 and ₹1.00. So the 10-requests-a-minute "
+    "cap, which does not rise with the plan tier, is a ceiling of 5 pages a minute for both "
+    "arms. The run averaged 1.2 pages a minute end to end, about a quarter of that ceiling. "
+    "The 96,469-page English corpus is 192,938 requests on both arms, roughly thirteen days of "
+    "continuous calling; digitise alone would be about seven.\n\n"
     "THE CATEGORY GRADE, and say plainly that it measures our schema and not the provider. "
     "Sarvam returned a category on 11 of 87 grievances and matched the officer's label on 0 of "
     "those 11. What came back was a subject line rather than a taxonomy label: the specific "
@@ -912,9 +916,10 @@ s.notes_slide.notes_text_frame.text = (
     "to local pytesseract.\n\n"
     "COST AT SCALE, projected list price: ₹48,000 to digitise the 96,469-page English corpus, "
     "₹145,000 for both endpoints, ₹8,050 to push 1.37M subjects through the 105B text model. "
-    "At 10 requests a minute, which does not rise with the plan tier, the full corpus is "
-    "roughly ten days of continuous calling. It is a measurement instrument, not a backfill "
-    "path. Do not quote ₹700; that was priced on the withdrawn 30B model."
+    "At 10 requests a minute, which does not rise with the plan tier, and two calls a page on "
+    "both endpoints, the full corpus is roughly thirteen days of continuous calling; digitise "
+    "alone is about seven. It is a measurement instrument, not a backfill path. Do not quote "
+    "₹700; that was priced on the withdrawn 30B model."
 )
 
 # ══ 12 · Category head to head (only when measured) ═════════════════════════

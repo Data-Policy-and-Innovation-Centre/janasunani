@@ -12,18 +12,22 @@ order, and the eyebrows mark the branch.
 | # | Slide | Reads |
 |---|---|---|
 | 1 | Title | |
-| 2 | The record has never been read | **names both** |
-| 3 | Deduplication needs every record at once | the citizen's text |
+| 2 | 1.37 million grievances, 6.5 million action notes | **names both** |
+| 3 | The live path and the batch path | the citizen's text |
 | 4 | Six stages, timed and scored | the citizen's text |
-| 5 | The department suggestion is learned from history | the citizen's text |
-| 6 | Closing a case costs nothing | **the officer's notes** |
-| 7 | We built the test before we built the feature | the officer's notes |
-| 8 | Positivity failed before the second year did | the officer's notes |
-| 9 | The dashboards count filings, not problems | both |
+| 5 | The department suggestion: an empirical crosswalk | the citizen's text |
+| 6 | Closures on the six-template disposal ladder | **the officer's notes** |
+| 7 | How the routing evaluation was built | the officer's notes |
+| 8 | Validation and untouched-year diagnostics | the officer's notes |
+| 9 | Duplicate-adjusted workload, spikes and themes | both |
 | 10 | What we cannot measure | |
-| 11 | It does more. We have not shown it does better | |
+| 11 | Sarvam: fields returned, latency and divergence | |
 | — | Category, head to head | *skipped until measured* |
 | 12 | Thank you | |
+
+Titles are deliberately descriptive rather than rhetorical: each names what the
+slide shows, so a reader scanning the outline can tell what is on it without
+being told what to conclude from it.
 
 Slide 2 is the map, not a preamble. Its three rows are the citizen's text, the
 officer's notes, and the fact that the portal has opened neither. It closes on
@@ -121,5 +125,15 @@ confirm the diagram is vector and its type matches the surrounding slides.
 - Withdrawn numbers stay off: the in-sample crosswalk figures (60.9 / 67.5 /
   72.8), PII coverage 49.6%, the superseded duplicate totals, MuRIL 71.04% as a
   current figure, and any routing time saving.
-- No accuracy, latency, or billed-cost claim for the outside provider. None has
-  been established.
+- The outside provider's **latency** is now measured and may be stated: the
+  2026-08-25 run derived it from the egress audit log, 5 s polling resolution.
+  Its **category** result may be stated only with the caveat attached, because
+  it grades our own v1 schema (no enum, no `required`) rather than the
+  provider. Its **OCR accuracy** and **summary quality** remain unestablished
+  and must not be claimed: divergence says two systems disagree, never which is
+  right, and no hand-transcribed reference exists (#53).
+- Every rupee figure is list price. Actual billing has never been observed, so
+  no billed-cost claim.
+- Sarvam is **two calls a page**, not one: `--arm both` submits digitise
+  (₹0.50) and extract (₹1.00) separately. Any throughput or corpus-duration
+  figure has to be built on two requests per page.
