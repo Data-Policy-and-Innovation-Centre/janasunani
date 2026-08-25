@@ -796,8 +796,15 @@ box-paths:
 #   make infra ARGS="--no-ssh"
 CPU_BOX_SSH    ?= ubuntu@52.66.116.80
 
+# --no-project on the infra targets is deliberate. Both scripts are pure
+# stdlib plus the aws CLI, so they need none of the project's dependencies --
+# and resolving them is exactly what breaks these targets when you need them
+# most. On 2026-08-25 `make ssh` failed with a timeout fetching the spaCy model
+# wheel from GitHub: the box was up, the security group was the only thing
+# wrong, and the one tool that fixes that could not start. Reaching an
+# unreachable box must not depend on the ML dependency tree resolving.
 infra:
-	@uv run python scripts/infra_status.py --host "$(CPU_BOX_SSH)" \
+	@uv run --no-project python scripts/infra_status.py --host "$(CPU_BOX_SSH)" \
 	  $(if $(SITE),--site "$(SITE)") $(if $(SG_ID),--sg-id "$(SG_ID)") $(ARGS)
 
 # Open tcp/22 to your current IP if it is not already permitted, then SSH in.
@@ -813,7 +820,7 @@ infra:
 #
 # PRUNE is opt-in: a stale-looking /32 may be a colleague who is connected.
 ssh:
-	@uv run python scripts/box_ssh.py --host "$(CPU_BOX_SSH)" \
+	@uv run --no-project python scripts/box_ssh.py --host "$(CPU_BOX_SSH)" \
 	  $(if $(CHECK),--check) $(if $(PRUNE),--prune) $(ARGS)
 
 status:
