@@ -23,6 +23,7 @@ from scripts.benchmark_pipeline import (
     SUPPORTED_DOCUMENT_SUFFIXES,
     VALID_VARIANTS,
     _clustered_se,
+    _document_kind,
     _document_sample_digest,
     _fake_process,
     _percentile,
@@ -232,6 +233,76 @@ def test_load_staged_documents_reuses_ticket_module_parsing(tmp_path):
     assert docs[0]["ticket"] == "CMO20241020862"
 
 
+def test_load_staged_documents_uses_manifest_for_hierarchical_tickets(tmp_path):
+    # Regression for P1-2 (PR #307 review): sarvam_sample_builder stages
+    # documents under Path(key).name, so two distinct complaints whose real
+    # tickets are "OR159/P/2021/00535" and "OR122/E/2021/00535" both land on
+    # disk with a filename that basename-parses to just "00535". Confirmed
+    # against the lake: 27,684 of 1,371,288 complaints (2.0%) have a
+    # hierarchical ticket like this. The manifest carries the real ticket
+    # per file and must be used to tell them apart.
+    from janasunani.pipeline.ticket import ticket_from_relpath
+
+    file1 = tmp_path / "00535_complaint_20250715_234307.pdf"
+    file1.write_bytes(_single_page_text_pdf("Grievance A"))
+    file2 = tmp_path / "00535_complaint_20250801_101010.pdf"
+    file2.write_bytes(_single_page_text_pdf("Grievance B"))
+
+    # Confirm the premise: basename-only parsing really does collide these.
+    assert ticket_from_relpath(file1.name) == ticket_from_relpath(file2.name) == "00535"
+
+    manifest = {
+        "slice": "State/2021",
+        "documents": [
+            {"ticket": "OR159/P/2021/00535", "gold_category": "Water Supply", "file": file1.name},
+            {"ticket": "OR122/E/2021/00535", "gold_category": "Water Supply", "file": file2.name},
+        ],
+    }
+
+    docs = load_staged_documents(tmp_path, manifest=manifest)
+
+    tickets = {d["ticket"] for d in docs}
+    assert tickets == {"OR159/P/2021/00535", "OR122/E/2021/00535"}
+
+
+def test_load_staged_documents_without_manifest_can_collapse_hierarchical_tickets(tmp_path):
+    # Documented limitation (see load_staged_documents docstring): without a
+    # manifest there is no way to recover the directory part of a
+    # hierarchical ticket that staging already discarded. This test records
+    # the gap honestly rather than claiming it is fixed in every case.
+    file1 = tmp_path / "00535_complaint_20250715_234307.pdf"
+    file1.write_bytes(_single_page_text_pdf("Grievance A"))
+    file2 = tmp_path / "00535_complaint_20250801_101010.pdf"
+    file2.write_bytes(_single_page_text_pdf("Grievance B"))
+
+    docs = load_staged_documents(tmp_path)  # no manifest
+
+    tickets = [d["ticket"] for d in docs]
+    assert tickets == ["00535", "00535"]
+
+
+def test_load_staged_documents_manifest_ticket_wins_per_file_not_all_or_nothing(tmp_path):
+    # A manifest entry is used per file it actually covers; a file the
+    # manifest omits still falls back to basename parsing rather than the
+    # whole load rejecting the manifest.
+    file1 = tmp_path / "OR159P202100535_complaint_20250715_234307.pdf"
+    file1.write_bytes(_single_page_text_pdf("Grievance A"))
+    file2 = _stage_document(tmp_path, "CMO2024483790", suffix=".jpeg")
+
+    manifest = {
+        "slice": "State/2021",
+        "documents": [
+            {"ticket": "OR159/P/2021/00535", "gold_category": "Water Supply", "file": file1.name},
+            # file2 intentionally absent from the manifest's documents list.
+        ],
+    }
+
+    docs = load_staged_documents(tmp_path, manifest=manifest)
+    by_name = {d["document_name"]: d["ticket"] for d in docs}
+    assert by_name[file1.name] == "OR159/P/2021/00535"
+    assert by_name[file2.name] == "CMO2024483790"
+
+
 def test_load_staged_documents_empty_directory_raises_loudly(tmp_path):
     # An empty doc list must never reach run_benchmark silently — its own
     # "no documents" error talks about n_text + n_image, which would
@@ -276,7 +347,7 @@ def test_document_sample_digest_prefers_manifest_and_is_stable(tmp_path):
     assert d1 != _document_sample_digest(tmp_path, {**manifest, "slice": "Khordha/2024"})
 
 
-def test_document_sample_digest_without_manifest_uses_filenames_and_sizes(tmp_path):
+def test_document_sample_digest_without_manifest_uses_filenames_and_content(tmp_path):
     _stage_document(tmp_path, "CMO20241020862")
     d1 = _document_sample_digest(tmp_path, None)
     d2 = _document_sample_digest(tmp_path, None)
@@ -285,6 +356,55 @@ def test_document_sample_digest_without_manifest_uses_filenames_and_sizes(tmp_pa
     _stage_document(tmp_path, "CMO2024483790", suffix=".jpeg")
     d3 = _document_sample_digest(tmp_path, None)
     assert d3 != d1
+
+
+def test_document_sample_digest_detects_content_change_with_manifest(tmp_path):
+    # Regression for P1-3 (PR #307 review): the original implementation
+    # hashed only the manifest JSON when a manifest was present, so
+    # replacing a staged scan's bytes (bad re-download, swapped page, a
+    # stale manifest beside different content) was invisible to the
+    # digest as long as the filename and document count still matched.
+    path = _stage_document(tmp_path, "CMO20241020862")
+    manifest = {
+        "slice": "Sambalpur/2024",
+        "documents": [{"ticket": "CMO20241020862", "file": path.name}],
+    }
+    d1 = _document_sample_digest(tmp_path, manifest)
+
+    path.write_bytes(_single_page_text_pdf("A completely different scan"))
+    d2 = _document_sample_digest(tmp_path, manifest)
+
+    assert d1 != d2
+
+
+def test_document_sample_digest_detects_content_change_without_manifest(tmp_path):
+    path = _stage_document(tmp_path, "CMO20241020862")
+    d1 = _document_sample_digest(tmp_path, None)
+
+    path.write_bytes(_single_page_text_pdf("A completely different scan"))
+    d2 = _document_sample_digest(tmp_path, None)
+
+    assert d1 != d2
+
+
+def test_document_sample_digest_stable_across_restage_to_new_path(tmp_path):
+    # The manifest-identity rationale claims stability across a re-stage to
+    # a different directory; hashing content must not break that, since the
+    # digest is keyed on filename + bytes, not the full path.
+    dir1 = tmp_path / "stageA"
+    dir1.mkdir()
+    dir2 = tmp_path / "stageB"
+    dir2.mkdir()
+    filename = "CMO20241020862_complaint_20250715_234307.pdf"
+    content = _single_page_text_pdf("Grievance for CMO20241020862")
+    (dir1 / filename).write_bytes(content)
+    (dir2 / filename).write_bytes(content)
+    manifest = {
+        "slice": "Sambalpur/2024",
+        "documents": [{"ticket": "CMO20241020862", "file": filename}],
+    }
+
+    assert _document_sample_digest(dir1, manifest) == _document_sample_digest(dir2, manifest)
 
 
 def test_run_benchmark_over_loaded_real_documents(tmp_path):
@@ -298,6 +418,58 @@ def test_run_benchmark_over_loaded_real_documents(tmp_path):
     assert result["n_docs"] == 2
     assert result["stages"]["e2e"]["n"] == 4
     assert {"CMO20241020862", "CMO2024483790"} == set(result["_raw"]["tickets"]["e2e"])
+
+
+def test_document_kind_reads_the_doc_not_the_ticket_string():
+    # Regression for P1-1 (PR #307 review): input-path classification used
+    # to match on a "SYN-TXT-"/"SYN-IMG-" ticket prefix, so every real
+    # ticket (no such prefix) fell through to "unspecified". The doc's own
+    # fields settle it instead.
+    text_doc = {"ticket": "CMO20241020862", "text": "hello", "document_bytes": None}
+    document_doc = {"ticket": "CMO20241020862", "text": None, "document_bytes": b"%PDF-1.4"}
+    empty_doc = {"ticket": "CMO20241020862", "text": None, "document_bytes": None}
+    assert _document_kind(text_doc) == "text"
+    assert _document_kind(document_doc) == "document"
+    assert _document_kind(empty_doc) == "unspecified"
+
+
+def test_real_document_only_run_reaches_publication_ready(tmp_path):
+    # Regression for P1-1 (PR #307 review): --documents-dir stages real
+    # documents only (no text grievances mixed in), so a clean run has just
+    # the "document" input path. The gate used to hardcode requiring BOTH
+    # "text" and "document" paths with n > 0, which made every real-
+    # document run structurally unpublishable regardless of how clean the
+    # measurements were. This is the exact scenario the whole branch exists
+    # to make publishable, so it must reach publication_ready: true when
+    # everything else about the run is clean.
+    _stage_document(tmp_path, "CMO20241020862")
+    _stage_document(tmp_path, "CMO2024483790", suffix=".jpeg")
+    docs = load_staged_documents(tmp_path)
+
+    result = run_benchmark(
+        variant="standard",
+        docs=docs,
+        repeats=2,
+        discard_warm=False,
+        processor_factory=lambda _variant: type(
+            "Processor",
+            (),
+            {
+                "_timing_sink": None,
+                "process": lambda self, **kwargs: self._timing_sink(
+                    {"redact": 0.1, "e2e": 0.2, "ok": 1.0}
+                ),
+            },
+        )(),
+    )
+    result["benchmark_context"] = {
+        "host_label": "release-host",
+        "model_release_id": "model-release-1",
+    }
+
+    assert set(result["input_paths"]) == {"document"}
+    payload = latency_json_payload(result)
+    assert payload["publication_ready"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -664,7 +836,17 @@ def test_real_latency_with_failure_is_not_publication_ready():
     assert latency_json_payload(result)["publication_ready"] is False
 
 
-def test_real_latency_without_document_path_is_not_publication_ready():
+def test_real_latency_single_kind_run_can_be_publication_ready():
+    # Regression for P1-1 (PR #307 review): this used to assert the
+    # opposite — that a text-only real run could never be
+    # publication_ready — because the gate hardcoded requiring BOTH "text"
+    # and "document" input_paths. That made every --documents-dir run
+    # (document-only, no synthetic text mixed in) structurally
+    # unpublishable no matter how clean the measurements were. The gate now
+    # requires clean coverage of whichever kinds a run actually exercised;
+    # a run that only ever saw text grievances is clean if its one path
+    # (text) is clean, symmetric with a document-only run (see
+    # test_real_document_only_run_reaches_publication_ready below).
     result = run_benchmark(
         variant="standard",
         n_text=1,
@@ -687,6 +869,46 @@ def test_real_latency_without_document_path_is_not_publication_ready():
         "model_release_id": "model-release-1",
     }
 
+    assert set(result["input_paths"]) == {"text"}
+    assert latency_json_payload(result)["publication_ready"] is True
+
+
+def test_real_latency_with_unspecified_input_kind_is_not_publication_ready():
+    # A doc with neither text nor document_bytes can't be classified by
+    # _document_kind, and "unspecified" must never satisfy the coverage
+    # gate: it means the provenance of at least one measurement is unknown,
+    # which is exactly what this gate exists to catch.
+    docs = [
+        {
+            "ticket": "T1",
+            "text": None,
+            "document_name": None,
+            "document_bytes": None,
+            "district": "Sambalpur",
+        },
+    ]
+    result = run_benchmark(
+        variant="standard",
+        docs=docs,
+        repeats=2,
+        discard_warm=False,
+        processor_factory=lambda _variant: type(
+            "Processor",
+            (),
+            {
+                "_timing_sink": None,
+                "process": lambda self, **kwargs: self._timing_sink(
+                    {"redact": 0.1, "e2e": 0.2, "ok": 1.0}
+                ),
+            },
+        )(),
+    )
+    result["benchmark_context"] = {
+        "host_label": "release-host",
+        "model_release_id": "model-release-1",
+    }
+
+    assert set(result["input_paths"]) == {"unspecified"}
     assert latency_json_payload(result)["publication_ready"] is False
 
 

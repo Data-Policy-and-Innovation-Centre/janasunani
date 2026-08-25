@@ -209,30 +209,44 @@ def compute_stage_stats(
     }
 
 
-def _input_kind(ticket: str) -> str:
-    if ticket.startswith("SYN-TXT-"):
-        return "text"
-    if ticket.startswith("SYN-IMG-"):
+def _document_kind(doc: Mapping[str, Any]) -> str:
+    """What kind of input a document dict represents.
+
+    Read off the doc's own fields, not its ticket string. This used to be
+    ``_input_kind(ticket)``, matching on a ``"SYN-TXT-"``/``"SYN-IMG-"``
+    prefix — a fixture-generator convention, not a property of the input.
+    Every real ticket (``CMO20241020862``, ...) fell through to
+    "unspecified", which made ``has_clean_full_path_coverage`` below
+    structurally unsatisfiable for a real-document run: it requires the
+    "document" path to have measurements, and none were ever attributed to
+    it. The loader already knows what it built: bytes present means a
+    scanned document, text present (and no bytes) means free text.
+    """
+    if doc.get("document_bytes") is not None:
         return "document"
+    if doc.get("text") is not None:
+        return "text"
     return "unspecified"
 
 
 def _stats_by_input(
     times_by_stage: dict[str, list[float]],
     tickets_by_stage: dict[str, list[str]],
+    kinds_by_stage: dict[str, list[str]],
 ) -> dict[str, dict[str, dict[str, Any]]]:
     result: dict[str, dict[str, dict[str, Any]]] = {}
     kinds = sorted(
-        {_input_kind(ticket) for tickets in tickets_by_stage.values() for ticket in tickets}
+        {kind for stage_kinds in kinds_by_stage.values() for kind in stage_kinds}
     )
     for kind in kinds:
         result[kind] = {}
         for stage, times in times_by_stage.items():
             tickets = tickets_by_stage.get(stage, [])
+            stage_kinds = kinds_by_stage.get(stage, [])
             selected = [
                 (seconds, ticket)
-                for seconds, ticket in zip(times, tickets)
-                if _input_kind(ticket) == kind
+                for seconds, ticket, doc_kind in zip(times, tickets, stage_kinds)
+                if doc_kind == kind
             ]
             result[kind][stage] = compute_stage_stats(
                 [seconds for seconds, _ in selected],
@@ -341,21 +355,26 @@ def _document_sample_digest(
 ) -> str:
     """Stable digest identifying the on-disk sample, for provenance.
 
-    Prefers the manifest: it is the draw's own record of what it selected,
-    so the digest is stable even if the sample is re-staged to a different
-    path. Falls back to a digest over sorted filename+size pairs so an ad
-    hoc directory (no manifest) still gets a stable identifier rather than
-    none at all.
+    Two components go in, for two different jobs. The manifest (when
+    present) gives *identity* — the draw/seed/slice — and is stable across
+    a re-stage to a different path. Every staged file's actual bytes give
+    *integrity*. Hashing only the manifest (the original version of this
+    function) made a content change on disk invisible: a bad re-download, a
+    swapped page, or a stale manifest sitting beside different bytes than
+    it describes all left the digest — and the manifest-count cross-check
+    in ``load_staged_documents`` — unchanged as long as filenames and
+    counts still lined up, even though the processor would read something
+    the manifest never claimed. Hashing filename + content per file (not
+    the full path) keeps the re-stage stability the manifest-only version
+    had, while an equal-count substitution now moves the digest.
     """
+    hasher = hashlib.sha256()
     if manifest is not None:
-        canonical = json.dumps(manifest, sort_keys=True).encode("utf-8")
-    else:
-        parts = sorted(
-            f"{path.name}:{path.stat().st_size}"
-            for path in _staged_document_paths(directory)
-        )
-        canonical = "\n".join(parts).encode("utf-8")
-    return hashlib.sha256(canonical).hexdigest()
+        hasher.update(json.dumps(manifest, sort_keys=True).encode("utf-8"))
+    for path in _staged_document_paths(directory):
+        hasher.update(path.name.encode("utf-8"))
+        hasher.update(hashlib.sha256(path.read_bytes()).digest())
+    return hasher.hexdigest()
 
 
 def load_staged_documents(
@@ -374,16 +393,31 @@ def load_staged_documents(
     (see ``SUPPORTED_DOCUMENT_SUFFIXES``) named
     ``"<ticket>_complaint_<timestamp>.<ext>"`` — the layout
     ``janasunani.evaluation.sarvam_sample_builder.build_sample`` writes.
-    Ticket ids are parsed with ``janasunani.pipeline.ticket.ticket_from_relpath``
-    (the same parser the pipeline itself uses) rather than a second regex,
-    so a ticket here clusters with the same key it would downstream.
+
+    Ticket ids come from the manifest's ``documents`` array (each entry has
+    ``ticket``/``s3_key``/``file``) when one is available, matched by
+    filename; only a file the manifest does not cover falls back to
+    ``janasunani.pipeline.ticket.ticket_from_relpath`` on the bare filename
+    (the same parser the pipeline itself uses, so a fallback ticket here
+    still clusters with the same key it would downstream). The fallback is
+    lossy for hierarchical tickets: ~2% of complaints have a ticket like
+    ``OR159/P/2021/00535``, but ``sarvam_sample_builder`` stages files under
+    ``Path(key).name`` — the directory part of the ticket is discarded
+    before the file ever reaches disk, so without a manifest entry the
+    parser can only recover the trailing segment (``00535``). Two distinct
+    complaints that happen to share that trailing segment then collapse
+    into one ticket, and therefore one cluster, corrupting the
+    ticket-clustered SEs this harness exists to report. Stage with the
+    manifest to avoid this; the fallback is a best-effort floor, not a fix.
 
     If ``manifest`` is not given and ``directory/sample_manifest.json``
-    exists, it is loaded and used for: the sample's district (from its
-    ``"slice"`` field, formatted ``"<district>/<year>"``) and a
-    document-count cross-check against what is actually staged. A missing
-    manifest is not an error — the loader still works from the directory's
-    filenames alone, just without a district or the cross-check.
+    exists, it is loaded and used for: per-file ticket ids (above), the
+    sample's district (from its ``"slice"`` field, formatted
+    ``"<district>/<year>"``), and a document-count cross-check against what
+    is actually staged. A missing manifest is not an error — the loader
+    still works from the directory's filenames alone, just without a
+    district, the cross-check, or protection against the hierarchical-
+    ticket collision above.
 
     Raises:
         FileNotFoundError: ``directory`` does not exist or is not a
@@ -423,10 +457,27 @@ def load_staged_documents(
     if not district:
         district = "unspecified"
 
+    # The manifest's own ticket, keyed by staged filename, is authoritative
+    # where it exists: it is the ticket that was actually drawn, before
+    # sarvam_sample_builder's Path(key).name staging step discarded any
+    # directory prefix. Only a file missing from the manifest (or no
+    # manifest at all) falls back to parsing the filename itself.
+    file_to_ticket: dict[str, str] = {}
+    if manifest is not None:
+        manifest_documents = manifest.get("documents")
+        if isinstance(manifest_documents, list):
+            for entry in manifest_documents:
+                if not isinstance(entry, Mapping):
+                    continue
+                file_name = entry.get("file")
+                manifest_ticket = entry.get("ticket")
+                if file_name and manifest_ticket:
+                    file_to_ticket[file_name] = manifest_ticket
+
     docs: list[dict[str, Any]] = []
     unparsed: list[str] = []
     for path in files:
-        ticket = ticket_from_relpath(path.name)
+        ticket = file_to_ticket.get(path.name) or ticket_from_relpath(path.name)
         if ticket is None:
             unparsed.append(path.name)
             continue
@@ -612,6 +663,7 @@ def _measure_with_processor(
     """
     per_stage_times: dict[str, list[float]] = {k: [] for k in ALL_KEYS}
     per_stage_tickets: dict[str, list[str]] = {k: [] for k in ALL_KEYS}
+    per_stage_kinds: dict[str, list[str]] = {k: [] for k in ALL_KEYS}
     temperature_times: dict[str, list[float]] = {"cold": [], "warm": []}
     temperature_tickets: dict[str, list[str]] = {"cold": [], "warm": []}
     has_completed_request = False
@@ -626,6 +678,7 @@ def _measure_with_processor(
 
     for doc in docs:
         ticket = doc["ticket"]
+        kind = _document_kind(doc)
         for r in range(repeats):
             attempts += 1
             is_warm = discard_warm and r == 0
@@ -680,9 +733,11 @@ def _measure_with_processor(
                 for stage_name, seconds in captured.items():
                     per_stage_times.setdefault(stage_name, []).append(seconds)
                     per_stage_tickets.setdefault(stage_name, []).append(ticket)
+                    per_stage_kinds.setdefault(stage_name, []).append(kind)
                 if E2E_KEY not in captured:
                     per_stage_times[E2E_KEY].append(elapsed)
                     per_stage_tickets[E2E_KEY].append(ticket)
+                    per_stage_kinds[E2E_KEY].append(kind)
             else:
                 # Fake timing path — deterministic, fast, no sleep unless
                 # BENCHMARK_FAKE_SLEEP is set (for manual wall-clock checks).
@@ -699,14 +754,17 @@ def _measure_with_processor(
                     continue
                 per_stage_times[E2E_KEY].append(timings.e2e)
                 per_stage_tickets[E2E_KEY].append(ticket)
+                per_stage_kinds[E2E_KEY].append(kind)
                 for stage in STAGES:
                     per_stage_times[stage].append(timings.per_stage[stage])
                     per_stage_tickets[stage].append(ticket)
+                    per_stage_kinds[stage].append(kind)
 
     # Return merged structure for compute_stage_stats
     return {
         "times": per_stage_times,  # type: ignore[return-value]
         "tickets": per_stage_tickets,  # type: ignore[return-value]
+        "kinds": per_stage_kinds,  # type: ignore[return-value]
         "attempts": attempts,
         "completed_attempts": completed_attempts,
         "failed_attempts": attempts - completed_attempts,
@@ -774,6 +832,7 @@ def run_benchmark(
     )
     per_stage_times: dict[str, list[float]] = raw["times"]  # type: ignore[assignment]
     per_stage_tickets: dict[str, list[str]] = raw["tickets"]  # type: ignore[assignment]
+    per_stage_kinds: dict[str, list[str]] = raw["kinds"]  # type: ignore[assignment]
 
     stages_stats: dict[str, dict[str, Any]] = {}
     for key in per_stage_times:
@@ -802,7 +861,7 @@ def run_benchmark(
         "timestamp": timestamp,
         "git_sha": git_sha,
         "stages": stages_stats,
-        "input_paths": _stats_by_input(per_stage_times, per_stage_tickets),
+        "input_paths": _stats_by_input(per_stage_times, per_stage_tickets, per_stage_kinds),
         "temperature_e2e": {
             temperature: compute_stage_stats(
                 raw["temperature_times"][temperature],
@@ -866,14 +925,34 @@ def latency_json_payload(
         )
 
     def has_clean_full_path_coverage(result: dict[str, Any]) -> bool:
+        # This used to hardcode requiring BOTH "text" and "document" paths
+        # to have clean e2e coverage, which matched the synthetic default
+        # (always mixes text grievances and image documents) but made a
+        # --documents-dir run structurally unpublishable: real staged
+        # scans are all "document" kind, so there is legitimately no
+        # "text" path, and the gate could never pass regardless of how
+        # clean the run was. The gate should require clean coverage for
+        # whatever input kinds this run actually exercised — every one of
+        # them, not a fixed pair. A mixed run (synthetic default) still has
+        # to show clean "text" and "document" coverage; a document-only run
+        # only has to show it for "document".
+        #
+        # "unspecified" never counts as coverage, whether or not other
+        # kinds are also present: it means at least one measurement's input
+        # kind (see _document_kind) could not be determined, which is
+        # exactly the provenance gap this gate exists to catch.
         if result.get("failed_attempts") != 0:
             return False
         input_paths = result.get("input_paths")
-        return isinstance(input_paths, dict) and all(
-            isinstance(input_paths.get(path_name), dict)
-            and isinstance(input_paths[path_name].get("e2e"), dict)
-            and input_paths[path_name]["e2e"].get("n", 0) > 0
-            for path_name in ("text", "document")
+        if not isinstance(input_paths, dict) or not input_paths:
+            return False
+        if "unspecified" in input_paths:
+            return False
+        return all(
+            isinstance(stats, dict)
+            and isinstance(stats.get("e2e"), dict)
+            and stats["e2e"].get("n", 0) > 0
+            for stats in input_paths.values()
         )
 
     publication_ready = bool(variants_payload) and all(
