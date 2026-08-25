@@ -300,34 +300,35 @@ set_text(sh[4], "Data, Policy and Innovation Centre")
 set_text(sh[5], "24 August 2026")
 
 # ══ 2 · The record ════════════════════════════════════════════════════════════
-s = clone(prs, A_BARS3)
+s = clone(prs, A_ROWS3)
 sh = S(s)
 set_text(sh[0], "THE RECORD")
 set_text(sh[1], "The record has never been read")
-set_text(sh[2], "A dated, geocoded record of what is going wrong across thirty districts.")
-rows = [
-    (sh[3], sh[4], sh[5], "Complaints filed", "1,371,288", 1.0),
-    (sh[6], sh[7], sh[8], "Closed with a remark", "1,209,144", 1_209_144 / 1_371_288),
-    (sh[9], sh[10], sh[11], "No closing remark", "162,144", 162_144 / 1_371_288),
-]
-for label_sh, bar_sh, num_sh, label, num, frac in rows:
-    set_text(label_sh, label)
-    set_text(num_sh, num)
-    bar_sh.width = Inches(max(1.35, 8.0 * frac))
-    num_sh.width = Inches(max(1.05, 8.0 * frac) - 0.3)
-set_text(sh[15], "6,556,171 action events · 30 districts · 427 blocks · 2021 to 2025")
-set_text(sh[12], "The portal reports how many cases are open and how many are closed. It has never read what the citizen wrote.")
+set_text(sh[3], "1.37 million grievances")
+set_text(sh[4], "Filed between 2021 and 2025, across 30 districts and 427 blocks.")
+set_text(sh[6], "6.5 million action notes")
+set_text(sh[7], "Every step an officer took on a case, written as free text.")
+set_text(sh[9], "Counts only")
+set_text(sh[10], "The portal reports how many cases are open and how many are closed. It has never opened either body of text.")
+textbox(
+    s,
+    "Everything after this slide is about reading it.",
+    x=0.7, y=6.28, w=11.9, h=0.42, size=17, color=MAROON, bold=True,
+)
 s.notes_slide.notes_text_frame.text = (
-    "Sources: docs/ARCHITECTURE.md, docs/ROADMAP.md. Canonical counts verified on both local "
-    "SQLite and cloud Postgres and must match after any migration change.\n\n"
+    "Sources: docs/ARCHITECTURE.md, docs/ROADMAP.md. Canonical counts, verified on both local "
+    "SQLite and cloud Postgres, and they must match after any migration change: 1,371,288 "
+    "complaints and 6,556,171 action-history rows.\n\n"
     "Caveat: the Parquet lake reads 6,548,820 action rows against the canonical 6,556,171, a "
     "0.11% shortfall tracked as issue #241. Use the canonical figure.\n\n"
-    "DERIVED FIGURE: 162,144 is arithmetic, 1,371,288 minus the 1,209,144 that carry a closing "
-    "remark. It is not separately measured. Those cases are either still open or were closed "
-    "without a remark, and the record cannot distinguish the two. If pressed, say that.\n\n"
-    "Two structural facts behind everything that follows: the portal has never read the "
-    "grievance text (median 19 words, 61% unique), and there is no citizen key, so every row is "
-    "an island."
+    "The grievance text has a median of 19 words and 61% of it is unique. The action notes are "
+    "populated on 99.87% of rows with 1,395,867 distinct normalised values. Both are opaque "
+    "strings to the reporting layer.\n\n"
+    "Two structural facts drive the whole deck. The portal has never read what the citizen "
+    "wrote. And there is no citizen key, so every row is an island, which is why deduplication "
+    "on the next slide needs the whole corpus at once.\n\n"
+    "This slide used to carry a closure breakdown. That data now sits on slide 6, where it "
+    "belongs, because it is the reason the routing model needed a correctness constraint."
 )
 
 # ══ 3 · Architecture ══════════════════════════════════════════════════════════
@@ -512,14 +513,62 @@ s.notes_slide.notes_text_frame.text = (
     "standard error of 3.50. Withdrawn 23 August, commits 879c24c and 365e3b4."
 )
 
-# ══ 6 · Would another route be faster? ════════════════════════════════════════
+# ══ 6 · Closing a case costs nothing ══════════════════════════════════════════
+s = clone(prs, A_BARS3)
+sh = S(s)
+set_text(sh[0], "WHAT CLOSURE RECORDS")
+set_text(sh[1], "Closing a case costs nothing")
+set_text(sh[2], "How 776,922 closures were recorded, on the six standard remarks.")
+ladder = 776_922
+rungs = [
+    (sh[3], sh[4], sh[5], "Disposed, no action claimed", 472_782),
+    (sh[6], sh[7], sh[8], "Disposed with action taken", 280_887),
+    (sh[9], sh[10], sh[11], "Beneficiary benefited", 23_253),
+]
+for label_sh, bar_sh, num_sh, label, count in rungs:
+    set_text(label_sh, label)
+    set_text(num_sh, f"{count:,}")
+    width = max(1.35, 8.0 * count / 472_782)
+    bar_sh.width = Inches(width)
+    num_sh.width = Inches(width - 0.3)
+set_text(sh[15], "Median days to close: 46 claiming no action, 54 claiming action taken")
+set_text(sh[12], "The fastest way to close a case is to do nothing. Speed alone cannot be the target.")
+s.notes_slide.notes_text_frame.text = (
+    "This slide exists to set up the next one. It is also the strongest finding in the "
+    "record.\n\n"
+    "NUMBERS. outputs/findings/closure_finding.md. Of 776,922 complaints closed on one of six "
+    "governed disposal templates, 472,782 used the rung that records no action. That is 60.9% "
+    "of ladder closures and 39.1% of all 1,209,144 resolved complaints. State the denominator, "
+    "because it moves the number by half. The ladder covers 64.25% of resolved cases; the rest "
+    "carry non-standard text.\n\n"
+    "WHY IT MATTERS FOR ROUTING. From the design document, section 2: 'The first instinct is to "
+    "minimise time to closure. This fails, instructively. Closure is an action the officer "
+    "controls directly, and the optimal behaviour under that objective is to close every case "
+    "immediately without doing anything. This is not hypothetical: the most common closing "
+    "remark in the system records disposal with no action claimed.' That is why the model "
+    "minimises duration SUBJECT TO a correctness constraint rather than minimising duration.\n\n"
+    "It is also the weak point. The constraint is derived from the closing remark after the "
+    "fact, so the population is conditioned on resolution and does not identify intake-time "
+    "actionability. That is one reason the estimate on the next slide did not hold.\n\n"
+    "THE CAVEAT THAT MUST TRAVEL. This is descriptive and is not a failure rate. A correct "
+    "closure and a premature one look identical in this record. Do not present it as an office "
+    "league table; report it at state level. The bare share RISES with work done, 58.4% at "
+    "three to five action steps and 64.8% at six or more, so whatever drives the choice of "
+    "phrase, it is not that nothing happened.\n\n"
+    "The benefit flag runs backwards to the ladder: 9.2% of no-action closures carry it against "
+    "6.2% of action-taken closures. Never report it as satisfaction.\n\n"
+    "If asked for a bounded review set: 8,974 complaints were created and closed within two "
+    "days on a bare disposal, 1.9% of bare disposals."
+)
+
+# ══ 7 · Would another route be faster? ════════════════════════════════════════
 s = clone_shell(prs, A_ROWS3, keep={0, 1, 11, 12})
 sh = S(s)
 set_text(sh[0], "WOULD ANOTHER ROUTE BE FASTER?")
 set_text(sh[1], "The estimate did not survive the second year")
 textbox(
     s,
-    "We tested whether a different department would have closed the case faster.",
+    "So we tested for speed without losing whether action was taken.",
     x=0.7, y=2.02, w=11.9, h=0.36, size=17, color=BODY,
 )
 add_table(
@@ -597,7 +646,7 @@ s.notes_slide.notes_text_frame.text = (
     "this data cannot detect one."
 )
 
-# ══ 7 · The limits ════════════════════════════════════════════════════════════
+# ══ 8 · The limits ════════════════════════════════════════════════════════════
 s = clone(prs, A_NUM3)
 sh = S(s)
 set_text(sh[0], "THE LIMITS")
@@ -625,7 +674,7 @@ s.notes_slide.notes_text_frame.text = (
     "cannot defend, and this deck has to survive the room checking it."
 )
 
-# ══ 8 · Sarvam ════════════════════════════════════════════════════════════════
+# ══ 9 · Sarvam ════════════════════════════════════════════════════════════════
 s = clone(prs, A_TWOGROUP)
 sh = S(s)
 set_text(sh[0], "THE OUTSIDE OPTION: SARVAM")
@@ -691,7 +740,7 @@ s.notes_slide.notes_text_frame.text = (
     "path. Do not quote ₹700; that was priced on the withdrawn 30B model."
 )
 
-# ══ 9 · Category head to head (only when measured) ════════════════════════════
+# ══ 10 · Category head to head (only when measured) ════════════════════════════
 if SARVAM_HEAD_TO_HEAD:
     hh = SARVAM_HEAD_TO_HEAD
     s = clone(prs, A_BARS3)
@@ -721,7 +770,7 @@ if SARVAM_HEAD_TO_HEAD:
     set_text(sh[12], hh["closing"])
     s.notes_slide.notes_text_frame.text = hh.get("notes", "")
 
-# ══ 10 · Closing ═══════════════════════════════════════════════════════════════
+# ══ 11 · Closing ═══════════════════════════════════════════════════════════════
 s = clone(prs, A_CLOSING)
 s.notes_slide.notes_text_frame.text = (
     "Close on the limits, not a summary.\n\n"

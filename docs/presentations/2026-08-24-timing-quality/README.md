@@ -1,23 +1,29 @@
 # Janasunani 2.0 — technical briefing, 24 August 2026
 
-Nine slides, 15 to 20 minutes, for a technical audience.
+Ten slides, 15 to 20 minutes, for a technical audience.
 
 The spine escalates: what we built, what we measured, where measurement runs
-out, what sits outside. Routing is the pivot, where the deck stops reporting
-numbers and starts reporting that a number could not be got.
+out, what sits outside.
 
 1. Title
 2. The record has never been read
 3. Deduplication needs every record at once
 4. Six stages, timed and scored
 5. The department suggestion is learned from history
-6. The estimate did not survive the second year
-7. What we cannot measure
-8. It does more. We have not shown it does better
-9. Thank you
+6. Closing a case costs nothing
+7. The estimate did not survive the second year
+8. What we cannot measure
+9. It does more. We have not shown it does better
+10. Thank you
 
-Slides 5 and 6 are the only pair on one topic, deliberately. Five says what can
-be claimed; six says what was claimed and withdrawn.
+Slides 5 to 7 are one movement. Five says what can be claimed about routing.
+Six explains why speed alone cannot be the objective, since the most common
+closing remark records disposal with no action taken. Seven is the estimate
+that tried to respect that constraint and did not survive a second year.
+
+The closure data sits at six rather than with the corpus at two on purpose. It
+is not a standalone finding there. It is the reason the routing model needed a
+correctness constraint at all.
 
 | File | What it is |
 |---|---|

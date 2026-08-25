@@ -8,13 +8,15 @@ _No notes._
 
 ## Slide 2 — The record has never been read
 
-Sources: docs/ARCHITECTURE.md, docs/ROADMAP.md. Canonical counts verified on both local SQLite and cloud Postgres and must match after any migration change.
+Sources: docs/ARCHITECTURE.md, docs/ROADMAP.md. Canonical counts, verified on both local SQLite and cloud Postgres, and they must match after any migration change: 1,371,288 complaints and 6,556,171 action-history rows.
 
 Caveat: the Parquet lake reads 6,548,820 action rows against the canonical 6,556,171, a 0.11% shortfall tracked as issue #241. Use the canonical figure.
 
-DERIVED FIGURE: 162,144 is arithmetic, 1,371,288 minus the 1,209,144 that carry a closing remark. It is not separately measured. Those cases are either still open or were closed without a remark, and the record cannot distinguish the two. If pressed, say that.
+The grievance text has a median of 19 words and 61% of it is unique. The action notes are populated on 99.87% of rows with 1,395,867 distinct normalised values. Both are opaque strings to the reporting layer.
 
-Two structural facts behind everything that follows: the portal has never read the grievance text (median 19 words, 61% unique), and there is no citizen key, so every row is an island.
+Two structural facts drive the whole deck. The portal has never read what the citizen wrote. And there is no citizen key, so every row is an island, which is why deduplication on the next slide needs the whole corpus at once.
+
+This slide used to carry a closure breakdown. That data now sits on slide 6, where it belongs, because it is the reason the routing model needed a correctness constraint.
 
 ## Slide 3 — Deduplication needs every record at once
 
@@ -71,7 +73,23 @@ Macro-F1 is weak, 25.2% informative and 19.8% all eligible, and about a dozen de
 
 WITHDRAWN, do not use: the in-sample crosswalk figures 60.9 / 67.5 / 72.8, which are resubstitution. And any routing time saving: an estimated 11 to 23 day gain held on validation 2024 and failed on the untouched 2025 test year at -2.35 days against a standard error of 3.50. Withdrawn 23 August, commits 879c24c and 365e3b4.
 
-## Slide 6 — The estimate did not survive the second year
+## Slide 6 — Closing a case costs nothing
+
+This slide exists to set up the next one. It is also the strongest finding in the record.
+
+NUMBERS. outputs/findings/closure_finding.md. Of 776,922 complaints closed on one of six governed disposal templates, 472,782 used the rung that records no action. That is 60.9% of ladder closures and 39.1% of all 1,209,144 resolved complaints. State the denominator, because it moves the number by half. The ladder covers 64.25% of resolved cases; the rest carry non-standard text.
+
+WHY IT MATTERS FOR ROUTING. From the design document, section 2: 'The first instinct is to minimise time to closure. This fails, instructively. Closure is an action the officer controls directly, and the optimal behaviour under that objective is to close every case immediately without doing anything. This is not hypothetical: the most common closing remark in the system records disposal with no action claimed.' That is why the model minimises duration SUBJECT TO a correctness constraint rather than minimising duration.
+
+It is also the weak point. The constraint is derived from the closing remark after the fact, so the population is conditioned on resolution and does not identify intake-time actionability. That is one reason the estimate on the next slide did not hold.
+
+THE CAVEAT THAT MUST TRAVEL. This is descriptive and is not a failure rate. A correct closure and a premature one look identical in this record. Do not present it as an office league table; report it at state level. The bare share RISES with work done, 58.4% at three to five action steps and 64.8% at six or more, so whatever drives the choice of phrase, it is not that nothing happened.
+
+The benefit flag runs backwards to the ladder: 9.2% of no-action closures carry it against 6.2% of action-taken closures. Never report it as satisfaction.
+
+If asked for a bounded review set: 8,974 complaints were created and closed within two days on a bare disposal, 1.9% of bare disposals.
+
+## Slide 7 — The estimate did not survive the second year
 
 Ninety seconds. The table is the argument; do not narrate every row.
 
@@ -96,7 +114,7 @@ WITHDRAWN, do not use: any routing time saving, including the 11 to 23 day band.
 
 What we are NOT saying: that routing gains do not exist. We are saying this design on this data cannot detect one.
 
-## Slide 7 — What we cannot measure
+## Slide 8 — What we cannot measure
 
 Do not cut this slide for time. It is the one that makes the rest credible.
 
@@ -110,7 +128,7 @@ Two more we do not claim, if asked: no gain from duplicate detection beyond the 
 
 If someone asks why so little is claimed: because the alternative is claiming things we cannot defend, and this deck has to survive the room checking it.
 
-## Slide 8 — It does more. We have not shown it does better
+## Slide 9 — It does more. We have not shown it does better
 
 The provider is Sarvam. Two endpoints, billed separately: digitise at ₹0.50 a page returns text and layout; extract at ₹1.00 a page returns schema-driven fields. Both is ₹1.50. Source: janasunani/evaluation/pricing.py, checked against the Sarvam dashboard 2026-08-07. Our local pipeline is ₹0.00 a page.
 
@@ -136,7 +154,7 @@ GOVERNANCE. Trust tier authorized-external. Authorisation is a GoO-Sarvam MoU wi
 
 COST AT SCALE, projected list price: ₹48,000 to digitise the 96,469-page English corpus, ₹145,000 for both endpoints, ₹8,050 to push 1.37M subjects through the 105B text model. At 10 requests a minute, which does not rise with the plan tier, the full corpus is roughly ten days of continuous calling. It is a measurement instrument, not a backfill path. Do not quote ₹700; that was priced on the withdrawn 30B model.
 
-## Slide 9 — Data, Policy and Innovation Centre
+## Slide 10 — Data, Policy and Innovation Centre
 
 Close on the limits, not a summary.
 
