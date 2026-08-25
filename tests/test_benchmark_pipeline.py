@@ -7,6 +7,7 @@ for the four variants standard / sarvam_digitise / sarvam_extract / sarvam_both.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -23,9 +24,11 @@ from scripts.benchmark_pipeline import (
     STAGES,
     SUPPORTED_DOCUMENT_SUFFIXES,
     VALID_VARIANTS,
+    StaleDocumentBytesError,
     _clustered_se,
     _document_kind,
     _document_sample_digest,
+    _document_sample_file_hashes,
     _fake_process,
     _percentile,
     _single_page_text_pdf,
@@ -625,6 +628,183 @@ def test_document_sample_digest_stable_across_restage_to_new_path(tmp_path):
     }
 
     assert _document_sample_digest(dir1, manifest) == _document_sample_digest(dir2, manifest)
+
+
+# ---------------------------------------------------------------------------
+# #315 Codex follow-up — bind sample_digest to the bytes actually benchmarked
+# ---------------------------------------------------------------------------
+
+
+def test_document_sample_file_hashes_matches_per_file_digest_inputs(tmp_path):
+    _stage_document(tmp_path, "CMO20241020862")
+    _stage_document(tmp_path, "CMO2024483790", suffix=".jpeg")
+
+    hashes = _document_sample_file_hashes(tmp_path)
+
+    names = {d.name for d in tmp_path.iterdir() if d.suffix.lower() in SUPPORTED_DOCUMENT_SUFFIXES}
+    assert set(hashes) == names
+    for name, digest in hashes.items():
+        expected = hashlib.sha256((tmp_path / name).read_bytes()).hexdigest()
+        assert digest == expected
+    # _document_sample_digest(..., file_hashes=hashes) must be reusable
+    # without a second read — same result as computing it fresh.
+    assert _document_sample_digest(tmp_path, None, file_hashes=hashes) == _document_sample_digest(
+        tmp_path, None
+    )
+
+
+def test_run_benchmark_detects_document_mutated_after_fingerprint(tmp_path):
+    # This is the actual race #308's lazy read opened: sample_digest is
+    # fingerprinted once, before the run starts; _measure_with_processor then
+    # reads each document lazily, potentially much later. Stage a directory,
+    # fingerprint it (as main() does before run_benchmark starts), mutate one
+    # file on disk exactly like a corpus still hydrating from Box would, and
+    # confirm the run refuses to silently benchmark content the fingerprint
+    # never saw.
+    mutated_path = _stage_document(tmp_path, "CMO20241020862")
+    _stage_document(tmp_path, "CMO2024483790", suffix=".jpeg")
+    file_hashes = _document_sample_file_hashes(tmp_path)
+    docs = load_staged_documents(tmp_path)
+
+    # Simulate the mid-run rewrite: different bytes land on disk after the
+    # fingerprint but before run_benchmark's lazy read.
+    mutated_path.write_bytes(_single_page_text_pdf("A completely different scan"))
+
+    with pytest.raises(StaleDocumentBytesError, match=mutated_path.name):
+        run_benchmark(
+            variant="standard",
+            docs=docs,
+            repeats=1,
+            discard_warm=False,
+            processor_factory=lambda _variant: type(
+                "Processor",
+                (),
+                {
+                    "_timing_sink": None,
+                    "process": lambda self, **kwargs: self._timing_sink(
+                        {"redact": 0.1, "e2e": 0.2, "ok": 1.0}
+                    ),
+                },
+            )(),
+            expected_file_hashes=file_hashes,
+        )
+
+
+def test_run_benchmark_missing_from_fingerprint_also_fails_loudly(tmp_path):
+    # A file staged after the fingerprint was taken is exactly as stale as
+    # one whose content changed — both mean the run is about to measure
+    # bytes the published sample_digest never claimed. Must not be treated
+    # as "no opinion, so allow it".
+    file_hashes = _document_sample_file_hashes(tmp_path)  # empty snapshot
+    _stage_document(tmp_path, "CMO20241020862")
+    docs = load_staged_documents(tmp_path)
+
+    with pytest.raises(StaleDocumentBytesError, match="CMO20241020862"):
+        run_benchmark(
+            variant="standard",
+            docs=docs,
+            repeats=1,
+            discard_warm=False,
+            processor_factory=lambda _variant: type(
+                "Processor",
+                (),
+                {
+                    "_timing_sink": None,
+                    "process": lambda self, **kwargs: self._timing_sink(
+                        {"redact": 0.1, "e2e": 0.2, "ok": 1.0}
+                    ),
+                },
+            )(),
+            expected_file_hashes=file_hashes,
+        )
+
+
+def test_run_benchmark_happy_path_with_matching_fingerprint_still_passes(tmp_path):
+    # The verification must not get in its own way when nothing changed —
+    # this is the common case (no hydration race) and must behave exactly
+    # like passing no expected_file_hashes at all.
+    _stage_document(tmp_path, "CMO20241020862")
+    _stage_document(tmp_path, "CMO2024483790", suffix=".jpeg")
+    file_hashes = _document_sample_file_hashes(tmp_path)
+    docs = load_staged_documents(tmp_path)
+
+    result = run_benchmark(
+        variant="standard",
+        docs=docs,
+        repeats=2,
+        discard_warm=False,
+        processor_factory=lambda _variant: type(
+            "Processor",
+            (),
+            {
+                "_timing_sink": None,
+                "process": lambda self, **kwargs: self._timing_sink(
+                    {"redact": 0.1, "e2e": 0.2, "ok": 1.0}
+                ),
+            },
+        )(),
+        expected_file_hashes=file_hashes,
+    )
+    assert result["n_docs"] == 2
+    assert result["failed_attempts"] == 0
+    assert result["stages"]["e2e"]["n"] == 4
+
+
+def test_run_benchmark_fake_path_skips_fingerprint_check(tmp_path):
+    # The fake timing path never reads document bytes at all (see #308's
+    # fake-path test), so it must not fail even when expected_file_hashes is
+    # stale — there is nothing to verify because nothing gets read.
+    mutated_path = _stage_document(tmp_path, "CMO20241020862")
+    file_hashes = _document_sample_file_hashes(tmp_path)
+    docs = load_staged_documents(tmp_path)
+    mutated_path.write_bytes(_single_page_text_pdf("A completely different scan"))
+
+    result = run_benchmark(
+        variant="standard",
+        docs=docs,
+        repeats=2,
+        discard_warm=False,
+        expected_file_hashes=file_hashes,  # no processor_factory -> fake path
+    )
+    assert result["n_docs"] == 1
+
+
+def test_cli_documents_dir_stale_document_bytes_fails_loudly(tmp_path, monkeypatch, capsys):
+    # CLI wiring: main() must convert a StaleDocumentBytesError raised deep
+    # inside run_benchmark into a loud, non-zero-exit CLI failure that names
+    # the file, not a silently-written latency.json. run_benchmark itself is
+    # stubbed here — the detection logic is exercised for real above; this
+    # test is only about main()'s try/except around the call.
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    _stage_document(staging, "CMO20241020862")
+    out = tmp_path / "latency.json"
+
+    def fake_run_benchmark(*_args, **_kwargs):
+        raise StaleDocumentBytesError(
+            "CMO20241020862_complaint_20250715_234307.pdf does not match "
+            "the sample_digest snapshot taken before this run started"
+        )
+
+    monkeypatch.setattr(bench_mod, "run_benchmark", fake_run_benchmark)
+
+    with pytest.raises(SystemExit) as exc:
+        bench_mod.main(
+            [
+                "--fake",
+                "--documents-dir",
+                str(staging),
+                "--repeats",
+                "2",
+                "--output",
+                str(out),
+            ]
+        )
+    assert exc.value.code == 2
+    assert not out.exists()
+    err = capsys.readouterr().err
+    assert "CMO20241020862_complaint_20250715_234307.pdf" in err
+    assert "sample_digest snapshot" in err
 
 
 def test_run_benchmark_over_loaded_real_documents(tmp_path):
