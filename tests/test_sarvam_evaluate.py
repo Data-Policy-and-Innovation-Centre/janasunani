@@ -896,3 +896,40 @@ def test_unwrap_extract_result_prefers_result_over_a_stale_sibling():
         "data": {"grievance_category": "WRONG"},
     }
     assert _unwrap_extract_result(both)["grievance_category"] == "Housing"
+
+
+def test_save_records_destination_must_be_inside_the_data_tree(tmp_path):
+    """The dump is unredacted citizen text, so the destination is not free-form.
+
+    Codex P1 on #309: an operator passing `--save-records records.jsonl` or a
+    path under `docs/` got the file created without complaint, leaving
+    unredacted grievance text somewhere git was watching.
+    """
+    import pytest
+
+    from janasunani.config import DATA_DIR
+    from janasunani.evaluation.sarvam_evaluate import _checked_record_destination
+
+    inside = DATA_DIR / "external" / "run" / "records.jsonl"
+    assert _checked_record_destination(inside) == inside.resolve()
+
+    for bad in (
+        Path("records.jsonl"),
+        Path("docs/records.jsonl"),
+        DATA_DIR / ".." / "docs" / "records.jsonl",
+        tmp_path / "records.jsonl",
+    ):
+        with pytest.raises(ValueError, match="governed data tree"):
+            _checked_record_destination(bad)
+
+
+def test_save_records_destination_rejects_traversal_after_resolution():
+    """`data/../docs/x` must not pass on the strength of its prefix."""
+    import pytest
+
+    from janasunani.config import DATA_DIR
+    from janasunani.evaluation.sarvam_evaluate import _checked_record_destination
+
+    escaped = DATA_DIR / "external" / ".." / ".." / "docs" / "leak.jsonl"
+    with pytest.raises(ValueError, match="governed data tree"):
+        _checked_record_destination(escaped)
