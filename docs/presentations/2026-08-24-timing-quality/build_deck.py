@@ -373,34 +373,53 @@ set_text(sh[1], "Six stages, timed and scored")
 add_table(
     s,
     [
-        ["Stage", "How fast", "How good, and on how many"],
-        ["Read the page", "5.8 s", "never measured"],
-        ["Hide personal details", "0.06 s", "found 78% of the items we marked, on 480"],
-        ["Flag for officer review", "under 0.01 s", "caught all 13 needing review, out of 57 cases"],
-        ["Sort into a category", "0.8 s", "right one in its top three, 91% of 3,160"],
-        ["Draft a summary", "6.6 s", "26 drafts read, 8 usable without an edit"],
-        ["Suggest a department", "under 0.01 s", "right one in its top three, 80% of 142,181"],
+        ["Stage", "Model", "Latency", "Quality"],
+        ["OCR", "pytesseract", "5.8 s", "not measured, no ground truth"],
+        ["PII redaction", "Presidio + spaCy NER", "0.06 s", "recall 0.78, n=480 spans"],
+        ["Actionability triage", "TF-IDF word + char", "< 0.01 s", "recall 1.00, precision 0.81, n=57"],
+        ["Categorisation", "hashing word + char SGD", "0.8 s", "top-1 47%, top-3 91%, n=3,160"],
+        ["Summarisation", "BART", "6.6 s", "fact recall 66%, 8 of 26 usable"],
+        ["Routing", "empirical crosswalk", "< 0.01 s", "top-1 55%, top-3 80%, n=142,181"],
     ],
-    x=0.7, y=2.02, w=11.9, col_w=[4.0, 2.5, 5.4], row_h=0.46, header_h=0.40,
+    x=0.7, y=1.96, w=11.9, col_w=[2.5, 3.1, 1.5, 4.8], row_h=0.46, header_h=0.40,
 )
 textbox(
     s,
-    "0.13 s typed end to end     ·     13.7 s scanned end to end     ·     "
-    "0 of 55,544 records kept a phone number, Aadhaar or PAN",
-    x=0.7, y=5.62, w=11.9, h=0.34, size=15, color=DARK,
+    "End to end: 0.13 s typed, 13.7 s scanned. OCR and summarisation are 94% of it.",
+    x=0.7, y=5.28, w=11.9, h=0.34, size=15, color=DARK,
 )
 textbox(
     s,
-    "Reading the page and drafting the summary are 94% of the time. Everything else is close to free.",
-    x=0.7, y=6.18, w=11.9, h=0.42, size=17, color=MAROON, bold=True,
+    "On triage a TF-IDF model beat a frozen MuRIL probe, 13 of 13 against 9 of 13.",
+    x=0.7, y=5.80, w=11.9, h=0.42, size=17, color=MAROON, bold=True,
 )
 textbox(
     s,
-    "Speeds are means on one scanned document, n=20. Categories are lopsided: always guessing "
-    "the three biggest scores 84%, so the model adds 7 points.",
-    x=0.7, y=6.66, w=11.9, h=0.32, size=12, color=SUBTLE, italic=True,
+    "Latency is a mean over one scanned document, n=20. PII precision is unmeasured, though "
+    "0 of 55,544 redacted records retain a shaped identifier.",
+    x=0.7, y=6.28, w=11.9, h=0.26, size=12, color=SUBTLE, italic=True,
+)
+textbox(
+    s,
+    "Category classes are lopsided. A majority-class baseline scores 37% top-1 and 84% top-3, "
+    "so the model adds 9 and 7 points.",
+    x=0.7, y=6.52, w=11.9, h=0.26, size=12, color=SUBTLE, italic=True,
 )
 s.notes_slide.notes_text_frame.text = (
+    "MODEL OPTIONS AT EACH STAGE, if asked what else was tried.\n"
+    "  OCR: pytesseract ships because it handles Odia script. DeepSeek-OCR exists in the repo "
+    "but is English-only in practice and GPU-bound. Sarvam Vision is the third option and is "
+    "slide 9.\n"
+    "  Actionability: a frozen MuRIL probe was the alternative and lost, 9 of 13 review cases "
+    "against TF-IDF's 13 of 13, at 86.0% accuracy against 94.7%. The cheap model won, and that "
+    "is the procurement point.\n"
+    "  Categorisation: a hashing word and character SGD ships. The DSI legacy MuRIL figure of "
+    "71.04% is NOT a comparison; it was measured on typed subject lines with a different split "
+    "and issue #127 warns against putting the two side by side.\n"
+    "  Routing: the empirical crosswalk ships. An opt-in empirical-Bayes incidence provider "
+    "exists behind JANASUNANI_ROUTER=incidence and falls back safely when it cannot answer.\n"
+    "  Summarisation: local BART, bart-large-cnn rev 37f520fa. No alternative has been "
+    "benchmarked.\n\n"
     "SPEEDS. outputs/benchmark/latency.json, run 2026-08-10T23:14:58Z at git sha 24ab193, "
     "is_fake_timing false. Document path, n=20 over 10 clusters. Means: OCR 5.833, summarise "
     "6.550, categorise 0.778, redact 0.055, detect PII 0.021, route 0.00048, triage 0.00026. "

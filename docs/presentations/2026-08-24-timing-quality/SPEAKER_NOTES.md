@@ -34,6 +34,13 @@ The diagram is architecture.svg in this directory, embedded as vector with a PNG
 
 ## Slide 4 — Six stages, timed and scored
 
+MODEL OPTIONS AT EACH STAGE, if asked what else was tried.
+  OCR: pytesseract ships because it handles Odia script. DeepSeek-OCR exists in the repo but is English-only in practice and GPU-bound. Sarvam Vision is the third option and is slide 9.
+  Actionability: a frozen MuRIL probe was the alternative and lost, 9 of 13 review cases against TF-IDF's 13 of 13, at 86.0% accuracy against 94.7%. The cheap model won, and that is the procurement point.
+  Categorisation: a hashing word and character SGD ships. The DSI legacy MuRIL figure of 71.04% is NOT a comparison; it was measured on typed subject lines with a different split and issue #127 warns against putting the two side by side.
+  Routing: the empirical crosswalk ships. An opt-in empirical-Bayes incidence provider exists behind JANASUNANI_ROUTER=incidence and falls back safely when it cannot answer.
+  Summarisation: local BART, bart-large-cnn rev 37f520fa. No alternative has been benchmarked.
+
 SPEEDS. outputs/benchmark/latency.json, run 2026-08-10T23:14:58Z at git sha 24ab193, is_fake_timing false. Document path, n=20 over 10 clusters. Means: OCR 5.833, summarise 6.550, categorise 0.778, redact 0.055, detect PII 0.021, route 0.00048, triage 0.00026. Summarise plus OCR is 12.383 s of the 13.244 s mean run, 93.5%. End to end: typed p50 0.133 s (n=40), PDF p50 13.661 s (n=20). Live API warm POST median 4.44 s (n=8), cold start 19.4 s. Measured on an arm64 laptop, not the deployment box.
 
 Four stages (format classifier, page type, pii, spam) were never separately instrumented and carry n=0. They are omitted rather than shown as zero.
