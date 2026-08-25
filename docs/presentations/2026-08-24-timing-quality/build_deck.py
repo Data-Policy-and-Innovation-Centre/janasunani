@@ -46,6 +46,7 @@ REF = "reference.pptx"
 OUT = "Janasunani_2.0_Timing_and_Quality.pptx"
 SVG = "architecture.svg"
 PNG = "architecture.png"
+NOTES_MD = pathlib.Path("SPEAKER_NOTES.md")
 
 # Reference archetype indices (0-based into prs.slides)
 A_TITLE, A_NUM3, A_TWOGROUP, A_ROWS3, A_BARS3, A_CLOSING = 0, 1, 2, 5, 8, 12
@@ -305,14 +306,14 @@ sh = S(s)
 set_text(sh[0], "THE RECORD")
 set_text(sh[1], "The record has never been read")
 set_text(sh[3], "1.37 million grievances")
-set_text(sh[4], "Filed between 2021 and 2025, across 30 districts and 427 blocks.")
+set_text(sh[4], "What the citizen asked for, 2021 to 2025 across 30 districts. Median 19 words, mostly unique.")
 set_text(sh[6], "6.5 million action notes")
-set_text(sh[7], "Every step an officer took on a case, written as free text.")
-set_text(sh[9], "Counts only")
-set_text(sh[10], "The portal reports how many cases are open and how many are closed. It has never opened either body of text.")
+set_text(sh[7], "What the officer did about it. Free text on 99.87% of rows, 1.4 million distinct values.")
+set_text(sh[9], "The portal counts rows")
+set_text(sh[10], "It reports how many cases are open and how many are closed. It has never opened either body of text.")
 textbox(
     s,
-    "Everything after this slide is about reading it.",
+    "Every number in this deck comes from reading one of those two.",
     x=0.7, y=6.28, w=11.9, h=0.42, size=17, color=MAROON, bold=True,
 )
 s.notes_slide.notes_text_frame.text = (
@@ -324,18 +325,21 @@ s.notes_slide.notes_text_frame.text = (
     "The grievance text has a median of 19 words and 61% of it is unique. The action notes are "
     "populated on 99.87% of rows with 1,395,867 distinct normalised values. Both are opaque "
     "strings to the reporting layer.\n\n"
-    "Two structural facts drive the whole deck. The portal has never read what the citizen "
-    "wrote. And there is no citizen key, so every row is an island, which is why deduplication "
-    "on the next slide needs the whole corpus at once.\n\n"
-    "This slide used to carry a closure breakdown. That data now sits on slide 6, where it "
-    "belongs, because it is the reason the routing model needed a correctness constraint."
+    "THIS SLIDE IS THE MAP. Two bodies of free text, and the deck reads them in that order. "
+    "Slides 3 to 5 read the citizen's text: the stages, their speed and quality, and the "
+    "department suggestion. Slides 6 and 7 read the officer's notes: how closures are recorded, "
+    "and whether a different route would have closed cases faster. Say the two halves out loud "
+    "here, so slide 6 lands as the turn rather than a new topic.\n\n"
+    "The third row is the reason the project exists. The portal has never opened either body of "
+    "text. There is also no citizen key, so every row is an island, which is why deduplication "
+    "on the next slide needs the whole corpus at once."
 )
 
 # ══ 3 · Architecture ══════════════════════════════════════════════════════════
 # Keep only eyebrow, title and the two footer texts from the S6 archetype.
 s = clone_shell(prs, A_ROWS3, keep={0, 1, 11, 12})
 sh = S(s)
-set_text(sh[0], "HOW IT WORKS")
+set_text(sh[0], "READING THE CITIZEN'S TEXT")
 set_text(sh[1], "Deduplication needs every record at once")
 add_vector_picture(s, PNG, SVG, x=0.7, y=2.08, w=11.9, h=11.9 * 450 / 1280)
 textbox(
@@ -535,7 +539,7 @@ s.notes_slide.notes_text_frame.text = (
 # ══ 6 · Closing a case costs nothing ══════════════════════════════════════════
 s = clone(prs, A_BARS3)
 sh = S(s)
-set_text(sh[0], "WHAT CLOSURE RECORDS")
+set_text(sh[0], "READING THE OFFICER'S NOTES")
 set_text(sh[1], "Closing a case costs nothing")
 set_text(sh[2], "How 776,922 closures were recorded, on the six standard remarks.")
 ladder = 776_922
@@ -553,8 +557,10 @@ for label_sh, bar_sh, num_sh, label, count in rungs:
 set_text(sh[15], "Median days to close: 46 claiming no action, 54 claiming action taken")
 set_text(sh[12], "The fastest way to close a case is to do nothing. Speed alone cannot be the target.")
 s.notes_slide.notes_text_frame.text = (
-    "This slide exists to set up the next one. It is also the strongest finding in the "
-    "record.\n\n"
+    "THIS IS THE TURN slide 2 announced. Everything up to here read the citizen's text. From "
+    "here the source is the officer's action notes, the second of the two bodies. Say so; it "
+    "is one sentence and it stops this slide reading as a new topic.\n\n"
+    "It sets up the next slide and it is also the strongest finding in the record.\n\n"
     "NUMBERS. outputs/findings/closure_finding.md. Of 776,922 complaints closed on one of six "
     "governed disposal templates, 472,782 used the rung that records no action. That is 60.9% "
     "of ladder closures and 39.1% of all 1,209,144 resolved complaints. State the denominator, "
@@ -812,3 +818,25 @@ prs.core_properties.title = "Janasunani 2.0 — technical briefing"
 prs.core_properties.author = "Data, Policy and Innovation Centre"
 prs.save(OUT)
 print(f"Wrote {OUT} with {len(prs.slides._sldIdLst)} slides")
+
+# ── export the notes, so the markdown cannot drift from the deck ──────────────
+lines = [
+    "# Janasunani 2.0 — technical briefing",
+    "",
+    "Speaker notes exported from the deck. Regenerated by `build_deck.py`; edit",
+    "the notes there, not here.",
+    "",
+]
+for i, slide in enumerate(prs.slides, 1):
+    # Every archetype puts the eyebrow first and the title second.
+    texts = [
+        sh.text_frame.text.strip()
+        for sh in slide.shapes
+        if sh.has_text_frame and sh.text_frame.text.strip()
+    ]
+    heading = texts[1] if len(texts) > 1 else (texts[0] if texts else "")
+    tf = slide.notes_slide.notes_text_frame
+    body = tf.text.strip() if tf is not None else ""
+    lines += [f"## Slide {i} — {heading}", "", body or "_No notes._", ""]
+NOTES_MD.write_text("\n".join(lines), encoding="utf-8")
+print(f"Wrote {NOTES_MD}")
