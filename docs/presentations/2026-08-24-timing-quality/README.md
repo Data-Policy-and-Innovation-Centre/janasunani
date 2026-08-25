@@ -1,6 +1,6 @@
 # Janasunani 2.0 — technical briefing, 24 August 2026
 
-Eleven slides, 15 to 20 minutes, for a technical audience. Twelve when the
+Twelve slides, 15 to 20 minutes, for a technical audience. Thirteen when the
 Sarvam category head-to-head is filled in; it is guarded and skips while
 `SARVAM_HEAD_TO_HEAD` is `None`, so the deck never ships a placeholder number.
 
@@ -17,12 +17,13 @@ order, and the eyebrows mark the branch.
 | 4 | Six stages, timed and scored | the citizen's text |
 | 5 | The department suggestion is learned from history | the citizen's text |
 | 6 | Closing a case costs nothing | **the officer's notes** |
-| 7 | The estimate did not survive the second year | the officer's notes |
-| 8 | The dashboards count filings, not problems | both |
-| 9 | What we cannot measure | |
-| 10 | It does more. We have not shown it does better | |
+| 7 | We built the test before we built the feature | the officer's notes |
+| 8 | Positivity failed before the second year did | the officer's notes |
+| 9 | The dashboards count filings, not problems | both |
+| 10 | What we cannot measure | |
+| 11 | It does more. We have not shown it does better | |
 | — | Category, head to head | *skipped until measured* |
-| 11 | Thank you | |
+| 12 | Thank you | |
 
 Slide 2 is the map, not a preamble. Its three rows are the citizen's text, the
 officer's notes, and the fact that the portal has opened neither. It closes on
@@ -39,9 +40,17 @@ why the routing model on slide 7 minimises duration subject to a correctness
 constraint rather than minimising duration. Six is not a standalone finding and
 does not belong beside the corpus counts at two.
 
-Slide 7 is that estimate failing on a second year. Eight and nine step outside
-the two bodies: what no amount of reading can currently settle, and the
-provider that reads them differently.
+Seven and eight are a pair and are presented as one. Seven is the evaluation
+that was built: what was estimated, what constrained it, how it was checked.
+Eight is the diagnostic that refused the result and the decision that followed.
+Splitting them is the point. A single slide read as a feature that failed to
+ship, which understates both the work and the reason it stayed offline.
+
+Nine is the analytics layer: what the record can be asked once both bodies
+have been read, and the house rule that keeps an ordinary query off the slide.
+
+Ten and eleven step outside the two bodies: what no amount of reading can
+currently settle, and the provider that reads them differently.
 
 | File | What it is |
 |---|---|

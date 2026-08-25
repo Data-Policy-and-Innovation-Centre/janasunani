@@ -15,7 +15,7 @@ Caveat: the Parquet lake reads 6,548,820 action rows against the canonical 6,556
 
 The grievance text has a median of 19 words and 61% of it is unique. The action notes are populated on 99.87% of rows with 1,395,867 distinct normalised values. Both are opaque strings to the reporting layer.
 
-THIS SLIDE IS THE MAP. Two bodies of free text, and the deck reads them in that order. Slides 3 to 5 read the citizen's text: the stages, their speed and quality, and the department suggestion. Slides 6 and 7 read the officer's notes: how closures are recorded, and whether a different route would have closed cases faster. Say the two halves out loud here, so slide 6 lands as the turn rather than a new topic.
+THIS SLIDE IS THE MAP. Two bodies of free text, and the deck reads them in that order. Slides 3 to 5 read the citizen's text: the stages, their speed and quality, and the department suggestion. Slides 6 to 8 read the officer's notes: how closures are recorded, and whether a different route would have closed cases faster. Say the two halves out loud here, so slide 6 lands as the turn rather than a new topic.
 
 The third row is the reason the project exists. The portal has never opened either body of text. There is also no citizen key, so every row is an island, which is why deduplication on the next slide needs the whole corpus at once.
 
@@ -36,7 +36,7 @@ The diagram is architecture.svg in this directory, embedded as vector with a PNG
 ## Slide 4 — Six stages, timed and scored
 
 MODEL OPTIONS AT EACH STAGE, if asked what else was tried.
-  OCR: pytesseract ships because it handles Odia script. DeepSeek-OCR exists in the repo but is English-only in practice and GPU-bound. Sarvam Vision is the third option and is slide 9.
+  OCR: pytesseract ships because it handles Odia script. DeepSeek-OCR exists in the repo but is English-only in practice and GPU-bound. Sarvam Vision is the third option and is slide 11.
   Actionability: a frozen MuRIL probe was the alternative and lost, 9 of 13 review cases against TF-IDF's 13 of 13, at 86.0% accuracy against 94.7%. The cheap model won, and that is the procurement point.
   Categorisation: a hashing word and character SGD ships. The DSI legacy MuRIL figure of 71.04% is NOT a comparison; it was measured on typed subject lines with a different split and issue #127 warns against putting the two side by side.
   Routing: the empirical crosswalk ships. An opt-in empirical-Bayes incidence provider exists behind JANASUNANI_ROUTER=incidence and falls back safely when it cannot answer.
@@ -70,10 +70,7 @@ RUNG 1, the crosswalk. Artifact janasunani/routing/reference/routing_crosswalk.j
 
 Below the crosswalk sit the ORTPSA master tables and a generic fallback. They are off this slide because they rarely answer: intCategoryGrp is NULL on all 62 categories, so no category-to-department link exists and MappingRouter can only bridge by exact name. That absence is why the crosswalk had to be learned from history rather than read off a table. Mention it only if someone asks what happens when the crosswalk has no key.
 
-ROW 3, THE OUTCOME MODEL. Design of record is docs/experiments/routing-outcome-model.tex, 42 pages. It asks a different question from the rows above: not where a grievance was sent, but whether sending it elsewhere would have closed it faster without losing whether action was taken.
-  Treatment is the department and the complete role chain chosen together at assignment, the intention to route. Outcome is days to closure capped at 365, with inverse-probability censoring weights so cases still open at the snapshot do not silently drop out. Two estimators are reported separately: a direct outcome model and an augmented, doubly-robust one.
-  Result: validation 2024 gave +26.77 days (SE 4.04). The untouched 2025 test year gave -2.35 (SE 3.50). No routing gain is established and no recommendation is published.
-  Why it failed, if pushed. Positivity breaks: on the test year only 15.6% of cases have the recommended route anywhere in observed support, and effective sample size falls to 7% of n, so the direct estimator is extrapolating into empty cells. The design document also states plainly that its no-interference assumption 'in a queueing system is false' — route everyone to the fast office and it stops being fast. Unconfoundedness is invoked on an information set smaller than the officer's, missing congestion and trailing destination performance. And the test year is a seven-month window being asked about a 365-day outcome, so replication and truncation cannot be separated.
+THE OUTCOME MODEL IS NOT THIS SLIDE. Everything here predicts where a grievance was sent. Whether sending it elsewhere would have resolved it better is slides 7 and 8, it is research-only, and no serving provider reads it. Keep the two apart when answering.
 
 RUNG 3, the trained model. Opt-in via JANASUNANI_ROUTER=incidence, artifact checksummed, and IncidenceRoutingProvider falls through to the crosswalk and rules when a lookup fails, logging rather than failing silently.
 
@@ -81,7 +78,7 @@ THE CAVEAT THAT MATTERS, and it applies to all three rungs. Every one of them me
 
 Macro-F1 is weak, 25.2% informative and 19.8% all eligible, and about a dozen departments sit at F1 zero. The top-three framing is doing real work here.
 
-WITHDRAWN, do not use: the in-sample crosswalk figures 60.9 / 67.5 / 72.8, which are resubstitution. And any routing time saving: an estimated 11 to 23 day gain held on validation 2024 and failed on the untouched 2025 test year at -2.35 days against a standard error of 3.50. Withdrawn 23 August, commits 879c24c and 365e3b4.
+WITHDRAWN, do not use: the in-sample crosswalk figures 60.9 / 67.5 / 72.8, which are resubstitution. Any routing time saving is withdrawn too; slide 8 carries that warning.
 
 ## Slide 6 — Closing a case costs nothing
 
@@ -93,7 +90,7 @@ NUMBERS. outputs/findings/closure_finding.md. Of 776,922 complaints closed on on
 
 WHY IT MATTERS FOR ROUTING. From the design document, section 2: 'The first instinct is to minimise time to closure. This fails, instructively. Closure is an action the officer controls directly, and the optimal behaviour under that objective is to close every case immediately without doing anything. This is not hypothetical: the most common closing remark in the system records disposal with no action claimed.' That is why the model minimises duration SUBJECT TO a correctness constraint rather than minimising duration.
 
-It is also the weak point. The constraint is derived from the closing remark after the fact, so the population is conditioned on resolution and does not identify intake-time actionability. That is one reason the estimate on the next slide did not hold.
+It is also the weak point. The constraint is derived from the closing remark after the fact, so the population is conditioned on resolution and does not identify intake-time actionability. It is on the unresolved list at slide 8, and one reason the estimate there did not hold.
 
 THE CAVEAT THAT MUST TRAVEL. This is descriptive and is not a failure rate. A correct closure and a premature one look identical in this record. Do not present it as an office league table; report it at state level. The bare share RISES with work done, 58.4% at three to five action steps and 64.8% at six or more, so whatever drives the choice of phrase, it is not that nothing happened.
 
@@ -101,32 +98,49 @@ The benefit flag runs backwards to the ladder: 9.2% of no-action closures carry 
 
 If asked for a bounded review set: 8,974 complaints were created and closed within two days on a bare disposal, 1.9% of bare disposals.
 
-## Slide 7 — The estimate did not survive the second year
+## Slide 7 — We built the test before we built the feature
+
+This slide is the design. The next one is why it is not live. Do not merge them.
+
+TREATMENT is the department and the complete role chain chosen jointly at assignment, the intention to route rather than the final state. ESTIMAND is capped RMST at 365 days.
+
+THE CONSTRAINT IS THE POINT, and it is what slide 6 was for. The objective minimises expected capped duration SUBJECT TO the action rate holding at its historical level. It is never conditional on the realised outcome, which would condition on a post-treatment variable. Unconstrained duration minimisation selects for closing cases untouched, because closure is an action the officer controls directly. Design document, section 2: 'The first instinct is to minimise time to closure. This fails, instructively.'
+
+THE THREE STAGES. Ridge and gradient boosting are carried separately rather than ensembled, so model-family disagreement stays visible. It later mattered. The action classifier is isotonic-calibrated, test ECE 0.0615 and AUC 0.7425. The threshold is the smallest floor meeting the constraint. Verification puts the direct outcome regression against the augmented estimator on the arm where history happened to match the proposed route, which is the only place a model prediction can be checked against an observed outcome.
+
+THE FIREWALL, if asked what is running today. Historical-route prediction is live and is slide 5. This work has no serving provider, no egress route, and no deployment recommendation. The two answer different questions: where similar grievances were sent, against where they would have resolved better.
+
+SOURCES. Design of record is docs/experiments/routing-outcome-model.tex, 42 pages. Appendices A to F carry the efficient influence function, Neyman orthogonality, the censoring argument and a marginal sensitivity model. He may ask whether they exist. They do. Plain-prose companion is janasunani/experiments/routing_outcome/README.md. Live path is janasunani/routing/provider.py.
+
+## Slide 8 — The second year failed every check we had
 
 Ninety seconds. The table is the argument; do not narrate every row.
 
-Say: on 2024 the two estimators land 2.3 days apart. On 2025 they land 33 apart. Same code, same pipeline, one year later. When a direct and a doubly-robust estimator diverge like that, the divergence measures missing overlap. It is not a choice between two answers.
+THE HEADLINE. The two estimators diverge by 33 days on 2025, 30.53 against -2.35, against 2.3 days on 2024. Under correct specification they estimate the same functional. Divergence of that size disqualifies the pair, it does not offer a menu to choose from.
 
-SOURCES, live 19 August refit. ope_val_ridge.json (n=450,567) and ope_test_ridge.json (n=113,535), both under outputs/experiments/routing_outcome/. Row 1 is delta_direct, 24.50 and 30.53. Row 2 is delta_dr, 26.77 (SE 4.04) and -2.35 (SE 3.50). Row 3 is the historical arm, where v_dr is the observed IPCW mean and v_direct is the model's prediction of it: 97.84 against 93.22 on validation, 108.69 against 49.74 on test. Row 4 is overlap.match_rate, 0.380 and 0.156. Row 5 is censoring_rate_of_split, 0.092 and 0.344.
+DO NOT ATTRIBUTE THE FAILURE TO POSITIVITY ALONE, and do not let the title be heard that way. Weak overlap is real: support falls to 16% and effective sample to 7% of n. But row 3 is measured on the arm each case actually received, so it extrapolates nowhere, and a 118% error there is an outcome-model or cohort-drift problem rather than an overlap one. Several threats fail at once and this design cannot separate them. The honest claim is that every check refused the result, not that one of them explains it.
 
-DO NOT USE routing-outcome-ope-val-ridge-2026-08-13.json. Its validation match rate of 0.536 and its +20.1 belong to the withdrawn run and it sits in docs/experiments/superseded/. Quoting it to dramatise the collapse re-cites the thing we retracted.
+ROW 3 IS THE ONE TO DWELL ON. It is the falsification that localises the failure. On the historical arm, the one arm where truth is observed, the direct estimator predicts 108.69 against an observed IPCW mean of 49.74. It is 118% wrong where it can be checked, and it was 5% wrong on 2024. AIPW down-weights the cells driving that error and lands at an effective sample of 8,291 on n=113,535.
 
-'So which estimator do you believe?' Neither, on the test year. The direct one extrapolates into cells where the recommended route was never taken, and row 3 shows it is 118% wrong on the one arm we can check. The doubly-robust one down-weights those cells, leaving an effective sample of 7% of n. The honest statement is that the test year cannot answer the question.
+SOURCES, live 19 August refit, both under outputs/experiments/routing_outcome/. ope_val_ridge.json (n=450,567) and ope_test_ridge.json (n=113,535). Row 1 delta_direct, 24.50 and 30.53. Row 2 delta_dr, 26.77 (SE 4.04) and -2.35 (SE 3.50). Row 3 v_direct against v_dr on the historical arm, 97.84 against 93.22 then 108.69 against 49.74. Row 4 overlap.match_rate, 0.380 and 0.156. Row 5 ess over n, 87,569 and 8,291 against the respective sample sizes. Censoring is censoring_rate_of_split, 0.092 and 0.344. Governed aggregate is docs/experiments/routing-outcome-evidence-2026-08-19.json, model commit 05f50da, a DVC dependency of the benchmark bundle. Status line in docs/QUALITY_BENCHMARKS.md, section 'Routing, outcome not destination': no routing gain established.
 
-'Is this replication failure or truncation?' They cannot be separated in this design. The snapshot is 2025-07-30, so the cohort has at most seven months against a 365-day outcome and censoring runs 3.1%, 9.2%, 34.4%. Answering it needs a later snapshot, not a better estimator.
+'Which estimator do you believe?' Neither, on the test year. Row 3 disqualifies the direct one. The augmented one is honest about how little support remains and cannot resolve anything at that effective sample. The test year cannot answer the question.
 
-'What about a different outcome model?' Boosting instead of ridge gives 12.40 on validation against ridge's 26.77, and 0.15 on test against -2.35. The two families disagree by a factor of two on the year that looked positive and agree on zero for the year that did not. The validation gain was never stable either.
+'Is this non-replication or immature follow-up?' Not separable in this design. The snapshot is 2025-07-30, so the cohort has at most seven months against a 365-day outcome and censoring runs 3.1%, 9.2%, 34.4%. It needs a later snapshot, not a better estimator.
 
-Only if pushed further:
-- No interference is assumed, and the design document says that assumption 'in a queueing system is false'. Route everyone to the fast office and it stops being fast. That bounds any future version of this exercise.
-- Unconfoundedness is invoked on less information than the assigning officer had. Congestion and trailing destination performance are absent from the covariates.
-- Treatment provenance is unresolved. dept_id and vchAllEscUser may record final state rather than the initial assignment.
+'A different outcome model?' Boosting gives 12.40 on validation against ridge's 26.77, and 0.15 on test against -2.35. The families disagree by a factor of two on the year that looked positive and agree on zero for the year that did not. The 2024 gain was never stable.
+
+ON THE UNRESOLVED LINE. Unconfoundedness is invoked on an information set smaller than the assigning officer's; congestion and trailing destination performance are absent from the covariates. Treatment provenance is open, since dept_id and vchAllEscUser may record final state rather than initial assignment. No interference is assumed, and the design document says that assumption 'in a queueing system is false'. Route everyone to the fast office and it stops being fast. That bounds any future version of this exercise.
+
+THE CORRECTNESS FRONTIER was withdrawn separately, issue #284, pending corrected regeneration. Its augmented score was normalised over all evaluation rows before being restricted to rows carrying an observed correctness label, while the direct value used the full population. tau_star is null.
 
 WITHDRAWN, do not use: any routing time saving, including the 11 to 23 day band. Do not present it as conservative, provisional or pending. There is no estimate.
 
-What we are NOT saying: that routing gains do not exist. We are saying this design on this data cannot detect one.
+DO NOT USE routing-outcome-ope-val-ridge-2026-08-13.json. Its validation match rate of 0.536 and its +20.1 belong to the withdrawn run and it sits in docs/experiments/superseded/. Quoting it to dramatise the collapse re-cites the thing we retracted.
 
-## Slide 8 — The dashboards count filings, not problems
+What we are NOT saying: that routing gains do not exist. Say no routing gain established. Never say routing does not work. This design on this data cannot detect one.
+
+## Slide 9 — The dashboards count filings, not problems
 
 THE HOUSE RULE, janasunani/analytics/README.md. An insight is something the record already contained and nobody had queried. A capability is something no existing dashboard could produce. Presenting the first as the second is the failure mode, ROADMAP section 5.3. All three items on this slide are capabilities: none is a query an analyst with database access could run against the existing dashboards in a day.
 
@@ -140,7 +154,7 @@ PROVENANCE DISCIPLINE. janasunani/serving/intelligence.py reports each dashboard
 
 FOR CONTEXT IF ASKED. Closure ladder: 472,782 of 776,922 disposed with no action claimed (docs/FINDINGS.md), against 1,209,144 total resolved complaints. Confirmed duplicates, the manual-process baseline: 37,299 officer-confirmed action rows, 21,117 already-taken-up plus 16,182 duplicate-copy (docs/PERFORMANCE.md section 4). The MinHash increment is reported separately and is never merged into that baseline. An earlier mart run mis-quoted 18,432 duplicates from a template-matching defect; docs/PERFORMANCE.md says explicitly not to quote it, and this deck does not.
 
-## Slide 9 — What we cannot measure
+## Slide 10 — What we cannot measure
 
 Do not cut this slide for time. It is the one that makes the rest credible.
 
@@ -150,11 +164,11 @@ Do not cut this slide for time. It is the one that makes the rest credible.
 
 3. The officer-hours figure that circulates, 201,000 to 302,000 across 1,209,144 resolved cases, is a denominator and not a saving. It is the size of the prize, not anything realised.
 
-Two more we do not claim, if asked: no gain from duplicate detection beyond the 37,299 repeats officers already confirmed, and no accuracy result for the outside option on slide 6.
+Two more we do not claim, if asked: no gain from duplicate detection beyond the 37,299 repeats officers already confirmed, and no accuracy result for the outside option on slide 11.
 
 If someone asks why so little is claimed: because the alternative is claiming things we cannot defend, and this deck has to survive the room checking it.
 
-## Slide 10 — It does more. We have not shown it does better
+## Slide 11 — It does more. We have not shown it does better
 
 The provider is Sarvam. Two endpoints, billed separately: digitise at ₹0.50 a page returns text and layout; extract at ₹1.00 a page returns schema-driven fields. Both is ₹1.50. Source: janasunani/evaluation/pricing.py, checked against the Sarvam dashboard 2026-08-07. Our local pipeline is ₹0.00 a page.
 
@@ -180,7 +194,7 @@ GOVERNANCE. Trust tier authorized-external. Authorisation is a GoO-Sarvam MoU wi
 
 COST AT SCALE, projected list price: ₹48,000 to digitise the 96,469-page English corpus, ₹145,000 for both endpoints, ₹8,050 to push 1.37M subjects through the 105B text model. At 10 requests a minute, which does not rise with the plan tier, the full corpus is roughly ten days of continuous calling. It is a measurement instrument, not a backfill path. Do not quote ₹700; that was priced on the withdrawn 30B model.
 
-## Slide 11 — Data, Policy and Innovation Centre
+## Slide 12 — Data, Policy and Innovation Centre
 
 Close on the limits, not a summary.
 

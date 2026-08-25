@@ -6,4 +6,8 @@
 reference.pptx
 
 # QA render byproducts. Regenerate with soffice + pdftoppm; see README.md.
-slide-*.jpg
+# Any prefix: pdftoppm names its output after whatever the caller passes, and a
+# `slide-*` pattern alone let a `rr-07.jpg` reach the index.
+*.jpg
+*.jpeg
+*.pdf
