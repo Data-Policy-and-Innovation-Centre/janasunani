@@ -306,7 +306,7 @@ set_text(sh[5], "24 August 2026")
 s = clone(prs, A_ROWS3)
 sh = S(s)
 set_text(sh[0], "THE RECORD")
-set_text(sh[1], "The record has never been read")
+set_text(sh[1], "1.37 million grievances, 6.5 million action notes")
 set_text(sh[3], "1.37 million grievances")
 set_text(sh[4], "What the citizen asked for, 2021 to 2025 across 30 districts. Median 19 words, mostly unique.")
 set_text(sh[6], "6.5 million action notes")
@@ -342,7 +342,7 @@ s.notes_slide.notes_text_frame.text = (
 s = clone_shell(prs, A_ROWS3, keep={0, 1, 11, 12})
 sh = S(s)
 set_text(sh[0], "READING THE CITIZEN'S TEXT")
-set_text(sh[1], "Deduplication needs every record at once")
+set_text(sh[1], "The live path and the batch path")
 add_vector_picture(s, PNG, SVG, x=0.7, y=2.08, w=11.9, h=11.9 * 450 / 1280)
 textbox(
     s,
@@ -487,7 +487,7 @@ s.notes_slide.notes_text_frame.text = (
 s = clone(prs, A_ROWS3)
 sh = S(s)
 set_text(sh[0], "SUGGESTING A DEPARTMENT")
-set_text(sh[1], "The department suggestion is learned from history")
+set_text(sh[1], "The department suggestion: an empirical crosswalk")
 set_text(sh[3], "Learned from history")
 set_text(sh[4], "5,084 keys built from where past grievances were actually sent. Right department in its top three 80% of the time on a year we held back.")
 set_text(sh[6], "Where it falls back")
@@ -536,7 +536,7 @@ s.notes_slide.notes_text_frame.text = (
 s = clone(prs, A_BARS3)
 sh = S(s)
 set_text(sh[0], "READING THE OFFICER'S NOTES")
-set_text(sh[1], "Closing a case costs nothing")
+set_text(sh[1], "Closures on the six-template disposal ladder")
 set_text(sh[2], "How 776,922 closures were recorded, on the six standard remarks.")
 ladder = 776_922
 rungs = [
@@ -591,7 +591,7 @@ s.notes_slide.notes_text_frame.text = (
 s = clone(prs, A_NUM3)
 sh = S(s)
 set_text(sh[0], "WOULD ANOTHER ROUTE WORK BETTER?")
-set_text(sh[1], "We built the test before we built the feature")
+set_text(sh[1], "How the routing evaluation was built")
 set_text(sh[3], "Estimate time to disposal on every route")
 set_text(sh[5], "Ridge and gradient boosting, cross-fitted, capped at 365 days, under each historically supported department and role chain.")
 set_text(sh[8], "Safeguard the action rate")
@@ -646,7 +646,7 @@ s.notes_slide.notes_text_frame.text = (
 s = clone_shell(prs, A_ROWS3, keep={0, 1, 11, 12})
 sh = S(s)
 set_text(sh[0], "WHY IT IS NOT LIVE")
-set_text(sh[1], "The second year failed every check we had")
+set_text(sh[1], "Validation and untouched-year diagnostics")
 textbox(
     s,
     "The same pipeline, refit and rerun on a year it had never seen.",
@@ -746,7 +746,7 @@ s.notes_slide.notes_text_frame.text = (
 s = clone(prs, A_NUM3)
 sh = S(s)
 set_text(sh[0], "WHAT THE RECORD CAN NOW BE ASKED")
-set_text(sh[1], "The dashboards count filings, not problems")
+set_text(sh[1], "Duplicate-adjusted workload, spikes and themes")
 set_text(sh[3], "Duplicate-adjusted workload.")
 set_text(sh[5], "55,544 filings in the slice are 10,963 distinct problems from 8,560 citizens. The portal reports the first number.")
 set_text(sh[8], "A spike with the cause attached.")
@@ -829,15 +829,21 @@ s.notes_slide.notes_text_frame.text = (
 s = clone(prs, A_TWOGROUP)
 sh = S(s)
 set_text(sh[0], "THE OUTSIDE OPTION: SARVAM")
-set_text(sh[1], "It does more. We have not shown it does better")
+set_text(sh[1], "Sarvam: fields returned, latency and divergence")
 set_text(sh[2], "What it does")
-set_text(sh[4], "One call at ₹1.50 a page returns the text, a category, a one-line summary and the district.")
+set_text(sh[4], "One call at ₹1.50 a page returns the page text, a category and a summary.")
 set_text(sh[6], "It reads 22 Indian languages including Odia. Ours reads English.")
 set_text(sh[12], "It reads handwriting. Ours does not.")
-set_text(sh[7], "What we established")
-set_text(sh[14], "On all 61 pages we compared, the two systems produced different text.")
-set_text(sh[16], "The category and summary it returned were never graded against anything.")
-set_text(sh[8], "Different is not better. Using it also sends citizen documents outside our control.")
+set_text(sh[7], "What we measured, on 200 pages of Sambalpur 2024")
+set_text(sh[14], "6 s to read a page, 11 s to extract the fields. Ours reads a page in 5.8 s.")
+set_text(sh[16], "The two systems differed on 197 of 198 pages. Sarvam returns 1.6 times the characters.")
+set_text(sh[8], "Different is not better, and using it sends citizen documents outside our control.")
+textbox(
+    s,
+    "Capped at ten requests a minute: this run took 166 minutes and the English corpus would take about ten days. "
+    "It returned a category on 11 of 87 grievances and matched none, because our v1 schema never listed the categories.",
+    x=0.7, y=6.62, w=11.9, h=0.36, size=11, color=SUBTLE, italic=True,
+)
 s.notes_slide.notes_text_frame.text = (
     "The provider is Sarvam. Two endpoints, billed separately: digitise at ₹0.50 a page "
     "returns text and layout; extract at ₹1.00 a page returns schema-driven fields. Both is "
@@ -852,13 +858,34 @@ s.notes_slide.notes_text_frame.text = (
     "There is also a separate transliteration API for romanized Odia (od-IN), which we do not "
     "solve at all today. Our own summariser skipped all four coherent Odia cases through an "
     "English-only gate, and non-English text is downgraded to Uncategorized.\n\n"
-    "WHAT WE ACTUALLY RAN. Two runs, docs/evidence/sarvam_cached_benchmark.json. A 5-page "
-    "validation (₹7.50) and a 300-page run that died at 65 pages on credit exhaustion, 3 HTTP "
-    "402s, 7 job failures. 61 pages paired and scored in total.\n\n"
-    "WHAT WE FOUND, AND WHAT IT COVERS. Normalised exact-text divergence 1.000 on both runs: "
-    "the two systems differed on every page. Sarvam returns more characters, ratio 1.2433 then "
-    "1.3345. That figure is TRANSCRIPTION ONLY. It compares OCR text and says nothing about "
-    "the category or summary fields. Divergence says they disagree, never who is right.\n\n"
+    "WHAT WE RAN, 2026-08-25. A 200-page stratified draw from Sambalpur/2024, both arms, "
+    "₹300 at list price, 87 grievances across 30 categories. 200 pages processed, 198 scored, "
+    "2 SarvamError failures. outputs/sarvam_run_2026-08-25/. Two earlier runs are superseded: "
+    "a 5-page validation and a 300-page run that died at 65 pages on credit exhaustion.\n\n"
+    "LATENCY, and this is the number the deck lacked until now. Derived from submission to "
+    "result in the egress audit log, outputs/sarvam_run_2026-08-25/sarvam_audit.sqlite, "
+    "excluding the later recovery re-reads. Digitise: median 6 s a page, mean 9 s, p90 16 s, "
+    "n=200. Extract: median 11 s, mean 13 s, p90 19 s, n=198. Polling is 5 s quantised, so "
+    "treat these as 5 s resolution. Our own OCR is 5.8 s a page on the same class of document, "
+    "so per page there is nothing in it. THROUGHPUT is the real constraint: 10 requests a "
+    "minute does not rise with the plan tier, the run averaged 1.2 pages a minute end to end, "
+    "and the 96,469-page English corpus is roughly ten days of continuous calling.\n\n"
+    "THE CATEGORY GRADE, and say plainly that it measures our schema and not the provider. "
+    "Sarvam returned a category on 11 of 87 grievances and matched the officer's label on 0 of "
+    "those 11: 'Sanction of new AWC buildings' against gold ICDS, 'Revenue & law Order' against "
+    "Land Matters, 'Social Benefit' against Health Care. The v1 schema described the field as "
+    "the complaints taxonomy and then never listed it, so the model had nothing to choose from "
+    "and answered with subject lines. Schema v2 adds the 35-label enum and is now the default. "
+    "A corrected run is extract-only, about ₹200.\n\n"
+    "WHY DISTRICT IS GONE FROM v2, if asked. It was the best-populated field in the run, 100 of "
+    "198 pages, because it sits on the letterhead. It is also a structured column on complaints, "
+    "recorded at intake and known for every grievance, so the extraction budget went to the one "
+    "field we already had while the field we needed came back on 11. Reinstate it only as an "
+    "explicit intake-accuracy cross-check.\n\n"
+    "TRANSCRIPTION. Normalised exact-text divergence 0.995, 95% CI [0.985, 1.005], n=198 pages "
+    "clustered on 87 tickets: the two systems differed on 197 of 198. Sarvam returns 295,117 "
+    "normalised characters against pytesseract's 189,497, a ratio of 1.56. Divergence says they "
+    "disagree, never who is right, and no hand-transcribed answer key exists (#53).\n\n"
     "THE EXTRACT FIELDS WERE NEVER GRADED. Sarvam did return them: 61 extract jobs completed "
     "in the 300-page run. Nothing was compared against them.\n\n"
     "  Category was the DECLARED PRIMARY OUTCOME and came back null. Reason, verbatim from "

@@ -7,7 +7,7 @@ the notes there, not here.
 
 _No notes._
 
-## Slide 2 — The record has never been read
+## Slide 2 — 1.37 million grievances, 6.5 million action notes
 
 Sources: docs/ARCHITECTURE.md, docs/ROADMAP.md. Canonical counts, verified on both local SQLite and cloud Postgres, and they must match after any migration change: 1,371,288 complaints and 6,556,171 action-history rows.
 
@@ -19,7 +19,7 @@ THIS SLIDE IS THE MAP. Two bodies of free text, and the deck reads them in that 
 
 The third row is the reason the project exists. The portal has never opened either body of text. There is also no citizen key, so every row is an island, which is why deduplication on the next slide needs the whole corpus at once.
 
-## Slide 3 — Deduplication needs every record at once
+## Slide 3 — The live path and the batch path
 
 The asymmetry is the whole slide. The live path processes one grievance and can never know it duplicates another. Only the batch path compares records against each other.
 
@@ -62,7 +62,7 @@ WITHDRAWN, do not use: the in-sample crosswalk figures 60.9 / 67.5 / 72.8; PII c
 
 If asked about routing time savings: an estimated 11 to 23 day gain held on validation 2024 and failed on the untouched 2025 test year at -2.35 days against a standard error of 3.50. It was withdrawn on 23 August, commits 879c24c and 365e3b4, and four artifacts are archived as do-not-cite. The direct and doubly-robust estimators disagree by 33 days on the test year, which is the diagnosis: no overlap to estimate on.
 
-## Slide 5 — The department suggestion is learned from history
+## Slide 5 — The department suggestion: an empirical crosswalk
 
 The ladder is janasunani/routing/provider.py. Three modes: ROUTER_DEFAULT 'crosswalk' is the shipped path and runs crosswalk, then mapping tables, then generic fallback; 'rules' skips the crosswalk and reproduces pre-#33 behaviour, useful to isolate the crosswalk in a comparison; ROUTER_INCIDENCE 'incidence' serves a checksummed empirical-Bayes artifact with the same ladder underneath it.
 
@@ -80,7 +80,7 @@ Macro-F1 is weak, 25.2% informative and 19.8% all eligible, and about a dozen de
 
 WITHDRAWN, do not use: the in-sample crosswalk figures 60.9 / 67.5 / 72.8, which are resubstitution. Any routing time saving is withdrawn too; slide 8 carries that warning.
 
-## Slide 6 — Closing a case costs nothing
+## Slide 6 — Closures on the six-template disposal ladder
 
 THIS IS THE TURN slide 2 announced. Everything up to here read the citizen's text. From here the source is the officer's action notes, the second of the two bodies. Say so; it is one sentence and it stops this slide reading as a new topic.
 
@@ -98,7 +98,7 @@ The benefit flag runs backwards to the ladder: 9.2% of no-action closures carry 
 
 If asked for a bounded review set: 8,974 complaints were created and closed within two days on a bare disposal, 1.9% of bare disposals.
 
-## Slide 7 — We built the test before we built the feature
+## Slide 7 — How the routing evaluation was built
 
 This slide is the design. The next one is why it is not live. Do not merge them.
 
@@ -112,7 +112,7 @@ THE FIREWALL, if asked what is running today. Historical-route prediction is liv
 
 SOURCES. Design of record is docs/experiments/routing-outcome-model.tex, 42 pages. Appendices A to F carry the efficient influence function, Neyman orthogonality, the censoring argument and a marginal sensitivity model. He may ask whether they exist. They do. Plain-prose companion is janasunani/experiments/routing_outcome/README.md. Live path is janasunani/routing/provider.py.
 
-## Slide 8 — The second year failed every check we had
+## Slide 8 — Validation and untouched-year diagnostics
 
 Ninety seconds. The table is the argument; do not narrate every row.
 
@@ -140,7 +140,7 @@ DO NOT USE routing-outcome-ope-val-ridge-2026-08-13.json. Its validation match r
 
 What we are NOT saying: that routing gains do not exist. Say no routing gain established. Never say routing does not work. This design on this data cannot detect one.
 
-## Slide 9 — The dashboards count filings, not problems
+## Slide 9 — Duplicate-adjusted workload, spikes and themes
 
 THE HOUSE RULE, janasunani/analytics/README.md. An insight is something the record already contained and nobody had queried. A capability is something no existing dashboard could produce. Presenting the first as the second is the failure mode, ROADMAP section 5.3. All three items on this slide are capabilities: none is a query an analyst with database access could run against the existing dashboards in a day.
 
@@ -168,7 +168,7 @@ Two more we do not claim, if asked: no gain from duplicate detection beyond the 
 
 If someone asks why so little is claimed: because the alternative is claiming things we cannot defend, and this deck has to survive the room checking it.
 
-## Slide 11 — It does more. We have not shown it does better
+## Slide 11 — Sarvam: fields returned, latency and divergence
 
 The provider is Sarvam. Two endpoints, billed separately: digitise at ₹0.50 a page returns text and layout; extract at ₹1.00 a page returns schema-driven fields. Both is ₹1.50. Source: janasunani/evaluation/pricing.py, checked against the Sarvam dashboard 2026-08-07. Our local pipeline is ₹0.00 a page.
 
@@ -176,9 +176,15 @@ THE FOUR EXTRACT FIELDS, which is the 'does more' claim: grievance_category, sum
 
 LANGUAGE. Sarvam Vision lists all 22 scheduled languages plus English, Odia among them. There is also a separate transliteration API for romanized Odia (od-IN), which we do not solve at all today. Our own summariser skipped all four coherent Odia cases through an English-only gate, and non-English text is downgraded to Uncategorized.
 
-WHAT WE ACTUALLY RAN. Two runs, docs/evidence/sarvam_cached_benchmark.json. A 5-page validation (₹7.50) and a 300-page run that died at 65 pages on credit exhaustion, 3 HTTP 402s, 7 job failures. 61 pages paired and scored in total.
+WHAT WE RAN, 2026-08-25. A 200-page stratified draw from Sambalpur/2024, both arms, ₹300 at list price, 87 grievances across 30 categories. 200 pages processed, 198 scored, 2 SarvamError failures. outputs/sarvam_run_2026-08-25/. Two earlier runs are superseded: a 5-page validation and a 300-page run that died at 65 pages on credit exhaustion.
 
-WHAT WE FOUND, AND WHAT IT COVERS. Normalised exact-text divergence 1.000 on both runs: the two systems differed on every page. Sarvam returns more characters, ratio 1.2433 then 1.3345. That figure is TRANSCRIPTION ONLY. It compares OCR text and says nothing about the category or summary fields. Divergence says they disagree, never who is right.
+LATENCY, and this is the number the deck lacked until now. Derived from submission to result in the egress audit log, outputs/sarvam_run_2026-08-25/sarvam_audit.sqlite, excluding the later recovery re-reads. Digitise: median 6 s a page, mean 9 s, p90 16 s, n=200. Extract: median 11 s, mean 13 s, p90 19 s, n=198. Polling is 5 s quantised, so treat these as 5 s resolution. Our own OCR is 5.8 s a page on the same class of document, so per page there is nothing in it. THROUGHPUT is the real constraint: 10 requests a minute does not rise with the plan tier, the run averaged 1.2 pages a minute end to end, and the 96,469-page English corpus is roughly ten days of continuous calling.
+
+THE CATEGORY GRADE, and say plainly that it measures our schema and not the provider. Sarvam returned a category on 11 of 87 grievances and matched the officer's label on 0 of those 11: 'Sanction of new AWC buildings' against gold ICDS, 'Revenue & law Order' against Land Matters, 'Social Benefit' against Health Care. The v1 schema described the field as the complaints taxonomy and then never listed it, so the model had nothing to choose from and answered with subject lines. Schema v2 adds the 35-label enum and is now the default. A corrected run is extract-only, about ₹200.
+
+WHY DISTRICT IS GONE FROM v2, if asked. It was the best-populated field in the run, 100 of 198 pages, because it sits on the letterhead. It is also a structured column on complaints, recorded at intake and known for every grievance, so the extraction budget went to the one field we already had while the field we needed came back on 11. Reinstate it only as an explicit intake-accuracy cross-check.
+
+TRANSCRIPTION. Normalised exact-text divergence 0.995, 95% CI [0.985, 1.005], n=198 pages clustered on 87 tickets: the two systems differed on 197 of 198. Sarvam returns 295,117 normalised characters against pytesseract's 189,497, a ratio of 1.56. Divergence says they disagree, never who is right, and no hand-transcribed answer key exists (#53).
 
 THE EXTRACT FIELDS WERE NEVER GRADED. Sarvam did return them: 61 extract jobs completed in the 300-page run. Nothing was compared against them.
 
