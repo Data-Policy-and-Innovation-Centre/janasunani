@@ -1,0 +1,9 @@
+# The GAPG 18 August 2026 briefing deck is the styling source that build_deck.py
+# clones from. It is deliberately NOT committed: its slides 4 and 8 are live
+# portal screenshots carrying citizen names, mobile numbers and addresses, and
+# the source file is marked not for circulation. Fetch it from Box before
+# rebuilding. See README.md.
+reference.pptx
+
+# QA render byproducts. Regenerate with soffice + pdftoppm; see README.md.
+slide-*.jpg

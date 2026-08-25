@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from dataclasses import asdict
 from datetime import UTC, datetime
 import hashlib
 import json
@@ -385,6 +386,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--audit-db", type=Path, default=None, help="Sarvam egress audit log (default: <out>/sarvam_audit.sqlite).")
     parser.add_argument("--dry-run", action="store_true", help="Render and run pytesseract only. No Sarvam call, no spend.")
     parser.add_argument("--dump-text", action="store_true", help="Print both transcripts. Debugging only; refuses more than one page.")
+    parser.add_argument(
+        "--save-records",
+        type=Path,
+        default=None,
+        help=(
+            "Persist one JSON line per scored page (ticket, page id, pytesseract "
+            "text, Sarvam markdown/category/summary, pipeline category/summary, "
+            "gold category, handwritten, language) to this path. Unredacted and "
+            "carries real ticket ids and grievance text — write it under a "
+            "controlled data/ location only, never under outputs/ or git."
+        ),
+    )
     return parser
 
 
@@ -679,6 +692,20 @@ def main(argv: list[str] | None = None) -> int:
     # Pass arm + slice so scorecard correctly hides non-measured arms (digitise vs extract)
     # and renders the selected slice (not demo constant).
     report = build_scorecard(records, slice_label=args.slice, arm=args.arm)
+
+    # Optional per-page record dump. The aggregate path deliberately keeps no
+    # provider payloads (`contains_text_or_provider_payloads: False` in the
+    # checkpoint), so without this the transcripts, categories and summaries are
+    # computed, scored and discarded. Reference examples need them kept, and the
+    # help text is explicit that the file is unredacted.
+    if args.save_records:
+        args.save_records.parent.mkdir(parents=True, exist_ok=True)
+        with args.save_records.open("w", encoding="utf-8") as handle:
+            for record in records:
+                handle.write(json.dumps(asdict(record), default=str) + "\n")
+        logger.success(
+            f"records -> {args.save_records} ({len(records)} pages, unredacted)"
+        )
 
     # Write markdown + base scorecard first, then overwrite JSON with enriched payload
     try:
