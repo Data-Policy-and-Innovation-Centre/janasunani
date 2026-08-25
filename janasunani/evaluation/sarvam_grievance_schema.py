@@ -3,8 +3,13 @@
 This module is the single source for the JSON schema passed to
 ``SarvamVisionAdapter.extract(schema=...)`` in the benchmark. The schema is
 versioned so a later change cannot silently shift the headline category
-accuracy number; callers pin ``--schema-version v1`` and the scorecard
-records the version.
+accuracy number, and the scorecard records the version it ran under.
+
+**Use v2, which is the default. Do not pass ``--schema-version v1`` unless you
+are deliberately reproducing the 2026-08-25 run.** v1's category field has no
+enum and no ``required``, which is why that run billed 200 pages and returned
+free-text subject lines on 11 of 87 grievances. Passing the flag explicitly
+overrides the default and buys that outcome again, at full price.
 
 The illustrative schema in the rehearsal plan (Part 5) is reproduced
 verbatim here as ``GRIEVANCE_EXTRACT_FIELDS_V1``. Field names are aligned
@@ -140,9 +145,21 @@ GRIEVANCE_EXTRACT_FIELDS_V2: dict[str, dict[str, Any]] = {
     },
 }
 
+#: ``grievance_category`` is declared ``required``. JSON Schema properties are
+#: optional by default, so without this a run could return only ``summary`` and
+#: ``grievance_text`` and omit the field the benchmark exists to measure --
+#: which is close to what the 2026-08-25 run did, answering the category on 11
+#: of 87 grievances. The enum fixes *what* the model may say; this fixes
+#: *whether* it has to say it. The other two fields stay optional: a page with
+#: no legible prose returning no ``grievance_text`` is a real outcome, not a
+#: malformed response.
+#:
+#: v1 deliberately gains nothing here. It stays byte-for-byte what the
+#: 2026-08-25 run sent, or that run stops being reproducible.
 GRIEVANCE_EXTRACT_SCHEMA_V2: dict[str, Any] = {
     "type": "object",
     "properties": GRIEVANCE_EXTRACT_FIELDS_V2,
+    "required": ["grievance_category"],
 }
 
 SUPPORTED_SCHEMA_VERSIONS: dict[str, dict[str, Any]] = {
