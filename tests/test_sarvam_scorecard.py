@@ -489,3 +489,79 @@ def test_render_markdown_and_write_outputs():
         assert "summary_divergence" in data
         md2 = paths["markdown"].read_text()
         assert md2 == md
+
+
+def test_escaped_gold_label_scores_a_correct_prediction_as_correct():
+    """``Scheme & Benefits`` is stored double-escaped; the enum offers it readable.
+
+    Exact-equality scoring counted every correct prediction for that category
+    as wrong, so the one category whose stored label carries an HTML entity
+    would have read 0% accuracy in a paid benchmark for a formatting reason.
+    """
+    from janasunani.evaluation.sarvam_scorecard import (
+        PageRecord,
+        build_scorecard,
+        per_category_table,
+    )
+
+    stored = "Scheme &amp;amp; Benefits"
+    readable = "Scheme & Benefits"
+    pages = [
+        PageRecord(
+            ticket=f"SCH{i}",
+            page_id=f"SCH{i}P1",
+            gold_category=stored,
+            pipeline_category=readable,
+            sarvam_category=readable,
+        )
+        for i in range(10)
+    ]
+
+    table = per_category_table(pages)
+    # The row is labelled readably, not with the entity.
+    assert readable in table
+    assert stored not in table
+    assert table[readable]["n_tickets"] == 10
+    assert table[readable]["pipeline_accuracy"] == 1.0
+    assert table[readable]["sarvam_accuracy"] == 1.0
+
+    report = build_scorecard(pages)
+    assert report.category is not None
+    assert report.category["pipeline_accuracy"] == 1.0
+    assert report.category["sarvam_accuracy"] == 1.0
+
+
+def test_label_normalisation_does_not_make_different_categories_match():
+    """Unescaping must not collapse genuinely different labels."""
+    from janasunani.evaluation.sarvam_scorecard import (
+        PageRecord,
+        build_scorecard,
+        category_key,
+        unescape_label,
+    )
+
+    assert unescape_label("Scheme &amp;amp; Benefits") == "Scheme & Benefits"
+    assert unescape_label("Scheme &amp; Benefits") == "Scheme & Benefits"
+    assert unescape_label("Scheme & Benefits") == "Scheme & Benefits"
+    assert unescape_label("  Land   Matters ") == "Land Matters"
+    assert unescape_label(None) is None
+    assert unescape_label("   ") is None
+
+    # Case-insensitive match, but distinct categories stay distinct.
+    assert category_key("land matters") == category_key("Land Matters")
+    assert category_key("Land Matters") != category_key("Legal")
+
+    # A missing prediction never matches a present gold label.
+    pages = [
+        PageRecord(
+            ticket="T1",
+            page_id="T1P1",
+            gold_category="Land Matters",
+            pipeline_category="Legal",
+            sarvam_category=None,
+        )
+    ]
+    report = build_scorecard(pages)
+    assert report.category is not None
+    assert report.category["pipeline_accuracy"] == 0.0
+    assert report.category["sarvam_accuracy"] == 0.0
