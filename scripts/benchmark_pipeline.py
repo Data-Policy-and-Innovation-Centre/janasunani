@@ -354,8 +354,47 @@ def _staged_document_paths(directory: Path) -> list[Path]:
     )
 
 
+class StaleDocumentBytesError(RuntimeError):
+    """A staged document's bytes changed after the sample was fingerprinted.
+
+    ``main()`` fingerprints the staged sample (``sample_digest`` /
+    ``_document_sample_file_hashes``) once, before the run starts.
+    ``_measure_with_processor`` then reads each document's actual bytes
+    lazily — one document at a time, potentially much later for a large
+    corpus (see #308) — to keep memory bounded. That gap is a real window: a
+    file rewritten mid-run (e.g. a corpus still hydrating from Box while the
+    benchmark is already running against it) is read with content the
+    published ``sample_digest`` never claimed. Raised eagerly, outside the
+    per-attempt failure tracking in ``_measure_with_processor`` — a silently
+    wrong provenance digest on a publishable artifact is exactly the defect
+    this guards against, not a processing failure to count and continue
+    past.
+    """
+
+
+def _document_sample_file_hashes(directory: Path) -> dict[str, str]:
+    """SHA-256 hex digest of each staged document's current bytes, by name.
+
+    Reads every file once, the same work ``_document_sample_digest`` already
+    folds into its aggregate digest — exposed per-file so a caller can
+    fingerprint the sample up front and later verify individual documents
+    against that snapshot at the point they are actually read (see
+    ``StaleDocumentBytesError`` and ``run_benchmark``'s
+    ``expected_file_hashes``), without a second full pass over the
+    directory. Bytes are hashed and discarded one file at a time — nothing
+    beyond one file's bytes is ever resident, same as the eager-read fix in
+    #308.
+    """
+    return {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in _staged_document_paths(directory)
+    }
+
+
 def _document_sample_digest(
-    directory: Path, manifest: Mapping[str, Any] | None
+    directory: Path,
+    manifest: Mapping[str, Any] | None,
+    file_hashes: Mapping[str, str] | None = None,
 ) -> str:
     """Stable digest identifying the on-disk sample, for provenance.
 
@@ -371,13 +410,20 @@ def _document_sample_digest(
     the manifest never claimed. Hashing filename + content per file (not
     the full path) keeps the re-stage stability the manifest-only version
     had, while an equal-count substitution now moves the digest.
+
+    ``file_hashes``, when given, must be ``_document_sample_file_hashes``'s
+    output for the same ``directory`` — reused so a caller that also wants
+    the per-file map (e.g. ``main()``, to pass as ``run_benchmark``'s
+    ``expected_file_hashes``) reads each file once, not twice.
     """
+    if file_hashes is None:
+        file_hashes = _document_sample_file_hashes(directory)
     hasher = hashlib.sha256()
     if manifest is not None:
         hasher.update(json.dumps(manifest, sort_keys=True).encode("utf-8"))
-    for path in _staged_document_paths(directory):
-        hasher.update(path.name.encode("utf-8"))
-        hasher.update(hashlib.sha256(path.read_bytes()).digest())
+    for name in sorted(file_hashes):
+        hasher.update(name.encode("utf-8"))
+        hasher.update(bytes.fromhex(file_hashes[name]))
     return hasher.hexdigest()
 
 
@@ -664,6 +710,7 @@ def _measure_with_processor(
     discard_warm: bool,
     processor_factory: Callable[[str], Any] | None,
     sleep_fake: bool = False,
+    expected_file_hashes: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Run processor over docs repeats times, collect per-stage wall seconds.
 
@@ -676,6 +723,17 @@ def _measure_with_processor(
     method with the same signature as ``PipelineGrievanceProcessor.process``.
     The factory is called once per variant (models warmed once). If it is
     None, fake timings are used (no real processor).
+
+    ``expected_file_hashes`` (filename -> sha256 hex, from
+    ``_document_sample_file_hashes``) is the fingerprint taken before this
+    run started. When given, every document read from ``document_path``
+    below is re-hashed and checked against it, raising
+    ``StaleDocumentBytesError`` on any mismatch — closing the window between
+    that snapshot and this function's lazy, one-document-at-a-time read
+    (#308) during which a file could be rewritten out from under the run,
+    e.g. by a corpus still hydrating from Box. ``None`` (the default) skips
+    the check, which is correct for synthetic docs and any caller that never
+    took a snapshot to check against.
     """
     per_stage_times: dict[str, list[float]] = {k: [] for k in ALL_KEYS}
     per_stage_tickets: dict[str, list[str]] = {k: [] for k in ALL_KEYS}
@@ -711,7 +769,27 @@ def _measure_with_processor(
         document_bytes = doc.get("document_bytes")
         document_path = doc.get("document_path")
         if document_bytes is None and document_path is not None and processor is not None:
-            document_bytes = Path(document_path).read_bytes()
+            resolved_path = Path(document_path)
+            document_bytes = resolved_path.read_bytes()
+            if expected_file_hashes is not None:
+                # Verification stays here too — after the read, still before
+                # the per-repeat timer loop below. One sha256 over bytes
+                # already in memory is cheap next to OCR, and it must never
+                # be silently skipped: a document missing from the snapshot
+                # (staged after fingerprinting) is exactly as stale as one
+                # whose hash no longer matches.
+                actual_hash = hashlib.sha256(document_bytes).hexdigest()
+                expected_hash = expected_file_hashes.get(resolved_path.name)
+                if expected_hash is None or actual_hash != expected_hash:
+                    raise StaleDocumentBytesError(
+                        f"{resolved_path.name} does not match the "
+                        "sample_digest snapshot taken before this run "
+                        f"started (expected sha256 {expected_hash!r}, got "
+                        f"{actual_hash!r}). The file changed on disk between "
+                        "fingerprinting and being read — e.g. a corpus still "
+                        "hydrating from Box. Re-stage the sample (or wait "
+                        "for hydration to finish) before benchmarking it."
+                    )
         for r in range(repeats):
             attempts += 1
             is_warm = discard_warm and r == 0
@@ -818,6 +896,7 @@ def run_benchmark(
     seed: int = 42,
     sleep_fake: bool = False,
     is_fake: bool | None = None,
+    expected_file_hashes: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Run one benchmark variant and return structured results.
 
@@ -834,6 +913,11 @@ def run_benchmark(
             is non-zero for manual checks; default False for fast tests.
         is_fake: whether this result is synthetic fake timing (non-publishable).
             If None, inferred from processor_factory is None.
+        expected_file_hashes: filename -> sha256 hex fingerprint taken before
+            this run started (see ``_document_sample_file_hashes``). Passed
+            straight to ``_measure_with_processor``, which raises
+            ``StaleDocumentBytesError`` if a document's bytes no longer match
+            when actually read. ``None`` (the default) skips the check.
 
     Returns dict with keys variant, n_docs, repeats, warm_discarded,
     git_sha, timestamp, stages (per-stage stats), is_fake_timing, etc.
@@ -862,6 +946,7 @@ def run_benchmark(
         discard_warm=discard_warm,
         processor_factory=processor_factory,
         sleep_fake=sleep_fake,
+        expected_file_hashes=expected_file_hashes,
     )
     per_stage_times: dict[str, list[float]] = raw["times"]  # type: ignore[assignment]
     per_stage_tickets: dict[str, list[str]] = raw["tickets"]  # type: ignore[assignment]
@@ -1175,6 +1260,7 @@ def main(argv: list[str] | None = None) -> int:
     sample_manifest: dict[str, Any] | None = None
     sample_slice: str | None = None
     sample_digest: str | None = None
+    sample_file_hashes: dict[str, str] | None = None
     if args.documents_dir is not None:
         if args.n_docs is not None or args.n_image_docs is not None:
             parser.error(
@@ -1196,7 +1282,15 @@ def main(argv: list[str] | None = None) -> int:
             or (sample_manifest or {}).get("slice")
             or "unspecified"
         )
-        sample_digest = _document_sample_digest(args.documents_dir, sample_manifest)
+        # Fingerprint the sample once, here, before the run reads anything —
+        # sample_file_hashes is threaded into run_benchmark below so each
+        # document's later, lazy read (#308) is checked against this exact
+        # snapshot rather than trusted blind. file_hashes= reuses that same
+        # read for sample_digest instead of a second pass over the directory.
+        sample_file_hashes = _document_sample_file_hashes(args.documents_dir)
+        sample_digest = _document_sample_digest(
+            args.documents_dir, sample_manifest, file_hashes=sample_file_hashes
+        )
     else:
         n_docs = DEFAULT_N_TEXT if args.n_docs is None else args.n_docs
         n_image_docs = DEFAULT_N_IMAGE if args.n_image_docs is None else args.n_image_docs
@@ -1254,18 +1348,26 @@ def main(argv: list[str] | None = None) -> int:
 
     results: dict[str, dict[str, Any]] = {}
     for variant in variants:
-        result = run_benchmark(
-            variant=variant,
-            n_text=0 if loaded_docs is not None else args.n_docs,
-            n_image=0 if loaded_docs is not None else args.n_image_docs,
-            docs=loaded_docs,
-            repeats=args.repeats,
-            discard_warm=discard_warm,
-            seed=args.seed,
-            sleep_fake=args.sleep_fake,
-            processor_factory=processor_factory,
-            is_fake=is_fake,
-        )
+        try:
+            result = run_benchmark(
+                variant=variant,
+                n_text=0 if loaded_docs is not None else args.n_docs,
+                n_image=0 if loaded_docs is not None else args.n_image_docs,
+                docs=loaded_docs,
+                repeats=args.repeats,
+                discard_warm=discard_warm,
+                seed=args.seed,
+                sleep_fake=args.sleep_fake,
+                processor_factory=processor_factory,
+                is_fake=is_fake,
+                expected_file_hashes=sample_file_hashes,
+            )
+        except StaleDocumentBytesError as exc:
+            # A staged document changed under us mid-run (e.g. a corpus
+            # still hydrating from Box) — fail loudly with the filename
+            # rather than publish a sample_digest that no longer describes
+            # what was actually measured.
+            parser.error(str(exc))
         result["processor_startup_seconds"] = startup.get("seconds")
         if loaded_docs is not None:
             # Real-document path: this is the actual defect being fixed —
