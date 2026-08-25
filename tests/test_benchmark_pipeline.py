@@ -902,8 +902,119 @@ def test_cli_synthetic_path_benchmark_context_fixture_is_unchanged(tmp_path):
     ctx = data["benchmark_context"]
     assert ctx["fixture"] == "deterministic synthetic grievances without citizen data"
     assert ctx["execution"] == "sequential single-process execution"
-    # No document-sample keys leak onto the synthetic path.
-    assert set(ctx) == {"host_label", "model_release_id", "fixture", "execution"}
+    # No document-sample keys leak onto the synthetic path. The OCR
+    # toolchain keys (#315 follow-up) are additive and present on every
+    # path, including synthetic — see test_cli_synthetic_path_records_ocr_toolchain.
+    assert set(ctx) == {
+        "host_label",
+        "model_release_id",
+        "fixture",
+        "execution",
+        "tesseract_version",
+        "tesseract_langs",
+        "poppler_version",
+    }
+
+
+# ---------------------------------------------------------------------------
+# #315 Codex follow-up — OCR toolchain provenance in benchmark_context
+# ---------------------------------------------------------------------------
+
+
+def test_probe_ocr_toolchain_populates_real_values_when_installed():
+    # Real code path, no mocking of pytesseract/poppler: the pipeline-core
+    # test gate (tests/README.md) requires tesseract and poppler installed
+    # locally, so this must report real values, not "unavailable"
+    # placeholders. Two machines with different tesseract versions or a
+    # missing Odia (ori) pack must be distinguishable from this output.
+    toolchain = bench_mod._probe_ocr_toolchain()
+
+    assert set(toolchain) == {"tesseract_version", "tesseract_langs", "poppler_version"}
+    assert toolchain["tesseract_version"] != "unavailable"
+    assert toolchain["tesseract_version"][0].isdigit()
+    assert isinstance(toolchain["tesseract_langs"], list)
+    assert toolchain["tesseract_langs"] == sorted(toolchain["tesseract_langs"])
+    assert "eng" in toolchain["tesseract_langs"]
+    assert toolchain["poppler_version"] != "unavailable"
+    assert "pdftoppm" in toolchain["poppler_version"].lower()
+
+
+def test_probe_ocr_toolchain_records_unavailable_when_tesseract_probe_fails(monkeypatch):
+    # Simulate a box where tesseract cannot be located/configured (e.g. no
+    # binary installed at all). The probe must not raise, must not silently
+    # omit the keys, and must not let a tesseract failure take poppler's
+    # (independently probed) result down with it.
+    def boom():
+        raise RuntimeError("tesseract not installed on this box")
+
+    monkeypatch.setattr(
+        "janasunani.pipeline.stages.ocr_extraction.pytesseract_backend._configure_tesseract",
+        boom,
+    )
+
+    toolchain = bench_mod._probe_ocr_toolchain()
+
+    assert toolchain["tesseract_version"] == "unavailable"
+    assert toolchain["tesseract_langs"] == "unavailable"
+    assert toolchain["poppler_version"] != "unavailable"  # unaffected
+
+
+def test_probe_ocr_toolchain_composes_independent_tesseract_and_poppler_probes():
+    # _probe_ocr_toolchain() itself has no per-field try/except — it trusts
+    # _probe_tesseract()/_probe_poppler_version() to each be defensive on
+    # their own (tested directly above/below). What it must get right is
+    # composition: both fields present, independently sourced.
+    toolchain = bench_mod._probe_ocr_toolchain()
+    tesseract_version, tesseract_langs = bench_mod._probe_tesseract()
+    assert toolchain["tesseract_version"] == tesseract_version
+    assert toolchain["tesseract_langs"] == tesseract_langs
+    assert toolchain["poppler_version"] == bench_mod._probe_poppler_version()
+
+
+def test_probe_poppler_version_never_raises_when_subprocess_fails(monkeypatch):
+    # One level lower than the test above: exercises _probe_poppler_version
+    # itself (not the composite _probe_ocr_toolchain) against the exact
+    # failure it is written to catch — subprocess.run raising because
+    # pdftoppm isn't installed.
+    def boom(*_args, **_kwargs):
+        raise FileNotFoundError("pdftoppm not found")
+
+    monkeypatch.setattr(bench_mod.subprocess, "run", boom)
+
+    assert bench_mod._probe_poppler_version() == "unavailable"
+
+
+def test_cli_synthetic_path_records_ocr_toolchain(tmp_path):
+    out = tmp_path / "latency.json"
+    rc = bench_mod.main(
+        ["--fake", "--n-docs", "2", "--repeats", "2", "--output", str(out)]
+    )
+    assert rc == 0
+    ctx = json.loads(out.read_text())["benchmark_context"]
+    for key in ("tesseract_version", "tesseract_langs", "poppler_version"):
+        assert key in ctx
+
+
+def test_cli_harness_still_runs_when_ocr_toolchain_probe_itself_raises(tmp_path, monkeypatch):
+    # Belt-and-suspenders: even if _probe_ocr_toolchain's own internal
+    # defensiveness were ever broken by a future change, main()'s outer
+    # catch must still keep the synthetic (--fake) path — which has no OCR
+    # dependency of its own — running to completion rather than crashing on
+    # an environment probe.
+    def boom():
+        raise RuntimeError("unexpected probe failure")
+
+    monkeypatch.setattr(bench_mod, "_probe_ocr_toolchain", boom)
+
+    out = tmp_path / "latency.json"
+    rc = bench_mod.main(
+        ["--fake", "--n-docs", "2", "--repeats", "2", "--output", str(out)]
+    )
+    assert rc == 0
+    ctx = json.loads(out.read_text())["benchmark_context"]
+    assert ctx["tesseract_version"] == "unavailable"
+    assert ctx["tesseract_langs"] == "unavailable"
+    assert ctx["poppler_version"] == "unavailable"
 
 
 def test_run_benchmark_standard_variant_basic():

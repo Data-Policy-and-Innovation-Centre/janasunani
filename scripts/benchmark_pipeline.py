@@ -703,6 +703,105 @@ def _get_git_sha() -> str | None:
     return None
 
 
+def _probe_tesseract() -> tuple[str, list[str] | str]:
+    """Best-effort (version, sorted available languages) for tesseract.
+
+    Resolves the binary exactly as the real OCR stage does —
+    ``pytesseract_backend._configure_tesseract()``, which checks
+    ``TESSERACT_CMD``/PATH/the bundled ``~/.local/tesseract`` install in that
+    order — not a naive PATH lookup, so a box using the bundled install is
+    reported accurately. Never raises: returns ``("unavailable",
+    "unavailable")`` if tesseract, or even the ``pipeline-core`` extra
+    itself, is unavailable. The two probes are independent (a broken version
+    call must not blank out a working language list, or vice versa).
+    """
+    version: str = "unavailable"
+    langs: list[str] | str = "unavailable"
+    try:
+        import pytesseract
+        from janasunani.pipeline.stages.ocr_extraction.pytesseract_backend import (
+            _configure_tesseract,
+        )
+
+        _configure_tesseract()
+        try:
+            version = str(pytesseract.get_tesseract_version())
+        except Exception:
+            pass
+        try:
+            langs = sorted(pytesseract.get_languages(config=""))
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return version, langs
+
+
+def _probe_poppler_version() -> str:
+    """Best-effort poppler/pdftoppm version banner.
+
+    Resolves the binary exactly as ``page_renderer`` does —
+    ``page_renderer.POPPLER_PATH`` (the bundled ``~/.local/poppler`` install,
+    falling back to ``/usr/bin``, falling back to plain PATH) — the same
+    value ``render_page`` passes to ``pdf2image``. Never raises: returns
+    ``"unavailable"`` if pdftoppm cannot be run at all (missing binary,
+    ``pipeline-core`` extra absent, etc).
+    """
+    try:
+        from janasunani.pipeline.stages.ocr_extraction import page_renderer
+
+        pdftoppm_cmd = (
+            str(Path(page_renderer.POPPLER_PATH) / "pdftoppm")
+            if page_renderer.POPPLER_PATH
+            else "pdftoppm"
+        )
+        result = subprocess.run(
+            [pdftoppm_cmd, "-v"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        # pdftoppm prints its version banner ("pdftoppm version X.YY.Z") to
+        # stderr regardless of exit code; take the first line either stream
+        # produced rather than trusting the exit code.
+        banner = (result.stderr or result.stdout or "").strip().splitlines()
+        if banner:
+            return banner[0].strip()
+    except Exception:
+        pass
+    return "unavailable"
+
+
+def _probe_ocr_toolchain() -> dict[str, Any]:
+    """Best-effort provenance for the OCR toolchain this run would use.
+
+    Two artifacts from the same corpus, produced by different tesseract
+    versions (a laptop's 5.5.1 vs. a freshly-provisioned box's 5.3.4), or by
+    one machine silently missing the Odia (`ori`) traineddata, must not be
+    indistinguishable in ``benchmark_context`` — a missing language pack is a
+    null-scored-as-zero: OCR quietly degrades with no error and no trace in
+    the artifact.
+
+    Never raises (composes ``_probe_tesseract``/``_probe_poppler_version``,
+    both independently defensive). A machine with no tesseract/poppler
+    installed, or missing the ``pipeline-core`` extra entirely (e.g. plain
+    CI), must not crash the harness on import or on the synthetic
+    (``--fake``) path — this is called unconditionally for every run. Each
+    field is the real value or the literal string ``"unavailable"``: never
+    omitted, so an absent key is never mistaken for "not recorded" when it
+    means "checked and absent". This is an environment probe, not a
+    measurement — called outside ``run_benchmark``/``_measure_with_processor``
+    entirely, nowhere near a stage timer.
+    """
+    tesseract_version, tesseract_langs = _probe_tesseract()
+    return {
+        "tesseract_version": tesseract_version,
+        "tesseract_langs": tesseract_langs,
+        "poppler_version": _probe_poppler_version(),
+    }
+
+
 def _measure_with_processor(
     variant: str,
     docs: list[dict[str, Any]],
@@ -1346,6 +1445,25 @@ def main(argv: list[str] | None = None) -> int:
                 startup["seconds"] = time.perf_counter() - started
             return warmed["processor"]
 
+    # Probed once — the OCR toolchain does not vary per variant within a
+    # single process — and merged into every variant's benchmark_context
+    # below (additive keys, both the real-document and synthetic paths) so
+    # two artifacts from different machines are distinguishable by tesseract
+    # version and available language packs, not just by host_label.
+    # _probe_ocr_toolchain() is already internally defensive (never raises),
+    # but this call site adds an outer belt-and-suspenders catch: an
+    # environment probe must never be the reason the harness — including the
+    # synthetic/--fake path, which has no OCR dependency of its own — fails
+    # to run at all.
+    try:
+        ocr_toolchain = _probe_ocr_toolchain()
+    except Exception:
+        ocr_toolchain = {
+            "tesseract_version": "unavailable",
+            "tesseract_langs": "unavailable",
+            "poppler_version": "unavailable",
+        }
+
     results: dict[str, dict[str, Any]] = {}
     for variant in variants:
         try:
@@ -1386,6 +1504,7 @@ def main(argv: list[str] | None = None) -> int:
                 "sample_slice": sample_slice,
                 "sample_document_count": len(loaded_docs),
                 "sample_digest": sample_digest,
+                **ocr_toolchain,
             }
         else:
             result["benchmark_context"] = {
@@ -1393,6 +1512,7 @@ def main(argv: list[str] | None = None) -> int:
                 "model_release_id": args.model_release_id,
                 "fixture": "deterministic synthetic grievances without citizen data",
                 "execution": "sequential single-process execution",
+                **ocr_toolchain,
             }
         results[variant] = result
         e2e = result["stages"][E2E_KEY]
