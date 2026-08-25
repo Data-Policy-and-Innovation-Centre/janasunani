@@ -338,9 +338,52 @@ def _load_metadata_join(
     return mapping
 
 
+def _checked_record_destination(path: Path) -> Path:
+    """Resolve ``--save-records`` and refuse anywhere outside ``data/``.
+
+    The dump is **unredacted**: every record carries the citizen's own words
+    plus whatever the provider returned. ``data/`` is the one tree the data
+    policy governs and the one git ignores wholesale, so a dump landing
+    anywhere else is a file nobody is watching. ``docs/records.jsonl`` or a
+    bare ``records.jsonl`` at the repo root would previously have been created
+    without complaint and would then sit in `git status` waiting to be added.
+
+    Resolved before comparison so ``data/../docs/x.jsonl`` and a symlink into
+    the tree are both rejected rather than passing a prefix check.
+    """
+    from janasunani.config import DATA_DIR
+
+    resolved = Path(path).expanduser().resolve()
+    root = DATA_DIR.resolve()
+    if not resolved.is_relative_to(root):
+        raise ValueError(
+            f"--save-records must write inside {root} (the governed data tree), "
+            f"not {resolved}. The dump is unredacted citizen text: it may not be "
+            "written where it could be committed or shared by accident."
+        )
+    return resolved
+
+
 def _unwrap_extract_result(payload: Any) -> dict[str, Any]:
-    """Unwrap the various shapes ``adapter.extract`` may return."""
+    """Unwrap the various shapes ``adapter.extract`` may return.
+
+    ``result`` (singular) is the shape the live API actually returns and is
+    checked first. GET /doc-ai/v1/job/{job_id}/results answers with the
+    envelope ``{job_id, type, status, usage, result, annotations, version}``
+    and the schema's fields live under ``result``.
+
+    Omitting it was silent rather than loud: the final ``return payload``
+    fallback handed back the envelope, and the caller's
+    ``payload.get("grievance_category")`` then read one level too high and
+    got ``None``. The 2026-08-25 Sambalpur/2024 run billed 200 Extract pages
+    and recorded ``sarvam_category`` as null on all 198 scored pages for
+    exactly this reason, which scored as 0.000 accuracy rather than as a
+    missing measurement. A shape this function does not recognise must not
+    look like a confident empty answer.
+    """
     if isinstance(payload, dict):
+        if isinstance(payload.get("result"), dict):
+            return payload["result"]
         if "results" in payload and isinstance(payload["results"], list) and payload["results"]:
             first = payload["results"][0]
             if isinstance(first, dict):
@@ -699,12 +742,18 @@ def main(argv: list[str] | None = None) -> int:
     # computed, scored and discarded. Reference examples need them kept, and the
     # help text is explicit that the file is unredacted.
     if args.save_records:
-        args.save_records.parent.mkdir(parents=True, exist_ok=True)
-        with args.save_records.open("w", encoding="utf-8") as handle:
+        try:
+            destination = _checked_record_destination(args.save_records)
+        except ValueError as exc:
+            logger.error(str(exc))
+            return 1
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with destination.open("w", encoding="utf-8") as handle:
             for record in records:
                 handle.write(json.dumps(asdict(record), default=str) + "\n")
+        destination.chmod(0o600)
         logger.success(
-            f"records -> {args.save_records} ({len(records)} pages, unredacted)"
+            f"records -> {destination} ({len(records)} pages, unredacted)"
         )
 
     # Write markdown + base scorecard first, then overwrite JSON with enriched payload

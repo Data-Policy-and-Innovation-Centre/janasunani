@@ -1,6 +1,8 @@
 # Janasunani 2.0 — technical briefing, 24 August 2026
 
-Eleven slides, 15 to 20 minutes, for a technical audience.
+Twelve slides, 15 to 20 minutes, for a technical audience. Thirteen when the
+Sarvam category head-to-head is filled in; it is guarded and skips while
+`SARVAM_HEAD_TO_HEAD` is `None`, so the deck never ships a placeholder number.
 
 ## Outline
 
@@ -17,9 +19,11 @@ order, and the eyebrows mark the branch.
 | 6 | Closing a case costs nothing | **the officer's notes** |
 | 7 | We built the test before we built the feature | the officer's notes |
 | 8 | Positivity failed before the second year did | the officer's notes |
-| 9 | What we cannot measure | |
-| 10 | It does more. We have not shown it does better | |
-| 11 | Thank you | |
+| 9 | The dashboards count filings, not problems | both |
+| 10 | What we cannot measure | |
+| 11 | It does more. We have not shown it does better | |
+| — | Category, head to head | *skipped until measured* |
+| 12 | Thank you | |
 
 Slide 2 is the map, not a preamble. Its three rows are the citizen's text, the
 officer's notes, and the fact that the portal has opened neither. It closes on
@@ -42,7 +46,10 @@ Eight is the diagnostic that refused the result and the decision that followed.
 Splitting them is the point. A single slide read as a feature that failed to
 ship, which understates both the work and the reason it stayed offline.
 
-Nine and ten step outside the two bodies: what no amount of reading can
+Nine is the analytics layer: what the record can be asked once both bodies
+have been read, and the house rule that keeps an ordinary query off the slide.
+
+Ten and eleven step outside the two bodies: what no amount of reading can
 currently settle, and the provider that reads them differently.
 
 | File | What it is |
@@ -72,7 +79,7 @@ are live portal screenshots carrying citizen names, mobile numbers and
 addresses, and the source is marked not for circulation. Copy it in first:
 
 ```bash
-cp "~/Library/CloudStorage/Box-Box/2. Projects/21. Governance/Grievance Redressal/Presentation/August 2026/GAPG_Grievance_Redressal_Briefing_Aug_18_2026 .pptx" reference.pptx
+cp ~/"Library/CloudStorage/Box-Box/2. Projects/21. Governance/Grievance Redressal/Presentation/August 2026/GAPG_Grievance_Redressal_Briefing_Aug_18_2026 .pptx" reference.pptx
 uv run --no-project --with python-pptx python build_deck.py
 ```
 
