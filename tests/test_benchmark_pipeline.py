@@ -24,7 +24,9 @@ from scripts.benchmark_pipeline import (
     STAGES,
     SUPPORTED_DOCUMENT_SUFFIXES,
     VALID_VARIANTS,
+    SampleFingerprintDriftError,
     StaleDocumentBytesError,
+    _check_fingerprint_matches_loaded_documents,
     _clustered_se,
     _document_kind,
     _document_sample_digest,
@@ -592,6 +594,158 @@ def test_cli_documents_dir_stale_document_bytes_fails_loudly(tmp_path, monkeypat
     assert "sample_digest snapshot" in err
 
 
+# ---------------------------------------------------------------------------
+# #315 Codex follow-up round 2 — fingerprint file set must match what was
+# actually loaded (a file added/removed between two independent directory
+# scans could be fingerprinted without being benchmarked, or vice versa)
+# ---------------------------------------------------------------------------
+
+
+def test_check_fingerprint_matches_loaded_documents_passes_when_sets_agree():
+    loaded_docs = [
+        {"document_name": "a.pdf"},
+        {"document_name": "b.pdf"},
+    ]
+    file_hashes = {"a.pdf": "hash-a", "b.pdf": "hash-b"}
+    # Must not raise.
+    _check_fingerprint_matches_loaded_documents(loaded_docs, file_hashes)
+
+
+def test_check_fingerprint_matches_loaded_documents_raises_on_extra_hash():
+    # A file fingerprinted but never loaded is the dangerous direction:
+    # sample_digest would cover bytes nothing in the run ever measured.
+    loaded_docs = [{"document_name": "a.pdf"}]
+    file_hashes = {"a.pdf": "hash-a", "stowaway.pdf": "hash-b"}
+
+    with pytest.raises(SampleFingerprintDriftError, match="stowaway.pdf"):
+        _check_fingerprint_matches_loaded_documents(loaded_docs, file_hashes)
+
+
+def test_check_fingerprint_matches_loaded_documents_raises_on_missing_hash():
+    loaded_docs = [{"document_name": "a.pdf"}, {"document_name": "b.pdf"}]
+    file_hashes = {"a.pdf": "hash-a"}
+
+    with pytest.raises(SampleFingerprintDriftError, match="b.pdf"):
+        _check_fingerprint_matches_loaded_documents(loaded_docs, file_hashes)
+
+
+def test_fingerprint_race_between_independent_scans_is_real_and_caught(tmp_path):
+    # Reproduces the actual race Codex found: load_staged_documents() and
+    # _document_sample_file_hashes() each independently list the directory
+    # by default (two directory.iterdir() calls, not one). A file staged in
+    # between -- e.g. a corpus still hydrating into this directory -- lands
+    # in the second scan's hashes without ever having been loaded. This is
+    # exactly what main() no longer does (it derives the hash target list
+    # from loaded_docs' own document_path, not a second scan -- see the
+    # tests below), but the two independently-scanning functions still
+    # exist on their own and the mismatch they can produce must be caught,
+    # not silently published.
+    _stage_document(tmp_path, "CMO20241020862")
+    loaded_docs = load_staged_documents(tmp_path)  # scan #1
+
+    # Simulate a file landing mid-hydration, after scan #1.
+    _stage_document(tmp_path, "CMO2024483790", suffix=".jpeg")
+
+    file_hashes = _document_sample_file_hashes(tmp_path)  # independent scan #2
+    assert "CMO2024483790_complaint_20250715_234307.jpeg" in file_hashes  # premise: the race is real
+
+    with pytest.raises(
+        SampleFingerprintDriftError, match="CMO2024483790_complaint_20250715_234307.jpeg"
+    ):
+        _check_fingerprint_matches_loaded_documents(loaded_docs, file_hashes)
+
+
+def test_document_sample_file_hashes_with_explicit_files_ignores_later_directory_changes(
+    tmp_path,
+):
+    # This is the actual fix: an explicit files= snapshot is hashed as-is,
+    # so a file appearing after the snapshot was taken cannot silently
+    # enter the fingerprint no matter when _document_sample_file_hashes
+    # happens to run relative to the directory changing.
+    _stage_document(tmp_path, "CMO20241020862")
+    files = bench_mod._staged_document_paths(tmp_path)
+
+    _stage_document(tmp_path, "CMO2024483790", suffix=".jpeg")  # lands after the snapshot
+
+    hashes = _document_sample_file_hashes(tmp_path, files=files)
+    assert set(hashes) == {"CMO20241020862_complaint_20250715_234307.pdf"}
+
+
+def test_cli_documents_dir_fingerprint_derives_from_loaded_documents_not_a_rescan(tmp_path):
+    # Integration-level regression guard for the actual fix in main(): the
+    # file list handed to _document_sample_file_hashes comes from
+    # loaded_docs' own document_path values, not a fresh directory scan. A
+    # file staged after load_staged_documents() has already run (simulated
+    # here by writing it right after staging the first two, before main()
+    # runs at all -- main() only ever sees the directory once) must not
+    # appear in sample_digest's file set unless it was actually loaded.
+    # (The full race -- a file appearing *during* main()'s own run, between
+    # its load and fingerprint steps -- can no longer happen by
+    # construction, which is exactly what this test is standing in for:
+    # there is only one directory scan for main() to race against itself.)
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    _stage_document(staging, "CMO20241020862")
+    _stage_document(staging, "CMO2024483790", suffix=".jpeg")
+    out = tmp_path / "latency.json"
+
+    rc = bench_mod.main(
+        [
+            "--fake",
+            "--documents-dir",
+            str(staging),
+            "--repeats",
+            "2",
+            "--output",
+            str(out),
+        ]
+    )
+    assert rc == 0
+    data = json.loads(out.read_text())
+    assert data["n_docs"] == 2
+    assert data["benchmark_context"]["sample_digest"]
+
+
+def test_cli_documents_dir_fingerprint_drift_fails_loudly(tmp_path, monkeypatch, capsys):
+    # CLI wiring: main() must convert a SampleFingerprintDriftError raised
+    # by the insurance check into a loud, non-zero-exit CLI failure, not a
+    # silently-written latency.json whose sample_digest overclaims what was
+    # measured. The detection logic itself is exercised for real above;
+    # this test is only about main()'s try/except around the call.
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    _stage_document(staging, "CMO20241020862")
+    out = tmp_path / "latency.json"
+
+    def fake_check(*_args, **_kwargs):
+        raise SampleFingerprintDriftError(
+            "sample_digest's file set does not match the documents loaded "
+            "for benchmarking (fingerprinted but never loaded, so never "
+            "measured: ['stowaway.pdf']; loaded but never fingerprinted: [])"
+        )
+
+    monkeypatch.setattr(
+        bench_mod, "_check_fingerprint_matches_loaded_documents", fake_check
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        bench_mod.main(
+            [
+                "--fake",
+                "--documents-dir",
+                str(staging),
+                "--repeats",
+                "2",
+                "--output",
+                str(out),
+            ]
+        )
+    assert exc.value.code == 2
+    assert not out.exists()
+    err = capsys.readouterr().err
+    assert "stowaway.pdf" in err
+
+
 def test_run_benchmark_over_loaded_real_documents(tmp_path):
     # No processor_factory here, so this exercises the fake timing path,
     # which never touches document_bytes/document_path — docs from
@@ -922,11 +1076,18 @@ def test_cli_synthetic_path_benchmark_context_fixture_is_unchanged(tmp_path):
 
 
 def test_probe_ocr_toolchain_populates_real_values_when_installed():
-    # Real code path, no mocking of pytesseract/poppler: the pipeline-core
-    # test gate (tests/README.md) requires tesseract and poppler installed
-    # locally, so this must report real values, not "unavailable"
-    # placeholders. Two machines with different tesseract versions or a
-    # missing Odia (ori) pack must be distinguishable from this output.
+    # Real code path, no mocking of pytesseract/poppler. Base CI
+    # (pipeline.yml) deliberately runs `uv sync --all-groups --extra
+    # serving` without pipeline-core, so pytesseract/pdf2image are not
+    # importable there and this test must skip rather than assert on
+    # "unavailable" — that path has its own test below. Locally, with
+    # pipeline-core installed (tests/README.md's gate requirement), this
+    # must report real values: two machines with different tesseract
+    # versions or a missing Odia (ori) pack must be distinguishable from
+    # this output, which is the entire point of #315's follow-up.
+    pytest.importorskip("pytesseract")
+    pytest.importorskip("pdf2image")
+
     toolchain = bench_mod._probe_ocr_toolchain()
 
     assert set(toolchain) == {"tesseract_version", "tesseract_langs", "poppler_version"}
@@ -940,10 +1101,19 @@ def test_probe_ocr_toolchain_populates_real_values_when_installed():
 
 
 def test_probe_ocr_toolchain_records_unavailable_when_tesseract_probe_fails(monkeypatch):
-    # Simulate a box where tesseract cannot be located/configured (e.g. no
-    # binary installed at all). The probe must not raise, must not silently
-    # omit the keys, and must not let a tesseract failure take poppler's
+    # Simulate a box where tesseract is importable but misbehaves at runtime
+    # (as opposed to not being installed at all, which base CI already
+    # exercises for real — see test_probe_ocr_toolchain_composes_independent_
+    # tesseract_and_poppler_probes, which asserts nothing about availability
+    # and so passes either way). monkeypatch.setattr's string-path form has
+    # to import pytesseract_backend to resolve the target, and that module
+    # does `import pytesseract` at module scope, so this needs pytesseract
+    # importable too — skip in base CI rather than error out on the mock
+    # setup itself. The probe must not raise, must not silently omit the
+    # keys, and must not let a tesseract failure take poppler's
     # (independently probed) result down with it.
+    pytest.importorskip("pytesseract")
+
     def boom():
         raise RuntimeError("tesseract not installed on this box")
 

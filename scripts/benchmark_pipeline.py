@@ -372,7 +372,30 @@ class StaleDocumentBytesError(RuntimeError):
     """
 
 
-def _document_sample_file_hashes(directory: Path) -> dict[str, str]:
+class SampleFingerprintDriftError(RuntimeError):
+    """The fingerprinted file set differs from the documents actually loaded.
+
+    ``load_staged_documents`` and ``_document_sample_file_hashes`` each list
+    ``directory`` independently by default (two separate ``iterdir()``
+    calls). A file staged between those two scans — the same live-hydration
+    scenario ``StaleDocumentBytesError`` guards against, just at the
+    directory-listing level instead of a single file's bytes — could end up
+    fingerprinted into ``sample_digest`` without ever being loaded (and
+    therefore never benchmarked or verified), or loaded without ever being
+    fingerprinted. Either way the published digest would describe a file set
+    the run never actually measured. ``main()`` closes the race at the
+    source: it derives the file list to fingerprint from ``loaded_docs``'
+    own ``document_path`` entries (a single directory scan, inside
+    ``load_staged_documents``) rather than a second, independent scan. This
+    error is the cheap, explicit insurance on top of that — checked, not
+    assumed — for any caller (present or future) that fingerprints from an
+    independently-scanned file list instead.
+    """
+
+
+def _document_sample_file_hashes(
+    directory: Path, files: list[Path] | None = None
+) -> dict[str, str]:
     """SHA-256 hex digest of each staged document's current bytes, by name.
 
     Reads every file once, the same work ``_document_sample_digest`` already
@@ -384,11 +407,50 @@ def _document_sample_file_hashes(directory: Path) -> dict[str, str]:
     directory. Bytes are hashed and discarded one file at a time — nothing
     beyond one file's bytes is ever resident, same as the eager-read fix in
     #308.
+
+    ``files``, when given, is hashed as-is instead of scanning ``directory``
+    independently. ``main()`` passes the ``document_path`` values from
+    ``load_staged_documents``'s own return, so the fingerprint covers
+    exactly the documents that were actually loaded (see
+    ``SampleFingerprintDriftError``) rather than whatever a second,
+    independent directory listing happens to see — a real difference while a
+    staging directory is actively being hydrated. The default (``None``)
+    scans fresh, which is correct for a standalone call with no
+    already-loaded document list to reuse.
     """
+    if files is None:
+        files = _staged_document_paths(directory)
     return {
-        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
-        for path in _staged_document_paths(directory)
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in files
     }
+
+
+def _check_fingerprint_matches_loaded_documents(
+    loaded_docs: list[dict[str, Any]],
+    file_hashes: Mapping[str, str],
+) -> None:
+    """Raise ``SampleFingerprintDriftError`` if the two file sets disagree.
+
+    Cheap insurance on top of ``main()`` deriving ``_document_sample_file_hashes``'s
+    ``files=`` from ``loaded_docs`` itself: an explicit, fast check rather
+    than trusting that derivation silently. ``loaded_docs`` is what
+    ``run_benchmark`` will actually iterate and measure; ``file_hashes``'
+    keys are what ``sample_digest`` claims to describe. They must name
+    exactly the same documents.
+    """
+    loaded_names = {doc["document_name"] for doc in loaded_docs}
+    hashed_names = set(file_hashes)
+    if loaded_names != hashed_names:
+        only_hashed = sorted(hashed_names - loaded_names)
+        only_loaded = sorted(loaded_names - hashed_names)
+        raise SampleFingerprintDriftError(
+            "sample_digest's file set does not match the documents loaded "
+            f"for benchmarking (fingerprinted but never loaded, so never "
+            f"measured: {only_hashed}; loaded but never fingerprinted: "
+            f"{only_loaded}). The staged directory likely changed between "
+            "listing and fingerprinting — re-run once staging/hydration has "
+            "settled."
+        )
 
 
 def _document_sample_digest(
@@ -479,6 +541,15 @@ def load_staged_documents(
     still works from the directory's filenames alone, just without a
     district, the cross-check, or protection against the hierarchical-
     ticket collision above.
+
+    ``main()`` fingerprints this same directory afterward
+    (``_document_sample_file_hashes``) for ``sample_digest``, from the
+    ``document_path`` this function already put in each returned dict —
+    not a second, independent directory scan. Two independent scans of a
+    staging directory that is actively being hydrated can each see a
+    different file set (see ``SampleFingerprintDriftError``); deriving the
+    fingerprint's file list from what was actually loaded here closes that
+    race at the source instead of trusting two scans to agree.
 
     Raises:
         FileNotFoundError: ``directory`` does not exist or is not a
@@ -1386,7 +1457,26 @@ def main(argv: list[str] | None = None) -> int:
         # document's later, lazy read (#308) is checked against this exact
         # snapshot rather than trusted blind. file_hashes= reuses that same
         # read for sample_digest instead of a second pass over the directory.
-        sample_file_hashes = _document_sample_file_hashes(args.documents_dir)
+        #
+        # The file list to hash comes from loaded_docs' own document_path
+        # entries, not a fresh directory scan: load_staged_documents() above
+        # already scanned the directory once. A second, independent scan
+        # here (the original shape) can see a different file set while a
+        # staging directory is actively being hydrated -- a file staged in
+        # between could be fingerprinted into sample_digest without ever
+        # being loaded (and therefore never benchmarked or verified), or the
+        # reverse. Reusing the already-loaded paths closes that race at the
+        # source; _check_fingerprint_matches_loaded_documents below is the
+        # cheap, explicit check on top, in case a future change reintroduces
+        # an independent scan somewhere in this path.
+        staged_files = [doc["document_path"] for doc in loaded_docs]
+        sample_file_hashes = _document_sample_file_hashes(
+            args.documents_dir, files=staged_files
+        )
+        try:
+            _check_fingerprint_matches_loaded_documents(loaded_docs, sample_file_hashes)
+        except SampleFingerprintDriftError as exc:
+            parser.error(str(exc))
         sample_digest = _document_sample_digest(
             args.documents_dir, sample_manifest, file_hashes=sample_file_hashes
         )
