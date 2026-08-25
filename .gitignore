@@ -333,3 +333,10 @@ docs/presentations/*/.quarto/
 # may reach git. (outputs/* is already ignored above; this catches strays.)
 janasunani/experiments/**/*.pkl
 janasunani/experiments/**/*.parquet
+
+# Office lock files. Word and PowerPoint write a `~$name.docx` owner file
+# beside any open document, and LibreOffice writes `.~lock.name#`; both appear
+# as untracked the moment anyone opens a deliverable. The repo ships .docx and
+# .pptx under docs/ and outputs/, so this recurs rather than being a one-off.
+~$*
+.~lock.*#
