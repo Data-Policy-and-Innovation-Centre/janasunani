@@ -22,8 +22,11 @@ def test_grievance_schema_is_pinned_and_versioned():
         get_schema,
     )
 
-    assert SCHEMA_VERSION == "v1"
+    # The default moved to v2 when v1 proved unable to answer its own primary
+    # outcome. v1 stays pinned and reachable so the 2026-08-25 run reproduces.
+    assert SCHEMA_VERSION == "v2"
     assert "v1" in SUPPORTED_SCHEMA_VERSIONS
+    assert "v2" in SUPPORTED_SCHEMA_VERSIONS
     assert SUPPORTED_SCHEMA_VERSIONS["v1"] is GRIEVANCE_EXTRACT_SCHEMA_V1
     schema = get_schema("v1")
     assert schema is GRIEVANCE_EXTRACT_SCHEMA_V1
@@ -205,10 +208,14 @@ def test_evaluate_dry_run_digitise_arm(tmp_path: Path):
     md_path = out / "sarvam_scorecard.md"
     assert json_path.is_file()
     assert md_path.is_file()
+    from janasunani.evaluation.sarvam_grievance_schema import SCHEMA_VERSION
+
     data = json.loads(json_path.read_text())
     assert data["n_pages"] == 2
     assert data["arm"] == "digitise"
-    assert data["schema_version"] == "v1"
+    # Whatever the default is, the scorecard records it, so a headline number
+    # can always be traced back to the schema that produced it.
+    assert data["schema_version"] == SCHEMA_VERSION
     assert data["cost_rupees"] == 0.0  # dry-run
     assert "summary_divergence" in data
     progress_path = out / "sarvam_progress.json"
@@ -1196,3 +1203,46 @@ def test_save_records_destination_rejects_traversal_after_resolution():
     escaped = DATA_DIR / "external" / ".." / ".." / "docs" / "leak.jsonl"
     with pytest.raises(ValueError, match="governed data tree"):
         _checked_record_destination(escaped)
+
+
+def test_schema_v2_constrains_the_category_and_drops_district():
+    """v1's category had no enum, so the model had nothing to choose from.
+
+    The 2026-08-25 Sambalpur/2024 run billed 200 Extract pages and got
+    free-text subject lines back: "Sanction of new AWC buildings" against a
+    gold label of ICDS. It matched gold on 0 of the 11 grievances where it
+    answered at all, which measured the schema rather than the provider.
+    """
+    from janasunani.evaluation.sarvam_grievance_schema import (
+        GRIEVANCE_CATEGORIES,
+        SCHEMA_VERSION,
+        get_schema,
+    )
+
+    v2 = get_schema("v2")
+    category = v2["properties"]["grievance_category"]
+    assert category["enum"] == list(GRIEVANCE_CATEGORIES)
+    assert len(GRIEVANCE_CATEGORIES) == 35
+
+    # District is a structured column on `complaints`, known at intake for
+    # every grievance. Paying an extraction endpoint to read it off a scan
+    # buys nothing, and in the run it crowded out the field we needed.
+    assert "district" not in v2["properties"]
+    assert "district" in get_schema("v1")["properties"]
+
+    # The stored taxonomy carries a double-escaped label; the enum must offer
+    # the readable form, not the HTML entity.
+    assert "Scheme & Benefits" in GRIEVANCE_CATEGORIES
+    assert not any("&amp;" in c for c in GRIEVANCE_CATEGORIES)
+
+    # New runs must not silently select the schema that cannot answer.
+    assert SCHEMA_VERSION == "v2"
+
+
+def test_schema_v2_passes_the_provider_preflight():
+    """An enum must not trip the guard that catches HTTP-400 shapes."""
+    from janasunani.egress.sarvam import _validate_extract_schema
+    from janasunani.evaluation.sarvam_grievance_schema import get_schema
+
+    _validate_extract_schema(get_schema("v2"))
+    _validate_extract_schema(get_schema("v1"))
