@@ -25,8 +25,11 @@ status: Internal
 > audit log, 5 s polling resolution); divergence is 0.995 on 198 scored pages
 > with a character ratio of 1.56, not 1.3345 on 56; and a category grade now
 > exists but measures our own v1 schema, which offered no enum, rather than the
-> provider. Still absent, and still blocking any accuracy claim: a
-> hand-transcribed reference (#53). Schema v2 is now the pinned default.
+> provider. Still absent, and still blocking any **OCR accuracy** claim
+> specifically: a hand-transcribed reference (#53). It does not block the
+> latency or category results above, which have their own referees — the
+> egress audit log and the recorded category. Schema v2 is now the pinned
+> default.
 
 ## What is built
 

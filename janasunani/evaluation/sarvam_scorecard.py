@@ -577,26 +577,53 @@ def build_scorecard(
     n_pages = len(pages)
     n_tickets = len({p.ticket for p in pages})
 
-    # Category arm — paired, ticket-clustered. De-duplicate by ticket for
-    # category (one category per ticket/document, not per page).
-    # If a ticket appears on multiple pages, its category should be consistent;
-    # we take the first non-None and require consistency (warn if not).
+    # Category arm — paired, ticket-clustered. Category is a property of the
+    # grievance, not of a page, so it is de-duplicated to one value per ticket.
+    #
+    # **Disagreement between pages is recorded, never resolved by position.**
+    # This used to keep the first non-null answer and `pass` on any later
+    # value that differed. That was survivable while a page with no grievance
+    # content could return null and let a later page's answer through. Schema
+    # v2 makes `grievance_category` `required`, and Extract is invoked per page
+    # (sarvam_evaluate.py:604), so every page must now answer — including cover
+    # sheets and attachments that have no category to give. First-wins then
+    # lets a forced guess on page one mask a correct answer on the
+    # grievance-bearing page, silently, in the primary outcome.
+    #
+    # Picking a different page is not a fix either: majority favours whichever
+    # page type is most numerous, which for a multi-page grievance is usually
+    # the attachments. Without knowing which page bears the grievance there is
+    # no defensible winner, so a ticket whose pages disagree is marked
+    # ambiguous and excluded from accuracy, with the count reported. The real
+    # fix is to extract once per grievance rather than per page.
     ticket_gold: dict[str, str | None] = {}
     ticket_pipe: dict[str, str | None] = {}
     ticket_sarvam: dict[str, str | None] = {}
+    # ticket -> set of distinct non-null answers seen, per field
+    seen_gold: dict[str, set[str]] = defaultdict(set)
+    seen_pipe: dict[str, set[str]] = defaultdict(set)
+    seen_sarvam: dict[str, set[str]] = defaultdict(set)
     for p in pages:
-        for d, val in [
-            (ticket_gold, p.gold_category),
-            (ticket_pipe, p.pipeline_category),
-            (ticket_sarvam, p.sarvam_category),
+        for d, seen, val in [
+            (ticket_gold, seen_gold, p.gold_category),
+            (ticket_pipe, seen_pipe, p.pipeline_category),
+            (ticket_sarvam, seen_sarvam, p.sarvam_category),
         ]:
+            key = category_key(val)
+            if key is not None:
+                seen[p.ticket].add(key)
             if p.ticket not in d:
                 d[p.ticket] = val
             elif d[p.ticket] is None and val is not None:
                 d[p.ticket] = val
-            elif val is not None and d[p.ticket] is not None and d[p.ticket] != val:
-                # Inconsistent label for same ticket — keep first, note later
-                pass
+
+    # A ticket whose pages gave two different answers has no usable value.
+    ambiguous_sarvam = {t for t, vals in seen_sarvam.items() if len(vals) > 1}
+    ambiguous_pipeline = {t for t, vals in seen_pipe.items() if len(vals) > 1}
+    for ticket in ambiguous_sarvam:
+        ticket_sarvam[ticket] = None
+    for ticket in ambiguous_pipeline:
+        ticket_pipe[ticket] = None
 
     # Only tickets with a gold label contribute to paired accuracy
     # Arm-aware: digitise-only does not score category (gold Category requires Extract)
@@ -625,6 +652,17 @@ def build_scorecard(
                 "ci_low": diff["ci_low"],
                 "ci_high": diff["ci_high"],
                 "n_clusters": diff["n_clusters"],
+                # Tickets whose pages disagreed. These score as incorrect
+                # because no page's answer is defensible, so a high count means
+                # the marginal rates understate the provider rather than
+                # measuring it. Reported so that is visible instead of being
+                # absorbed into the accuracy figure.
+                "sarvam_ambiguous_tickets": len(
+                    [t for t in cat_tickets if t in ambiguous_sarvam]
+                ),
+                "pipeline_ambiguous_tickets": len(
+                    [t for t in cat_tickets if t in ambiguous_pipeline]
+                ),
                 "interpretation": "difference + CI is the result; marginal rates are description (#127)",
             }
         else:

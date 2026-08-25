@@ -565,3 +565,67 @@ def test_label_normalisation_does_not_make_different_categories_match():
     assert report.category is not None
     assert report.category["pipeline_accuracy"] == 0.0
     assert report.category["sarvam_accuracy"] == 0.0
+
+
+def test_pages_disagreeing_on_category_are_ambiguous_not_first_wins():
+    """A forced guess on page one must not mask the grievance page's answer.
+
+    Schema v2 makes `grievance_category` required and Extract runs per page,
+    so cover sheets and attachments must now answer even though they carry no
+    category. The old first-non-null rule let that guess win silently.
+    """
+    from janasunani.evaluation.sarvam_scorecard import PageRecord, build_scorecard
+
+    pages = [
+        # Page 1 is a cover sheet: forced to guess, and guesses wrong.
+        PageRecord(
+            ticket="T1", page_id="T1:1", gold_category="ICDS",
+            pipeline_category="ICDS", sarvam_category="Housing",
+        ),
+        # Page 2 actually bears the grievance and gets it right.
+        PageRecord(
+            ticket="T1", page_id="T1:2", gold_category="ICDS",
+            pipeline_category="ICDS", sarvam_category="ICDS",
+        ),
+    ]
+    report = build_scorecard(pages)
+    assert report.category is not None
+    # Not scored as correct on a lucky later page, and not scored as correct
+    # on a wrong first page: the ticket is ambiguous and counts against.
+    assert report.category["sarvam_accuracy"] == 0.0
+    assert report.category["sarvam_ambiguous_tickets"] == 1
+    # The pipeline agreed across pages, so it is unaffected.
+    assert report.category["pipeline_accuracy"] == 1.0
+    assert report.category["pipeline_ambiguous_tickets"] == 0
+
+
+def test_pages_agreeing_across_pages_still_score_normally():
+    """Ambiguity handling must not penalise a consistent multi-page answer."""
+    from janasunani.evaluation.sarvam_scorecard import PageRecord, build_scorecard
+
+    pages = [
+        PageRecord(ticket=f"T{i}", page_id=f"T{i}:{p}", gold_category="Housing",
+                   pipeline_category="Housing", sarvam_category="Housing")
+        for i in range(5) for p in (1, 2, 3)
+    ]
+    report = build_scorecard(pages)
+    assert report.category is not None
+    assert report.category["sarvam_accuracy"] == 1.0
+    assert report.category["sarvam_ambiguous_tickets"] == 0
+    assert report.category["n_tickets"] == 5
+
+
+def test_escaped_and_unescaped_spellings_are_not_a_disagreement():
+    """Two spellings of one category must not be scored as pages disagreeing."""
+    from janasunani.evaluation.sarvam_scorecard import PageRecord, build_scorecard
+
+    pages = [
+        PageRecord(ticket="T1", page_id="T1:1", gold_category="Scheme &amp;amp; Benefits",
+                   pipeline_category="Scheme & Benefits", sarvam_category="Scheme & Benefits"),
+        PageRecord(ticket="T1", page_id="T1:2", gold_category="Scheme &amp;amp; Benefits",
+                   pipeline_category="Scheme &amp;amp; Benefits", sarvam_category="scheme & benefits"),
+    ]
+    report = build_scorecard(pages)
+    assert report.category is not None
+    assert report.category["sarvam_ambiguous_tickets"] == 0
+    assert report.category["sarvam_accuracy"] == 1.0
