@@ -1,5 +1,5 @@
 """
-Janasunani 2.0 — a seven-slide technical briefing.
+Janasunani 2.0 — an eleven-slide technical briefing.
 
 Built by CLONING slide archetypes out of the GAPG 18 August 2026 reference deck,
 so type, colour, geometry and the footer lockup are that file's own shapes rather
@@ -16,10 +16,11 @@ Archetypes reused (by reference slide number):
 Reference slides 4, 8 (portal screenshots) and 10 (native chart) are NOT used:
 the screenshots carry citizen PII and the chart has no equivalent here.
 
-Two slides are authored rather than cloned, because the reference deck contains
+Three slides are authored rather than cloned, because the reference deck contains
 neither a diagram nor a table:
   slide 3  architecture.svg, embedded as true vector with a PNG fallback
   slide 4  a native table styled to the reference palette
+  slide 8  the same table, on the routing-outcome diagnostics
 
 Every figure traces to an artifact; sources live in the speaker notes.
 
@@ -502,25 +503,9 @@ s.notes_slide.notes_text_frame.text = (
     "category-to-department link exists and MappingRouter can only bridge by exact name. That "
     "absence is why the crosswalk had to be learned from history rather than read off a table. "
     "Mention it only if someone asks what happens when the crosswalk has no key.\n\n"
-    "ROW 3, THE OUTCOME MODEL. Design of record is docs/experiments/routing-outcome-model.tex, "
-    "42 pages. It asks a different question from the rows above: not where a grievance was "
-    "sent, but whether sending it elsewhere would have closed it faster without losing whether "
-    "action was taken.\n"
-    "  Treatment is the department and the complete role chain chosen together at assignment, "
-    "the intention to route. Outcome is days to closure capped at 365, with inverse-probability "
-    "censoring weights so cases still open at the snapshot do not silently drop out. Two "
-    "estimators are reported separately: a direct outcome model and an augmented, "
-    "doubly-robust one.\n"
-    "  Result: validation 2024 gave +26.77 days (SE 4.04). The untouched 2025 test year gave "
-    "-2.35 (SE 3.50). No routing gain is established and no recommendation is published.\n"
-    "  Why it failed, if pushed. Positivity breaks: on the test year only 15.6% of cases have "
-    "the recommended route anywhere in observed support, and effective sample size falls to 7% "
-    "of n, so the direct estimator is extrapolating into empty cells. The design document also "
-    "states plainly that its no-interference assumption 'in a queueing system is false' — route "
-    "everyone to the fast office and it stops being fast. Unconfoundedness is invoked on an "
-    "information set smaller than the officer's, missing congestion and trailing destination "
-    "performance. And the test year is a seven-month window being asked about a 365-day "
-    "outcome, so replication and truncation cannot be separated.\n\n"
+    "THE OUTCOME MODEL IS NOT THIS SLIDE. Everything here predicts where a grievance was sent. "
+    "Whether sending it elsewhere would have resolved it better is slides 7 and 8, it is "
+    "research-only, and no serving provider reads it. Keep the two apart when answering.\n\n"
     "RUNG 3, the trained model. Opt-in via JANASUNANI_ROUTER=incidence, artifact checksummed, "
     "and IncidenceRoutingProvider falls through to the crosswalk and rules when a lookup "
     "fails, logging rather than failing silently.\n\n"
@@ -531,9 +516,7 @@ s.notes_slide.notes_text_frame.text = (
     "Macro-F1 is weak, 25.2% informative and 19.8% all eligible, and about a dozen departments "
     "sit at F1 zero. The top-three framing is doing real work here.\n\n"
     "WITHDRAWN, do not use: the in-sample crosswalk figures 60.9 / 67.5 / 72.8, which are "
-    "resubstitution. And any routing time saving: an estimated 11 to 23 day gain held on "
-    "validation 2024 and failed on the untouched 2025 test year at -2.35 days against a "
-    "standard error of 3.50. Withdrawn 23 August, commits 879c24c and 365e3b4."
+    "resubstitution. Any routing time saving is withdrawn too; slide 8 carries that warning."
 )
 
 # ══ 6 · Closing a case costs nothing ══════════════════════════════════════════
@@ -574,7 +557,8 @@ s.notes_slide.notes_text_frame.text = (
     "minimises duration SUBJECT TO a correctness constraint rather than minimising duration.\n\n"
     "It is also the weak point. The constraint is derived from the closing remark after the "
     "fact, so the population is conditioned on resolution and does not identify intake-time "
-    "actionability. That is one reason the estimate on the next slide did not hold.\n\n"
+    "actionability. It is on the unresolved list at slide 8, and one reason the estimate there "
+    "did not hold.\n\n"
     "THE CAVEAT THAT MUST TRAVEL. This is descriptive and is not a failure rate. A correct "
     "closure and a premature one look identical in this record. Do not present it as an office "
     "league table; report it at state level. The bare share RISES with work done, 58.4% at "
@@ -586,92 +570,158 @@ s.notes_slide.notes_text_frame.text = (
     "days on a bare disposal, 1.9% of bare disposals."
 )
 
-# ══ 7 · Would another route be faster? ════════════════════════════════════════
-s = clone_shell(prs, A_ROWS3, keep={0, 1, 11, 12})
+# ══ 7 · What was built ════════════════════════════════════════════════════════
+# The archetype's own maroon 1/2/3 numerals carry the sequence, so the three
+# stages need no authored shapes. Its bottom line at sh[16] is dropped: the
+# deck's idiom puts the maroon conclusion last, and the live/research
+# distinction has to sit above it.
+s = clone(prs, A_NUM3)
 sh = S(s)
-set_text(sh[0], "WOULD ANOTHER ROUTE BE FASTER?")
-set_text(sh[1], "The estimate did not survive the second year")
+set_text(sh[0], "WOULD ANOTHER ROUTE WORK BETTER?")
+set_text(sh[1], "We built the test before we built the feature")
+set_text(sh[3], "Estimate time to disposal on every route")
+set_text(sh[5], "Ridge and gradient boosting, cross-fitted, capped at 365 days, under each historically supported department and role chain.")
+set_text(sh[8], "Safeguard the action rate")
+set_text(sh[10], "A calibrated classifier for whether substantive action is taken. A faster route is admissible only where that rate holds.")
+set_text(sh[13], "Verify against outcomes we observed")
+set_text(sh[15], "Direct outcome regression against augmented IPCW, Hajek-normalised, with censoring weights and a district-by-year cluster bootstrap.")
+sh[16]._element.getparent().remove(sh[16]._element)
 textbox(
     s,
-    "So we tested for speed without losing whether action was taken.",
+    "LIVE: predicts where similar grievances were historically sent.",
+    x=0.7, y=5.90, w=11.9, h=0.26, size=13, color=SUBTLE,
+)
+textbox(
+    s,
+    "RESEARCH ONLY: asks where they would have resolved better.",
+    x=0.7, y=6.16, w=11.9, h=0.26, size=13, color=SUBTLE,
+)
+textbox(
+    s,
+    "A complete offline evaluation. It was never connected to live routing.",
+    x=0.7, y=6.52, w=11.9, h=0.42, size=17, color=MAROON, bold=True,
+)
+s.notes_slide.notes_text_frame.text = (
+    "This slide is the design. The next one is why it is not live. Do not merge them.\n\n"
+    "TREATMENT is the department and the complete role chain chosen jointly at assignment, the "
+    "intention to route rather than the final state. ESTIMAND is capped RMST at 365 days.\n\n"
+    "THE CONSTRAINT IS THE POINT, and it is what slide 6 was for. The objective minimises "
+    "expected capped duration SUBJECT TO the action rate holding at its historical level. It "
+    "is never conditional on the realised outcome, which would condition on a post-treatment "
+    "variable. Unconstrained duration minimisation selects for closing cases untouched, "
+    "because closure is an action the officer controls directly. Design document, section 2: "
+    "'The first instinct is to minimise time to closure. This fails, instructively.'\n\n"
+    "THE THREE STAGES. Ridge and gradient boosting are carried separately rather than "
+    "ensembled, so model-family disagreement stays visible. It later mattered. The action "
+    "classifier is isotonic-calibrated, test ECE 0.0615 and AUC 0.7425. The threshold is the "
+    "smallest floor meeting the constraint. Verification puts the direct outcome regression "
+    "against the augmented estimator on the arm where history happened to match the proposed "
+    "route, which is the only place a model prediction can be checked against an observed "
+    "outcome.\n\n"
+    "THE FIREWALL, if asked what is running today. Historical-route prediction is live and is "
+    "slide 5. This work has no serving provider, no egress route, and no deployment "
+    "recommendation. The two answer different questions: where similar grievances were sent, "
+    "against where they would have resolved better.\n\n"
+    "SOURCES. Design of record is docs/experiments/routing-outcome-model.tex, 42 pages. "
+    "Appendices A to F carry the efficient influence function, Neyman orthogonality, the "
+    "censoring argument and a marginal sensitivity model. He may ask whether they exist. They "
+    "do. Plain-prose companion is janasunani/experiments/routing_outcome/README.md. Live path "
+    "is janasunani/routing/provider.py."
+)
+
+# ══ 8 · Why it is not live ════════════════════════════════════════════════════
+s = clone_shell(prs, A_ROWS3, keep={0, 1, 11, 12})
+sh = S(s)
+set_text(sh[0], "WHY IT IS NOT LIVE")
+set_text(sh[1], "Positivity failed before the second year did")
+textbox(
+    s,
+    "The same pipeline, refit and rerun on a year it had never seen.",
     x=0.7, y=2.02, w=11.9, h=0.36, size=17, color=BODY,
 )
 add_table(
     s,
     [
         ["What we measured", "2024, held out", "2025, untouched"],
-        ["Outcome model alone", "+24.5 days", "+30.5 days"],
-        ["Doubly robust", "+26.8 days (SE 4.0)", "\u22122.3 days (SE 3.5)"],
-        ["Error predicting the routes actually used", "5%", "118%"],
-        ["Suggested route has precedent in that category and district", "38% of cases", "16% of cases"],
-        ["Still open when the data was cut", "9%", "34%"],
+        ["Direct estimate, outcome regression", "+24.5 days", "+30.5 days"],
+        ["Cross-fitted AIPW", "+26.8 days (SE 4.0)", "\u22122.3 days (SE 3.5)"],
+        ["Falsification: predicting the arm actually observed", "5% error", "118% error"],
+        ["Proposed route in observed support", "38% of cases", "16% of cases"],
+        ["Effective sample as a share of n", "0.19", "0.07"],
     ],
     x=0.7, y=2.55, w=11.9, col_w=[6.0, 2.95, 2.95], row_h=0.46, header_h=0.40,
 )
 textbox(
     s,
-    "We withdrew the estimate. No routing gain is established.",
+    "DECISION   Withdraw the saving estimate, the correctness threshold and the routing recommendation. Keep the research offline.",
     x=0.7, y=5.42, w=11.9, h=0.34, size=15, color=DARK,
 )
 textbox(
     s,
-    "Positive means the suggested route closed faster. The direct estimator reports no standard error.",
+    "Censoring at the cut runs 9% then 34%. The 2025 cohort has seven months against a 365-day outcome, so non-replication and immaturity are not separable here.",
     x=0.7, y=5.92, w=11.9, h=0.26, size=12, color=SUBTLE, italic=True,
 )
 textbox(
     s,
-    "The 2025 data stops seven months in. The outcome is measured at 365 days.",
-    x=0.7, y=6.14, w=11.9, h=0.26, size=12, color=SUBTLE, italic=True,
+    "Unresolved: assignment-field provenance, intake-time actionability, interference since routing changes the queue, mature follow-up, a governed pilot.",
+    x=0.7, y=6.16, w=11.9, h=0.26, size=12, color=SUBTLE,
 )
 textbox(
     s,
-    "Two estimators on the same data disagreed by 33 days. The disagreement is the finding.",
+    "We withdrew the estimate, not the research question.",
     x=0.7, y=6.52, w=11.9, h=0.42, size=17, color=MAROON, bold=True,
 )
 s.notes_slide.notes_text_frame.text = (
     "Ninety seconds. The table is the argument; do not narrate every row.\n\n"
-    "Say: on 2024 the two estimators land 2.3 days apart. On 2025 they land 33 apart. Same "
-    "code, same pipeline, one year later. When a direct and a doubly-robust estimator diverge "
-    "like that, the divergence measures missing overlap. It is not a choice between two "
-    "answers.\n\n"
-    "SOURCES, live 19 August refit. ope_val_ridge.json (n=450,567) and ope_test_ridge.json "
-    "(n=113,535), both under outputs/experiments/routing_outcome/. Row 1 is delta_direct, "
-    "24.50 and 30.53. Row 2 is delta_dr, 26.77 (SE 4.04) and -2.35 (SE 3.50). Row 3 is the "
-    "historical arm, where v_dr is the observed IPCW mean and v_direct is the model's "
-    "prediction of it: 97.84 against 93.22 on validation, 108.69 against 49.74 on test. Row 4 "
-    "is overlap.match_rate, 0.380 and 0.156. Row 5 is censoring_rate_of_split, 0.092 and "
-    "0.344.\n\n"
+    "THE HEADLINE. The two estimators diverge by 33 days on 2025, 30.53 against -2.35, against "
+    "2.3 days on 2024. Under correct specification they estimate the same functional. "
+    "Divergence of that size is a positivity diagnostic, not a menu to choose from.\n\n"
+    "ROW 3 IS THE ONE TO DWELL ON. It is the falsification that localises the failure. On the "
+    "historical arm, the one arm where truth is observed, the direct estimator predicts 108.69 "
+    "against an observed IPCW mean of 49.74. It is 118% wrong where it can be checked, and it "
+    "was 5% wrong on 2024. AIPW down-weights the cells driving that error and lands at an "
+    "effective sample of 8,291 on n=113,535.\n\n"
+    "SOURCES, live 19 August refit, both under outputs/experiments/routing_outcome/. "
+    "ope_val_ridge.json (n=450,567) and ope_test_ridge.json (n=113,535). Row 1 delta_direct, "
+    "24.50 and 30.53. Row 2 delta_dr, 26.77 (SE 4.04) and -2.35 (SE 3.50). Row 3 v_direct "
+    "against v_dr on the historical arm, 97.84 against 93.22 then 108.69 against 49.74. Row 4 "
+    "overlap.match_rate, 0.380 and 0.156. Row 5 ess over n, 87,569 and 8,291 against the "
+    "respective sample sizes. Censoring is censoring_rate_of_split, 0.092 and 0.344. Governed "
+    "aggregate is docs/experiments/routing-outcome-evidence-2026-08-19.json, model commit "
+    "05f50da, a DVC dependency of the benchmark bundle. Status line in "
+    "docs/QUALITY_BENCHMARKS.md, section 'Routing, outcome not destination': no routing gain "
+    "established.\n\n"
+    "'Which estimator do you believe?' Neither, on the test year. Row 3 disqualifies the "
+    "direct one. The augmented one is honest about how little support remains and cannot "
+    "resolve anything at that effective sample. The test year cannot answer the question.\n\n"
+    "'Is this non-replication or immature follow-up?' Not separable in this design. The "
+    "snapshot is 2025-07-30, so the cohort has at most seven months against a 365-day outcome "
+    "and censoring runs 3.1%, 9.2%, 34.4%. It needs a later snapshot, not a better "
+    "estimator.\n\n"
+    "'A different outcome model?' Boosting gives 12.40 on validation against ridge's 26.77, "
+    "and 0.15 on test against -2.35. The families disagree by a factor of two on the year that "
+    "looked positive and agree on zero for the year that did not. The 2024 gain was never "
+    "stable.\n\n"
+    "ON THE UNRESOLVED LINE. Unconfoundedness is invoked on an information set smaller than "
+    "the assigning officer's; congestion and trailing destination performance are absent from "
+    "the covariates. Treatment provenance is open, since dept_id and vchAllEscUser may record "
+    "final state rather than initial assignment. No interference is assumed, and the design "
+    "document says that assumption 'in a queueing system is false'. Route everyone to the fast "
+    "office and it stops being fast. That bounds any future version of this exercise.\n\n"
+    "THE CORRECTNESS FRONTIER was withdrawn separately, issue #284, pending corrected "
+    "regeneration. Its augmented score was normalised over all evaluation rows before being "
+    "restricted to rows carrying an observed correctness label, while the direct value used "
+    "the full population. tau_star is null.\n\n"
+    "WITHDRAWN, do not use: any routing time saving, including the 11 to 23 day band. Do not "
+    "present it as conservative, provisional or pending. There is no estimate.\n\n"
     "DO NOT USE routing-outcome-ope-val-ridge-2026-08-13.json. Its validation match rate of "
     "0.536 and its +20.1 belong to the withdrawn run and it sits in docs/experiments/"
     "superseded/. Quoting it to dramatise the collapse re-cites the thing we retracted.\n\n"
-    "'So which estimator do you believe?' Neither, on the test year. The direct one "
-    "extrapolates into cells where the recommended route was never taken, and row 3 shows it "
-    "is 118% wrong on the one arm we can check. The doubly-robust one down-weights those "
-    "cells, leaving an effective sample of 7% of n. The honest statement is that the test year "
-    "cannot answer the question.\n\n"
-    "'Is this replication failure or truncation?' They cannot be separated in this design. The "
-    "snapshot is 2025-07-30, so the cohort has at most seven months against a 365-day outcome "
-    "and censoring runs 3.1%, 9.2%, 34.4%. Answering it needs a later snapshot, not a better "
-    "estimator.\n\n"
-    "'What about a different outcome model?' Boosting instead of ridge gives 12.40 on "
-    "validation against ridge's 26.77, and 0.15 on test against -2.35. The two families "
-    "disagree by a factor of two on the year that looked positive and agree on zero for the "
-    "year that did not. The validation gain was never stable either.\n\n"
-    "Only if pushed further:\n"
-    "- No interference is assumed, and the design document says that assumption 'in a queueing "
-    "system is false'. Route everyone to the fast office and it stops being fast. That bounds "
-    "any future version of this exercise.\n"
-    "- Unconfoundedness is invoked on less information than the assigning officer had. "
-    "Congestion and trailing destination performance are absent from the covariates.\n"
-    "- Treatment provenance is unresolved. dept_id and vchAllEscUser may record final state "
-    "rather than the initial assignment.\n\n"
-    "WITHDRAWN, do not use: any routing time saving, including the 11 to 23 day band. Do not "
-    "present it as conservative, provisional or pending. There is no estimate.\n\n"
-    "What we are NOT saying: that routing gains do not exist. We are saying this design on "
-    "this data cannot detect one."
+    "What we are NOT saying: that routing gains do not exist. Say no routing gain established. "
+    "Never say routing does not work. This design on this data cannot detect one."
 )
 
-# ══ 8 · The limits ════════════════════════════════════════════════════════════
+# ══ 9 · The limits ════════════════════════════════════════════════════════════
 s = clone(prs, A_NUM3)
 sh = S(s)
 set_text(sh[0], "THE LIMITS")
@@ -694,12 +744,12 @@ s.notes_slide.notes_text_frame.text = (
     "realised.\n\n"
     "Two more we do not claim, if asked: no gain from duplicate detection beyond the 37,299 "
     "repeats officers already confirmed, and no accuracy result for the outside option on "
-    "slide 6.\n\n"
+    "slide 10.\n\n"
     "If someone asks why so little is claimed: because the alternative is claiming things we "
     "cannot defend, and this deck has to survive the room checking it."
 )
 
-# ══ 9 · Sarvam ════════════════════════════════════════════════════════════════
+# ══ 10 · Sarvam ═══════════════════════════════════════════════════════════════
 s = clone(prs, A_TWOGROUP)
 sh = S(s)
 set_text(sh[0], "THE OUTSIDE OPTION: SARVAM")
@@ -765,7 +815,7 @@ s.notes_slide.notes_text_frame.text = (
     "path. Do not quote ₹700; that was priced on the withdrawn 30B model."
 )
 
-# ══ 10 · Category head to head (only when measured) ════════════════════════════
+# ══ 11 · Category head to head (only when measured) ═══════════════════════════
 if SARVAM_HEAD_TO_HEAD:
     hh = SARVAM_HEAD_TO_HEAD
     s = clone(prs, A_BARS3)
@@ -795,7 +845,7 @@ if SARVAM_HEAD_TO_HEAD:
     set_text(sh[12], hh["closing"])
     s.notes_slide.notes_text_frame.text = hh.get("notes", "")
 
-# ══ 11 · Closing ═══════════════════════════════════════════════════════════════
+# ══ 12 · Closing ══════════════════════════════════════════════════════════════
 s = clone(prs, A_CLOSING)
 s.notes_slide.notes_text_frame.text = (
     "Close on the limits, not a summary.\n\n"

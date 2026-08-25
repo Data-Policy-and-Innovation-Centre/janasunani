@@ -1,6 +1,6 @@
 # Janasunani 2.0 — technical briefing, 24 August 2026
 
-Ten slides, 15 to 20 minutes, for a technical audience.
+Eleven slides, 15 to 20 minutes, for a technical audience.
 
 ## Outline
 
@@ -15,10 +15,11 @@ order, and the eyebrows mark the branch.
 | 4 | Six stages, timed and scored | the citizen's text |
 | 5 | The department suggestion is learned from history | the citizen's text |
 | 6 | Closing a case costs nothing | **the officer's notes** |
-| 7 | The estimate did not survive the second year | the officer's notes |
-| 8 | What we cannot measure | |
-| 9 | It does more. We have not shown it does better | |
-| 10 | Thank you | |
+| 7 | We built the test before we built the feature | the officer's notes |
+| 8 | Positivity failed before the second year did | the officer's notes |
+| 9 | What we cannot measure | |
+| 10 | It does more. We have not shown it does better | |
+| 11 | Thank you | |
 
 Slide 2 is the map, not a preamble. Its three rows are the citizen's text, the
 officer's notes, and the fact that the portal has opened neither. It closes on
@@ -35,9 +36,14 @@ why the routing model on slide 7 minimises duration subject to a correctness
 constraint rather than minimising duration. Six is not a standalone finding and
 does not belong beside the corpus counts at two.
 
-Slide 7 is that estimate failing on a second year. Eight and nine step outside
-the two bodies: what no amount of reading can currently settle, and the
-provider that reads them differently.
+Seven and eight are a pair and are presented as one. Seven is the evaluation
+that was built: what was estimated, what constrained it, how it was checked.
+Eight is the diagnostic that refused the result and the decision that followed.
+Splitting them is the point. A single slide read as a feature that failed to
+ship, which understates both the work and the reason it stayed offline.
+
+Nine and ten step outside the two bodies: what no amount of reading can
+currently settle, and the provider that reads them differently.
 
 | File | What it is |
 |---|---|
