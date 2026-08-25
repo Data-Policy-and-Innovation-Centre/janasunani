@@ -1,6 +1,8 @@
 # Janasunani 2.0 — technical briefing, 24 August 2026
 
-Ten slides, 15 to 20 minutes, for a technical audience.
+Eleven slides, 15 to 20 minutes, for a technical audience. Twelve when the
+Sarvam category head-to-head is filled in; it is guarded and skips while
+`SARVAM_HEAD_TO_HEAD` is `None`, so the deck never ships a placeholder number.
 
 ## Outline
 
@@ -16,9 +18,11 @@ order, and the eyebrows mark the branch.
 | 5 | The department suggestion is learned from history | the citizen's text |
 | 6 | Closing a case costs nothing | **the officer's notes** |
 | 7 | The estimate did not survive the second year | the officer's notes |
-| 8 | What we cannot measure | |
-| 9 | It does more. We have not shown it does better | |
-| 10 | Thank you | |
+| 8 | The dashboards count filings, not problems | both |
+| 9 | What we cannot measure | |
+| 10 | It does more. We have not shown it does better | |
+| — | Category, head to head | *skipped until measured* |
+| 11 | Thank you | |
 
 Slide 2 is the map, not a preamble. Its three rows are the citizen's text, the
 officer's notes, and the fact that the portal has opened neither. It closes on
@@ -66,7 +70,7 @@ are live portal screenshots carrying citizen names, mobile numbers and
 addresses, and the source is marked not for circulation. Copy it in first:
 
 ```bash
-cp "~/Library/CloudStorage/Box-Box/2. Projects/21. Governance/Grievance Redressal/Presentation/August 2026/GAPG_Grievance_Redressal_Briefing_Aug_18_2026 .pptx" reference.pptx
+cp ~/"Library/CloudStorage/Box-Box/2. Projects/21. Governance/Grievance Redressal/Presentation/August 2026/GAPG_Grievance_Redressal_Briefing_Aug_18_2026 .pptx" reference.pptx
 uv run --no-project --with python-pptx python build_deck.py
 ```
 
