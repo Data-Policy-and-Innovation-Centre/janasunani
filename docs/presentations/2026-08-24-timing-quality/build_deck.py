@@ -402,19 +402,19 @@ textbox(
     s,
     "Latency is a mean over one scanned document, n=20. PII precision is unmeasured, though "
     "0 of 55,544 redacted records retain a shaped identifier.",
-    x=0.7, y=6.28, w=11.9, h=0.26, size=12, color=SUBTLE, italic=True,
+    x=0.7, y=6.20, w=11.9, h=0.26, size=12, color=SUBTLE, italic=True,
 )
 textbox(
     s,
     "Category classes are lopsided. A majority-class baseline scores 37% top-1 and 84% top-3, "
     "so the model adds 9 and 7 points.",
-    x=0.7, y=6.52, w=11.9, h=0.26, size=12, color=SUBTLE, italic=True,
+    x=0.7, y=6.43, w=11.9, h=0.26, size=12, color=SUBTLE, italic=True,
 )
 textbox(
     s,
     "Document measurements are one draw, Sambalpur 2024, the slice the duplicate index was "
     "built on. Categorisation, triage and routing are measured on text and records, not documents.",
-    x=0.7, y=6.78, w=11.9, h=0.22, size=11, color=SUBTLE, italic=True,
+    x=0.7, y=6.66, w=11.9, h=0.22, size=11, color=SUBTLE, italic=True,
 )
 s.notes_slide.notes_text_frame.text = (
     "MODEL OPTIONS AT EACH STAGE, if asked what else was tried.\n"
@@ -692,9 +692,9 @@ set_text(sh[1], "The dashboards count filings, not problems")
 set_text(sh[3], "Duplicate-adjusted workload.")
 set_text(sh[5], "55,544 filings in the slice are 10,963 distinct problems from 8,560 citizens. The portal reports the first number.")
 set_text(sh[8], "A spike with the cause attached.")
-set_text(sh[10], "Every spike carries filings, distinct problems and distinct citizens. Four hundred citizens on one road and two hundred unrelated problems look identical in a count.")
+set_text(sh[10], "Every spike carries filings, distinct problems and distinct citizens. A campaign and two hundred separate problems count the same.")
 set_text(sh[13], "Local issue themes.")
-set_text(sh[15], "Grouped by what complaints are about rather than the category assigned at intake. Concentrated in one place and rising is the alert worth acting on.")
+set_text(sh[15], "Grouped by what complaints are about, not the category assigned at intake. Concentrated in one place and rising is the alert worth acting on.")
 set_text(sh[16], "If an analyst with database access could produce a number in a day, we do not present it as something the system enables.")
 s.notes_slide.notes_text_frame.text = (
     "THE HOUSE RULE, janasunani/analytics/README.md. An insight is something the record already "
