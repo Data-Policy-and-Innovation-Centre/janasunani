@@ -102,6 +102,7 @@ migration change): **1,371,288 complaints / 6,556,171 action-history rows**.
 | Path | What lives there |
 |---|---|
 | [`janasunani/config.py`](../janasunani/config.py) | Paths (`directories`), settings (`settings`, pydantic-settings from env/`.env`), loguru helpers. The two things everything else imports. |
+| [`janasunani/samples.py`](../janasunani/samples.py) | The registry of named corpora and `require_sample()`, the guard that refuses a random draw for a population-level measurement. Stdlib-only so anything can consult it. **The source of truth for which sample a measurement may run on** — do not restate its entries here or anywhere else. |
 | [`janasunani/db/`](../janasunani/db/README.md) | ORM models, async session, CRUD, Alembic migrations. Engine-portable (SQLite + Postgres). |
 | [`janasunani/migration/`](../janasunani/migration/README.md) | Cold-start dump loader + live-MySQL sync, converging on one validated insert routine. |
 | [`janasunani/ingestion/`](../janasunani/ingestion/README.md) | Janasunani API client, S3 service, document downloader, and the Pydantic schemas that are the **single raw→ORM column map**. |

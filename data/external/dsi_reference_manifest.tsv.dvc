@@ -1,0 +1,5 @@
+outs:
+- md5: 28776e145f983b9e873e8b761026948e
+  size: 6857606
+  hash: md5
+  path: dsi_reference_manifest.tsv
