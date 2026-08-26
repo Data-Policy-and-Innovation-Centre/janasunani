@@ -38,6 +38,7 @@ WORKLOAD_FIELDS = (
     "duplicate_adjustment",
     "source_name",
     "source_snapshot_id",
+    "grouping_scope_snapshot_id",
 )
 
 
@@ -83,8 +84,8 @@ def _read_oltp_groups(oltp_url: str, district: str, year: int):
         with engine.connect() as conn:
             rows = conn.execute(
                 text(
-                    "SELECT ticket_no, duplicate_group_id, group_size, source_name, source_snapshot_id "
-                    "FROM dedup_groups WHERE district = :d AND created_year = :y"
+                    "SELECT ticket_no, duplicate_group_id, group_size, source_name, source_snapshot_id, "
+                    "grouping_scope_snapshot_id FROM dedup_groups WHERE district = :d AND created_year = :y"
                 ),
                 {"d": district, "y": year},
             ).mappings().all()
@@ -119,6 +120,7 @@ def compute_workload(
             "ticket_no": r["ticket_no"],
             "source_name": r["source_name"],
             "source_snapshot_id": r["source_snapshot_id"],
+            "grouping_scope_snapshot_id": r["grouping_scope_snapshot_id"],
         }
         for r in group_rows_raw
     ]
@@ -137,6 +139,11 @@ def compute_workload(
         "duplicate_adjustment": duplicate_adjustment,
         "source_name": DEDUP_SOURCE_NAME,
         "source_snapshot_id": expected_snapshot,
+        # #317. The slice digest above cannot certify a corpus grouping: a
+        # ticket outside this slice can bridge two groups inside it. This is
+        # the digest of everything the grouping run read, so two artifacts
+        # built from different assignments are distinguishable.
+        "grouping_scope_snapshot_id": group_rows_raw[0]["grouping_scope_snapshot_id"],
     }
 
 

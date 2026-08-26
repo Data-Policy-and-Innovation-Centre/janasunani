@@ -478,5 +478,20 @@ class DedupGroup(Base):
     source_name = Column(String, nullable=True)
     source_snapshot_id = Column(String, nullable=True)
 
+    # #317. `source_snapshot_id` above hashes the records of *this row's*
+    # district-year, which is what a slice-scoped consumer can recompute from
+    # the lake -- and was the complete story while a run could only cover one
+    # district-year. A corpus-wide run breaks that: a ticket outside this row's
+    # slice can bridge two otherwise separate groups inside it, so changing
+    # that outside ticket and regrouping changes this slice's distinct-problem
+    # count while `source_snapshot_id` stays byte-identical.
+    #
+    # This field is the digest of every record the grouping run actually read.
+    # A consumer cannot recompute it from one slice and is not meant to; it
+    # exists so rows produced by different group assignments are detectably
+    # different rather than silently combinable. NULL on rows written before
+    # the column existed, and those are not valid for the assertion.
+    grouping_scope_snapshot_id = Column(String, nullable=True)
+
     index_version = Column(String, nullable=True)
     grouped_at = Column(DateTime, nullable=False, server_default=func.now())

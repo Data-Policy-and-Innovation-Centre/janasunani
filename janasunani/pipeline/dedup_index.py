@@ -904,7 +904,7 @@ async def _raise_if_scope_would_split_existing_groups(
 
 async def _source_snapshots_by_slice(
     conn, district: Optional[str], year: Optional[int]
-) -> dict[tuple[str, int], str]:
+) -> tuple[dict[tuple[str, int], str], str]:
     """Manifest the indexed inputs, **one digest per district-year**.
 
     This intentionally reads the digest stored at signature time, never the
@@ -949,10 +949,18 @@ async def _source_snapshots_by_slice(
         by_slice[(row.district, row.created_year)].append(
             (row.ticket_no, row.source_record_digest)
         )
-    return {
+    per_slice = {
         slice_key: source_snapshot_id_from_record_digests(record_digests)
         for slice_key, record_digests in by_slice.items()
     }
+    # Everything the grouping run read, which is the input set that actually
+    # determined the assignments -- see DedupGroup.grouping_scope_snapshot_id.
+    # For a single-slice run this equals that slice's own digest, so the two
+    # fields agree exactly where they always did.
+    scope = source_snapshot_id_from_record_digests(
+        [(row.ticket_no, row.source_record_digest) for row in rows]
+    )
+    return per_slice, scope
 
 
 async def _load_redacted_text(conn, ticket_nos: list[str]) -> dict[str, str]:
@@ -1203,7 +1211,9 @@ async def _group_duplicates(
             source_mismatches, missing_source, district, year
         )
         await _raise_if_scope_would_split_existing_groups(conn, district, year)
-        snapshots_by_slice = await _source_snapshots_by_slice(conn, district, year)
+        snapshots_by_slice, scope_snapshot = await _source_snapshots_by_slice(
+            conn, district, year
+        )
 
     if not rows:
         return {
@@ -1331,6 +1341,7 @@ async def _group_duplicates(
                     signature_by_ticket[ticket_no].created_year,
                 )
             ],
+            "grouping_scope_snapshot_id": scope_snapshot,
             "index_version": version,
             "grouped_at": now,
         }

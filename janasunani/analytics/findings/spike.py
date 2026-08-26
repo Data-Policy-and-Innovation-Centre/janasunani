@@ -114,6 +114,7 @@ SPIKE_AGG_FIELDS = (
     "distinct_citizens",
     "source_name",
     "source_snapshot_id",
+    "grouping_scope_snapshot_id",
     "interpretation",
 )
 
@@ -158,7 +159,8 @@ def _read_oltp_groups(oltp_url: str, district: str, year: int):
         with engine.connect() as conn:
             rows = conn.execute(
                 text(
-                    "SELECT ticket_no, duplicate_group_id, group_size, source_name, source_snapshot_id, block_key "
+                    "SELECT ticket_no, duplicate_group_id, group_size, source_name, source_snapshot_id, "
+                    "grouping_scope_snapshot_id, block_key "
                     "FROM dedup_groups WHERE district = :d AND created_year = :y"
                 ),
                 {"d": district, "y": year},
@@ -209,7 +211,12 @@ def compute_spike_with_dedup(
     if not group_rows_raw:
         raise ValueError(f"No dedup_groups for {district}/{year}")
     group_rows = [
-        {"ticket_no": r["ticket_no"], "source_name": r["source_name"], "source_snapshot_id": r["source_snapshot_id"]}
+        {
+            "ticket_no": r["ticket_no"],
+            "source_name": r["source_name"],
+            "source_snapshot_id": r["source_snapshot_id"],
+            "grouping_scope_snapshot_id": r["grouping_scope_snapshot_id"],
+        }
         for r in group_rows_raw
     ]
     assert_group_source_snapshot(group_rows, source_records)
@@ -286,6 +293,7 @@ def compute_spike_with_dedup(
         "distinct_citizens": distinct_citizens,
         "source_name": DEDUP_SOURCE_NAME,
         "source_snapshot_id": expected_snapshot,
+        "grouping_scope_snapshot_id": group_rows_raw[0]["grouping_scope_snapshot_id"],
         "interpretation": interpretation,
     }
 
@@ -331,6 +339,14 @@ def publish_intelligence_aggregates(
     s_row = compute_spike_with_dedup(lake_dir=lake_dir, oltp_url=oltp_url, district=district, year=year)
     if w_row["source_snapshot_id"] != s_row["source_snapshot_id"]:
         raise ValueError("workload and spike digests diverged — refusing to publish mixed snapshot")
+    # #317. Equal slice digests are no longer sufficient: a corpus grouping
+    # depends on records outside this slice, so two runs can agree here and
+    # still carry different group assignments.
+    if w_row["grouping_scope_snapshot_id"] != s_row["grouping_scope_snapshot_id"]:
+        raise ValueError(
+            "workload and spike grouping scopes diverged — refusing to publish "
+            "figures from two different group assignments"
+        )
     if w_row["source_name"] != s_row["source_name"]:
         raise ValueError("workload and spike source names diverged")
     w_path = write_workload(w_row, dest)

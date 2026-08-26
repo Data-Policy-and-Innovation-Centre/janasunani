@@ -276,6 +276,7 @@ def assert_group_source_snapshot(
     source_tickets = {record["ticket_no"] for record in source_records}
 
     observed: set[tuple[object, object]] = set()
+    scopes: set[object] = set()
     group_tickets: set[str] = set()
     duplicate_group_tickets = 0
     blank_group_tickets = 0
@@ -288,6 +289,7 @@ def assert_group_source_snapshot(
         else:
             group_tickets.add(ticket_no)
         observed.add((row.get("source_name"), row.get("source_snapshot_id")))
+        scopes.add(row.get("grouping_scope_snapshot_id"))
 
     if blank_group_tickets:
         raise DedupSourceSnapshotMismatch(
@@ -311,6 +313,15 @@ def assert_group_source_snapshot(
             "dedup group ticket population does not match the asserted source snapshot: "
             f"missing_group_rows={len(source_tickets - group_tickets)}, "
             f"extra_group_rows={len(group_tickets - source_tickets)}"
+        )
+    # #317. Rows that agree on the source snapshot can still come from
+    # different grouping runs once a run can span slices, because a corpus
+    # grouping depends on records this slice's digest does not cover. Differing
+    # scopes here means the rows were assembled from two assignments.
+    if len(scopes) > 1:
+        raise DedupSourceSnapshotMismatch(
+            "dedup group rows mix grouping scopes and cannot be combined: "
+            f"observed_scopes={len(scopes)}"
         )
     return expected
 

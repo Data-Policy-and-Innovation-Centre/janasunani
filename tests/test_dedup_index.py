@@ -1843,3 +1843,102 @@ class TestCodexFollowups317:
         # They are excluded from the denominator too, so the run does not
         # report itself as perpetually incomplete.
         assert counts["total"] == 1
+
+
+class TestGroupingScopeProvenance:
+    """#317 follow-up. The per-slice source digest cannot certify a corpus
+    grouping, because a ticket outside a row's district-year can bridge two
+    otherwise separate groups inside it. Change that outside ticket, regroup,
+    and the slice's distinct-problem count moves while its source_snapshot_id
+    does not. The grouping-scope digest is what makes the two runs tell
+    apart."""
+
+    def test_scoped_run_scope_digest_equals_its_slice_digest(self, oltp):
+        """For a single-slice run the two describe the same record set, so
+        they must agree -- otherwise the new field changes existing meaning."""
+        async_url, sync_url = oltp
+        build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT)
+
+        row = _group_rows(sync_url)["T1"]
+        assert row.grouping_scope_snapshot_id == row.source_snapshot_id
+
+    def test_corpus_run_scope_digest_is_wider_than_the_slice_digest(self, oltp):
+        async_url, sync_url = oltp
+        build_dedup_index(None, None, oltp_url=async_url, salt=_SALT)
+
+        rows = _group_rows(sync_url)
+        # One scope for the whole run...
+        assert len({r.grouping_scope_snapshot_id for r in rows.values()}) == 1
+        # ...and it is not any individual slice's digest.
+        assert rows["T1"].grouping_scope_snapshot_id != rows["T1"].source_snapshot_id
+
+    def test_changing_an_out_of_slice_record_changes_the_scope_digest(
+        self, cross_scope_oltp
+    ):
+        """The failure Codex described, pinned directly. X1 (2023) is outside
+        Khordha/2024 but participates in its grouping. Editing X1 must change
+        what Khordha/2024's rows advertise, or two different group
+        assignments are publishable as the same snapshot."""
+        async_url, sync_url = cross_scope_oltp
+        build_dedup_index(None, None, oltp_url=async_url, salt=_SALT)
+        before = _group_rows(sync_url)["X2"]
+
+        engine = create_engine(sync_url)
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE grievance_redactions SET grievance_redacted = :t "
+                    "WHERE ticket_no = 'X1'"
+                ),
+                {"t": UNRELATED_C},
+            )
+        engine.dispose()
+        build_dedup_index(
+            None, None, oltp_url=async_url, salt=_SALT, refresh_stale=True
+        )
+        after = _group_rows(sync_url)["X2"]
+
+        # X2's own slice is untouched, so the old stamp cannot distinguish them.
+        assert after.source_snapshot_id == before.source_snapshot_id
+        # The scope digest can.
+        assert after.grouping_scope_snapshot_id != before.grouping_scope_snapshot_id
+
+    def test_mixed_grouping_scopes_are_refused(self):
+        """assert_group_source_snapshot must reject rows assembled from two
+        group assignments even when their slice digests agree."""
+        records = [
+            {
+                "ticket_no": ticket,
+                "district": "Khordha",
+                "created_year": 2024,
+                "created_on": datetime(2024, 1, 5),
+                "petitioner_mobile": None,
+                "petitioner_email": None,
+                "grievance_redacted": text_,
+            }
+            for ticket, text_ in (("A1", UNRELATED_A), ("A2", UNRELATED_B))
+        ]
+        digest = source_snapshot_id(records)
+
+        def rows_with(scope_a, scope_b):
+            return [
+                {
+                    "ticket_no": "A1",
+                    "source_name": DEDUP_SOURCE_NAME,
+                    "source_snapshot_id": digest,
+                    "grouping_scope_snapshot_id": scope_a,
+                },
+                {
+                    "ticket_no": "A2",
+                    "source_name": DEDUP_SOURCE_NAME,
+                    "source_snapshot_id": digest,
+                    "grouping_scope_snapshot_id": scope_b,
+                },
+            ]
+
+        # Uniform scope is fine, and the ticket population is complete in both
+        # cases so only the scope differs between them.
+        assert assert_group_source_snapshot(rows_with("s1", "s1"), records) == digest
+
+        with pytest.raises(DedupSourceSnapshotMismatch, match="mix grouping scopes"):
+            assert_group_source_snapshot(rows_with("s1", "s2"), records)
