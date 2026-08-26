@@ -197,6 +197,7 @@ from janasunani.pipeline.dedup import (
     lsh_bands,
     minhash_signature,
     source_record_digest,
+    grouping_scope_id,
     source_snapshot_id_from_record_digests,
     shingles,
 )
@@ -903,7 +904,7 @@ async def _raise_if_scope_would_split_existing_groups(
 
 
 async def _source_snapshots_by_slice(
-    conn, district: Optional[str], year: Optional[int]
+    conn, district: Optional[str], year: Optional[int], grouping_version: str
 ) -> tuple[dict[tuple[str, int], str], str]:
     """Manifest the indexed inputs, **one digest per district-year**.
 
@@ -957,8 +958,8 @@ async def _source_snapshots_by_slice(
     # determined the assignments -- see DedupGroup.grouping_scope_snapshot_id.
     # For a single-slice run this equals that slice's own digest, so the two
     # fields agree exactly where they always did.
-    scope = source_snapshot_id_from_record_digests(
-        [(row.ticket_no, row.source_record_digest) for row in rows]
+    scope = grouping_scope_id(
+        grouping_version, [(row.ticket_no, row.source_record_digest) for row in rows]
     )
     return per_slice, scope
 
@@ -1202,6 +1203,18 @@ async def _group_duplicates(
     representative_cap: int = REPRESENTATIVE_COMPARISON_CAP,
     anchor_count: int = LARGE_BUCKET_ANCHOR_COUNT,
 ) -> dict[str, int]:
+    # Computed before the snapshot read, because the grouping scope digest
+    # has to cover the parameters that produced an assignment and not only
+    # which records were read.
+    version = _index_version(
+        window_days,
+        threshold,
+        salt,
+        grouping_algorithm=GROUPING_ALGORITHM,
+        representative_cap=representative_cap,
+        anchor_count=anchor_count,
+    )
+
     async with engine.begin() as conn:
         rows = await _load_slice_signatures(conn, district, year)
         source_mismatches, missing_source = await _source_digest_mismatches(
@@ -1212,7 +1225,7 @@ async def _group_duplicates(
         )
         await _raise_if_scope_would_split_existing_groups(conn, district, year)
         snapshots_by_slice, scope_snapshot = await _source_snapshots_by_slice(
-            conn, district, year
+            conn, district, year, version
         )
 
     if not rows:
@@ -1310,14 +1323,6 @@ async def _group_duplicates(
     groups = {ticket: _find(parent, ticket) for ticket in all_tickets}
     group_sizes = Counter(groups.values())
 
-    version = _index_version(
-        window_days,
-        threshold,
-        salt,
-        grouping_algorithm=GROUPING_ALGORITHM,
-        representative_cap=representative_cap,
-        anchor_count=anchor_count,
-    )
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     # district/created_year describe the *record*, taken from its signature
     # row -- not the scope the run was invoked with. Those coincided while

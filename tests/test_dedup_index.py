@@ -1865,14 +1865,47 @@ class TestGroupingScopeProvenance:
     does not. The grouping-scope digest is what makes the two runs tell
     apart."""
 
-    def test_scoped_run_scope_digest_equals_its_slice_digest(self, oltp):
-        """For a single-slice run the two describe the same record set, so
-        they must agree -- otherwise the new field changes existing meaning."""
+    def test_regrouping_the_same_records_is_deterministic(self, oltp):
         async_url, sync_url = oltp
         build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT)
+        first = _group_rows(sync_url)["T1"].grouping_scope_snapshot_id
 
-        row = _group_rows(sync_url)["T1"]
-        assert row.grouping_scope_snapshot_id == row.source_snapshot_id
+        build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT)
+        assert _group_rows(sync_url)["T1"].grouping_scope_snapshot_id == first
+
+    def test_a_different_threshold_changes_the_scope_but_not_the_slice_digest(
+        self, oltp
+    ):
+        """The scope digest covers the parameters that produced an assignment,
+        not only which records were read. Regrouping the identical records at
+        a different --threshold yields different duplicate groups, so two
+        artifacts from the two runs must not compare equal.
+
+        The slice digest must *not* move: a consumer recomputes it from lake
+        records and knows nothing about grouping parameters, so folding them
+        in there would make it unverifiable."""
+        async_url, sync_url = oltp
+        build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT)
+        before = _group_rows(sync_url)["T1"]
+
+        build_dedup_index(
+            "Khordha", 2024, oltp_url=async_url, salt=_SALT, threshold=0.9
+        )
+        after = _group_rows(sync_url)["T1"]
+
+        assert after.grouping_scope_snapshot_id != before.grouping_scope_snapshot_id
+        assert after.source_snapshot_id == before.source_snapshot_id
+
+    def test_a_different_window_changes_the_scope(self, oltp):
+        async_url, sync_url = oltp
+        build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT)
+        before = _group_rows(sync_url)["T1"].grouping_scope_snapshot_id
+
+        build_dedup_index(
+            "Khordha", 2024, oltp_url=async_url, salt=_SALT, window_days=7,
+            refresh_stale=True,
+        )
+        assert _group_rows(sync_url)["T1"].grouping_scope_snapshot_id != before
 
     def test_corpus_run_scope_digest_is_wider_than_the_slice_digest(self, oltp):
         async_url, sync_url = oltp

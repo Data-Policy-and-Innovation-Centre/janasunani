@@ -236,6 +236,33 @@ def source_snapshot_id_from_record_digests(
     return f"sha256:{digest.hexdigest()}"
 
 
+def grouping_scope_id(grouping_version: str, record_digests: Iterable[tuple[str, str]]) -> str:
+    """Digest of the inputs *and* the parameters that produced an assignment.
+
+    `source_snapshot_id_from_record_digests` covers only which records were
+    read. Two runs over the identical record set with a different
+    ``--threshold`` or ``--window-days``, or after the grouping algorithm
+    changes, produce different duplicate groups and an identical record
+    digest -- so artifacts from the two would compare equal and be served as
+    one snapshot. Folding the grouping version in is what makes them differ.
+
+    Deliberately *not* mixed into the per-slice `source_snapshot_id`: a
+    consumer recomputes that one from lake records alone and knows nothing
+    about grouping parameters, so adding them there would make it
+    unverifiable. The two digests answer different questions -- "are these the
+    same source records" and "did the same grouping run produce these rows".
+    """
+    if not isinstance(grouping_version, str) or not grouping_version.strip():
+        raise ValueError("grouping scope id requires a non-blank grouping version")
+    records = source_snapshot_id_from_record_digests(record_digests)
+    digest = hashlib.sha256()
+    digest.update(b"janasunani-dedup-grouping-scope-v1\n")
+    digest.update(grouping_version.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(records.encode("ascii"))
+    return f"sha256:{digest.hexdigest()}"
+
+
 def source_snapshot_id(records: Iterable[Mapping[str, object]]) -> str:
     """Stable manifest of the exact historical inputs used for a dedup slice.
 
