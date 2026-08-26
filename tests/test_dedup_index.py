@@ -253,6 +253,7 @@ class TestGroupSourceSnapshotProvenance:
                 "ticket_no": row.ticket_no,
                 "source_name": row.source_name,
                 "source_snapshot_id": row.source_snapshot_id,
+                "grouping_scope_snapshot_id": row.grouping_scope_snapshot_id,
             }
             for row in groups.values()
         ]
@@ -297,6 +298,7 @@ class TestGroupSourceSnapshotProvenance:
                 "ticket_no": "synthetic-extra-ticket",
                 "source_name": group_rows[0]["source_name"],
                 "source_snapshot_id": group_rows[0]["source_snapshot_id"],
+                "grouping_scope_snapshot_id": group_rows[0]["grouping_scope_snapshot_id"],
             }
         )
 
@@ -1424,7 +1426,12 @@ class TestHeldOutRecall:
         # Baseline passes.
         assert assert_group_source_snapshot(
             [
-                {"ticket_no": r.ticket_no, "source_name": r.source_name, "source_snapshot_id": r.source_snapshot_id}
+                {
+                "ticket_no": r.ticket_no,
+                "source_name": r.source_name,
+                "source_snapshot_id": r.source_snapshot_id,
+                "grouping_scope_snapshot_id": r.grouping_scope_snapshot_id,
+            }
                 for r in groups.values()
             ],
             source_records,
@@ -1432,7 +1439,12 @@ class TestHeldOutRecall:
         # Tamper one group's snapshot — downstream join must fail loudly,
         # not silently mix.
         tampered = [
-            {"ticket_no": r.ticket_no, "source_name": r.source_name, "source_snapshot_id": "sha256:deadbeef"}
+            {
+                "ticket_no": r.ticket_no,
+                "source_name": r.source_name,
+                "source_snapshot_id": "sha256:deadbeef",
+                "grouping_scope_snapshot_id": r.grouping_scope_snapshot_id,
+            }
             for r in groups.values()
         ]
         with pytest.raises(DedupSourceSnapshotMismatch):
@@ -1942,3 +1954,31 @@ class TestGroupingScopeProvenance:
 
         with pytest.raises(DedupSourceSnapshotMismatch, match="mix grouping scopes"):
             assert_group_source_snapshot(rows_with("s1", "s2"), records)
+
+    def test_absent_grouping_scope_is_refused_not_treated_as_agreement(self):
+        """A set of scopes that is exactly {None} passes a 'no two different
+        values' test. Rows written before the column existed all carry NULL,
+        so without this the legacy case publishes a blank scope that compares
+        equal to every other blank one -- reopening the hole the field closes."""
+        records = [
+            {
+                "ticket_no": "L1",
+                "district": "Khordha",
+                "created_year": 2024,
+                "created_on": datetime(2024, 1, 5),
+                "petitioner_mobile": None,
+                "petitioner_email": None,
+                "grievance_redacted": UNRELATED_A,
+            }
+        ]
+        digest = source_snapshot_id(records)
+        legacy = [
+            {
+                "ticket_no": "L1",
+                "source_name": DEDUP_SOURCE_NAME,
+                "source_snapshot_id": digest,
+                "grouping_scope_snapshot_id": None,
+            }
+        ]
+        with pytest.raises(DedupSourceSnapshotMismatch, match="lack grouping-scope"):
+            assert_group_source_snapshot(legacy, records)

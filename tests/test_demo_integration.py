@@ -108,7 +108,7 @@ def _write_closure(findings_dir: Path, name: str = "closure_recording_no_action.
     return path
 
 
-def _write_workload(agg_dir: Path, digest: str) -> Path:
+def _write_workload(agg_dir: Path, digest: str, scope: str = "sha256:" + "c" * 64) -> Path:
     path = agg_dir / "workload.csv"
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(
@@ -122,6 +122,7 @@ def _write_workload(agg_dir: Path, digest: str) -> Path:
                 "duplicate_adjustment",
                 "source_name",
                 "source_snapshot_id",
+                "grouping_scope_snapshot_id",
             ],
         )
         writer.writeheader()
@@ -135,12 +136,13 @@ def _write_workload(agg_dir: Path, digest: str) -> Path:
                 "duplicate_adjustment": "20",
                 "source_name": "oltp:complaints+grievance_redactions",
                 "source_snapshot_id": digest,
+                "grouping_scope_snapshot_id": scope,
             }
         )
     return path
 
 
-def _write_spike(agg_dir: Path, digest: str) -> Path:
+def _write_spike(agg_dir: Path, digest: str, scope: str = "sha256:" + "c" * 64) -> Path:
     path = agg_dir / "spike.csv"
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(
@@ -154,6 +156,7 @@ def _write_spike(agg_dir: Path, digest: str) -> Path:
                 "distinct_citizens",
                 "source_name",
                 "source_snapshot_id",
+                "grouping_scope_snapshot_id",
                 "interpretation",
             ],
         )
@@ -168,6 +171,7 @@ def _write_spike(agg_dir: Path, digest: str) -> Path:
                 "distinct_citizens": "45",
                 "source_name": "oltp:complaints+grievance_redactions",
                 "source_snapshot_id": digest,
+                "grouping_scope_snapshot_id": scope,
                 "interpretation": "Sambalpur 2024 spike: 50 filings decomposed into 40 problems and 45 citizens",
             }
         )

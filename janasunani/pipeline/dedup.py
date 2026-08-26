@@ -318,6 +318,19 @@ def assert_group_source_snapshot(
     # different grouping runs once a run can span slices, because a corpus
     # grouping depends on records this slice's digest does not cover. Differing
     # scopes here means the rows were assembled from two assignments.
+    if None in scopes:
+        # Absence is not agreement. Rows written before a4e17c93b820 all carry
+        # NULL here, so a "no two different values" test would pass on {None}
+        # and both findings would publish a blank scope that compares equal to
+        # every other blank one -- the mixed-output hole this field exists to
+        # close, reopened by the legacy case. A migration cannot invent this
+        # provenance; only re-running the index can.
+        raise DedupSourceSnapshotMismatch(
+            "dedup group rows lack grouping-scope provenance "
+            f"({sum(1 for s in scopes if s is None)} distinct NULL scope(s)); "
+            "re-run janasunani-dedup-index to populate "
+            "grouping_scope_snapshot_id"
+        )
     if len(scopes) > 1:
         raise DedupSourceSnapshotMismatch(
             "dedup group rows mix grouping scopes and cannot be combined: "
