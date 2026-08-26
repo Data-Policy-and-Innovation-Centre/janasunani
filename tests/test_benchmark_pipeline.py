@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tracemalloc
@@ -1085,8 +1086,20 @@ def test_probe_ocr_toolchain_populates_real_values_when_installed():
     # must report real values: two machines with different tesseract
     # versions or a missing Odia (ori) pack must be distinguishable from
     # this output, which is the entire point of #315's follow-up.
+    #
+    # The importorskips gate on the Python wrappers; the assertions below
+    # need the system binaries those wrappers shell out to. They are
+    # separately installable, so `pip install pytesseract` on a host with no
+    # `tesseract` on PATH satisfies the import and still probes
+    # "unavailable" — correct behaviour that used to fail this test, and so
+    # the repo's required test command, on a legitimate environment. Gate on
+    # what is actually asserted.
     pytest.importorskip("pytesseract")
     pytest.importorskip("pdf2image")
+    if shutil.which("tesseract") is None:
+        pytest.skip("tesseract binary not on PATH; _probe_tesseract has its own test")
+    if shutil.which("pdftoppm") is None:
+        pytest.skip("poppler (pdftoppm) not on PATH; _probe_poppler_version has its own test")
 
     toolchain = bench_mod._probe_ocr_toolchain()
 
