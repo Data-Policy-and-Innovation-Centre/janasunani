@@ -83,10 +83,25 @@ created_on, petitioner_mobile/email); it never selects `complaints.grievance`.
 district-year slice runs to tens of thousands of rows — 55,544 for
 Sambalpur 2024, ~1.5 billion unordered pairs if compared directly. Each
 signature is assigned a `block_key` of `district:script:window_index`
-(`window_index` is `(created_on - Jan 1 of --year).days // --window-days`,
+(`window_index` is `(created_on - DEDUP_WINDOW_EPOCH).days // --window-days`,
 `None`/"undated" for complaints with no `created_on`), and LSH candidate
 generation only buckets within one block. Only pairs that land in the same
-block can ever become candidates.
+block can ever become candidates. The epoch is a fixed absolute date, not
+the run's own scope, so a record's block key is a property of the record;
+it is part of `_index_version` for the same reason the salt marker is.
+
+Because the block key still partitions by district and window, this bounds
+work the same way at 1.37M rows as it does at 55,544 — a corpus-wide run
+does not create one giant bucket.
+
+**Scope is optional, and identity matching is why it matters.** `--slice`,
+`--district` and `--year` narrow a run; `--all` indexes everything. Text
+candidates are blocked, so per-slice runs find the same ones a corpus run
+would. Identity candidates (mobile/email) are deliberately *not* blocked,
+so a same-citizen resubmission that crosses a district or year boundary is
+only visible to a run whose scope contains both sides of it. Looping over
+every district-year finds every text duplicate and no cross-slice identity
+duplicate at all.
 
 **Cross-script recall is explicitly unsupported.** `script` (`"odia"` if the
 redacted text contains any Odia-script codepoint, else `"latin"`) is part of
@@ -197,6 +212,25 @@ DEFAULT_WINDOW_DAYS = 30
 # opening a DB connection, since this backfill persists what it computes.
 DEFAULT_DUPLICATE_THRESHOLD = 0.5
 
+# Absolute origin for `_window_index`. Time windows have to be a property of
+# the *record*, not of the run that indexed it, or the same complaint lands in
+# a different block depending on what scope it was indexed under and the two
+# never become candidates.
+#
+# This used to be `date(year, 1, 1)` -- Jan 1 of the slice's --year -- which is
+# well defined only while every run is one district-year. It is not defined at
+# all for a corpus-wide run, and worse, it silently made block keys
+# run-dependent: `_index_version` never carried the epoch, so signatures built
+# under different origins were stamped as mutually current and grouping mixed
+# them with no error. Same failure class the salt marker exists to catch
+# (#136). The epoch is now in the version stamp, so anything built under the
+# old per-year origin is detected as stale and rebuilt.
+#
+# The specific date is arbitrary and only has to be stable and earlier than any
+# complaint in the corpus. It must never be "tidied" -- changing it rewrites
+# every block key, which is why it is versioned rather than merely fixed.
+DEDUP_WINDOW_EPOCH = date(2000, 1, 1)
+
 # Bucket size at which `_verify_bucket` switches from exhaustive all-pairs
 # comparison to fixed-anchor comparison (#158; see the module
 # docstring for the recall trade this makes). The Sambalpur 2024 measurement
@@ -246,7 +280,8 @@ def _window_index(
     created_on: Optional[datetime], epoch: date, window_days: int
 ) -> Optional[int]:
     """Bucket ``created_on`` into a time-window index relative to ``epoch``
-    (Jan 1 of the slice's ``--year``). ``None`` for a missing timestamp —
+    (`DEDUP_WINDOW_EPOCH`, a fixed absolute date — never the run's own scope;
+    see that constant for why). ``None`` for a missing timestamp —
     deliberately not bucket 0, so an undated row does not silently
     block-match every row that happens to fall in the first window; see
     `_block_key`'s "undated" label."""
@@ -302,6 +337,7 @@ def _index_version(
     base = (
         f"shingle_size={DEFAULT_SHINGLE_SIZE} num_hashes={DEFAULT_NUM_HASHES} "
         f"num_bands={DEFAULT_NUM_BANDS} window_days={window_days} "
+        f"epoch={DEDUP_WINDOW_EPOCH.isoformat()} "
         f"threshold={threshold} salt={_salt_marker(salt)}"
     )
     grouping_values = (grouping_algorithm, representative_cap, anchor_count)
@@ -318,30 +354,58 @@ def _index_version(
 # --- stage 1: signatures ---------------------------------------------------
 
 
-async def _count_signature_slice(conn, district: str, year: int) -> tuple[int, int]:
+def _slice_filters(model, district: Optional[str], year: Optional[int]) -> list:
+    """Scope predicates for ``model``, empty when the scope is unbounded.
+
+    ``None`` means "every district" / "every year", so a corpus-wide run is
+    the absence of a predicate rather than a wildcard value. Both are
+    independently optional: ``--district`` with no ``--year`` is a whole
+    district across all years, which the identity path in particular needs,
+    since a resubmission can cross a year boundary.
+
+    ``model`` is `Complaint` or `DedupSignature` -- both carry ``district``
+    and ``created_year``, and the caller picks whichever table the query is
+    already filtering on.
+    """
+    filters = []
+    if district is not None:
+        filters.append(model.district == district)
+    if year is not None:
+        filters.append(model.created_year == year)
+    return filters
+
+
+def _scope_label(district: Optional[str], year: Optional[int]) -> str:
+    """Human-readable run scope for logs and errors."""
+    if district is None and year is None:
+        return "the whole corpus"
+    return f"{district or 'all districts'}/{year or 'all years'}"
+
+
+async def _count_signature_slice(
+    conn, district: Optional[str], year: Optional[int]
+) -> tuple[int, int]:
     """(redacted complaints in the slice, already indexed)."""
     total = await conn.scalar(
         select(func.count())
         .select_from(GrievanceRedaction)
         .join(Complaint, Complaint.ticket_no == GrievanceRedaction.ticket_no)
         .where(
-            Complaint.district == district,
-            Complaint.created_year == year,
+            *_slice_filters(Complaint, district, year),
             GrievanceRedaction.grievance_redacted.isnot(None),
         )
     )
     done = await conn.scalar(
         select(func.count())
         .select_from(DedupSignature)
-        .where(
-            DedupSignature.district == district,
-            DedupSignature.created_year == year,
-        )
+        .where(*_slice_filters(DedupSignature, district, year))
     )
     return int(total or 0), int(done or 0)
 
 
-async def _count_stale_signatures(conn, district: str, year: int, version: str) -> int:
+async def _count_stale_signatures(
+    conn, district: Optional[str], year: Optional[int], version: str
+) -> int:
     """Signatures produced under different parameters than the current ones.
 
     Reported by every run whether or not it acts on them, so a salt rotation
@@ -354,8 +418,7 @@ async def _count_stale_signatures(conn, district: str, year: int, version: str) 
             .select_from(DedupSignature)
             .join(Complaint, Complaint.ticket_no == DedupSignature.ticket_no)
             .where(
-                Complaint.district == district,
-                Complaint.created_year == year,
+                *_slice_filters(Complaint, district, year),
                 DedupSignature.index_version != version,
             )
         )
@@ -364,7 +427,11 @@ async def _count_stale_signatures(conn, district: str, year: int, version: str) 
 
 
 async def _load_pending_signature_batch(
-    conn, district: str, year: int, limit: int, version: str | None = None
+    conn,
+    district: Optional[str],
+    year: Optional[int],
+    limit: int,
+    version: str | None = None,
 ):
     """Redacted complaints in the slice with no current `dedup_signatures` row.
 
@@ -400,8 +467,7 @@ async def _load_pending_signature_batch(
         )
         .join(Complaint, Complaint.ticket_no == GrievanceRedaction.ticket_no)
         .where(
-            Complaint.district == district,
-            Complaint.created_year == year,
+            *_slice_filters(Complaint, district, year),
             GrievanceRedaction.grievance_redacted.isnot(None),
             ~done.exists(),
         )
@@ -484,7 +550,7 @@ def _signature_rows_for_source_batch(
     return rows
 
 
-async def _source_digest_mismatches(conn, district: str, year: int):
+async def _source_digest_mismatches(conn, district: Optional[str], year: Optional[int]):
     """Current source records whose existing signature digest is no longer true.
 
     This is deliberately a source read before grouping. Candidate generation
@@ -507,10 +573,7 @@ async def _source_digest_mismatches(conn, district: str, year: int):
         .select_from(DedupSignature)
         .outerjoin(Complaint, Complaint.ticket_no == DedupSignature.ticket_no)
         .outerjoin(GrievanceRedaction, GrievanceRedaction.ticket_no == DedupSignature.ticket_no)
-        .where(
-            DedupSignature.district == district,
-            DedupSignature.created_year == year,
-        )
+        .where(*_slice_filters(DedupSignature, district, year))
         .order_by(DedupSignature.ticket_no)
     )
     result = await conn.execute(stmt)
@@ -566,13 +629,24 @@ def _source_membership_changed_error(count: int) -> ValueError:
 
 
 def _raise_if_source_is_not_current(
-    source_mismatches, missing_source: list[str], district: str, year: int
+    source_mismatches, missing_source: list[str], district: Optional[str], year: Optional[int]
 ) -> None:
-    """Fail grouping before a stored signature and current text can diverge."""
+    """Fail grouping before a stored signature and current text can diverge.
+
+    "Moved" means the source record left the scope its signature was indexed
+    under. Only bound dimensions can be left: for a corpus-wide run both are
+    ``None`` and nothing can move out of the corpus, so the check must compare
+    against the dimensions actually pinned rather than against ``None`` --
+    otherwise every mismatch reads as moved and the run fails with the wrong
+    error.
+    """
     if missing_source:
         raise _missing_source_error(missing_source)
     moved_sources = [
-        row for row in source_mismatches if row[2] != district or row[3] != year
+        row
+        for row in source_mismatches
+        if (district is not None and row[2] != district)
+        or (year is not None and row[3] != year)
     ]
     if moved_sources:
         raise _source_membership_changed_error(len(moved_sources))
@@ -582,8 +656,8 @@ def _raise_if_source_is_not_current(
 
 async def _index_signatures(
     engine: AsyncEngine,
-    district: str,
-    year: int,
+    district: Optional[str],
+    year: Optional[int],
     salt: str,
     window_days: int,
     threshold: float,
@@ -591,7 +665,7 @@ async def _index_signatures(
     refresh_stale: bool = False,
 ) -> dict[str, int]:
     version = _index_version(window_days, threshold, salt)
-    epoch = date(year, 1, 1)
+    epoch = DEDUP_WINDOW_EPOCH
     processed = 0
     refreshed_tickets: set[str] = set()
 
@@ -602,9 +676,8 @@ async def _index_signatures(
             conn, district, year
         )
     logger.info(
-        "slice {}/{}: {} redacted complaints, {} already indexed",
-        district,
-        year,
+        "{}: {} redacted complaints, {} already indexed",
+        _scope_label(district, year),
         total,
         already,
     )
@@ -725,22 +798,23 @@ async def _index_signatures(
 # --- stage 2: grouping ------------------------------------------------------
 
 
-async def _load_slice_signatures(conn, district: str, year: int):
+async def _load_slice_signatures(conn, district: Optional[str], year: Optional[int]):
     stmt = select(
         DedupSignature.ticket_no,
+        DedupSignature.district,
+        DedupSignature.created_year,
         DedupSignature.block_key,
         DedupSignature.signature,
         DedupSignature.identity_key_mobile,
         DedupSignature.identity_key_email,
-    ).where(
-        DedupSignature.district == district,
-        DedupSignature.created_year == year,
-    )
+    ).where(*_slice_filters(DedupSignature, district, year))
     result = await conn.execute(stmt)
     return result.all()
 
 
-async def _source_snapshot_for_signature_slice(conn, district: str, year: int) -> str:
+async def _source_snapshot_for_signature_slice(
+    conn, district: Optional[str], year: Optional[int]
+) -> str:
     """Manifest the exact indexed inputs represented by this group run.
 
     This intentionally reads the digest stored at signature time, never the
@@ -755,10 +829,7 @@ async def _source_snapshot_for_signature_slice(conn, district: str, year: int) -
             DedupSignature.ticket_no,
             DedupSignature.source_record_digest,
         )
-        .where(
-            DedupSignature.district == district,
-            DedupSignature.created_year == year,
-        )
+        .where(*_slice_filters(DedupSignature, district, year))
         .order_by(DedupSignature.ticket_no)
     )
     result = await conn.execute(stmt)
@@ -1004,8 +1075,8 @@ def _verify_bucket(
 
 async def _group_duplicates(
     engine: AsyncEngine,
-    district: str,
-    year: int,
+    district: Optional[str],
+    year: Optional[int],
     window_days: int,
     threshold: float,
     salt: str,
@@ -1126,13 +1197,19 @@ async def _group_duplicates(
         anchor_count=anchor_count,
     )
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    block_key_by_ticket = {row.ticket_no: row.block_key for row in rows}
+    # district/created_year describe the *record*, taken from its signature
+    # row -- not the scope the run was invoked with. Those coincided while
+    # every run was a single district-year, and stop coinciding the moment one
+    # run spans more than one: a corpus-wide run would otherwise stamp NULL
+    # over every group row, which the NOT NULL constraint catches, and a
+    # district-wide run would silently stamp the wrong year, which it does not.
+    signature_by_ticket = {row.ticket_no: row for row in rows}
     group_rows = [
         {
             "ticket_no": ticket_no,
-            "district": district,
-            "created_year": year,
-            "block_key": block_key_by_ticket[ticket_no],
+            "district": signature_by_ticket[ticket_no].district,
+            "created_year": signature_by_ticket[ticket_no].created_year,
+            "block_key": signature_by_ticket[ticket_no].block_key,
             "duplicate_group_id": group_id,
             "group_size": group_sizes[group_id],
             "source_name": DEDUP_SOURCE_NAME,
@@ -1245,8 +1322,8 @@ def evaluate_held_out_recall(
 
 
 def build_dedup_index(
-    district: str,
-    year: int,
+    district: Optional[str],
+    year: Optional[int],
     oltp_url: Optional[str] = None,
     salt: Optional[str] = None,
     window_days: int = DEFAULT_WINDOW_DAYS,
@@ -1256,7 +1333,16 @@ def build_dedup_index(
     representative_cap: int = REPRESENTATIVE_COMPARISON_CAP,
     anchor_count: int = LARGE_BUCKET_ANCHOR_COUNT,
 ) -> dict[str, int]:
-    """Index one district-year slice and (re)compute its duplicate groups.
+    """Index a scope and (re)compute its duplicate groups.
+
+    ``district`` and ``year`` are independently optional; ``None`` means
+    unbounded on that dimension, so ``(None, None)`` indexes the whole
+    corpus. Scope is not merely a convenience: identity buckets
+    (mobile/email) are deliberately unblocked, because a resubmission can
+    land months later under any district, so a same-citizen duplicate that
+    crosses a district or year boundary is only ever visible to a run whose
+    scope contains both sides of it. Running 150 district-years in a loop
+    finds the text duplicates and none of those.
 
     Returns per-run counts from both stages. Raises ``ValueError``
     immediately — before opening any DB connection — if no salt is
@@ -1351,6 +1437,16 @@ def main() -> None:
     parser.add_argument("--year", required=False, type=int, default=None, help="created_year to process.")
     parser.add_argument("--slice", required=False, default=None, help="Shorthand for --district/--year as District/YYYY (e.g. Sambalpur/2024).")
     parser.add_argument(
+        "--all",
+        action="store_true",
+        help=(
+            "Index every district and year. Required to run corpus-wide: an "
+            "unscoped invocation errors rather than silently rebuilding 1.37M "
+            "rows. Needed for same-citizen duplicates that cross a district or "
+            "year boundary, which no per-slice run can see."
+        ),
+    )
+    parser.add_argument(
         "--oltp-url", default=None, help="OLTP DB URL (default: settings.OLTP_DB_URL)."
     )
     parser.add_argument(
@@ -1363,7 +1459,10 @@ def main() -> None:
         "--window-days",
         type=int,
         default=DEFAULT_WINDOW_DAYS,
-        help="Time-window width (days) for blocking, within the district-year slice.",
+        help="Time-window width (days) for blocking. Windows are measured from a "
+        "fixed absolute epoch, so a record's window is the same whatever scope "
+        "indexed it; changing this value changes every block key and is "
+        "recorded in the index version.",
     )
     parser.add_argument(
         "--threshold",
@@ -1403,8 +1502,18 @@ def main() -> None:
         if year is not None and year != slice_year:
             parser.error("--year conflicts with --slice year")
         district, year = slice_district, slice_year
-    if district is None or year is None:
-        parser.error("--district/--year or --slice is required")
+    # No scope at all is a corpus-wide run, and it has to be asked for
+    # explicitly. A bare invocation is far more often a forgotten --slice than
+    # a deliberate 1.37M-row rebuild, and the two are indistinguishable from
+    # argv alone.
+    if district is None and year is None and not args.all:
+        parser.error(
+            "no scope given. Pass --slice/--district/--year for part of the "
+            "corpus, or --all to index every district and year. --all is a "
+            "full rebuild over the whole corpus, so it is never implied."
+        )
+    if args.all and (district is not None or year is not None):
+        parser.error("--all cannot be combined with --slice/--district/--year")
 
     counts = build_dedup_index(
         district,
@@ -1418,7 +1527,7 @@ def main() -> None:
     )
     logger.info(
         "done: {} processed this run, {} of {} indexed, {} duplicate groups "
-        "over {} signatures (comparison_pairs={}, large_buckets={}) in slice {}/{}",
+        "over {} signatures (comparison_pairs={}, large_buckets={}) in {}",
         counts["processed"],
         counts["already_indexed"] + counts["processed"],
         counts["total"],
@@ -1426,8 +1535,7 @@ def main() -> None:
         counts["slice_signatures"],
         counts["comparison_pairs"],
         counts["large_buckets"],
-        district,
-        year,
+        _scope_label(district, year),
     )
 
 

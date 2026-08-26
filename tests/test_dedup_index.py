@@ -587,7 +587,7 @@ def _dup_oltp(tmp_path, rows):
 @pytest.fixture
 def dup_oltp(tmp_path):
     rows = [
-        # --- campaign block (window 0: Jan 2024) ---
+        # --- campaign block (all within one 30-day window: Jan 2024) ---
         ("T1", "Sambalpur", 2024, datetime(2024, 1, 5), "9861234567", None, "raw t1", CAMPAIGN_A),
         ("T2", "Sambalpur", 2024, datetime(2024, 1, 10), None, None, "raw t2", CAMPAIGN_A),
         ("T3", "Sambalpur", 2024, datetime(2024, 1, 12), None, None, "raw t3", CAMPAIGN_C_REWORDED),
@@ -601,18 +601,18 @@ def dup_oltp(tmp_path):
         ("T6", "Puri", 2024, datetime(2024, 1, 5), None, None, "raw t6", CAMPAIGN_A),
         ("T7", "Sambalpur", 2024, datetime(2024, 1, 5), None, None, "raw t7 with 9999999999", None),
         # --- hard constraint: index built from grievance_redacted, never
-        # complaints.grievance (window 8: Sept 2024) ---
+        # complaints.grievance (a different window: Sept 2024) ---
         ("T8", "Sambalpur", 2024, datetime(2024, 9, 5), None, None, "same raw text for t8 and t9", CAMPAIGN_A),
         ("T9", "Sambalpur", 2024, datetime(2024, 9, 6), None, None, "same raw text for t8 and t9", UNRELATED_A),
         ("T10", "Sambalpur", 2024, datetime(2024, 9, 10), None, None, "unique raw text for t10", CAMPAIGN_A),
         ("T11", "Sambalpur", 2024, datetime(2024, 9, 12), None, None, "totally different raw text for t11", CAMPAIGN_A),
         # --- abstention: too short/empty to shingle ---
         ("T12", "Sambalpur", 2024, datetime(2024, 1, 6), None, None, "raw t12", ""),
-        # --- cross-script (window 2: Mar 2024) ---
+        # --- cross-script (a different window: Mar 2024) ---
         ("T13", "Sambalpur", 2024, datetime(2024, 3, 1), None, None, "raw t13", ODIA_TEXT),
         ("T14", "Sambalpur", 2024, datetime(2024, 3, 2), None, None, "raw t14", ROMANIZED_TEXT),
         ("T15", "Sambalpur", 2024, datetime(2024, 3, 3), None, None, "raw t15", ODIA_TEXT),
-        # --- blocking: identical text to T1's campaign, but window 6 (Jul 2024) ---
+        # --- blocking: identical text to T1's campaign, different window (Jul 2024) ---
         ("T18", "Sambalpur", 2024, datetime(2024, 7, 1), None, None, "raw t18", CAMPAIGN_A),
         # --- same citizen (email), different issue: must NOT group ---
         ("T19", "Sambalpur", 2024, datetime(2024, 1, 6), None, "citizen@example.com", "raw t19", UNRELATED_B),
@@ -699,10 +699,17 @@ class TestBlockingByTimeWindow:
         assert groups["T18"].duplicate_group_id != groups["T1"].duplicate_group_id
 
     def test_block_key_encodes_district_script_and_window(self, dup_oltp):
+        from janasunani.pipeline.dedup_index import DEDUP_WINDOW_EPOCH
+
         async_url, sync_url = dup_oltp
         build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt=_SALT)
         row = _signature_rows(sync_url)["T1"]
-        assert row.block_key == "Sambalpur:latin:0"
+        # The window index counts from the fixed epoch, not from Jan 1 of the
+        # slice year, so it is not 0 for the first complaint of a year. That
+        # is the point: the bucket is a property of the record, so the same
+        # complaint keeps it under any run scope.
+        expected_window = (datetime(2024, 1, 5).date() - DEDUP_WINDOW_EPOCH).days // 30
+        assert row.block_key == f"Sambalpur:latin:{expected_window}"
 
 
 class TestBucketVerifiesAllPairsNotJustStarEdges:
@@ -1461,3 +1468,235 @@ class TestHeldOutRecall:
             sys.argv = old_argv
         groups_via_slice = {r.ticket_no: r.duplicate_group_id for r in _group_rows(sync_url).values()}
         assert groups_via_args == groups_via_slice
+
+
+# --- #317: corpus-wide scope ----------------------------------------------
+
+# A citizen refiling the same complaint in a later year, from the same
+# mobile. Both halves are needed: identity alone is "same citizen, not same
+# issue" and never unions on its own, so the text has to clear the Jaccard
+# threshold too.
+_REFILED_2023 = (
+    "the community water pump near the panchayat office has been broken "
+    "for months and no one has come to repair it despite several visits"
+)
+_REFILED_2024 = (
+    "the community water pump near the panchayat office has been broken "
+    "for months and nobody has come to repair it despite several visits"
+)
+
+_CROSS_SCOPE_ROWS = [
+    # ticket, district,   year, created_on,           mobile,        redacted
+    ("X1", "Khordha", 2023, datetime(2023, 3, 4), "9861111111", _REFILED_2023),
+    ("X2", "Khordha", 2024, datetime(2024, 7, 9), "9861111111", _REFILED_2024),
+    ("X3", "Khordha", 2024, datetime(2024, 7, 9), None, UNRELATED_A),
+]
+
+
+@pytest.fixture
+def cross_scope_oltp(tmp_path):
+    complaints = [
+        {
+            "ticket_no": t,
+            "district": d,
+            "created_year": y,
+            "created_on": c,
+            "petitioner_mobile": m,
+            "grievance": f"raw grievance for {t}",
+        }
+        for t, d, y, c, m, _ in _CROSS_SCOPE_ROWS
+    ]
+    redactions = [
+        {"ticket_no": t, "grievance_redacted": r} for t, _, _, _, _, r in _CROSS_SCOPE_ROWS
+    ]
+    return _make_oltp(tmp_path, complaints, redactions)
+
+
+class TestCorpusWideScope:
+    """`district`/`year` are independently optional; None means unbounded."""
+
+    def test_corpus_wide_indexes_every_district_and_year(self, oltp):
+        async_url, sync_url = oltp
+        build_dedup_index(None, None, oltp_url=async_url, salt=_SALT)
+        # T6 stays out: it has no redaction row, which is orthogonal to scope.
+        assert set(_signature_rows(sync_url)) == {"T1", "T2", "T3", "T4", "T5"}
+
+    def test_district_without_year_spans_years(self, oltp):
+        async_url, sync_url = oltp
+        build_dedup_index("Khordha", None, oltp_url=async_url, salt=_SALT)
+        assert set(_signature_rows(sync_url)) == {"T1", "T2", "T3", "T4"}
+
+    def test_year_without_district_spans_districts(self, oltp):
+        async_url, sync_url = oltp
+        build_dedup_index(None, 2024, oltp_url=async_url, salt=_SALT)
+        assert set(_signature_rows(sync_url)) == {"T1", "T2", "T3", "T5"}
+
+
+class TestCrossSliceIdentityDuplicates:
+    """The reason corpus-wide exists, and the thing a per-slice loop cannot do.
+
+    Text candidates are blocked by `district:script:window_index`, so a
+    per-slice run finds every text duplicate a corpus run would. Identity
+    candidates are deliberately unblocked -- but `build_dedup_index` scopes
+    its rows before bucketing, so only a run whose scope contains *both*
+    sides of a same-citizen pair can ever see it.
+    """
+
+    def test_per_year_runs_never_group_the_refiling(self, cross_scope_oltp):
+        async_url, sync_url = cross_scope_oltp
+        build_dedup_index("Khordha", 2023, oltp_url=async_url, salt=_SALT)
+        build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT)
+
+        groups = _group_rows(sync_url)
+        assert set(groups) == {"X1", "X2", "X3"}
+        # Each slice saw one half of the pair, so nothing could union.
+        assert groups["X1"].duplicate_group_id != groups["X2"].duplicate_group_id
+
+    def test_corpus_wide_groups_the_refiling(self, cross_scope_oltp):
+        async_url, sync_url = cross_scope_oltp
+        build_dedup_index(None, None, oltp_url=async_url, salt=_SALT)
+
+        groups = _group_rows(sync_url)
+        assert groups["X1"].duplicate_group_id == groups["X2"].duplicate_group_id
+        # An unrelated filing in the same district-year stays separate: the
+        # identity path is not unioning everything it touches.
+        assert groups["X3"].duplicate_group_id != groups["X1"].duplicate_group_id
+
+
+class TestWindowEpochIsAbsolute:
+    """A record's time window must be a property of the record, not of the
+    run that indexed it.
+
+    The epoch used to be `date(year, 1, 1)`, so the same complaint got a
+    different `window_index` -- and therefore a different `block_key` --
+    depending on the scope it was indexed under. Two signatures built under
+    different origins would then never bucket together, silently.
+    """
+
+    def test_block_key_does_not_depend_on_run_scope(self, tmp_path):
+        complaints = [
+            {
+                "ticket_no": t,
+                "district": d,
+                "created_year": y,
+                "created_on": c,
+                "petitioner_mobile": m,
+                "grievance": f"raw grievance for {t}",
+            }
+            for t, d, y, c, m, _ in _SMALL_ROWS
+        ]
+        redactions = [
+            {"ticket_no": t, "grievance_redacted": r}
+            for t, _, _, _, _, r in _SMALL_ROWS
+            if r is not None
+        ]
+
+        # Two independent databases with identical contents, so the only
+        # difference between the runs is the scope they were invoked with.
+        scoped_dir = tmp_path / "scoped"
+        corpus_dir = tmp_path / "corpus"
+        scoped_dir.mkdir()
+        corpus_dir.mkdir()
+
+        scoped_async, scoped_sync = _make_oltp(scoped_dir, complaints, redactions)
+        corpus_async, corpus_sync = _make_oltp(corpus_dir, complaints, redactions)
+
+        build_dedup_index("Khordha", 2024, oltp_url=scoped_async, salt=_SALT)
+        build_dedup_index(None, None, oltp_url=corpus_async, salt=_SALT)
+
+        assert (
+            _signature_rows(scoped_sync)["T1"].block_key
+            == _signature_rows(corpus_sync)["T1"].block_key
+        )
+
+    def test_epoch_is_part_of_the_index_version(self):
+        """Without this, changing the epoch rewrites every block key while
+        leaving the version stamp claiming the rows are current, so
+        --refresh-stale would not rebuild them (#136's failure mode)."""
+        from janasunani.pipeline.dedup_index import DEDUP_WINDOW_EPOCH, _index_version
+
+        version = _index_version(30, 0.5, _SALT)
+        assert f"epoch={DEDUP_WINDOW_EPOCH.isoformat()}" in version
+
+    def test_window_index_counts_from_the_absolute_epoch(self):
+        from janasunani.pipeline.dedup_index import DEDUP_WINDOW_EPOCH, _window_index
+
+        created = datetime(2024, 1, 5)
+        expected = (created.date() - DEDUP_WINDOW_EPOCH).days // 30
+        assert _window_index(created, DEDUP_WINDOW_EPOCH, 30) == expected
+        # Same record, a scope that knows nothing about 2024: same bucket.
+        assert _window_index(created, DEDUP_WINDOW_EPOCH, 30) != 0
+
+
+class TestScopeIsNeverImplied:
+    """A bare invocation is far more often a forgotten --slice than a
+    deliberate 1.37M-row rebuild, and argv cannot tell them apart. Corpus
+    scope has to be asked for."""
+
+    def test_no_scope_at_all_is_rejected(self, monkeypatch):
+        from janasunani.pipeline import dedup_index
+
+        monkeypatch.setattr("sys.argv", ["janasunani-dedup-index"])
+        with pytest.raises(SystemExit) as exc:
+            dedup_index.main()
+        assert exc.value.code == 2
+
+    def test_all_conflicts_with_an_explicit_scope(self, monkeypatch):
+        from janasunani.pipeline import dedup_index
+
+        monkeypatch.setattr(
+            "sys.argv",
+            ["janasunani-dedup-index", "--all", "--slice", "Khordha/2024"],
+        )
+        with pytest.raises(SystemExit) as exc:
+            dedup_index.main()
+        assert exc.value.code == 2
+
+    def test_all_runs_corpus_wide(self, oltp, monkeypatch):
+        from janasunani.pipeline import dedup_index
+
+        async_url, sync_url = oltp
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "janasunani-dedup-index",
+                "--all",
+                "--oltp-url",
+                async_url,
+                "--salt",
+                _SALT,
+            ],
+        )
+        dedup_index.main()
+        assert set(_signature_rows(sync_url)) == {"T1", "T2", "T3", "T4", "T5"}
+
+
+class TestGroupRowsDescribeTheRecordNotTheRun:
+    """`dedup_groups.district`/`created_year` come from the signature row.
+
+    They used to be stamped from the run's own scope, which was
+    indistinguishable from correct while every run was a single
+    district-year. A corpus-wide run makes it a NOT NULL violation, which is
+    loud. A district-wide run makes it a wrong year on every row, which is
+    not -- so this is pinned rather than left to the constraint.
+    """
+
+    def test_district_wide_run_stamps_each_row_with_its_own_year(self, oltp):
+        async_url, sync_url = oltp
+        build_dedup_index("Khordha", None, oltp_url=async_url, salt=_SALT)
+
+        groups = _group_rows(sync_url)
+        assert groups["T1"].created_year == 2024
+        # T4 is the 2023 row. Stamping the run scope would have made this
+        # 2024 as well, or None, depending on what the run was invoked with.
+        assert groups["T4"].created_year == 2023
+        assert {g.district for g in groups.values()} == {"Khordha"}
+
+    def test_corpus_wide_run_stamps_each_row_with_its_own_district(self, oltp):
+        async_url, sync_url = oltp
+        build_dedup_index(None, None, oltp_url=async_url, salt=_SALT)
+
+        groups = _group_rows(sync_url)
+        assert groups["T1"].district == "Khordha"
+        assert groups["T5"].district == "Puri"
+        assert groups["T4"].created_year == 2023
