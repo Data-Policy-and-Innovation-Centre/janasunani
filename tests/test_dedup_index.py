@@ -1700,3 +1700,146 @@ class TestGroupRowsDescribeTheRecordNotTheRun:
         assert groups["T1"].district == "Khordha"
         assert groups["T5"].district == "Puri"
         assert groups["T4"].created_year == 2023
+
+
+class TestCodexFollowups317:
+    """The four findings on #325, each pinned by the failure it caused."""
+
+    def test_refresh_stale_does_not_call_every_mismatch_moved(self, cross_scope_oltp):
+        """P1. The moved-source predicate had a second copy inside
+        _index_signatures. Fixing only the one in
+        _raise_if_source_is_not_current left --all --refresh-stale comparing
+        every row against None and raising "moved outside this district-year
+        source slice" for a corpus run, where nothing can move."""
+        async_url, sync_url = cross_scope_oltp
+        build_dedup_index(None, None, oltp_url=async_url, salt=_SALT)
+
+        # Change a source record so its stored digest no longer matches.
+        engine = create_engine(sync_url)
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE grievance_redactions SET grievance_redacted = :t "
+                    "WHERE ticket_no = 'X3'"
+                ),
+                {"t": UNRELATED_C},
+            )
+        engine.dispose()
+
+        # Must rebuild, not raise a membership error.
+        counts = build_dedup_index(
+            None, None, oltp_url=async_url, salt=_SALT, refresh_stale=True
+        )
+        assert counts["processed"] >= 1
+
+    def test_group_rows_carry_their_own_slice_snapshot(self, oltp):
+        """P1. analytics/findings/workload.py reads one district-year from the
+        lake, recomputes source_snapshot_id over it, and asserts every group
+        row carries that value. Stamping one corpus-wide digest on every row
+        would fail that assertion for every slice."""
+        async_url, sync_url = oltp
+        build_dedup_index(None, None, oltp_url=async_url, salt=_SALT)
+
+        groups = _group_rows(sync_url)
+        khordha_2024 = {groups[t].source_snapshot_id for t in ("T1", "T2", "T3")}
+        assert len(khordha_2024) == 1
+
+        # Different district-years must not share a digest, or the stamp is
+        # not describing the slice at all.
+        assert groups["T4"].source_snapshot_id not in khordha_2024  # Khordha/2023
+        assert groups["T5"].source_snapshot_id not in khordha_2024  # Puri/2024
+
+    def test_scoped_snapshot_matches_what_a_scoped_run_would_stamp(self, oltp, tmp_path):
+        """The per-slice digest from a corpus run must equal the digest a
+        district-year run produces, or consumers still cannot verify."""
+        scoped_dir = tmp_path / "scoped"
+        scoped_dir.mkdir()
+        complaints = [
+            {
+                "ticket_no": t,
+                "district": d,
+                "created_year": y,
+                "created_on": c,
+                "petitioner_mobile": m,
+                "grievance": f"raw grievance for {t}",
+            }
+            for t, d, y, c, m, _ in _SMALL_ROWS
+        ]
+        redactions = [
+            {"ticket_no": t, "grievance_redacted": r}
+            for t, _, _, _, _, r in _SMALL_ROWS
+            if r is not None
+        ]
+        scoped_async, scoped_sync = _make_oltp(scoped_dir, complaints, redactions)
+
+        corpus_async, corpus_sync = oltp
+        build_dedup_index("Khordha", 2024, oltp_url=scoped_async, salt=_SALT)
+        build_dedup_index(None, None, oltp_url=corpus_async, salt=_SALT)
+
+        assert (
+            _group_rows(scoped_sync)["T1"].source_snapshot_id
+            == _group_rows(corpus_sync)["T1"].source_snapshot_id
+        )
+
+    def test_scoped_rerun_refuses_to_split_a_cross_scope_group(self, cross_scope_oltp):
+        """P1. X1/X2 are one group spanning 2023 and 2024. Regrouping 2024
+        alone would recompute X2 as a singleton and upsert only it, leaving
+        X1 stamped with a group id and size that no longer hold."""
+        async_url, _ = cross_scope_oltp
+        build_dedup_index(None, None, oltp_url=async_url, salt=_SALT)
+
+        # Matched on the guard's own wording: _source_membership_changed_error
+        # also says "outside", and this must not pass on that instead.
+        with pytest.raises(ValueError, match="would split them"):
+            build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT)
+
+    def test_scoped_rerun_is_allowed_when_no_group_straddles(self, oltp):
+        """The guard must not block the ordinary case, or every slice run
+        breaks the moment a corpus index exists."""
+        async_url, sync_url = oltp
+        build_dedup_index(None, None, oltp_url=async_url, salt=_SALT)
+        build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT)
+        assert set(_group_rows(sync_url)) >= {"T1", "T2", "T3"}
+
+    def test_complaints_missing_district_or_year_are_not_indexed(self, tmp_path):
+        """P2. Complaint.district/created_year are nullable; DedupSignature
+        declares both NOT NULL. A scoped run never saw such a row because
+        `district = 'X'` is NULL for it. Removing the predicate for --all
+        removed that accidental filter and the backfill died on an integrity
+        error partway through."""
+        complaints = [
+            {
+                "ticket_no": "N1",
+                "district": "Khordha",
+                "created_year": 2024,
+                "created_on": datetime(2024, 1, 5),
+                "grievance": "raw n1",
+            },
+            {
+                "ticket_no": "N2",
+                "district": None,
+                "created_year": 2024,
+                "created_on": datetime(2024, 1, 6),
+                "grievance": "raw n2",
+            },
+            {
+                "ticket_no": "N3",
+                "district": "Khordha",
+                "created_year": None,
+                "created_on": datetime(2024, 1, 7),
+                "grievance": "raw n3",
+            },
+        ]
+        redactions = [
+            {"ticket_no": "N1", "grievance_redacted": UNRELATED_A},
+            {"ticket_no": "N2", "grievance_redacted": UNRELATED_B},
+            {"ticket_no": "N3", "grievance_redacted": UNRELATED_C},
+        ]
+        async_url, sync_url = _make_oltp(tmp_path, complaints, redactions)
+
+        counts = build_dedup_index(None, None, oltp_url=async_url, salt=_SALT)
+
+        assert set(_signature_rows(sync_url)) == {"N1"}
+        # They are excluded from the denominator too, so the run does not
+        # report itself as perpetually incomplete.
+        assert counts["total"] == 1

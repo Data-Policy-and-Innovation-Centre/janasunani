@@ -10,8 +10,10 @@ result — that is what this module does, one stage after
 
 Mirrors `redact_grievance.py`'s shape on purpose (argparse entrypoint,
 `def main() -> None` wrapping `asyncio.run`, its own `create_async_engine`,
-`--district`/`--year` with no defaults, batched and resumable): they are the
-same kind of job, one stage apart, over the same slice.
+scope flags with no defaults, batched and resumable): they are the same kind
+of job, one stage apart, over the same records. It diverges in one place:
+this runner also accepts `--all`, because dedup is the only stage whose
+answer depends on which *other* records are in scope.
 
 **Built from `grievance_redactions.grievance_redacted` only.** Never from
 `complaints.grievance` — that column has never met Presidio, and indexing it
@@ -34,7 +36,9 @@ created_on, petitioner_mobile/email); it never selects `complaints.grievance`.
    redacted text and never feeds `shingles()` (dedup.py module docstring
    point 3; see `identity_key()`'s contract). Writes `dedup_signatures`.
 2. `_group_duplicates()` — not batched. It loads every signature already
-   written for the slice (tens of thousands of rows, comfortably in memory),
+   written for the scope (tens of thousands of rows for a district-year,
+   comfortably in memory; 1.37M for `--all`, where that claim has not been
+   verified and #317 tracks measuring it),
    buckets by `(block_key, lsh band)` to find text candidates, adds
    identity-key equality as a second, unblocked source of candidates
    (same-citizen resubmission does not need to fall in the same time
@@ -57,6 +61,18 @@ created_on, petitioner_mobile/email); it never selects `complaints.grievance`.
    duplicate-adjusted analytics consumer.  That consumer must assert the
    match before aggregation; a stale/incomplete lake or a mixture of group
    runs is an error, not a number to publish.
+
+   The digest is per district-year, never per run, so a corpus-wide run
+   still stamps each row with the digest of the slice that row belongs to
+   and slice-scoped consumers keep verifying (`_source_snapshots_by_slice`).
+
+   **One consequence of corpus grouping, for whoever reads these counts.**
+   A group whose members straddle two district-years is counted as a
+   distinct problem in *both* when each is aggregated on its own. That is
+   the right answer per slice — each really did receive a filing about that
+   problem — but it means per-slice distinct-problem counts no longer sum
+   to the corpus figure. Report the corpus number from a corpus
+   aggregation, not by adding slices up.
 
    **Above `REPRESENTATIVE_COMPARISON_CAP` members, a bucket trades recall
    for time (#158).** A campaign-heavy district-year produces buckets in the
@@ -166,7 +182,7 @@ from itertools import combinations
 from typing import Optional
 
 from loguru import logger
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from janasunani.config import settings
@@ -354,6 +370,23 @@ def _index_version(
 # --- stage 1: signatures ---------------------------------------------------
 
 
+def _indexable_filters(model) -> list:
+    """Require the dimensions a signature row cannot be written without.
+
+    ``Complaint.district`` and ``Complaint.created_year`` are nullable, while
+    ``DedupSignature`` and ``DedupGroup`` declare both NOT NULL. A scoped run
+    never saw such a record, because SQL ``NULL = 'Sambalpur'`` is NULL and
+    the row was silently filtered out by the scope predicate itself. Removing
+    that predicate for a corpus-wide run removes the accidental filter with
+    it, and the run dies on an integrity error partway through the backfill.
+
+    Stated explicitly so the exclusion is a decision rather than a side effect
+    of how the scope happened to be expressed, and applied on every path so a
+    scoped and an unscoped run agree on which records are indexable.
+    """
+    return [model.district.isnot(None), model.created_year.isnot(None)]
+
+
 def _slice_filters(model, district: Optional[str], year: Optional[int]) -> list:
     """Scope predicates for ``model``, empty when the scope is unbounded.
 
@@ -392,6 +425,7 @@ async def _count_signature_slice(
         .join(Complaint, Complaint.ticket_no == GrievanceRedaction.ticket_no)
         .where(
             *_slice_filters(Complaint, district, year),
+            *_indexable_filters(Complaint),
             GrievanceRedaction.grievance_redacted.isnot(None),
         )
     )
@@ -468,6 +502,7 @@ async def _load_pending_signature_batch(
         .join(Complaint, Complaint.ticket_no == GrievanceRedaction.ticket_no)
         .where(
             *_slice_filters(Complaint, district, year),
+            *_indexable_filters(Complaint),
             GrievanceRedaction.grievance_redacted.isnot(None),
             ~done.exists(),
         )
@@ -628,26 +663,34 @@ def _source_membership_changed_error(count: int) -> ValueError:
     )
 
 
-def _raise_if_source_is_not_current(
-    source_mismatches, missing_source: list[str], district: Optional[str], year: Optional[int]
-) -> None:
-    """Fail grouping before a stored signature and current text can diverge.
+def _moved_sources(source_mismatches, district: Optional[str], year: Optional[int]) -> list:
+    """Mismatched sources that left the scope their signature was indexed under.
 
-    "Moved" means the source record left the scope its signature was indexed
-    under. Only bound dimensions can be left: for a corpus-wide run both are
-    ``None`` and nothing can move out of the corpus, so the check must compare
-    against the dimensions actually pinned rather than against ``None`` --
-    otherwise every mismatch reads as moved and the run fails with the wrong
-    error.
+    Only a *bound* dimension can be left. For a corpus-wide run both are
+    ``None`` and nothing can move out of the corpus, so this compares against
+    the dimensions actually pinned rather than against ``None`` -- otherwise
+    every mismatch reads as moved and the run fails with the wrong error.
+
+    Deliberately one function rather than a copy at each call site: this
+    predicate is evaluated both during signature refresh and again before
+    groups are persisted, and the two drifting apart is exactly how a scope
+    fix gets applied to one path and not the other.
     """
-    if missing_source:
-        raise _missing_source_error(missing_source)
-    moved_sources = [
+    return [
         row
         for row in source_mismatches
         if (district is not None and row[2] != district)
         or (year is not None and row[3] != year)
     ]
+
+
+def _raise_if_source_is_not_current(
+    source_mismatches, missing_source: list[str], district: Optional[str], year: Optional[int]
+) -> None:
+    """Fail grouping before a stored signature and current text can diverge."""
+    if missing_source:
+        raise _missing_source_error(missing_source)
+    moved_sources = _moved_sources(source_mismatches, district, year)
     if moved_sources:
         raise _source_membership_changed_error(len(moved_sources))
     if source_mismatches:
@@ -694,9 +737,7 @@ async def _index_signatures(
         )
     if missing_source:
         raise _missing_source_error(missing_source)
-    moved_sources = [
-        row for row in source_mismatches if row[2] != district or row[3] != year
-    ]
+    moved_sources = _moved_sources(source_mismatches, district, year)
     if moved_sources:
         raise _source_membership_changed_error(len(moved_sources))
     if source_mismatches and not refresh_stale:
@@ -812,10 +853,59 @@ async def _load_slice_signatures(conn, district: Optional[str], year: Optional[i
     return result.all()
 
 
-async def _source_snapshot_for_signature_slice(
+async def _raise_if_scope_would_split_existing_groups(
     conn, district: Optional[str], year: Optional[int]
-) -> str:
-    """Manifest the exact indexed inputs represented by this group run.
+) -> None:
+    """Refuse a scoped run that would tear apart a wider existing group.
+
+    Grouping recomputes whole and upserts only the tickets it loaded. That is
+    correct while every group is contained in the scope that built it, which
+    was guaranteed while the only possible scope was one district-year.
+
+    Once ``--all`` has unioned a same-citizen resubmission across a district
+    or year boundary, it stops being guaranteed. A later scoped run loads one
+    side of that group, cannot see the other, recomputes its half as a
+    singleton (or a smaller local group) and upserts only those rows. The
+    other half keeps the old ``duplicate_group_id`` and a ``group_size`` that
+    no longer matches how many rows carry it. Nothing errors, and the
+    duplicate-adjusted counts downstream are quietly wrong in both directions.
+
+    So this fails closed instead, in the same spirit as the source-currency
+    check above: the operator is told to widen the scope rather than being
+    allowed to half-rebuild. An unbounded run can never trip it, because
+    nothing lies outside the corpus.
+    """
+    if district is None and year is None:
+        return
+
+    in_scope = select(DedupGroup.duplicate_group_id).where(
+        *_slice_filters(DedupGroup, district, year)
+    )
+    # "Outside the scope" is the negation of the whole conjunction, so the
+    # negated predicates are OR-ed. AND-ing them would only find rows outside
+    # *every* bound dimension at once and miss, for example, the same district
+    # in a different year -- which is the common case.
+    outside = or_(*[~predicate for predicate in _slice_filters(DedupGroup, district, year)])
+    straddling = await conn.scalar(
+        select(func.count(func.distinct(DedupGroup.duplicate_group_id))).where(
+            DedupGroup.duplicate_group_id.in_(in_scope),
+            outside,
+        )
+    )
+    if straddling:
+        raise ValueError(
+            f"{straddling} existing duplicate group(s) have members outside "
+            f"{_scope_label(district, year)}, so regrouping this scope alone "
+            "would split them and leave the outside half stamped with a group "
+            "id and size that no longer hold. Rerun with --all, or widen the "
+            "scope to contain them."
+        )
+
+
+async def _source_snapshots_by_slice(
+    conn, district: Optional[str], year: Optional[int]
+) -> dict[tuple[str, int], str]:
+    """Manifest the indexed inputs, **one digest per district-year**.
 
     This intentionally reads the digest stored at signature time, never the
     current redaction row. If OLTP changes without re-indexing, persisted
@@ -823,25 +913,46 @@ async def _source_snapshot_for_signature_slice(
     lake join fails the public assertion rather than being stamped as current.
     A partial signature run likewise has a manifest only for its actual subset
     and cannot validate a full lake slice.
+
+    Keyed by district-year rather than by run, because that is the unit
+    consumers verify against. `analytics/findings/workload.py` and `spike.py`
+    read the lake for one district-year, recompute `source_snapshot_id` over
+    it, and assert every group row carries that value. A corpus-wide run that
+    stamped one whole-corpus digest onto every row would fail that assertion
+    for every slice, breaking both findings — the digest has to describe the
+    slice the *record* belongs to, not the scope the run happened to use.
+
+    A scoped run yields exactly one entry, so its behaviour is unchanged.
     """
     stmt = (
         select(
             DedupSignature.ticket_no,
+            DedupSignature.district,
+            DedupSignature.created_year,
             DedupSignature.source_record_digest,
         )
         .where(*_slice_filters(DedupSignature, district, year))
         .order_by(DedupSignature.ticket_no)
     )
     result = await conn.execute(stmt)
-    row_digests = result.all()
-    missing = [ticket_no for ticket_no, digest in row_digests if digest is None]
+    rows = result.all()
+    missing = [row.ticket_no for row in rows if row.source_record_digest is None]
     if missing:
         raise ValueError(
             "dedup groups cannot be stamped with source provenance while "
             f"{len(missing)} signature(s) lack source_record_digest; rerun "
             "janasunani-dedup-index so #137 can rebuild them"
         )
-    return source_snapshot_id_from_record_digests(row_digests)
+
+    by_slice: dict[tuple[str, int], list[tuple[str, str]]] = defaultdict(list)
+    for row in rows:
+        by_slice[(row.district, row.created_year)].append(
+            (row.ticket_no, row.source_record_digest)
+        )
+    return {
+        slice_key: source_snapshot_id_from_record_digests(record_digests)
+        for slice_key, record_digests in by_slice.items()
+    }
 
 
 async def _load_redacted_text(conn, ticket_nos: list[str]) -> dict[str, str]:
@@ -1091,7 +1202,8 @@ async def _group_duplicates(
         _raise_if_source_is_not_current(
             source_mismatches, missing_source, district, year
         )
-        snapshot_id = await _source_snapshot_for_signature_slice(conn, district, year)
+        await _raise_if_scope_would_split_existing_groups(conn, district, year)
+        snapshots_by_slice = await _source_snapshots_by_slice(conn, district, year)
 
     if not rows:
         return {
@@ -1213,7 +1325,12 @@ async def _group_duplicates(
             "duplicate_group_id": group_id,
             "group_size": group_sizes[group_id],
             "source_name": DEDUP_SOURCE_NAME,
-            "source_snapshot_id": snapshot_id,
+            "source_snapshot_id": snapshots_by_slice[
+                (
+                    signature_by_ticket[ticket_no].district,
+                    signature_by_ticket[ticket_no].created_year,
+                )
+            ],
             "index_version": version,
             "grouped_at": now,
         }
