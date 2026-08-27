@@ -60,6 +60,12 @@ jobs:
       # SSH ingress CIDRs and the operator public key while being named like a
       # plan. Two of them were committed on a branch and this step did not
       # object, because every pattern below described state by its filename.
+      #
+      # The suffix is not the guard, though — see the content check below.
+      # `-out` takes any filename, and Terraform's own documentation uses
+      # `terraform plan -out=tfplan`, which has no suffix to match on. These
+      # patterns catch the obvious names and say what the rule is; the next
+      # step is what actually enforces it.
       - name: Reject local state and secret files
         shell: bash
         run: |
@@ -79,6 +85,14 @@ jobs:
             echo "A .tfplan is a zip containing tfstate — it is state, despite the name."
             exit 1
           fi
+
+      # Name-independent. Reads the bytes of every tracked file and fails on
+      # anything that is a zip carrying a tfstate/tfplan member, so a plan
+      # saved as `tfplan`, `plan.out` or with no extension at all is caught
+      # where the suffix patterns above would pass it.
+      - name: Reject terraform plan archives by content
+        shell: bash
+        run: python3 scripts/check_no_terraform_plans.py
 
       - name: Check DVC files are present
         shell: bash
