@@ -842,7 +842,8 @@ set_text(sh[16], "The two systems differed on 197 of 198 pages. Sarvam returns 1
 set_text(sh[8], "Different is not better, and using it sends citizen documents outside our control.")
 textbox(
     s,
-    "Capped at ten requests a minute, and two calls a page: this run took 166 minutes and the English corpus would take about thirteen days. "
+    "Capped at ten requests a minute, and two calls a page: this run took 166 minutes. "
+    "At the cap the English corpus is thirteen days; at the rate this run actually achieved, about eight weeks. "
     "It returned a category on 11 of 87 grievances and matched none, because our v1 schema never listed the categories.",
     x=0.7, y=6.62, w=11.9, h=0.36, size=11, color=SUBTLE, italic=True,
 )
@@ -879,8 +880,13 @@ s.notes_slide.notes_text_frame.text = (
     "(sarvam_evaluate.py:596 and :604), billed ₹0.50 and ₹1.00. So the 10-requests-a-minute "
     "cap, which does not rise with the plan tier, is a ceiling of 5 pages a minute for both "
     "arms. The run averaged 1.2 pages a minute end to end, about a quarter of that ceiling. "
-    "The 96,469-page English corpus is 192,938 requests on both arms, roughly thirteen days of "
-    "continuous calling; digitise alone would be about seven.\n\n"
+    "Quote both numbers, because the gap between them is the point. The 96,469-page English "
+    "corpus is 192,938 requests on both arms: 13 days at the cap (192,938 / 10 a minute), "
+    "which is a floor and assumes perfect saturation, and about 56 days at the 1.2 pages a "
+    "minute we measured (96,469 / 1.2). The calls are sequential and blocking, so the "
+    "measured rate is the one to plan against. Digitise alone is about seven days at the cap. "
+    "If asked why the gap: nothing here is batched or concurrent, and that is a property of "
+    "this runner, not of the provider.\n\n"
     "THE CATEGORY GRADE, and say plainly that it measures our schema and not the provider. "
     "Sarvam returned a category on 11 of 87 grievances and matched the officer's label on 0 of "
     "those 11. What came back was a subject line rather than a taxonomy label: the specific "
@@ -922,8 +928,9 @@ s.notes_slide.notes_text_frame.text = (
     "COST AT SCALE, projected list price: ₹48,000 to digitise the 96,469-page English corpus, "
     "₹145,000 for both endpoints, ₹8,050 to push 1.37M subjects through the 105B text model. "
     "At 10 requests a minute, which does not rise with the plan tier, and two calls a page on "
-    "both endpoints, the full corpus is roughly thirteen days of continuous calling; digitise "
-    "alone is about seven. It is a measurement instrument, not a backfill path. Do not quote "
+    "both endpoints, the full corpus is thirteen days of continuous calling at the cap and "
+    "about eight weeks at the throughput actually observed; digitise alone is about seven days "
+    "at the cap. It is a measurement instrument, not a backfill path. Do not quote "
     "₹700; that was priced on the withdrawn 30B model."
 )
 
