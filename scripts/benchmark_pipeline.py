@@ -1237,11 +1237,26 @@ def main(argv: list[str] | None = None) -> int:
         _missing, unlisted = staged_sample_coverage(
             sample_manifest, (doc["document_name"] for doc in loaded_docs)
         )
-        sample_manifest_complete = sample_manifest is not None and not unlisted
+        # A manifest that does not enumerate its documents is no better than
+        # no manifest for this purpose. `{"slice": "Sambalpur/2024"}` — valid
+        # JSON, hand-written or truncated — makes staged_sample_coverage
+        # return nothing in either direction, which is indistinguishable from
+        # a perfect match unless the enumeration itself is required.
+        manifest_enumerates = isinstance(
+            (sample_manifest or {}).get("documents"), list
+        )
+        sample_manifest_complete = manifest_enumerates and not unlisted
         if sample_manifest is None:
             logger.warning(
                 "no sample_manifest.json in {}; the run cannot say which draw "
                 "it measured, so it will not be marked publication_ready",
+                args.documents_dir,
+            )
+        elif not manifest_enumerates:
+            logger.warning(
+                "sample_manifest.json in {} has no 'documents' list, so "
+                "nothing ties these files to the draw it names; the run will "
+                "not be marked publication_ready",
                 args.documents_dir,
             )
         elif unlisted:

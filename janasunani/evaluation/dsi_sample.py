@@ -114,13 +114,33 @@ def load_corpus(
 ) -> list[DocumentRecord]:
     """Join documents on disk to their complaint category.
 
-    Filenames are ``<ticket>_complaint_<timestamp>.<ext>``. A ticket may carry
-    more than one document; each is its own record, because the pipeline
-    processes documents and the latency measurement is per document.
+    Object keys are ``<ticket>_complaint_<timestamp>.<ext>`` and the ticket may
+    itself contain slashes: 1,446 of the corpus's 70,029 documents (2.06%)
+    belong to tickets like ``OR159/P/2021/00535``. The reference bucket stores
+    them under the full key, so a synced copy has those documents in nested
+    directories.
+
+    The walk is therefore recursive and the ticket comes from the path
+    **relative to** ``documents_dir``, which reconstructs the object key
+    exactly. A flat ``iterdir()`` did not mis-parse those documents, it never
+    reached them: they sat one directory down and were silently absent from
+    the corpus, and so from every tier drawn out of it. Taking the basename
+    instead would be the other failure -- ``00535_complaint_...`` parses to
+    ``00535``, which matches no complaint and collapses distinct tickets that
+    share a trailing segment.
+
+    A ticket may carry more than one document; each is its own record, because
+    the pipeline processes documents and the latency measurement is per
+    document.
 
     Documents whose ticket is absent from the complaints table, or whose
     complaint has no category, land in :data:`UNCATEGORISED` rather than being
     dropped.
+
+    Raises:
+        ValueError: a file does not carry the ``_complaint_`` marker and so
+            has no ticket. Including it as a document named after itself is
+            how a stray ``manifest.tsv`` becomes a stratum of one.
     """
     import polars as pl
 
@@ -136,17 +156,37 @@ def load_corpus(
             categories[str(ticket)] = _norm_category(category)
 
     records: list[DocumentRecord] = []
-    for path in sorted(documents_dir.iterdir()):
-        if path.name.startswith(".") or not path.is_file():
+    unparsed: list[str] = []
+    for path in sorted(documents_dir.rglob("*")):
+        if not path.is_file():
             continue
-        ticket = path.name.split("_complaint_")[0]
+        relative = path.relative_to(documents_dir)
+        # Hidden anywhere in the path, not just the basename: a synced corpus
+        # carries .dvc/ and .DS_Store, and neither is a document.
+        if any(part.startswith(".") for part in relative.parts):
+            continue
+        key = relative.as_posix()
+        if "_complaint_" not in key:
+            unparsed.append(key)
+            continue
+        ticket = key.split("_complaint_")[0]
         records.append(
             DocumentRecord(
                 ticket=ticket,
-                filename=path.name,
+                filename=key,
                 category=categories.get(ticket, UNCATEGORISED),
                 size_bytes=path.stat().st_size,
             )
+        )
+
+    if unparsed:
+        raise ValueError(
+            f"{len(unparsed)} file(s) under {documents_dir} carry no "
+            f"'_complaint_' marker and so have no ticket: {unparsed[:5]}"
+            + (", ..." if len(unparsed) > 5 else "")
+            + ". Move non-document files out of the corpus directory. Kept as "
+            "documents they would each become their own uncategorised "
+            "stratum and take a floor allocation from a real category."
         )
     return records
 

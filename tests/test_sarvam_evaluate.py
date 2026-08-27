@@ -924,6 +924,41 @@ def test_save_records_destination_must_be_inside_the_data_tree(tmp_path):
             _checked_record_destination(bad)
 
 
+def test_save_records_is_validated_before_any_page_is_processed(tmp_path, monkeypatch):
+    """Codex P2 on #326: a knowable path error must not cost a paid run.
+
+    The check used to run at the write, after every page had been rendered,
+    submitted to Sarvam and scored — and the command then returned before
+    writing the aggregate outputs, so the spend bought nothing at all.
+
+    `discover_pages` is the first thing that touches the input, so asserting
+    it is never reached is what pins "before any page is processed".
+    """
+    from janasunani.evaluation import sarvam_evaluate
+
+    input_dir = tmp_path / "pages"
+    input_dir.mkdir()
+    (input_dir / "CMO1_complaint_20250101_000000.pdf").write_bytes(b"%PDF-1.3 stub")
+
+    def _explode(*args, **kwargs):  # pragma: no cover - must not be called
+        raise AssertionError("discover_pages reached despite an invalid --save-records")
+
+    monkeypatch.setattr(sarvam_evaluate, "discover_pages", _explode)
+
+    rc = sarvam_evaluate.main(
+        [
+            "--input-dir",
+            str(input_dir),
+            "--out",
+            str(tmp_path / "out"),
+            "--dry-run",
+            "--save-records",
+            str(tmp_path / "records.jsonl"),  # outside data/
+        ]
+    )
+    assert rc == 1
+
+
 def test_record_dump_is_0600_from_creation_not_after_the_write(tmp_path):
     """The dump must never be readable by other local users, not even briefly.
 

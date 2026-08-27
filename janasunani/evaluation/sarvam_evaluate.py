@@ -478,6 +478,19 @@ def main(argv: list[str] | None = None) -> int:
         logger.error(f"input dir not found: {input_dir}")
         return 1
 
+    # Resolved here rather than at the write, which is after every page has
+    # been rendered, sent to a paid provider and scored. A bad path is knowable
+    # at startup, and finding out at the end costs the whole run — the command
+    # then returned 1 before writing the aggregate outputs too, so the money
+    # bought nothing. Held for the actual write below.
+    record_destination: Path | None = None
+    if args.save_records:
+        try:
+            record_destination = _checked_record_destination(args.save_records)
+        except ValueError as exc:
+            logger.error(str(exc))
+            return 1
+
     try:
         schema = get_schema(args.schema_version)
     except ValueError as exc:
@@ -764,15 +777,10 @@ def main(argv: list[str] | None = None) -> int:
     # checkpoint), so without this the transcripts, categories and summaries are
     # computed, scored and discarded. Reference examples need them kept, and the
     # help text is explicit that the file is unredacted.
-    if args.save_records:
-        try:
-            destination = _checked_record_destination(args.save_records)
-        except ValueError as exc:
-            logger.error(str(exc))
-            return 1
-        _write_record_dump(destination, records)
+    if record_destination is not None:
+        _write_record_dump(record_destination, records)
         logger.success(
-            f"records -> {destination} ({len(records)} pages, unredacted)"
+            f"records -> {record_destination} ({len(records)} pages, unredacted)"
         )
 
     # Write markdown + base scorecard first, then overwrite JSON with enriched payload

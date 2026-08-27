@@ -626,6 +626,42 @@ def test_cli_documents_dir_records_manifest_completeness(tmp_path):
     assert ctx["sample_document_count"] == 2
 
 
+def test_cli_a_manifest_that_lists_no_documents_is_not_complete(tmp_path):
+    """Codex P1, round 2 on #326.
+
+    `{"slice": "Sambalpur/2024"}` is valid JSON and names a draw, but nothing
+    in it ties these files to that draw. `staged_sample_coverage` reports
+    nothing missing and nothing unlisted, which is byte-identical to a perfect
+    match — so the enumeration itself has to be required, or a truncated or
+    hand-written manifest publishes under a slice label it cannot support.
+    """
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    _stage_document(staging, "CMO20241020862")
+    (staging / "sample_manifest.json").write_text(json.dumps({"slice": "Sambalpur/2024"}))
+    out = tmp_path / "latency.json"
+
+    assert (
+        bench_mod.main(
+            [
+                "--fake",
+                "--documents-dir",
+                str(staging),
+                "--repeats",
+                "2",
+                "--no-warm-discard",
+                "--output",
+                str(out),
+            ]
+        )
+        == 0
+    )
+    ctx = json.loads(out.read_text())["benchmark_context"]
+    # The slice is still recorded — it is the only provenance there is.
+    assert ctx["sample_slice"] == "Sambalpur/2024"
+    assert ctx["sample_manifest_complete"] is False
+
+
 def test_cli_documents_dir_rejects_a_partially_staged_manifest(tmp_path, capsys):
     staging = tmp_path / "staging"
     staging.mkdir()

@@ -164,6 +164,80 @@ def test_load_corpus_joins_categories_and_keeps_uncategorised(tmp_path):
     assert summary["distinct_categories"] == 2
 
 
+def test_load_corpus_preserves_hierarchical_tickets(tmp_path):
+    """1,446 of the 70,029 corpus documents (2.06%) have a ticket with slashes.
+
+    Codex P1 on #326. The reference bucket stores those under the full key, so
+    a synced copy has them one directory down. The old flat `iterdir()` did
+    not mis-parse them, it never reached them — they were silently absent from
+    the corpus and therefore from every tier drawn out of it. Taking the
+    basename instead is the other failure: `00535_complaint_...` parses to
+    `00535`, which matches no complaint and collapses distinct tickets sharing
+    a trailing segment.
+    """
+    polars = pytest.importorskip("polars")
+
+    docs = tmp_path / "documents"
+    (docs / "OR159" / "P" / "2021").mkdir(parents=True)
+    (docs / "OR160" / "P" / "2021").mkdir(parents=True)
+    (docs / "OR159/P/2021/00535_complaint_20250101_000000.pdf").write_bytes(b"a")
+    # Same trailing segment, different ticket. A basename parse merges these.
+    (docs / "OR160/P/2021/00535_complaint_20250101_000001.pdf").write_bytes(b"bb")
+    (docs / "CMO2024001_complaint_20250101_000002.pdf").write_bytes(b"ccc")
+    # Hidden directories anywhere in the path are not documents.
+    (docs / ".dvc" / "cache").mkdir(parents=True)
+    (docs / ".dvc" / "cache" / "x_complaint_20250101_000009.pdf").write_bytes(b"no")
+
+    parquet = tmp_path / "complaints.parquet"
+    polars.DataFrame(
+        {
+            "ticket_no": ["OR159/P/2021/00535", "OR160/P/2021/00535", "CMO2024001"],
+            "category": ["Housing", "Traffic", "Housing"],
+        }
+    ).write_parquet(parquet)
+
+    records = load_corpus(docs, parquet)
+
+    assert len(records) == 3
+    by_ticket = {r.ticket: r for r in records}
+    assert set(by_ticket) == {
+        "OR159/P/2021/00535",
+        "OR160/P/2021/00535",
+        "CMO2024001",
+    }
+    # Both nested documents are found, categorised, and kept distinct.
+    assert by_ticket["OR159/P/2021/00535"].category == "Housing"
+    assert by_ticket["OR160/P/2021/00535"].category == "Traffic"
+    assert all(r.is_categorised for r in records)
+    # filename is the key relative to the corpus root, not the basename —
+    # a basename is not unique across subdirectories.
+    assert (
+        by_ticket["OR159/P/2021/00535"].filename
+        == "OR159/P/2021/00535_complaint_20250101_000000.pdf"
+    )
+
+
+def test_load_corpus_refuses_a_file_that_is_not_a_document(tmp_path):
+    """A stray manifest kept as a document becomes its own stratum.
+
+    Silently, and with a floor allocation taken from a real category.
+    """
+    polars = pytest.importorskip("polars")
+
+    docs = tmp_path / "documents"
+    docs.mkdir()
+    (docs / "CMO2024001_complaint_20250101_000000.pdf").write_bytes(b"a")
+    (docs / "manifest.tsv").write_text("ticket\ts3_key\n")
+
+    parquet = tmp_path / "complaints.parquet"
+    polars.DataFrame(
+        {"ticket_no": ["CMO2024001"], "category": ["Housing"]}
+    ).write_parquet(parquet)
+
+    with pytest.raises(ValueError, match="no '_complaint_' marker"):
+        load_corpus(docs, parquet)
+
+
 def test_write_manifest_round_trips(tmp_path):
     corpus = _corpus({"Housing": 40, "Legal": 20})
     drawn = draw_nested(corpus, {"q": 20}, seed=5, floor=3)["q"]
