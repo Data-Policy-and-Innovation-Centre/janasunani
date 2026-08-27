@@ -369,35 +369,30 @@ def staged_sample_coverage(
     still means the measured set is not the drawn set, so it blocks
     publication rather than the run.
 
-    Manifest entries without a ``file`` key cannot be matched by name at all
-    — the explicit-manifest call path allows ``{"ticket": ...}`` alone. Each
-    such entry is taken to account for one otherwise-unlisted staged file,
-    which is the most that can be claimed without inventing an identity.
+    Manifest entries without a ``file`` key are simply not counted as
+    coverage. The explicit-manifest call path allows ``{"ticket": ...}``
+    alone, so such a manifest still *loads* — it just cannot claim the staged
+    files are the drawn ones, because it ties no identity to any of them. An
+    earlier version absorbed one unlisted file per unkeyed entry, on the
+    reasoning that the count was the most that could be claimed. That was
+    wrong: a count is not an identity, and it let a one-file staging beside
+    ``{"documents": [{"ticket": "CMO1"}]}`` report perfect coverage while
+    nothing connected the two.
     """
     entries = (manifest or {}).get("documents")
     if not isinstance(entries, list):
         return [], []
 
     listed: set[str] = set()
-    unkeyed = 0
     for entry in entries:
         if not isinstance(entry, Mapping):
             continue
         file_name = entry.get("file")
-        if file_name:
-            listed.add(str(file_name))
-        else:
-            unkeyed += 1
+        if isinstance(file_name, str) and file_name.strip():
+            listed.add(file_name)
 
     staged = set(staged_names)
-    missing = sorted(listed - staged)
-    unlisted = sorted(staged - listed)
-    # Absorb the unnameable entries into the unlisted set, oldest-first by
-    # sort order. Which specific names they cover is unknowable; the count is
-    # what the completeness verdict turns on.
-    if unkeyed:
-        unlisted = unlisted[unkeyed:]
-    return missing, unlisted
+    return sorted(listed - staged), sorted(staged - listed)
 
 
 def _document_sample_digest(
@@ -1223,11 +1218,22 @@ def main(argv: list[str] | None = None) -> int:
             )
         except (FileNotFoundError, ValueError) as exc:
             parser.error(str(exc))
-        sample_slice = (
-            args.slice
-            or (sample_manifest or {}).get("slice")
-            or "unspecified"
-        )
+        manifest_slice = (sample_manifest or {}).get("slice")
+        # A conflicting --slice is refused, not preferred. The override exists
+        # to *supply* a label the manifest does not carry, not to rename a
+        # draw: taking the CLI value while the manifest still counted as
+        # complete produced an artifact labelled with one district-year and
+        # measured on another, and the publication gate would approve it.
+        if args.slice and manifest_slice and args.slice != manifest_slice:
+            parser.error(
+                f"--slice {args.slice!r} contradicts the sample manifest in "
+                f"{args.documents_dir}, which records {manifest_slice!r}. "
+                "The manifest describes the draw these documents came from; "
+                "--slice can supply a label when there is no manifest, but it "
+                "cannot rename one. Drop --slice, or point --documents-dir at "
+                "the sample you meant."
+            )
+        sample_slice = args.slice or manifest_slice or "unspecified"
         sample_digest = _document_sample_digest(args.documents_dir, sample_manifest)
         # load_staged_documents has already refused a manifest that lists a
         # document nobody staged. What is left is the other direction —

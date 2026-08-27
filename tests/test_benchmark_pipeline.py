@@ -336,15 +336,33 @@ def test_staged_sample_coverage_reports_both_directions(tmp_path):
     assert unlisted == ["c.pdf"]
 
 
-def test_staged_sample_coverage_absorbs_entries_without_a_filename():
-    # The explicit-manifest call path allows {"ticket": ...} with no "file".
-    # Such an entry cannot be matched by name, so it accounts for one staged
-    # file rather than reading as an unlisted extra.
+def test_staged_sample_coverage_does_not_count_entries_without_a_filename():
+    """Codex P1, round 3 on #326 — a count is not an identity.
+
+    An earlier version of this helper absorbed one unlisted file per manifest
+    entry that had no ``file`` key, reasoning that the count was the most that
+    could be claimed. That let a one-file staging beside
+    ``{"documents": [{"ticket": "CMO1"}]}`` report perfect coverage while
+    nothing tied the entry to the file on disk, and `main()` then marked the
+    run complete and publishable.
+
+    Such a manifest still loads — it supplies the slice — it just cannot
+    claim the staged files are the drawn ones.
+    """
     missing, unlisted = staged_sample_coverage(
         {"documents": [{"ticket": "CMO1"}]}, ["only.pdf"]
     )
     assert missing == []
-    assert unlisted == []
+    assert unlisted == ["only.pdf"]
+
+
+def test_staged_sample_coverage_ignores_blank_and_non_string_filenames():
+    missing, unlisted = staged_sample_coverage(
+        {"documents": [{"file": "  "}, {"file": None}, {"file": 7}]},
+        ["only.pdf"],
+    )
+    assert missing == []
+    assert unlisted == ["only.pdf"]
 
 
 def test_staged_sample_coverage_is_silent_without_a_documents_list():
@@ -660,6 +678,49 @@ def test_cli_a_manifest_that_lists_no_documents_is_not_complete(tmp_path):
     # The slice is still recorded — it is the only provenance there is.
     assert ctx["sample_slice"] == "Sambalpur/2024"
     assert ctx["sample_manifest_complete"] is False
+
+
+def test_cli_a_slice_override_that_contradicts_the_manifest_is_refused(tmp_path, capsys):
+    """Codex P1, round 3 on #326.
+
+    `--slice` used to win over the manifest while `sample_manifest_complete`
+    stayed true, so the gate would approve an artifact labelled with one
+    district-year and measured on another. The override exists to supply a
+    label where there is no manifest, not to rename a draw.
+    """
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    covered = _stage_document(staging, "CMO20241020862")
+    (staging / "sample_manifest.json").write_text(
+        json.dumps(
+            {
+                "slice": "Sambalpur/2024",
+                "documents": [{"ticket": "CMO20241020862", "file": covered.name}],
+            }
+        )
+    )
+    out = tmp_path / "latency.json"
+    argv = [
+        "--fake",
+        "--documents-dir",
+        str(staging),
+        "--repeats",
+        "2",
+        "--no-warm-discard",
+        "--output",
+        str(out),
+    ]
+
+    with pytest.raises(SystemExit):
+        bench_mod.main([*argv, "--slice", "Khordha/2023"])
+    assert "contradicts the sample manifest" in capsys.readouterr().err
+    assert not out.exists()
+
+    # The same value as the manifest is not a conflict.
+    assert bench_mod.main([*argv, "--slice", "Sambalpur/2024"]) == 0
+    ctx = json.loads(out.read_text())["benchmark_context"]
+    assert ctx["sample_slice"] == "Sambalpur/2024"
+    assert ctx["sample_manifest_complete"] is True
 
 
 def test_cli_documents_dir_rejects_a_partially_staged_manifest(tmp_path, capsys):
