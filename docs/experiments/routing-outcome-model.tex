@@ -2939,8 +2939,20 @@ For every point, duration uses \eqref{eq:hajek}, historical values use
 $\hat e_{\hat\delta_\tau(X_i)}(X_i)$. The residual is centred at the same fitted model used in
 the direct term. Weight reliability is reported through
 \[
-\operatorname{ESS}=\frac{(\sum_iw_i)^2}{\sum_iw_i^2}.
+\operatorname{ESS}=\frac{(\sum_iw_i)^2}{\sum_iw_i^2},
+\qquad
+w_i=\frac{\mathbf 1\{A_i=\hat\delta(X_i)\}}{\hat e_{\hat\delta(X_i)}(X_i)}.
 \]
+\textbf{The reported ESS is propensity-only overlap.} The weight above omits the censoring
+factor $R_i/\hat G(Y_i-)$ that the augmented score in \eqref{eq:score} actually applies, because
+\texttt{evaluate\_arm} passes only $\hat e$ and the match indicator to \texttt{overlap\_report}.
+The composite weight the estimator uses is $\mathbf 1\{\cdot\}\,R_i/(\hat e\,\hat G)$, so the
+figure below is the effective sample size of the matching-and-propensity correction alone and
+is an upper bound on the effective sample size of the correction as applied. The gap widens
+with the spread of $\hat G$, which makes it largest exactly where it matters most: the 2025
+cohort, where censoring is substantial. Read it as an overlap diagnostic for $\hat e$, not as
+the precision of the augmented estimate.
+
 When no row matches, the self-normalised correction is set to zero and ESS is zero; this is
 reported as absence of augmented support, not treated as corroboration of the direct estimate.
 
@@ -2948,6 +2960,21 @@ For descriptive uncertainty the code resamples whole district--year clusters 200
 seed 20260811 and recomputes the mean of already-fitted scores. It does not refit $G$, $m$, $p$
 or $e$ inside a bootstrap draw. The resulting standard error measures sensitivity to cluster
 composition; it is not a causal confidence interval or valid post-policy-selection inference.
+
+\textbf{The reported standard error is policy-value-only, including where it is printed beside a
+contrast.} \texttt{cluster\_bootstrap\_se} resamples the arm's own score vector; the historical
+IPCW baseline in \eqref{eq:historical-estimators} is not recomputed inside the draw, so the
+difference is never formed per draw. A parenthesised figure such as $26.77\,(4.04)$ therefore
+carries the uncertainty of the policy value $\hat V_{\hat\delta}$, not of
+$\hat V_{\hat\delta}-\hat V_{\mathrm{hist}}$. The two differ by the covariance term: because both
+quantities are computed on the same district--year clusters, they move together, and the
+contrast SE is
+$\sqrt{\operatorname{Var}(\hat V_{\hat\delta})+\operatorname{Var}(\hat V_{\mathrm{hist}})
+-2\operatorname{Cov}(\cdot,\cdot)}$, which the printed number equals only if the baseline were
+both constant across clusters and uncorrelated with the policy value. Neither holds. The sign
+of the discrepancy is not determined in advance, so this is not a conservative approximation
+either. Differencing the two per draw is the fix and is tracked separately; until then the
+number qualifies the level, not the change.
 
 \subsection{What was run, what merely exists, and what remains proposed}
 
