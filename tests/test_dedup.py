@@ -644,3 +644,71 @@ class TestEmptySignatureIsRejected:
         signature = minhash_signature({"abc", "bcd", "cde"}, num_hashes=8)
         assert signature is not None
         assert len(lsh_bands(signature, num_bands=4)) == 4
+
+
+class TestGroupingScopeId:
+    """The digest that distinguishes two grouping runs over the same records.
+
+    `source_snapshot_id` answers "were these the same source records", and a
+    consumer recomputes it from lake rows alone. This one answers "did the
+    same grouping run produce these rows", which the consumer cannot
+    reconstruct and which is the only thing standing between two different
+    assignments and being served as one snapshot.
+    """
+
+    RECORDS = [("A", "sha256:aa"), ("B", "sha256:bb"), ("C", "sha256:cc")]
+
+    def _scope(self, version="v1", records=None, versions=()):
+        from janasunani.pipeline.dedup import grouping_scope_id
+
+        return grouping_scope_id(
+            version, self.RECORDS if records is None else records, versions
+        )
+
+    def test_same_inputs_give_the_same_digest(self):
+        assert self._scope() == self._scope()
+
+    def test_a_different_grouping_version_changes_it(self):
+        # A different --threshold or --window-days produces different groups
+        # from identical records; without this they compare equal.
+        assert self._scope(version="v1") != self._scope(version="v2")
+
+    def test_a_changed_record_changes_it(self):
+        other = [("A", "sha256:aa"), ("B", "sha256:ZZ"), ("C", "sha256:cc")]
+        assert self._scope() != self._scope(records=other)
+
+    def test_the_same_versions_spread_differently_across_tickets_differ(self):
+        """Codex P1 on #325 — the case a set of distinct versions cannot see.
+
+        A partial `--refresh-stale --limit` leaves both layouts below with the
+        same records, the same requested version, and the same set {v1, v2}.
+        They do not group the same way: where identity candidates are split
+        from text candidates by a time window, the first can union A/B and the
+        second B/C. A slice holding A and B then reports a different
+        distinct-problem count while the artifacts still compare equal.
+        """
+        first = [("A", "idx-v1"), ("B", "idx-v1"), ("C", "idx-v2")]
+        second = [("A", "idx-v1"), ("B", "idx-v2"), ("C", "idx-v2")]
+        assert {v for _, v in first} == {v for _, v in second}
+        assert self._scope(versions=first) != self._scope(versions=second)
+
+    def test_ordering_of_the_version_pairs_does_not_matter(self):
+        pairs = [("A", "idx-v1"), ("B", "idx-v2")]
+        assert self._scope(versions=pairs) == self._scope(versions=list(reversed(pairs)))
+
+    def test_a_missing_version_is_distinguishable_from_a_present_one(self):
+        assert self._scope(versions=[("A", None)]) != self._scope(
+            versions=[("A", "idx-v1")]
+        )
+
+    def test_a_missing_version_does_not_break_the_sort(self):
+        # ticket_no is unique per signature row so the version is never
+        # reached as a tiebreak, but the sort must not depend on that.
+        mixed = [("B", None), ("A", "idx-v1"), ("C", None)]
+        assert self._scope(versions=mixed) == self._scope(
+            versions=list(reversed(mixed))
+        )
+
+    def test_a_blank_grouping_version_is_refused(self):
+        with pytest.raises(ValueError, match="non-blank grouping version"):
+            self._scope(version="   ")

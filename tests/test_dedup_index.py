@@ -2047,3 +2047,147 @@ class TestGroupingScopeProvenance:
         )
         assert refreshed["processed"] > 0
         assert _group_rows(sync_url)["T1"].grouping_scope_snapshot_id != mixed
+
+
+class TestCorpusScaleMemory:
+    """Codex P1 (two findings) on #325: `--all` is the point of the PR, and
+    at corpus scale both the refresh and the grouping load would have failed
+    before doing any work.
+
+    These pin the shape of the fix rather than the byte count, which no unit
+    test can assert honestly. What is checkable is that the text never
+    accumulates and the signature never survives banding.
+    """
+
+    def test_the_mismatch_scan_carries_identity_not_text(self, cross_scope_oltp):
+        """The documented post-redaction run is `--all --refresh-stale`, where
+        every signature mismatches at once. Carrying each row's grievance text
+        through this scan would hold the whole redacted corpus in memory
+        before rebuilding a single signature.
+        """
+        import asyncio
+
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        from janasunani.pipeline import dedup_index as di
+
+        async_url, sync_url = cross_scope_oltp
+        build_dedup_index(None, None, oltp_url=async_url, salt=_SALT)
+
+        engine = create_engine(sync_url)
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE grievance_redactions SET grievance_redacted = :t "
+                    "WHERE ticket_no = 'X3'"
+                ),
+                {"t": UNRELATED_C},
+            )
+        engine.dispose()
+
+        async def _scan():
+            aengine = create_async_engine(async_url)
+            try:
+                async with aengine.begin() as conn:
+                    return await di._source_digest_mismatches(conn, None, None)
+            finally:
+                await aengine.dispose()
+
+        mismatches, missing = asyncio.run(_scan())
+
+        assert missing == []
+        assert [m[0] for m in mismatches] == ["X3"]
+        # (ticket_no, district, created_year) and nothing else. The assertion
+        # that matters is the width: a text column here is the whole defect.
+        for row in mismatches:
+            assert len(row) == 3
+            assert not any(
+                isinstance(value, str) and len(value) > 64 for value in row
+            )
+
+    def test_the_source_refresh_runs_in_batches(self, cross_scope_oltp, monkeypatch):
+        """One pass would build every replacement row beside the whole fetched
+        corpus and submit them through a single multi-row upsert."""
+        from janasunani.pipeline import dedup_index as di
+
+        async_url, sync_url = cross_scope_oltp
+        build_dedup_index(None, None, oltp_url=async_url, salt=_SALT)
+
+        engine = create_engine(sync_url)
+        with engine.begin() as conn:
+            # Every row mismatches, which is the post-redaction shape.
+            conn.execute(
+                text("UPDATE grievance_redactions SET grievance_redacted = :t"),
+                {"t": UNRELATED_C},
+            )
+            total = conn.execute(
+                text("SELECT count(*) FROM dedup_signatures")
+            ).scalar_one()
+        engine.dispose()
+        assert total > 1, "fixture must have more than one signature to batch"
+
+        monkeypatch.setattr(di, "BATCH_SIZE", 1)
+        seen: list[int] = []
+        original = di._load_source_rows_for_tickets
+
+        async def _spy(conn, ticket_nos):
+            seen.append(len(ticket_nos))
+            return await original(conn, ticket_nos)
+
+        monkeypatch.setattr(di, "_load_source_rows_for_tickets", _spy)
+
+        build_dedup_index(None, None, oltp_url=async_url, salt=_SALT, refresh_stale=True)
+
+        # One fetch per batch, each bounded by BATCH_SIZE — never one call
+        # holding every mismatched ticket's text at once.
+        assert len(seen) == total
+        assert set(seen) == {1}
+
+    def test_loaded_signatures_keep_bands_and_drop_the_signature(self, oltp):
+        """1.37M rows x a 128-element JSON array is roughly 4.6 GiB of Python
+        ints before anything else. The array is only ever used to compute
+        bands — verification re-reads the text — so it must not survive the
+        load.
+        """
+        import asyncio
+
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        from janasunani.pipeline import dedup_index as di
+
+        async_url, _sync_url = oltp
+        build_dedup_index(None, None, oltp_url=async_url, salt=_SALT)
+
+        async def _load():
+            aengine = create_async_engine(async_url)
+            try:
+                async with aengine.begin() as conn:
+                    return await di._load_slice_signatures(conn, None, None, 16)
+            finally:
+                await aengine.dispose()
+
+        rows = asyncio.run(_load())
+
+        assert rows, "fixture must produce signatures"
+        for row in rows:
+            assert not hasattr(row, "signature")
+            assert row.bands is None or len(row.bands) == 16
+        # At least one real signature, or the assertion above is vacuous.
+        assert any(row.bands is not None for row in rows)
+
+    def test_bucketing_refuses_bands_built_for_a_different_band_count(self):
+        """Banding at load time and bucketing at another count would produce
+        buckets that are not LSH bands of anything."""
+        from janasunani.pipeline import dedup_index as di
+
+        row = di._BandedSignature(
+            ticket_no="T1",
+            district="Khordha",
+            created_year=2024,
+            block_key="Khordha:latin:0",
+            identity_key_mobile=None,
+            identity_key_email=None,
+            bands=(1, 2, 3, 4),
+        )
+        with pytest.raises(ValueError, match="carries 4 band"):
+            di._candidate_buckets([row], 16)

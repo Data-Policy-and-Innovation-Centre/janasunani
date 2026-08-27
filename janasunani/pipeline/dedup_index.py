@@ -176,6 +176,7 @@ import argparse
 import asyncio
 import math
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 import hashlib
 from itertools import combinations
@@ -594,6 +595,19 @@ async def _source_digest_mismatches(conn, district: Optional[str], year: Optiona
     current redacted text, so allowing these two inputs to differ would create
     an unprovable mixed run. Missing legacy digests are handled separately as
     pending signature rows; non-NULL disagreement requires --refresh-stale.
+
+    Returns ``(ticket_no, district, created_year)`` triples -- **identity
+    only, never the text**. Every caller of this needs a count, a membership
+    check, or a ticket list; the redacted text is needed only to rebuild a
+    signature, and `_refresh_mismatched_signatures` re-reads it one bounded
+    batch at a time.
+
+    That is not a tidiness point. The documented run after a corpus redaction
+    is `--all --refresh-stale`, where every one of ~1.37M signatures mismatches
+    at once. Carrying each row's grievance text through this scan would hold
+    the entire redacted corpus in memory before a single signature was
+    rebuilt. The query is streamed for the same reason: the result set is the
+    whole corpus even when the mismatch list is short.
     """
     stmt = (
         select(
@@ -612,10 +626,10 @@ async def _source_digest_mismatches(conn, district: Optional[str], year: Optiona
         .where(*_slice_filters(DedupSignature, district, year))
         .order_by(DedupSignature.ticket_no)
     )
-    result = await conn.execute(stmt)
-    mismatches = []
-    missing_source = []
-    for (
+    mismatches: list[tuple[str, Optional[str], Optional[int]]] = []
+    missing_source: list[str] = []
+    result = await conn.stream(stmt)
+    async for (
         ticket_no,
         stored_digest,
         row_district,
@@ -634,10 +648,36 @@ async def _source_digest_mismatches(conn, district: Optional[str], year: Optiona
             )
         )
         if stored_digest is not None and stored_digest != current:
-            mismatches.append(
-                (ticket_no, redacted_text, row_district, row_year, created_on, mobile, email)
-            )
+            mismatches.append((ticket_no, row_district, row_year))
     return mismatches, missing_source
+
+
+async def _load_source_rows_for_tickets(conn, ticket_nos: list[str]):
+    """Full source rows for exactly these tickets, in the batch shape
+    `_signature_rows_for_source_batch` consumes.
+
+    The other half of keeping `_source_digest_mismatches` text-free: the
+    grievance text comes back only for the batch about to be rebuilt, and is
+    released with it.
+    """
+    stmt = (
+        select(
+            DedupSignature.ticket_no,
+            GrievanceRedaction.grievance_redacted,
+            Complaint.district,
+            Complaint.created_year,
+            Complaint.created_on,
+            Complaint.petitioner_mobile,
+            Complaint.petitioner_email,
+        )
+        .select_from(DedupSignature)
+        .outerjoin(Complaint, Complaint.ticket_no == DedupSignature.ticket_no)
+        .outerjoin(GrievanceRedaction, GrievanceRedaction.ticket_no == DedupSignature.ticket_no)
+        .where(DedupSignature.ticket_no.in_(ticket_nos))
+        .order_by(DedupSignature.ticket_no)
+    )
+    result = await conn.execute(stmt)
+    return result.all()
 
 
 def _source_digest_mismatch_error(count: int) -> ValueError:
@@ -680,8 +720,9 @@ def _moved_sources(source_mismatches, district: Optional[str], year: Optional[in
     return [
         row
         for row in source_mismatches
-        if (district is not None and row[2] != district)
-        or (year is not None and row[3] != year)
+        # (ticket_no, district, created_year) -- see _source_digest_mismatches.
+        if (district is not None and row[1] != district)
+        or (year is not None and row[2] != year)
     ]
 
 
@@ -755,20 +796,42 @@ async def _index_signatures(
             len(source_mismatches),
         )
         now = datetime.now(timezone.utc).replace(tzinfo=None)
-        rows = _signature_rows_for_source_batch(
-            source_mismatches,
-            salt=salt,
-            epoch=epoch,
-            window_days=window_days,
-            version=version,
-            now=now,
-        )
-        async with engine.begin() as conn:
-            await conn.execute(
-                _dialect_upsert(DedupSignature, conn.dialect.name, rows, "ticket_no")
+        # Batched on the same BATCH_SIZE as the pending-signature loop below,
+        # and for the same reason. The documented post-redaction run is
+        # `--all --refresh-stale`, where every one of ~1.37M signatures
+        # mismatches: one pass would fetch the whole redacted corpus, build
+        # 1.37M replacement rows beside it, and hand the lot to a single
+        # multi-row upsert -- millions of bind parameters, past both the
+        # memory envelope and the statement limits, before this loop's
+        # existing batching was ever reached.
+        #
+        # Each batch is its own transaction, so an interrupted refresh leaves
+        # the batches it completed durably rebuilt. That is safe because the
+        # rebuilt rows carry the current digest: a rerun simply finds fewer
+        # mismatches, and the not-yet-rebuilt ones are still found by the scan.
+        mismatched_tickets = [row[0] for row in source_mismatches]
+        for start in range(0, len(mismatched_tickets), BATCH_SIZE):
+            chunk = mismatched_tickets[start : start + BATCH_SIZE]
+            async with engine.begin() as conn:
+                batch = await _load_source_rows_for_tickets(conn, chunk)
+                rows = _signature_rows_for_source_batch(
+                    batch,
+                    salt=salt,
+                    epoch=epoch,
+                    window_days=window_days,
+                    version=version,
+                    now=now,
+                )
+                await conn.execute(
+                    _dialect_upsert(DedupSignature, conn.dialect.name, rows, "ticket_no")
+                )
+            refreshed_tickets.update(chunk)
+            processed += len(rows)
+            logger.info(
+                "source refresh: {}/{} signature(s) rebuilt",
+                min(start + BATCH_SIZE, len(mismatched_tickets)),
+                len(mismatched_tickets),
             )
-        refreshed_tickets.update(row[0] for row in source_mismatches)
-        processed += len(rows)
 
     while True:
         remaining = None if limit is None else limit - processed
@@ -840,7 +903,62 @@ async def _index_signatures(
 # --- stage 2: grouping ------------------------------------------------------
 
 
-async def _load_slice_signatures(conn, district: Optional[str], year: Optional[int]):
+@dataclass(frozen=True, slots=True)
+class _BandedSignature:
+    """One signature row with its bands precomputed and the signature dropped.
+
+    The 128-element MinHash array is only ever used to compute band hashes:
+    exact verification re-reads the redacted text (`_load_redacted_text`) and
+    scores true Jaccard on shingles, never the sketch. So the array has no
+    reason to outlive banding, and at corpus scale it is the whole memory
+    problem -- 1.37M rows x 128 Python ints is roughly 4.6 GiB for the
+    integers plus about 1.3 GiB for the list objects holding them, before
+    SQLAlchemy rows, strings, buckets and union-find state. That does not fit
+    the 8 GiB box.
+
+    Sixteen band hashes in a tuple is about an eighth of that, and the rest of
+    the row is small. `slots=True` because a per-row `__dict__` at this count
+    is itself hundreds of megabytes.
+    """
+
+    ticket_no: str
+    district: str
+    created_year: int
+    block_key: str
+    identity_key_mobile: Optional[str]
+    identity_key_email: Optional[str]
+    #: ``None`` where `minhash_signature` abstained -- nothing to band.
+    bands: Optional[tuple[int, ...]]
+
+
+def _band_signature_row(row, num_bands: int) -> _BandedSignature:
+    """Convert a DB row to its banded form, discarding the raw signature."""
+    return _BandedSignature(
+        ticket_no=row.ticket_no,
+        district=row.district,
+        created_year=row.created_year,
+        block_key=row.block_key,
+        identity_key_mobile=row.identity_key_mobile,
+        identity_key_email=row.identity_key_email,
+        bands=(
+            None
+            if row.signature is None
+            else tuple(lsh_bands(tuple(row.signature), num_bands=num_bands))
+        ),
+    )
+
+
+async def _load_slice_signatures(
+    conn, district: Optional[str], year: Optional[int], num_bands: int = DEFAULT_NUM_BANDS
+) -> list[_BandedSignature]:
+    """Stream the slice's signatures, keeping only what grouping needs.
+
+    Streamed rather than `result.all()` because `--all` selects the whole
+    corpus. Materialising every ORM-decoded row first and converting after
+    would peak at the same size the conversion exists to avoid; the driver
+    hands back a bounded window and each signature is banded and released as
+    it arrives.
+    """
     stmt = select(
         DedupSignature.ticket_no,
         DedupSignature.district,
@@ -850,8 +968,12 @@ async def _load_slice_signatures(conn, district: Optional[str], year: Optional[i
         DedupSignature.identity_key_mobile,
         DedupSignature.identity_key_email,
     ).where(*_slice_filters(DedupSignature, district, year))
-    result = await conn.execute(stmt)
-    return result.all()
+
+    rows: list[_BandedSignature] = []
+    result = await conn.stream(stmt)
+    async for row in result:
+        rows.append(_band_signature_row(row, num_bands))
+    return rows
 
 
 async def _raise_if_scope_would_split_existing_groups(
@@ -962,7 +1084,7 @@ async def _source_snapshots_by_slice(
     scope = grouping_scope_id(
         grouping_version,
         [(row.ticket_no, row.source_record_digest) for row in rows],
-        signature_versions=[row.index_version for row in rows],
+        signature_versions=[(row.ticket_no, row.index_version) for row in rows],
     )
     return per_slice, scope
 
@@ -985,6 +1107,40 @@ async def _load_redacted_text(conn, ticket_nos: list[str]) -> dict[str, str]:
     return text_by_ticket
 
 
+def _banded(rows, num_bands: int):
+    """Yield rows that have bands, banding on the fly if they arrive raw.
+
+    Production reaches here with `_BandedSignature` rows: `_load_slice_signatures`
+    bands each row as the driver hands it over and never keeps the 128-element
+    signature. This accepts a raw DB row too, so the pure bucket functions
+    below stay directly callable from a test with a plain signature.
+
+    The band count is checked rather than assumed. Banding at load time and
+    bucketing at a different `num_bands` would silently produce buckets that
+    are not LSH bands of anything, and the two call sites take the count as a
+    parameter, so the mismatch is reachable.
+
+    Yields ``(row, bands)`` rather than a rebuilt row so a caller's own row
+    type passes through untouched -- the tests build partial rows on purpose.
+    """
+    for row in rows:
+        bands = getattr(row, "bands", None)
+        if bands is None:
+            signature = getattr(row, "signature", None)
+            if signature is None:
+                # `minhash_signature` abstained; there is nothing to band
+                # (dedup.py module docstring point 5).
+                continue
+            bands = tuple(lsh_bands(tuple(signature), num_bands=num_bands))
+        if len(bands) != num_bands:
+            raise ValueError(
+                f"signature for {row.ticket_no} carries {len(bands)} band(s) "
+                f"but bucketing was asked for {num_bands}; the bands were "
+                "computed at load time and must match."
+            )
+        yield row, bands
+
+
 def _text_candidate_pairs(rows, num_bands: int) -> set[tuple[str, str]]:
     """LSH candidate pairs, blocked by `block_key` — a shared band hash
     within the same block is a candidate, never across blocks. Rows with no
@@ -999,11 +1155,8 @@ def _text_candidate_pairs(rows, num_bands: int) -> set[tuple[str, str]]:
     verify against whichever ticket landed first in iteration order.
     """
     buckets: dict[tuple[str, int, int], list[str]] = defaultdict(list)
-    for row in rows:
-        if row.signature is None:
-            continue
-        signature = tuple(row.signature)
-        for band_index, band_hash in enumerate(lsh_bands(signature, num_bands=num_bands)):
+    for row, bands in _banded(rows, num_bands):
+        for band_index, band_hash in enumerate(bands):
             buckets[(row.block_key, band_index, band_hash)].append(row.ticket_no)
 
     pairs: set[tuple[str, str]] = set()
@@ -1075,11 +1228,8 @@ def _candidate_buckets(rows, num_bands: int) -> list[tuple[Optional[str], list[s
     that production uses.
     """
     band_buckets: dict[tuple[str, int, int], list[str]] = defaultdict(list)
-    for row in rows:
-        if row.signature is None:
-            continue
-        signature = tuple(row.signature)
-        for band_index, band_hash in enumerate(lsh_bands(signature, num_bands=num_bands)):
+    for row, bands in _banded(rows, num_bands):
+        for band_index, band_hash in enumerate(bands):
             band_buckets[(row.block_key, band_index, band_hash)].append(row.ticket_no)
 
     identity_buckets: dict[tuple[str, str], list[str]] = defaultdict(list)
@@ -1219,7 +1369,7 @@ async def _group_duplicates(
     )
 
     async with engine.begin() as conn:
-        rows = await _load_slice_signatures(conn, district, year)
+        rows = await _load_slice_signatures(conn, district, year, DEFAULT_NUM_BANDS)
         source_mismatches, missing_source = await _source_digest_mismatches(
             conn, district, year
         )
