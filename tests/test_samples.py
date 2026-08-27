@@ -28,7 +28,7 @@ class TestTheGuard:
             require_sample("dsi_large", _POP)
         # The message has to carry *why*, or the next person works around it.
         assert "population-level" in str(exc.value)
-        assert "190x" in str(exc.value)
+        assert "~14x too low" in str(exc.value)
 
     def test_the_same_sample_is_fine_for_document_level_work(self):
         sample = require_sample("dsi_large", _DOC)

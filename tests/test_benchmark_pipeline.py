@@ -32,6 +32,7 @@ from scripts.benchmark_pipeline import (
     latency_json_payload,
     load_staged_documents,
     run_benchmark,
+    staged_sample_coverage,
     synthesize_documents,
     write_latency_json,
 )
@@ -303,6 +304,54 @@ def test_load_staged_documents_manifest_ticket_wins_per_file_not_all_or_nothing(
     assert by_name[file2.name] == "CMO2024483790"
 
 
+def test_load_staged_documents_rejects_a_partially_staged_sample(tmp_path):
+    """A manifest document that is not on disk stops the run.
+
+    Codex P1 on #326: this used to log a warning and benchmark whatever had
+    been staged. The artifact then carried the manifest's slice, seed and
+    digest while describing a strict subset of the draw — an incomplete
+    Glacier restore silently became a publishable latency number for a
+    sample that was never measured.
+    """
+    staged = _stage_document(tmp_path, "CMO20241020862")
+    manifest = {
+        "slice": "Sambalpur/2024",
+        "documents": [
+            {"ticket": "CMO20241020862", "file": staged.name},
+            {"ticket": "CMO2024483790", "file": "CMO2024483790_complaint_20250715_234307.pdf"},
+        ],
+    }
+    (tmp_path / "sample_manifest.json").write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match="are not staged there"):
+        load_staged_documents(tmp_path)
+
+
+def test_staged_sample_coverage_reports_both_directions(tmp_path):
+    missing, unlisted = staged_sample_coverage(
+        {"documents": [{"file": "a.pdf"}, {"file": "b.pdf"}]},
+        ["a.pdf", "c.pdf"],
+    )
+    assert missing == ["b.pdf"]
+    assert unlisted == ["c.pdf"]
+
+
+def test_staged_sample_coverage_absorbs_entries_without_a_filename():
+    # The explicit-manifest call path allows {"ticket": ...} with no "file".
+    # Such an entry cannot be matched by name, so it accounts for one staged
+    # file rather than reading as an unlisted extra.
+    missing, unlisted = staged_sample_coverage(
+        {"documents": [{"ticket": "CMO1"}]}, ["only.pdf"]
+    )
+    assert missing == []
+    assert unlisted == []
+
+
+def test_staged_sample_coverage_is_silent_without_a_documents_list():
+    assert staged_sample_coverage(None, ["a.pdf"]) == ([], [])
+    assert staged_sample_coverage({"slice": "X/2024"}, ["a.pdf"]) == ([], [])
+
+
 def test_load_staged_documents_empty_directory_raises_loudly(tmp_path):
     # An empty doc list must never reach run_benchmark silently — its own
     # "no documents" error talks about n_text + n_image, which would
@@ -531,6 +580,80 @@ def test_cli_documents_dir_runs_fake_and_records_provenance(tmp_path):
     assert "synthetic" not in ctx["fixture"]
     # Additive-only: synthetic-path keys are still present.
     assert ctx["execution"] == "sequential single-process execution"
+    # No manifest, so --slice names a draw nothing ties these documents to.
+    # The run is fine; publishing it under that label is not.
+    assert ctx["sample_manifest_complete"] is False
+
+
+def test_cli_documents_dir_records_manifest_completeness(tmp_path):
+    """The recorded verdict follows the manifest, both ways.
+
+    A staged file the manifest does not cover is legal (its ticket falls back
+    to filename parsing) but means the measured set is larger than the drawn
+    set, which the gate has to see.
+    """
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    covered = _stage_document(staging, "CMO20241020862")
+    manifest = {
+        "slice": "Sambalpur/2024",
+        "documents": [{"ticket": "CMO20241020862", "file": covered.name}],
+    }
+    (staging / "sample_manifest.json").write_text(json.dumps(manifest))
+    out = tmp_path / "latency.json"
+
+    argv = [
+        "--fake",
+        "--documents-dir",
+        str(staging),
+        "--repeats",
+        "2",
+        "--no-warm-discard",
+        "--output",
+        str(out),
+    ]
+    assert bench_mod.main(argv) == 0
+    ctx = json.loads(out.read_text())["benchmark_context"]
+    assert ctx["sample_manifest_complete"] is True
+    assert ctx["sample_document_count"] == 1
+
+    # Drop a second document into the staging directory without touching the
+    # manifest: the same manifest now describes only part of what runs.
+    _stage_document(staging, "CMO2024483790", suffix=".jpeg")
+    assert bench_mod.main(argv) == 0
+    ctx = json.loads(out.read_text())["benchmark_context"]
+    assert ctx["sample_manifest_complete"] is False
+    assert ctx["sample_document_count"] == 2
+
+
+def test_cli_documents_dir_rejects_a_partially_staged_manifest(tmp_path, capsys):
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    staged = _stage_document(staging, "CMO20241020862")
+    manifest = {
+        "slice": "Sambalpur/2024",
+        "documents": [
+            {"ticket": "CMO20241020862", "file": staged.name},
+            {"ticket": "CMO2024483790", "file": "CMO2024483790_complaint_20250715_234307.pdf"},
+        ],
+    }
+    (staging / "sample_manifest.json").write_text(json.dumps(manifest))
+    out = tmp_path / "latency.json"
+
+    with pytest.raises(SystemExit):
+        bench_mod.main(
+            [
+                "--fake",
+                "--documents-dir",
+                str(staging),
+                "--repeats",
+                "2",
+                "--output",
+                str(out),
+            ]
+        )
+    assert "are not staged there" in capsys.readouterr().err
+    assert not out.exists()
 
 
 def test_cli_documents_dir_uses_manifest_slice_when_no_override(tmp_path):
@@ -804,6 +927,51 @@ def test_identified_real_latency_run_is_publication_ready():
     result["git_sha"] = "abc1234"
     result["benchmark_context"]["host_label"] = "   "
     assert latency_json_payload(result)["publication_ready"] is False
+
+
+def test_an_incomplete_document_sample_is_not_publication_ready():
+    """The other half of Codex's P1 on #326.
+
+    ``load_staged_documents`` refuses a manifest listing documents nobody
+    staged. The reverse — staged documents the manifest does not account for,
+    or no manifest at all — is allowed to run (the ticket for an uncovered
+    file falls back to filename parsing, deliberately) but must not publish:
+    the artifact's ``sample_slice`` and ``sample_digest`` would name a draw
+    that is not the set measured.
+    """
+    result = run_benchmark(
+        variant="standard",
+        n_text=1,
+        n_image=1,
+        repeats=2,
+        discard_warm=False,
+        processor_factory=lambda _variant: type(
+            "Processor",
+            (),
+            {
+                "_timing_sink": None,
+                "process": lambda self, **kwargs: self._timing_sink(
+                    {"redact": 0.1, "e2e": 0.2, "ok": 1.0}
+                ),
+            },
+        )(),
+    )
+    result["benchmark_context"] = {
+        "host_label": "release-host",
+        "model_release_id": "model-release-1",
+        "sample_slice": "Sambalpur/2024",
+        "sample_manifest_complete": False,
+    }
+    assert latency_json_payload(result)["publication_ready"] is False
+
+    result["benchmark_context"]["sample_manifest_complete"] = True
+    assert latency_json_payload(result)["publication_ready"] is True
+
+    # Absent on the synthetic path, which has no drawn sample to be
+    # incomplete. Only an explicit False blocks, or every existing
+    # synthetic-fixture run would stop publishing.
+    del result["benchmark_context"]["sample_manifest_complete"]
+    assert latency_json_payload(result)["publication_ready"] is True
 
 
 def test_real_latency_with_failure_is_not_publication_ready():

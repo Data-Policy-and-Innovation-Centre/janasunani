@@ -13,11 +13,13 @@ harmless, and a random draw is fine.
 A *population-level* measurement asks about relationships *between* records,
 so it needs every member of a group present: deduplication, workload, spikes,
 themes. Sampling is destructive, and **no random draw can ever satisfy it, at
-any size**. `dsi_large` is a 7.29% draw, which leaves a 0.53% chance that both
-members of a duplicate pair are present -- a duplicate rate measured on it
-would be roughly 190x too low, and the survivors a biased rather than random
-subset. `demo_slice` was frozen as a *complete district-year* (#64) precisely
-because completeness, not size, is the property that matters.
+any size**. `dsi_large` is a 7.29% draw, which leaves a 0.53% chance (p^2)
+that both members of a given duplicate pair are present. The *rate* is not
+attenuated by p^2, though: the denominator shrinks by p as well, so the
+duplicate-member rate measured on the sample is about p of the true one --
+roughly 14x too low, not 190x -- and the survivors are a biased rather than
+random subset. `demo_slice` was frozen as a *complete district-year* (#64)
+precisely because completeness, not size, is the property that matters.
 
 The failure mode this prevents is not exotic. "Use the DSI sample for
 everything, including dedup" is a reasonable-sounding instruction that would
@@ -110,7 +112,8 @@ REGISTRY: dict[str, Sample] = {
         caveat=(
             "Document-level only. Never dedup, workload, spikes or themes: at "
             "7.29% the chance both members of a duplicate pair are present is "
-            "0.53%, so a duplicate rate would come out ~190x too low. Note "
+            "0.53%, and since the denominator shrinks by 7.29% too, a "
+            "duplicate rate would come out ~14x too low. Note "
             "also that the Box copy of this sample holds 69,844 files, 189 "
             "fewer than S3 -- source from the manifest, not from Box. The "
             "manifest's md5 column is a true content hash for every object: "

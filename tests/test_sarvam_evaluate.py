@@ -6,6 +6,7 @@ Recorded / dry-run only; no live Sarvam call.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -921,6 +922,65 @@ def test_save_records_destination_must_be_inside_the_data_tree(tmp_path):
     ):
         with pytest.raises(ValueError, match="governed data tree"):
             _checked_record_destination(bad)
+
+
+def test_record_dump_is_0600_from_creation_not_after_the_write(tmp_path):
+    """The dump must never be readable by other local users, not even briefly.
+
+    Codex P1 on #326: `destination.open("w")` under the usual 022 umask
+    creates the file 0644 and the old code narrowed it only after the last
+    record was written, so unredacted citizen text sat world-readable for the
+    length of the write -- and permanently if the run was interrupted.
+
+    Asserted mid-write, via a records iterable that checks the mode on its
+    way past. Checking only the finished file would pass against the old
+    chmod-afterwards code too, which is the bug.
+    """
+    from dataclasses import dataclass
+
+    from janasunani.evaluation.sarvam_evaluate import _write_record_dump
+
+    @dataclass
+    class _Rec:
+        page: int
+
+    destination = tmp_path / "records.jsonl"
+    seen_modes: list[int] = []
+
+    def _records():
+        for page in range(3):
+            seen_modes.append(destination.stat().st_mode & 0o777)
+            yield _Rec(page=page)
+
+    original_umask = os.umask(0o022)
+    try:
+        _write_record_dump(destination, _records())
+    finally:
+        os.umask(original_umask)
+
+    assert seen_modes == [0o600, 0o600, 0o600]
+    assert destination.stat().st_mode & 0o777 == 0o600
+    assert len(destination.read_text().splitlines()) == 3
+
+
+def test_record_dump_narrows_a_pre_existing_world_readable_file(tmp_path):
+    """O_CREAT's mode is ignored when the path already exists, so fchmod does it."""
+    from dataclasses import dataclass
+
+    from janasunani.evaluation.sarvam_evaluate import _write_record_dump
+
+    @dataclass
+    class _Rec:
+        page: int
+
+    destination = tmp_path / "records.jsonl"
+    destination.write_text("stale\n")
+    destination.chmod(0o644)
+
+    _write_record_dump(destination, [_Rec(page=1)])
+
+    assert destination.stat().st_mode & 0o777 == 0o600
+    assert "stale" not in destination.read_text()
 
 
 def test_save_records_destination_rejects_traversal_after_resolution():

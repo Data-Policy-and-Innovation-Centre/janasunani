@@ -364,6 +364,29 @@ def _checked_record_destination(path: Path) -> Path:
     return resolved
 
 
+def _write_record_dump(destination: Path, records: Any) -> Path:
+    """Write the unredacted per-page dump, 0600 from the moment it exists.
+
+    The mode has to be applied at creation, not after the write. Under the
+    usual ``022`` umask ``Path.open("w")`` creates the file ``0644``, so the
+    citizen text was world-readable on the host for the entire write and was
+    narrowed only once the last record had landed -- a window that grows with
+    the run. An interrupt before the ``chmod`` left it ``0644`` permanently.
+
+    ``os.open`` applies the mode as the file is created. ``fchmod`` covers the
+    other half: if the path already exists, ``O_CREAT``'s mode argument is
+    ignored, so a dump overwriting a previously world-readable file would
+    otherwise keep those permissions.
+    """
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(asdict(record), default=str) + "\n")
+    return destination
+
+
 def _unwrap_extract_result(payload: Any) -> dict[str, Any]:
     """Unwrap the various shapes ``adapter.extract`` may return.
 
@@ -747,11 +770,7 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             logger.error(str(exc))
             return 1
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        with destination.open("w", encoding="utf-8") as handle:
-            for record in records:
-                handle.write(json.dumps(asdict(record), default=str) + "\n")
-        destination.chmod(0o600)
+        _write_record_dump(destination, records)
         logger.success(
             f"records -> {destination} ({len(records)} pages, unredacted)"
         )

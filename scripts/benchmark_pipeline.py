@@ -43,7 +43,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from loguru import logger
 
@@ -350,6 +350,56 @@ def _staged_document_paths(directory: Path) -> list[Path]:
     )
 
 
+def staged_sample_coverage(
+    manifest: Mapping[str, Any] | None, staged_names: Iterable[str]
+) -> tuple[list[str], list[str]]:
+    """Compare what the manifest says was drawn with what is on disk.
+
+    Returns ``(missing, unlisted)``: manifest documents that were not staged,
+    and staged documents the manifest does not account for. Both are sorted.
+
+    The two halves are not symmetric, and the callers treat them differently.
+    A *missing* document means the sample measured is a strict subset of the
+    sample drawn while still being labelled with the manifest's slice, seed
+    and digest — the artifact would name a draw it did not run on, which is
+    the defect this whole input path exists to close. An *unlisted* document
+    means the reverse, and cannot be an error here: a manifest is allowed to
+    cover only some of the staged files (the ticket for the rest falls back
+    to filename parsing, deliberately, see ``load_staged_documents``). It
+    still means the measured set is not the drawn set, so it blocks
+    publication rather than the run.
+
+    Manifest entries without a ``file`` key cannot be matched by name at all
+    — the explicit-manifest call path allows ``{"ticket": ...}`` alone. Each
+    such entry is taken to account for one otherwise-unlisted staged file,
+    which is the most that can be claimed without inventing an identity.
+    """
+    entries = (manifest or {}).get("documents")
+    if not isinstance(entries, list):
+        return [], []
+
+    listed: set[str] = set()
+    unkeyed = 0
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            continue
+        file_name = entry.get("file")
+        if file_name:
+            listed.add(str(file_name))
+        else:
+            unkeyed += 1
+
+    staged = set(staged_names)
+    missing = sorted(listed - staged)
+    unlisted = sorted(staged - listed)
+    # Absorb the unnameable entries into the unlisted set, oldest-first by
+    # sort order. Which specific names they cover is unknowable; the count is
+    # what the completeness verdict turns on.
+    if unkeyed:
+        unlisted = unlisted[unkeyed:]
+    return missing, unlisted
+
+
 def _document_sample_digest(
     directory: Path, manifest: Mapping[str, Any] | None
 ) -> str:
@@ -413,21 +463,24 @@ def load_staged_documents(
     If ``manifest`` is not given and ``directory/sample_manifest.json``
     exists, it is loaded and used for: per-file ticket ids (above), the
     sample's district (from its ``"slice"`` field, formatted
-    ``"<district>/<year>"``), and a document-count cross-check against what
-    is actually staged. A missing manifest is not an error — the loader
-    still works from the directory's filenames alone, just without a
-    district, the cross-check, or protection against the hierarchical-
-    ticket collision above.
+    ``"<district>/<year>"``), and a completeness check against what is
+    actually staged. A missing manifest is not an error — the loader still
+    works from the directory's filenames alone, just without a district, the
+    completeness check, or protection against the hierarchical-ticket
+    collision above (and ``main`` will refuse to mark such a run
+    publication-ready).
 
     Raises:
         FileNotFoundError: ``directory`` does not exist or is not a
             directory.
-        ValueError: the directory has no supported documents, or a
-            filename cannot be parsed into a ticket. An empty document list
-            must never reach ``run_benchmark`` silently — its own "no
-            documents" error talks about ``n_text + n_image``, which would
-            misdescribe a directory problem as a document-count-flag
-            problem.
+        ValueError: the directory has no supported documents, a filename
+            cannot be parsed into a ticket, or the manifest lists a document
+            that is not staged. An empty document list must never reach
+            ``run_benchmark`` silently — its own "no documents" error talks
+            about ``n_text + n_image``, which would misdescribe a directory
+            problem as a document-count-flag problem. A partially staged
+            sample must not run at all: it would measure a subset of the
+            draw under the full draw's label.
     """
     directory = Path(directory)
     if not directory.is_dir():
@@ -498,16 +551,20 @@ def load_staged_documents(
             + (", ..." if len(unparsed) > 5 else "")
         )
 
-    if manifest is not None:
-        manifest_documents = manifest.get("documents")
-        if isinstance(manifest_documents, list) and len(manifest_documents) != len(docs):
-            logger.warning(
-                "sample_manifest.json at {} lists {} document(s) but {} are "
-                "staged; the sample may be incomplete or stale",
-                directory,
-                len(manifest_documents),
-                len(docs),
-            )
+    missing, _unlisted = staged_sample_coverage(
+        manifest, (doc["document_name"] for doc in docs)
+    )
+    if missing:
+        raise ValueError(
+            f"{len(missing)} document(s) listed in the sample manifest at "
+            f"{directory} are not staged there: {missing[:5]}"
+            + (", ..." if len(missing) > 5 else "")
+            + ". Benchmarking the remainder would measure a strict subset of "
+            "the drawn sample while labelling the artifact with the "
+            "manifest's slice, seed and digest. Re-stage the sample (a "
+            "failed Glacier restore is the usual cause) or point "
+            "--documents-dir at a directory whose manifest matches it."
+        )
 
     return docs
 
@@ -965,6 +1022,13 @@ def latency_json_payload(
         and isinstance(result.get("benchmark_context"), dict)
         and nonblank(result["benchmark_context"].get("host_label"))
         and nonblank(result["benchmark_context"].get("model_release_id"))
+        # Absent on the synthetic path, which has no sample to be
+        # incomplete; only an explicit False blocks. False means the
+        # measured document set is not the drawn document set — no
+        # manifest at all, or staged files the manifest does not account
+        # for — so the recorded slice and digest would name a draw that is
+        # not what ran.
+        and result["benchmark_context"].get("sample_manifest_complete") is not False
         and nonblank(result.get("git_sha"))
         for result in variants_payload.values()
     )
@@ -1142,6 +1206,7 @@ def main(argv: list[str] | None = None) -> int:
     sample_manifest: dict[str, Any] | None = None
     sample_slice: str | None = None
     sample_digest: str | None = None
+    sample_manifest_complete = False
     if args.documents_dir is not None:
         if args.n_docs is not None or args.n_image_docs is not None:
             parser.error(
@@ -1164,6 +1229,30 @@ def main(argv: list[str] | None = None) -> int:
             or "unspecified"
         )
         sample_digest = _document_sample_digest(args.documents_dir, sample_manifest)
+        # load_staged_documents has already refused a manifest that lists a
+        # document nobody staged. What is left is the other direction —
+        # staged files the manifest does not account for, and the no-manifest
+        # case — neither of which should stop the run, and neither of which
+        # may be published under a sample label they do not describe.
+        _missing, unlisted = staged_sample_coverage(
+            sample_manifest, (doc["document_name"] for doc in loaded_docs)
+        )
+        sample_manifest_complete = sample_manifest is not None and not unlisted
+        if sample_manifest is None:
+            logger.warning(
+                "no sample_manifest.json in {}; the run cannot say which draw "
+                "it measured, so it will not be marked publication_ready",
+                args.documents_dir,
+            )
+        elif unlisted:
+            logger.warning(
+                "{} staged document(s) in {} are not accounted for by its "
+                "sample_manifest.json ({}...); the measured set is not the "
+                "drawn set, so the run will not be marked publication_ready",
+                len(unlisted),
+                args.documents_dir,
+                unlisted[:5],
+            )
     else:
         n_docs = DEFAULT_N_TEXT if args.n_docs is None else args.n_docs
         n_image_docs = DEFAULT_N_IMAGE if args.n_image_docs is None else args.n_image_docs
@@ -1251,6 +1340,7 @@ def main(argv: list[str] | None = None) -> int:
                 "sample_slice": sample_slice,
                 "sample_document_count": len(loaded_docs),
                 "sample_digest": sample_digest,
+                "sample_manifest_complete": sample_manifest_complete,
             }
         else:
             result["benchmark_context"] = {
