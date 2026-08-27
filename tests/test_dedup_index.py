@@ -2015,3 +2015,35 @@ class TestGroupingScopeProvenance:
         ]
         with pytest.raises(DedupSourceSnapshotMismatch, match="lack grouping-scope"):
             assert_group_source_snapshot(legacy, records)
+
+    def test_stale_signatures_produce_a_distinct_scope_from_a_refreshed_run(
+        self, oltp
+    ):
+        """Without --refresh-stale the runner deliberately leaves stale
+        signatures in place, so a run can group old-parameter rows together
+        with newly indexed ones. Identity linkage breaks across that boundary
+        (#136) and the assignments are wrong; a later full refresh produces
+        different, correct ones from identical source records under the
+        identical *requested* version. Hashing only the requested version made
+        those two runs indistinguishable."""
+        async_url, sync_url = oltp
+        build_dedup_index("Khordha", 2024, oltp_url=async_url, salt=_SALT)
+
+        # A different salt makes every stored signature stale. Without
+        # --refresh-stale they survive, so this run groups over rows whose
+        # stored version is not the one it asked for.
+        stale_run = build_dedup_index(
+            "Khordha", 2024, oltp_url=async_url, salt="a-rotated-salt"
+        )
+        assert stale_run["processed"] == 0  # nothing rebuilt: they are stale, not missing
+        mixed = _group_rows(sync_url)["T1"].grouping_scope_snapshot_id
+
+        refreshed = build_dedup_index(
+            "Khordha",
+            2024,
+            oltp_url=async_url,
+            salt="a-rotated-salt",
+            refresh_stale=True,
+        )
+        assert refreshed["processed"] > 0
+        assert _group_rows(sync_url)["T1"].grouping_scope_snapshot_id != mixed

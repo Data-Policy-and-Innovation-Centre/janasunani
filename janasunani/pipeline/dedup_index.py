@@ -931,6 +931,7 @@ async def _source_snapshots_by_slice(
             DedupSignature.district,
             DedupSignature.created_year,
             DedupSignature.source_record_digest,
+            DedupSignature.index_version,
         )
         .where(*_slice_filters(DedupSignature, district, year))
         .order_by(DedupSignature.ticket_no)
@@ -959,7 +960,9 @@ async def _source_snapshots_by_slice(
     # For a single-slice run this equals that slice's own digest, so the two
     # fields agree exactly where they always did.
     scope = grouping_scope_id(
-        grouping_version, [(row.ticket_no, row.source_record_digest) for row in rows]
+        grouping_version,
+        [(row.ticket_no, row.source_record_digest) for row in rows],
+        signature_versions=[row.index_version for row in rows],
     )
     return per_slice, scope
 

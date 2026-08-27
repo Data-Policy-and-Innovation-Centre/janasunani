@@ -236,7 +236,11 @@ def source_snapshot_id_from_record_digests(
     return f"sha256:{digest.hexdigest()}"
 
 
-def grouping_scope_id(grouping_version: str, record_digests: Iterable[tuple[str, str]]) -> str:
+def grouping_scope_id(
+    grouping_version: str,
+    record_digests: Iterable[tuple[str, str]],
+    signature_versions: Iterable[str | None] = (),
+) -> str:
     """Digest of the inputs *and* the parameters that produced an assignment.
 
     `source_snapshot_id_from_record_digests` covers only which records were
@@ -256,8 +260,20 @@ def grouping_scope_id(grouping_version: str, record_digests: Iterable[tuple[str,
         raise ValueError("grouping scope id requires a non-blank grouping version")
     records = source_snapshot_id_from_record_digests(record_digests)
     digest = hashlib.sha256()
-    digest.update(b"janasunani-dedup-grouping-scope-v1\n")
+    digest.update(b"janasunani-dedup-grouping-scope-v2\n")
     digest.update(grouping_version.encode("utf-8"))
+    digest.update(b"\0")
+    # The versions actually stored on the signatures, not only the one this
+    # run requested. Without --refresh-stale the runner deliberately leaves
+    # stale signatures in place, so a run can group old-salt rows together
+    # with newly indexed new-salt ones -- identity linkage breaks across that
+    # boundary (#136) and the assignments are wrong. A later full refresh
+    # produces different, correct assignments from identical source records
+    # under the identical requested version, so without this the two runs are
+    # indistinguishable and their artifacts compare equal.
+    for version in sorted({v for v in signature_versions}, key=lambda v: (v is None, v or "")):
+        digest.update((version or "\x00none").encode("utf-8"))
+        digest.update(b"\n")
     digest.update(b"\0")
     digest.update(records.encode("ascii"))
     return f"sha256:{digest.hexdigest()}"
