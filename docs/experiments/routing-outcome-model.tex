@@ -2937,7 +2937,16 @@ For every point, duration uses \eqref{eq:hajek}, historical values use
 \eqref{eq:correct-dm}--\eqref{eq:correct-hist}, and contrasts use
 \eqref{eq:like-with-like}. The policy-side propensity is always
 $\hat e_{\hat\delta_\tau(X_i)}(X_i)$. The residual is centred at the same fitted model used in
-the direct term. Weight reliability is reported through
+the direct term --- \textbf{except under \texttt{-{}-policy-split}}, where it is not.
+\texttt{run()} computes \texttt{mu\_observed} from the full-training $\hat m$ before
+\texttt{\_split\_policy\_model} is called, then passes the half-fit model to
+\texttt{score\_policy}, whose output becomes the policy direct term. On that path the two $\hat
+m$ terms come from different fits, so the residual absorbs the difference between two
+estimators rather than one model's error --- the failure \texttt{dr\_scores} warns about in its
+own docstring. That path additionally selects \emph{and} values the policy with the same
+half-fit model, so it does not provide the independent partition a winner's-curse diagnostic
+needs. Numbers in this document are from runs without \texttt{-{}-policy-split}; the flag is
+tracked as unsound rather than merely approximate. Weight reliability is reported through
 \[
 \operatorname{ESS}=\frac{(\sum_iw_i)^2}{\sum_iw_i^2},
 \qquad
@@ -2947,11 +2956,19 @@ w_i=\frac{\mathbf 1\{A_i=\hat\delta(X_i)\}}{\hat e_{\hat\delta(X_i)}(X_i)}.
 factor $R_i/\hat G(Y_i-)$ that the augmented score in \eqref{eq:score} actually applies, because
 \texttt{evaluate\_arm} passes only $\hat e$ and the match indicator to \texttt{overlap\_report}.
 The composite weight the estimator uses is $\mathbf 1\{\cdot\}\,R_i/(\hat e\,\hat G)$, so the
-figure below is the effective sample size of the matching-and-propensity correction alone and
-is an upper bound on the effective sample size of the correction as applied. The gap widens
-with the spread of $\hat G$, which makes it largest exactly where it matters most: the 2025
-cohort, where censoring is substantial. Read it as an overlap diagnostic for $\hat e$, not as
-the precision of the augmented estimate.
+figure below describes the matching-and-propensity correction alone and not the correction as
+applied. Read it as an overlap diagnostic for $\hat e$, not as the precision of the augmented
+estimate.
+
+It is \emph{not} an upper bound, and the direction of the discrepancy is not determined by the
+spread of $\hat G$. Kish ESS is not monotone under multiplying the weights by a positive
+factor: a factor that equalises them raises it. With propensity weights $(10,2)$ the ESS is
+$12^2/104\approx1.38$, and censoring factors $(1,5)$ give composite weights $(10,10)$ and an
+ESS of $2$; factors $(1,0.2)$ instead give $(10,0.4)$ and an ESS of $\approx1.08$. Whether the
+2025 cohort's composite ESS sits above or below its reported one is therefore an empirical
+question about how $\hat G$ covaries with $\hat e$ on the matched rows, not something that
+follows from censoring being heavy. Computing the composite ESS is the fix and is tracked
+separately.
 
 When no row matches, the self-normalised correction is set to zero and ESS is zero; this is
 reported as absence of augmented support, not treated as corroboration of the direct estimate.
