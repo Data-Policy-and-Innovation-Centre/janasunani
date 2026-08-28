@@ -105,17 +105,38 @@ def _norm_category(value: Any) -> str:
     return text
 
 
-def load_reference_manifest(path: Path | str) -> dict[str, str]:
-    """``{s3_key: ticket}`` from the pinned DSI reference manifest (TSV).
+@dataclass(frozen=True)
+class ManifestEntry:
+    """One row of the pinned reference manifest."""
+
+    ticket: str
+    size_bytes: int | None
+    md5: str | None
+
+
+def load_reference_manifest(path: Path | str) -> dict[str, ManifestEntry]:
+    """``{s3_key: ManifestEntry}`` from the pinned DSI reference manifest (TSV).
 
     Columns are ``ticket``, ``s3_key``, ``size_bytes``, ``md5``. The key is
     the object key in ``janasunani-documents-dsi-reference``, which is also
     the path relative to the corpus root once synced -- so it is directly
     comparable to what :func:`load_corpus` walks.
+
+    ``size_bytes`` and ``md5`` are kept, not discarded. A key comparison
+    alone proves only that a file with the right name is present; a
+    truncated, stale or replaced document under the expected key passes it,
+    and ``draw_nested`` then emits well-formed tier manifests for altered
+    bytes. See ``verify`` in :func:`load_corpus`.
+
+    The md5 column is a true content hash for every object in the reference
+    bucket, including the 80 over 8 MB: they arrived multipart in the source
+    bucket, where the etag is not an MD5, and the server-side copy rewrote
+    them single-part.
     """
     import csv
 
     path = Path(path)
+    entries: dict[str, ManifestEntry] = {}
     with path.open(newline="") as handle:
         reader = csv.DictReader(handle, delimiter="\t")
         missing = {"ticket", "s3_key"} - set(reader.fieldnames or ())
@@ -124,7 +145,17 @@ def load_reference_manifest(path: Path | str) -> dict[str, str]:
                 f"{path} is not a reference manifest: missing column(s) "
                 f"{sorted(missing)}. Expected ticket, s3_key, size_bytes, md5."
             )
-        return {row["s3_key"]: row["ticket"] for row in reader if row.get("s3_key")}
+        for row in reader:
+            key = row.get("s3_key")
+            if not key:
+                continue
+            raw_size = (row.get("size_bytes") or "").strip()
+            entries[key] = ManifestEntry(
+                ticket=row["ticket"],
+                size_bytes=int(raw_size) if raw_size.isdigit() else None,
+                md5=(row.get("md5") or "").strip() or None,
+            )
+    return entries
 
 
 def load_corpus(
@@ -133,7 +164,8 @@ def load_corpus(
     *,
     ticket_column: str = "ticket_no",
     category_column: str = "category",
-    manifest: Mapping[str, str] | None = None,
+    manifest: Mapping[str, "ManifestEntry"] | None = None,
+    verify: str = "size",
 ) -> list[DocumentRecord]:
     """Join documents on disk to their complaint category.
 
@@ -209,7 +241,9 @@ def load_corpus(
         if "_complaint_" not in key:
             unparsed.append(key)
             continue
-        ticket = manifest.get(key, key.split("_complaint_")[0]) if manifest else key.split("_complaint_")[0]
+        parsed = key.split("_complaint_")[0]
+        entry = manifest.get(key) if manifest else None
+        ticket = entry.ticket if entry is not None else parsed
         records.append(
             DocumentRecord(
                 ticket=ticket,
@@ -220,6 +254,10 @@ def load_corpus(
         )
 
     if manifest is not None:
+        if verify not in {"keys", "size", "md5"}:
+            raise ValueError(
+                f"verify must be 'keys', 'size' or 'md5', got {verify!r}"
+            )
         on_disk = {r.filename for r in records}
         listed = set(manifest)
         missing = sorted(listed - on_disk)
@@ -235,6 +273,46 @@ def load_corpus(
                 "short of S3 in exactly this way. Re-sync from "
                 "janasunani-documents-dsi-reference."
             )
+
+        # Keys matching is not bytes matching. A truncated, stale or replaced
+        # document under the expected key passes the set comparison above,
+        # and draw_nested then emits well-formed tier manifests for altered
+        # bytes -- the same class of silent-wrong-population failure, one
+        # level down.
+        #
+        # Size is the default because it is a stat() per file: free at 70,029
+        # documents, and it catches truncation and replacement, which is what
+        # a partial sync actually produces. md5 is exact and reads all 56 GB,
+        # so it is opt-in for when the corpus is being certified rather than
+        # used. keys is the escape hatch for a manifest without the columns.
+        if verify != "keys":
+            corrupt: list[str] = []
+            for record in records:
+                entry = manifest[record.filename]
+                if entry.size_bytes is not None and record.size_bytes != entry.size_bytes:
+                    corrupt.append(
+                        f"{record.filename} (size {record.size_bytes} != "
+                        f"{entry.size_bytes})"
+                    )
+                    continue
+                if verify == "md5" and entry.md5:
+                    digest = hashlib.md5()  # noqa: S324 - matching S3 etags, not security
+                    with (documents_dir / record.filename).open("rb") as stream:
+                        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                            digest.update(chunk)
+                    if digest.hexdigest() != entry.md5:
+                        corrupt.append(f"{record.filename} (md5 mismatch)")
+            if corrupt:
+                raise ValueError(
+                    f"{len(corrupt)} document(s) under {documents_dir} do not "
+                    f"match the pinned manifest's recorded bytes: "
+                    f"{corrupt[:3]}"
+                    + (", ..." if len(corrupt) > 3 else "")
+                    + ". The keys are right and the content is not, so a draw "
+                    "from this corpus would carry the manifest's identity and "
+                    "different documents. Re-sync from "
+                    "janasunani-documents-dsi-reference."
+                )
 
     if unparsed:
         raise ValueError(

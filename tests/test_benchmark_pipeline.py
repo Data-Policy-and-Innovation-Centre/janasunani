@@ -329,7 +329,8 @@ def test_load_staged_documents_rejects_a_partially_staged_sample(tmp_path):
 
 def test_staged_sample_coverage_reports_both_directions(tmp_path):
     missing, unlisted = staged_sample_coverage(
-        {"documents": [{"file": "a.pdf"}, {"file": "b.pdf"}]},
+        {"documents": [{"file": "a.pdf", "ticket": "T1"},
+                       {"file": "b.pdf", "ticket": "T2"}]},
         ["a.pdf", "c.pdf"],
     )
     assert missing == ["b.pdf"]
@@ -372,6 +373,32 @@ def test_staged_sample_coverage_rejects_a_duplicated_filename():
                            {"file": "one.pdf", "ticket": "T2"}]},
             ["one.pdf"],
         )
+
+
+def test_staged_sample_coverage_rejects_malformed_entries(tmp_path):
+    """Codex P1, round 5 on #326: a row that cannot be read is not coverage.
+
+    Skipping it let a manifest with valid rows for every staged file plus one
+    junk row still report a perfect match and publish. And a row naming a
+    file with no ticket counted as coverage while `load_staged_documents`
+    fell back to the basename parser — lossy for exactly the hierarchical
+    tickets the manifest exists to preserve.
+    """
+    with pytest.raises(ValueError, match="malformed"):
+        staged_sample_coverage(
+            {"documents": [{"file": "a.pdf", "ticket": "T1"}, "not-an-object"]},
+            ["a.pdf"],
+        )
+
+    with pytest.raises(ValueError, match="has no ticket"):
+        staged_sample_coverage({"documents": [{"file": "a.pdf"}]}, ["a.pdf"])
+
+    # The other half of the asymmetry is deliberate and stays: a ticket with
+    # no file cannot be matched by name, so it is simply not coverage.
+    missing, unlisted = staged_sample_coverage(
+        {"documents": [{"ticket": "T1"}]}, ["a.pdf"]
+    )
+    assert (missing, unlisted) == ([], ["a.pdf"])
 
 
 def test_staged_sample_coverage_ignores_blank_and_non_string_filenames():

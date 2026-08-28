@@ -389,14 +389,42 @@ def staged_sample_coverage(
 
     listed: set[str] = set()
     duplicated: list[str] = []
-    for entry in entries:
+    malformed: list[str] = []
+    for position, entry in enumerate(entries):
+        # A non-mapping row is not a manifest entry at all. Skipping it let a
+        # manifest with valid rows for every staged file plus one junk row
+        # report a perfect match and publish.
         if not isinstance(entry, Mapping):
+            malformed.append(f"entry {position}: not an object ({type(entry).__name__})")
             continue
         file_name = entry.get("file")
-        if isinstance(file_name, str) and file_name.strip():
+        ticket = entry.get("ticket")
+        has_file = isinstance(file_name, str) and file_name.strip()
+        has_ticket = isinstance(ticket, str) and ticket.strip()
+        # A row naming a file but no ticket is the dangerous half of the
+        # asymmetry: it counts as coverage while `load_staged_documents`
+        # silently falls back to basename parsing, which is lossy for the
+        # hierarchical tickets (~2% of complaints) it exists to protect.
+        if has_file and not has_ticket:
+            malformed.append(f"entry {position}: {file_name!r} has no ticket")
+            continue
+        # The other half is fine and is relied on: a row with a ticket and no
+        # file cannot be matched by name, so it simply does not count as
+        # coverage and the run is not publishable. That is the explicit-
+        # manifest call path, and it is tested.
+        if has_file:
             if file_name in listed:
                 duplicated.append(file_name)
             listed.add(file_name)
+
+    if malformed:
+        raise ValueError(
+            f"sample manifest has {len(malformed)} malformed entr(ies): "
+            f"{malformed[:5]}"
+            + (", ..." if len(malformed) > 5 else "")
+            + ". A row that cannot be read is not coverage, and skipping it "
+            "let a manifest with one junk row still report a perfect match."
+        )
 
     # A repeated `file` is a broken manifest, not a coverage question, so it
     # raises rather than being folded into `missing`/`unlisted`. Collapsed

@@ -298,16 +298,18 @@ def test_load_corpus_verifies_against_the_pinned_manifest(tmp_path):
         {"ticket_no": ["CMO2024001", "CMO2024002"], "category": ["Housing", "Traffic"]}
     ).write_parquet(parquet)
 
+    from janasunani.evaluation.dsi_sample import ManifestEntry
+
     complete = {
-        "CMO2024001_complaint_20250101_000000.pdf": "CMO2024001",
-        "CMO2024002_complaint_20250101_000001.pdf": "CMO2024002",
+        "CMO2024001_complaint_20250101_000000.pdf": ManifestEntry("CMO2024001", 1, None),
+        "CMO2024002_complaint_20250101_000001.pdf": ManifestEntry("CMO2024002", 2, None),
     }
     records = load_corpus(docs, parquet, manifest=complete)
     assert {r.ticket for r in records} == {"CMO2024001", "CMO2024002"}
 
     # A manifest listing a document nobody synced: the Box-copy failure.
     short = dict(complete)
-    short["CMO2024003_complaint_20250101_000002.pdf"] = "CMO2024003"
+    short["CMO2024003_complaint_20250101_000002.pdf"] = ManifestEntry("CMO2024003", 3, None)
     with pytest.raises(ValueError, match="does not match the pinned"):
         load_corpus(docs, parquet, manifest=short)
 
@@ -334,7 +336,11 @@ def test_load_corpus_takes_the_ticket_from_the_manifest_not_the_path(tmp_path):
         {"ticket_no": ["OR159/P/2021/00535"], "category": ["Housing"]}
     ).write_parquet(parquet)
 
-    records = load_corpus(docs, parquet, manifest={key: "OR159/P/2021/00535"})
+    from janasunani.evaluation.dsi_sample import ManifestEntry
+
+    records = load_corpus(
+        docs, parquet, manifest={key: ManifestEntry("OR159/P/2021/00535", 1, None)}
+    )
     assert records[0].ticket == "OR159/P/2021/00535"
     assert records[0].is_categorised
 
@@ -349,11 +355,62 @@ def test_load_reference_manifest_reads_the_tsv_and_rejects_a_wrong_one(tmp_path)
         "OR159/P/2021/00535\tOR159/P/2021/00535_complaint_20250101_000001.pdf\t200\tdef\n"
     )
     got = load_reference_manifest(good)
-    assert got["CMO2024001_complaint_20250101_000000.pdf"] == "CMO2024001"
+    first = got["CMO2024001_complaint_20250101_000000.pdf"]
+    assert (first.ticket, first.size_bytes, first.md5) == ("CMO2024001", 100, "abc")
     # The hierarchical key keeps its directory prefix, which is the whole point.
-    assert got["OR159/P/2021/00535_complaint_20250101_000001.pdf"] == "OR159/P/2021/00535"
+    assert got["OR159/P/2021/00535_complaint_20250101_000001.pdf"].ticket == "OR159/P/2021/00535"
 
     wrong = tmp_path / "other.tsv"
     wrong.write_text("a\tb\n1\t2\n")
     with pytest.raises(ValueError, match="not a reference manifest"):
         load_reference_manifest(wrong)
+
+
+def test_load_corpus_catches_altered_bytes_under_the_right_key(tmp_path):
+    """Codex P1 on #326: matching keys is not matching content.
+
+    A truncated, stale or replaced document stored under the expected key
+    passes the key comparison, and `draw_nested` then emits well-formed tier
+    manifests for altered bytes — the same silent-wrong-population failure
+    the key check exists to stop, one level down.
+    """
+    polars = pytest.importorskip("polars")
+
+    from janasunani.evaluation.dsi_sample import ManifestEntry
+
+    docs = tmp_path / "documents"
+    docs.mkdir()
+    name = "CMO2024001_complaint_20250101_000000.pdf"
+    (docs / name).write_bytes(b"the real document")
+
+    parquet = tmp_path / "complaints.parquet"
+    polars.DataFrame(
+        {"ticket_no": ["CMO2024001"], "category": ["Housing"]}
+    ).write_parquet(parquet)
+
+    import hashlib
+
+    good_md5 = hashlib.md5(b"the real document").hexdigest()  # noqa: S324
+    good = {name: ManifestEntry("CMO2024001", len(b"the real document"), good_md5)}
+
+    assert load_corpus(docs, parquet, manifest=good)  # size and md5 both agree
+    assert load_corpus(docs, parquet, manifest=good, verify="md5")
+
+    # Truncated in place: right key, wrong bytes. Caught by size alone,
+    # which is why size is the default — a stat() per file, free at 70,029.
+    (docs / name).write_bytes(b"trunc")
+    with pytest.raises(ValueError, match="recorded bytes"):
+        load_corpus(docs, parquet, manifest=good)
+
+    # Replaced with something the same length: size cannot see it, md5 can.
+    (docs / name).write_bytes(b"THE FAKE DOCUMENT")
+    assert len(b"THE FAKE DOCUMENT") == len(b"the real document")
+    load_corpus(docs, parquet, manifest=good)  # size check passes
+    with pytest.raises(ValueError, match="md5 mismatch"):
+        load_corpus(docs, parquet, manifest=good, verify="md5")
+
+    # And the escape hatch for a manifest without those columns.
+    load_corpus(docs, parquet, manifest=good, verify="keys")
+
+    with pytest.raises(ValueError, match="verify must be"):
+        load_corpus(docs, parquet, manifest=good, verify="checksum")

@@ -364,6 +364,38 @@ def _checked_record_destination(path: Path) -> Path:
     return resolved
 
 
+def _probe_record_destination(destination: Path) -> None:
+    """Fail now if the dump could not be written, without destroying anything.
+
+    Writability is a property of the directory plus, where the target already
+    exists, of that file. Neither can be established from the path alone --
+    ``_checked_record_destination`` proves only that the location is
+    permitted -- and finding out at the write costs a whole paid run.
+
+    Never truncates. An existing dump from a previous run is evidence; the
+    probe checks it is writable and leaves the bytes alone. For a new file it
+    creates and removes a uniquely named sibling, which tests the directory
+    that the real ``os.open`` will use without inventing a partial file at
+    the destination.
+    """
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        if not destination.is_file():
+            raise OSError(f"{destination} exists and is not a regular file")
+        if not os.access(destination, os.W_OK):
+            raise OSError(f"{destination} exists and is not writable")
+        return
+    probe = destination.parent / f".{destination.name}.probe-{os.getpid()}"
+    try:
+        fd = os.open(probe, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.close(fd)
+    finally:
+        try:
+            probe.unlink()
+        except FileNotFoundError:
+            pass
+
+
 def _write_record_dump(destination: Path, records: Any) -> Path:
     """Write the unredacted per-page dump, 0600 from the moment it exists.
 
@@ -492,8 +524,14 @@ def main(argv: list[str] | None = None) -> int:
             # read-only directory or a bad permission all pass the location
             # check and then raise inside _write_record_dump -- after every
             # page has been rendered, submitted to a paid provider and
-            # scored. Creating it now costs nothing and fails at parse time.
-            _write_record_dump(record_destination, ())
+            # scored.
+            #
+            # Non-destructively. The first version of this probe called
+            # _write_record_dump directly, which opens O_TRUNC: pointing
+            # --save-records at a previous run's dump erased it before any
+            # other check ran, and an early return then left neither the old
+            # evidence nor a replacement.
+            _probe_record_destination(record_destination)
         except (ValueError, OSError) as exc:
             logger.error(f"--save-records destination is unusable: {exc}")
             return 1
