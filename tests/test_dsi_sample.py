@@ -366,6 +366,46 @@ def test_load_reference_manifest_reads_the_tsv_and_rejects_a_wrong_one(tmp_path)
         load_reference_manifest(wrong)
 
 
+def test_load_reference_manifest_rejects_a_blank_identity(tmp_path):
+    """Codex P1, round 7 on #326: a blank column is not a valid row.
+
+    A blank `s3_key` silently left the expected-key set, so a document that
+    was also absent on disk still compared equal and certified a smaller
+    corpus — the known-short-copy failure the manifest exists to catch,
+    caused by the manifest. A blank `ticket` was emitted in place of the path
+    parse, because `load_corpus` prefers the record over the derivation, and
+    the document landed in the uncategorised stratum under an empty ticket.
+    """
+    from janasunani.evaluation.dsi_sample import load_reference_manifest
+
+    header = "ticket\ts3_key\tsize_bytes\tmd5\n"
+    good = "CMO2024001\tCMO2024001_complaint_20250101_000000.pdf\t100\tabc\n"
+
+    no_key = tmp_path / "no_key.tsv"
+    no_key.write_text(header + good + "CMO2024002\t\t100\tabc\n")
+    with pytest.raises(ValueError, match="blank identity"):
+        load_reference_manifest(no_key)
+
+    no_ticket = tmp_path / "no_ticket.tsv"
+    no_ticket.write_text(
+        header + good + "\tCMO2024002_complaint_20250101_000001.pdf\t100\tabc\n"
+    )
+    with pytest.raises(ValueError, match="blank identity"):
+        load_reference_manifest(no_ticket)
+
+    # Whitespace is blank, not an identity.
+    spaces = tmp_path / "spaces.tsv"
+    spaces.write_text(header + good + "   \t   \t100\tabc\n")
+    with pytest.raises(ValueError, match="blank identity"):
+        load_reference_manifest(spaces)
+
+    # And the well-formed manifest still loads, with the ticket stripped.
+    ok = tmp_path / "ok.tsv"
+    ok.write_text(header + good)
+    got = load_reference_manifest(ok)
+    assert got["CMO2024001_complaint_20250101_000000.pdf"].ticket == "CMO2024001"
+
+
 def test_load_reference_manifest_rejects_a_repeated_key(tmp_path):
     """Codex P1 on #326: a duplicate s3_key silently picked the last row.
 

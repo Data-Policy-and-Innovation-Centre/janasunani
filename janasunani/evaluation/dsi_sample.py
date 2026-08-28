@@ -122,6 +122,11 @@ def load_reference_manifest(path: Path | str) -> dict[str, ManifestEntry]:
     the path relative to the corpus root once synced -- so it is directly
     comparable to what :func:`load_corpus` walks.
 
+    Every row must carry a nonblank ``s3_key`` and ``ticket``. A blank key
+    would silently leave the expected-key set and let an equally absent
+    document compare equal; a blank ticket would be emitted in place of the
+    path parse that would have been right.
+
     A repeated ``s3_key`` raises: the surviving row would decide the ticket,
     the category and the provenance for that document, so a duplicate makes
     stratification depend on manifest order.
@@ -150,9 +155,29 @@ def load_reference_manifest(path: Path | str) -> dict[str, ManifestEntry]:
                 f"{sorted(missing)}. Expected ticket, s3_key, size_bytes, md5."
             )
         duplicated: list[str] = []
+        blank: list[str] = []
         for row in reader:
-            key = row.get("s3_key")
-            if not key:
+            key = (row.get("s3_key") or "").strip()
+            ticket = (row.get("ticket") or "").strip()
+            # Neither identity may be blank, and neither may be skipped.
+            #
+            # A blank key silently shrank the expected-key set, so if that
+            # document was also absent on disk the set comparison in
+            # `load_corpus` passed and certified a smaller corpus -- the
+            # known-short-copy failure this manifest exists to catch, caused
+            # by the manifest itself.
+            #
+            # A blank ticket was worse than it looks: `load_corpus` prefers
+            # the manifest's ticket over the one parsed from the path,
+            # because the record beats a derivation. A blank one is not a
+            # record, so the document was emitted under an empty ticket and
+            # landed in the uncategorised stratum, overriding a path parse
+            # that would have been right.
+            if not key or not ticket:
+                blank.append(
+                    f"line {reader.line_num}: "
+                    + ("no s3_key" if not key else f"{key!r} has no ticket")
+                )
                 continue
             # A repeated key is a broken manifest, not a last-one-wins
             # question. The disk-versus-manifest set comparison in
@@ -165,10 +190,20 @@ def load_reference_manifest(path: Path | str) -> dict[str, ManifestEntry]:
                 continue
             raw_size = (row.get("size_bytes") or "").strip()
             entries[key] = ManifestEntry(
-                ticket=row["ticket"],
+                ticket=ticket,
                 size_bytes=int(raw_size) if raw_size.isdigit() else None,
                 md5=(row.get("md5") or "").strip() or None,
             )
+    if blank:
+        raise ValueError(
+            f"{path} has {len(blank)} row(s) with a blank identity: "
+            f"{blank[:5]}"
+            + (", ..." if len(blank) > 5 else "")
+            + ". A row with no s3_key silently leaves the expected-key set, "
+            "so an equally absent document still compares equal; a row with "
+            "no ticket is emitted under an empty one and overrides the path "
+            "parse that would have been right."
+        )
     if duplicated:
         raise ValueError(
             f"{path} lists {len(duplicated)} s3_key(s) more than once: "
