@@ -1130,8 +1130,9 @@ exceptions must be stated rather than hidden under ``out of period'': the correc
 is isotonically calibrated on labelled 2024 rows, and $G$ is estimated separately within each
 split's full arrival cohort. Hence 2024 is out of period for the raw models but is not held out
 from correctness calibration; 2025 is the temporal check after calibration. The optional
-two-way district--year policy split addresses the winner's curse, not nuisance overfitting, and
-was not enabled in the headline commands. Appendix~\ref{app:asrun} gives the full timeline.
+two-way district--year policy split was aimed at the winner's curse rather than nuisance
+overfitting, but as implemented it is unsound and is not a valid diagnostic for it
+(Appendix~\ref{app:asrun}); it was not enabled in the headline commands. Appendix~\ref{app:asrun} gives the full timeline.
 
 \subsection{Layer 5: which model estimates what}\label{sec:models}
 
@@ -1764,7 +1765,7 @@ Smearing (\S\ref{sec:smear}) & Built, per stratum.\\
 Nuisance separation (\S\ref{sec:crossfit}) & Duration, raw correctness, propensity and eligible
 sets use 2021--23 training. Correctness is calibrated on 2024, while $G$ is fitted on each
 split's full arrival cohort; only the qualified chronology in Appendix~\ref{app:asrun} is built.\\
-Sample splitting for the rule (\S\ref{sec:policy}) & Built as an option; the winner's curse is priced rather than assumed away.\\
+Sample splitting for the rule (\S\ref{sec:policy}) & Built as an option, but unsound as implemented (Appendix~\ref{app:asrun}); the winner's curse is neither priced nor assumed away.\\
 $\tau$ calibration (Cor.~\ref{cor:feasible}) & Code corrected to score one labelled population. \emph{Not recomputed}: the prior frontier is withdrawn pending a rerun (\S\ref{sec:ev-provisional}, issue~\#284).\\
 \midrule
 $\Sstar$ from pre-treatment inputs & \notbuilt. \emph{Highest priority.} The legacy \code{S} column is $\Sproxy$, read from closure-time information. A case still open past the horizon is dropped although $\min(T,L)$ is known.\\
@@ -2833,8 +2834,9 @@ Temporal developmental check. The augmented duration contrast does not reproduce
 \end{longtable}
 
 The optional policy-split flag refits the policy-selection outcome model on one of two balanced
-district--year cluster partitions. It is a winner's-curse diagnostic, not the chronological
-nuisance separation above, and it was not enabled in the headline reproduction commands.
+district--year cluster partitions. It was intended as a winner's-curse diagnostic rather than the
+chronological nuisance separation above, but as implemented it is not one --- see the fitted-model
+discussion below --- and it was not enabled in the headline reproduction commands.
 
 \subsection{The four fitted functions}
 
@@ -2887,13 +2889,23 @@ N_a/N, & N_{h(x),a}=0\text{ and }N_a>0,\\
 \label{eq:asrun-e}
 \end{equation}
 The marginal backoff prevents an absent cell--flow pair from receiving a residual multiplier of
-100 merely because it hit the clip floor. The clipping is weight truncation, not an overlap
-restriction: \texttt{EmpiricalSharePropensity.score} clips the value and keeps the observation in
-the evaluated population, so the estimand is unchanged and a row with genuinely no support is
-carried at a bounded weight rather than excluded. That can bias the augmented estimate rather
-than moving the target to a population with adequate overlap. Restricting to the region of common
-support, and reporting how much of the sample that removes, is the fix and is not implemented.
-In neither form is the clip evidence for positivity.
+100 merely because it hit the clip floor. The clip itself is weight truncation and not an overlap
+restriction: \texttt{EmpiricalSharePropensity.score} bounds the value and keeps the observation,
+so it changes a weight rather than the target population.
+
+The overlap restriction is done elsewhere, and it is executed. \texttt{EligibleSets.fit} admits a
+cell--action pair only at $N_{h,a}\ge10$ training assignments, and \texttt{run\_ope.run} then
+restricts the evaluation frame to the cells supported in \emph{every} arm, reporting the excluded
+count as \texttt{n\_excluded} beside \texttt{n\_supported\_cells}. Every policy action reaching
+\eqref{eq:score} therefore has positive in-cell support by construction, so the marginal and floor
+branches of \eqref{eq:asrun-e} are reachable for an arbitrary call to \texttt{score} but not for an
+as-run $\hat e_{\hat\delta(X)}(X)$.
+
+What the clip can still do on that path is truncate a share that is small but genuine: a supported
+action in a large cell can sit below $0.01$, and the floor then caps its residual multiplier at
+100. That is a bias-variance trade on a supported row, which is a different and milder thing than
+carrying an unsupported one. In neither form is the clip evidence for positivity --- the
+restriction above is what supplies it, for the cells that survive.
 
 \subsubsection*{Administrative censoring $\hat G$}
 
@@ -2971,9 +2983,13 @@ factor: a factor that equalises them raises it. With propensity weights $(10,2)$
 $12^2/104\approx1.38$, and censoring factors $(1,5)$ give composite weights $(10,10)$ and an
 ESS of $2$; factors $(5,1)$ instead give $(50,2)$ and an ESS of $\approx1.08$. Both examples use
 factors the estimator can actually produce: $\omega^G_i=R_i/\max\{0.05,\hat G\}$ is zero on an
-unmatched row and at least $1$ on a matched one, because $\hat G\le1$, so a fractional factor is
-not an as-run possibility. ESS is scale-invariant, so it is the spread of the factors and not
-their level that moves it. Whether the
+\emph{unobserved} row and at least $1$ on an observed one, because $\hat G\le1$, so a fractional
+factor is not an as-run possibility. Observation is $R_i$ and is separate from policy matching:
+\texttt{evaluate\_arm} forms \texttt{matched} as $A_i=\hat\delta(X_i)$, and an observed
+policy-unmatched row still carries a factor of at least $1$, its composite weight being zeroed
+later by the match indicator rather than by $\omega^G$. In the actionable evaluation the
+distinction is moot in one direction: every selected row is resolved, so $R_i=1$ throughout. ESS
+is scale-invariant, so it is the spread of the factors and not their level that moves it. Whether the
 2025 cohort's composite ESS sits above or below its reported one is therefore an empirical
 question about how $\hat G$ covaries with $\hat e$ on the matched rows, not something that
 follows from censoring being heavy. Computing the composite ESS is the fix and is tracked
