@@ -369,6 +369,10 @@ def staged_sample_coverage(
     still means the measured set is not the drawn set, so it blocks
     publication rather than the run.
 
+    Raises ``ValueError`` if a filename is listed more than once. That is a
+    broken manifest rather than a coverage question, and collapsing it into
+    the set made it invisible in the worst way -- see the check below.
+
     Manifest entries without a ``file`` key are simply not counted as
     coverage. The explicit-manifest call path allows ``{"ticket": ...}``
     alone, so such a manifest still *loads* — it just cannot claim the staged
@@ -384,12 +388,32 @@ def staged_sample_coverage(
         return [], []
 
     listed: set[str] = set()
+    duplicated: list[str] = []
     for entry in entries:
         if not isinstance(entry, Mapping):
             continue
         file_name = entry.get("file")
         if isinstance(file_name, str) and file_name.strip():
+            if file_name in listed:
+                duplicated.append(file_name)
             listed.add(file_name)
+
+    # A repeated `file` is a broken manifest, not a coverage question, so it
+    # raises rather than being folded into `missing`/`unlisted`. Collapsed
+    # into the set it was invisible: a manifest claiming `one.pdf` for both
+    # T1 and T2 against a one-file staging reported nothing missing and
+    # nothing unlisted -- a perfect match -- while `file_to_ticket` kept only
+    # the last entry and the run measured one document under a manifest
+    # claiming two.
+    if duplicated:
+        raise ValueError(
+            f"sample manifest lists {len(duplicated)} filename(s) more than "
+            f"once: {sorted(set(duplicated))[:5]}"
+            + (", ..." if len(set(duplicated)) > 5 else "")
+            + ". Each staged file must appear once, or the ticket it is "
+            "attributed to depends on entry order and the document count "
+            "the manifest claims is not the count that runs."
+        )
 
     staged = set(staged_names)
     return sorted(listed - staged), sorted(staged - listed)

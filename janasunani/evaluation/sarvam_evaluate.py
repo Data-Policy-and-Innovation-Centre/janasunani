@@ -487,8 +487,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.save_records:
         try:
             record_destination = _checked_record_destination(args.save_records)
-        except ValueError as exc:
-            logger.error(str(exc))
+            # Prove it can actually be written, not merely that it sits in a
+            # permitted directory. A parent that is an existing file, a
+            # read-only directory or a bad permission all pass the location
+            # check and then raise inside _write_record_dump -- after every
+            # page has been rendered, submitted to a paid provider and
+            # scored. Creating it now costs nothing and fails at parse time.
+            _write_record_dump(record_destination, ())
+        except (ValueError, OSError) as exc:
+            logger.error(f"--save-records destination is unusable: {exc}")
             return 1
 
     try:

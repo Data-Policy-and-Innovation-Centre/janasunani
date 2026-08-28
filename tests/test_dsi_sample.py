@@ -276,3 +276,84 @@ def test_escaped_category_raises_rather_than_splitting_a_stratum(tmp_path):
 
     with pytest.raises(ValueError, match="HTML entity"):
         load_corpus(docs, parquet)
+
+
+def test_load_corpus_verifies_against_the_pinned_manifest(tmp_path):
+    """Codex P1 on #326: without this the corpus is whatever is on disk.
+
+    `draw_nested` then emits valid-looking tier manifests for a different
+    population. That is not hypothetical — the Box copy holds 69,844 files
+    against S3's 70,029, and the registry caveat in `janasunani.samples`
+    already warns to source from the manifest rather than from Box.
+    """
+    polars = pytest.importorskip("polars")
+
+    docs = tmp_path / "documents"
+    docs.mkdir()
+    (docs / "CMO2024001_complaint_20250101_000000.pdf").write_bytes(b"a")
+    (docs / "CMO2024002_complaint_20250101_000001.pdf").write_bytes(b"bb")
+
+    parquet = tmp_path / "complaints.parquet"
+    polars.DataFrame(
+        {"ticket_no": ["CMO2024001", "CMO2024002"], "category": ["Housing", "Traffic"]}
+    ).write_parquet(parquet)
+
+    complete = {
+        "CMO2024001_complaint_20250101_000000.pdf": "CMO2024001",
+        "CMO2024002_complaint_20250101_000001.pdf": "CMO2024002",
+    }
+    records = load_corpus(docs, parquet, manifest=complete)
+    assert {r.ticket for r in records} == {"CMO2024001", "CMO2024002"}
+
+    # A manifest listing a document nobody synced: the Box-copy failure.
+    short = dict(complete)
+    short["CMO2024003_complaint_20250101_000002.pdf"] = "CMO2024003"
+    with pytest.raises(ValueError, match="does not match the pinned"):
+        load_corpus(docs, parquet, manifest=short)
+
+    # A document on disk the manifest does not list: the other direction.
+    (docs / "CMO2024999_complaint_20250101_000003.pdf").write_bytes(b"ccc")
+    with pytest.raises(ValueError, match="does not match the pinned"):
+        load_corpus(docs, parquet, manifest=complete)
+
+
+def test_load_corpus_takes_the_ticket_from_the_manifest_not_the_path(tmp_path):
+    """The key and the ticket agree by construction, but the manifest is the
+    pinned record and the parser is a derivation. Where both exist, the
+    record wins — which is what makes hierarchical tickets exact rather than
+    reconstructed."""
+    polars = pytest.importorskip("polars")
+
+    docs = tmp_path / "documents"
+    (docs / "OR159" / "P" / "2021").mkdir(parents=True)
+    key = "OR159/P/2021/00535_complaint_20250101_000000.pdf"
+    (docs / key).write_bytes(b"a")
+
+    parquet = tmp_path / "complaints.parquet"
+    polars.DataFrame(
+        {"ticket_no": ["OR159/P/2021/00535"], "category": ["Housing"]}
+    ).write_parquet(parquet)
+
+    records = load_corpus(docs, parquet, manifest={key: "OR159/P/2021/00535"})
+    assert records[0].ticket == "OR159/P/2021/00535"
+    assert records[0].is_categorised
+
+
+def test_load_reference_manifest_reads_the_tsv_and_rejects_a_wrong_one(tmp_path):
+    from janasunani.evaluation.dsi_sample import load_reference_manifest
+
+    good = tmp_path / "manifest.tsv"
+    good.write_text(
+        "ticket\ts3_key\tsize_bytes\tmd5\n"
+        "CMO2024001\tCMO2024001_complaint_20250101_000000.pdf\t100\tabc\n"
+        "OR159/P/2021/00535\tOR159/P/2021/00535_complaint_20250101_000001.pdf\t200\tdef\n"
+    )
+    got = load_reference_manifest(good)
+    assert got["CMO2024001_complaint_20250101_000000.pdf"] == "CMO2024001"
+    # The hierarchical key keeps its directory prefix, which is the whole point.
+    assert got["OR159/P/2021/00535_complaint_20250101_000001.pdf"] == "OR159/P/2021/00535"
+
+    wrong = tmp_path / "other.tsv"
+    wrong.write_text("a\tb\n1\t2\n")
+    with pytest.raises(ValueError, match="not a reference manifest"):
+        load_reference_manifest(wrong)

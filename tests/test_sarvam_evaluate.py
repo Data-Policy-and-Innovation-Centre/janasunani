@@ -959,6 +959,39 @@ def test_save_records_is_validated_before_any_page_is_processed(tmp_path, monkey
     assert rc == 1
 
 
+def test_save_records_unwritable_destination_fails_before_the_run(tmp_path, monkeypatch):
+    """Codex P2, round 4 on #326: being inside data/ is not being writable.
+
+    A parent that is an existing file passes the location check and then
+    raises inside `_write_record_dump` — after every page has been rendered,
+    sent to a paid provider and scored.
+    """
+    from janasunani.config import DATA_DIR
+    from janasunani.evaluation import sarvam_evaluate
+
+    input_dir = tmp_path / "pages"
+    input_dir.mkdir()
+    (input_dir / "CMO1_complaint_20250101_000000.pdf").write_bytes(b"%PDF-1.3 stub")
+
+    # Inside the governed tree, but its parent is a regular file.
+    blocker = DATA_DIR / "external" / "not_a_dir_probe"
+    blocker.parent.mkdir(parents=True, exist_ok=True)
+    blocker.write_text("i am a file\n")
+
+    def _explode(*a, **k):  # pragma: no cover - must not be reached
+        raise AssertionError("discover_pages reached despite an unusable destination")
+
+    monkeypatch.setattr(sarvam_evaluate, "discover_pages", _explode)
+    try:
+        rc = sarvam_evaluate.main(
+            ["--input-dir", str(input_dir), "--out", str(tmp_path / "out"),
+             "--dry-run", "--save-records", str(blocker / "records.jsonl")]
+        )
+    finally:
+        blocker.unlink()
+    assert rc == 1
+
+
 def test_record_dump_is_0600_from_creation_not_after_the_write(tmp_path):
     """The dump must never be readable by other local users, not even briefly.
 

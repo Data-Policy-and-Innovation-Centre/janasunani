@@ -356,6 +356,24 @@ def test_staged_sample_coverage_does_not_count_entries_without_a_filename():
     assert unlisted == ["only.pdf"]
 
 
+def test_staged_sample_coverage_rejects_a_duplicated_filename():
+    """Codex P1, round 4 on #326 — the set hid it in the worst way.
+
+    A manifest claiming `one.pdf` for both T1 and T2, against a one-file
+    staging, collapsed to a single listed name and reported nothing missing
+    and nothing unlisted: a perfect match. `file_to_ticket` meanwhile kept
+    only the last entry, so the run measured one document, attributed it to
+    whichever entry came last, and published as complete under a manifest
+    claiming two.
+    """
+    with pytest.raises(ValueError, match="more than once"):
+        staged_sample_coverage(
+            {"documents": [{"file": "one.pdf", "ticket": "T1"},
+                           {"file": "one.pdf", "ticket": "T2"}]},
+            ["one.pdf"],
+        )
+
+
 def test_staged_sample_coverage_ignores_blank_and_non_string_filenames():
     missing, unlisted = staged_sample_coverage(
         {"documents": [{"file": "  "}, {"file": None}, {"file": 7}]},

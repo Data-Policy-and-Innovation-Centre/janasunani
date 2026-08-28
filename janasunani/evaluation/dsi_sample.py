@@ -105,12 +105,35 @@ def _norm_category(value: Any) -> str:
     return text
 
 
+def load_reference_manifest(path: Path | str) -> dict[str, str]:
+    """``{s3_key: ticket}`` from the pinned DSI reference manifest (TSV).
+
+    Columns are ``ticket``, ``s3_key``, ``size_bytes``, ``md5``. The key is
+    the object key in ``janasunani-documents-dsi-reference``, which is also
+    the path relative to the corpus root once synced -- so it is directly
+    comparable to what :func:`load_corpus` walks.
+    """
+    import csv
+
+    path = Path(path)
+    with path.open(newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        missing = {"ticket", "s3_key"} - set(reader.fieldnames or ())
+        if missing:
+            raise ValueError(
+                f"{path} is not a reference manifest: missing column(s) "
+                f"{sorted(missing)}. Expected ticket, s3_key, size_bytes, md5."
+            )
+        return {row["s3_key"]: row["ticket"] for row in reader if row.get("s3_key")}
+
+
 def load_corpus(
     documents_dir: Path | str,
     complaints_path: Path | str,
     *,
     ticket_column: str = "ticket_no",
     category_column: str = "category",
+    manifest: Mapping[str, str] | None = None,
 ) -> list[DocumentRecord]:
     """Join documents on disk to their complaint category.
 
@@ -137,10 +160,27 @@ def load_corpus(
     complaint has no category, land in :data:`UNCATEGORISED` rather than being
     dropped.
 
+    ``manifest`` is the pinned reference manifest
+    (``load_reference_manifest``), and passing it is what makes the corpus
+    *verified* rather than *whatever happens to be on disk*. Without it this
+    walks any directory and hands the result to ``draw_nested``, which then
+    produces valid-looking tier manifests for a different population -- the
+    known-short Box copy (69,844 files against 70,029, see
+    ``janasunani.samples``) being the case that already exists. With it, a
+    key on disk that the manifest does not list, or a key the manifest lists
+    that is not on disk, stops the draw.
+
+    Ticket ids come from the manifest where it is given, rather than being
+    re-parsed from the path. They are the same by construction -- the key is
+    ``<ticket>_complaint_<timestamp>.<ext>`` -- but the manifest is the
+    pinned record and the parser is a derivation, so where both exist the
+    record wins.
+
     Raises:
         ValueError: a file does not carry the ``_complaint_`` marker and so
-            has no ticket. Including it as a document named after itself is
-            how a stray ``manifest.tsv`` becomes a stratum of one.
+            has no ticket (including it as a document named after itself is
+            how a stray ``manifest.tsv`` becomes a stratum of one), or the
+            staged corpus does not match ``manifest``.
     """
     import polars as pl
 
@@ -169,7 +209,7 @@ def load_corpus(
         if "_complaint_" not in key:
             unparsed.append(key)
             continue
-        ticket = key.split("_complaint_")[0]
+        ticket = manifest.get(key, key.split("_complaint_")[0]) if manifest else key.split("_complaint_")[0]
         records.append(
             DocumentRecord(
                 ticket=ticket,
@@ -178,6 +218,23 @@ def load_corpus(
                 size_bytes=path.stat().st_size,
             )
         )
+
+    if manifest is not None:
+        on_disk = {r.filename for r in records}
+        listed = set(manifest)
+        missing = sorted(listed - on_disk)
+        extra = sorted(on_disk - listed)
+        if missing or extra:
+            raise ValueError(
+                f"the corpus under {documents_dir} does not match the pinned "
+                f"reference manifest: {len(missing)} listed document(s) are "
+                f"absent and {len(extra)} present document(s) are not listed "
+                f"(missing e.g. {missing[:3]}, extra e.g. {extra[:3]}). "
+                "Drawing tiers from it would produce valid-looking manifests "
+                "for a different population -- the Box copy is 185 documents "
+                "short of S3 in exactly this way. Re-sync from "
+                "janasunani-documents-dsi-reference."
+            )
 
     if unparsed:
         raise ValueError(
