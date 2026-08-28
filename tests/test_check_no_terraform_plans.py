@@ -119,7 +119,7 @@ def test_this_repository_currently_passes():
     assert result.returncode == 0, result.stdout
 
 
-def test_tracked_files_never_returns_anything_under_data(monkeypatch):
+def test_tracked_files_never_returns_anything_under_data(tmp_path, monkeypatch):
     """Codex P1 on #321: the scan opens every path it is handed.
 
     AGENTS.md forbids reading anything under `data/` without explicit
@@ -127,19 +127,36 @@ def test_tracked_files_never_returns_anything_under_data(monkeypatch):
     provenance sidecars there. Nothing is lost by excluding it: the workflow
     step before this one already rejects any tracked file under `data/` that
     is not one of those, so a plan archive hidden there fails a step earlier.
+
+    In a throwaway repository, never the real one. The first version of this
+    test proved non-vacuousness by running `git ls-files -- data/` against
+    the checkout, which enumerated every protected path and reproduced the
+    exact violation the fix had just removed. A synthetic repo gives the
+    stronger guarantee -- files under `data/` provably exist and are
+    provably excluded -- while touching nothing real.
     """
-    monkeypatch.chdir(SCRIPT.parents[1])
+    repo = tmp_path / "repo"
+    (repo / "data" / "external").mkdir(parents=True)
+    (repo / "deploy").mkdir()
+    (repo / "data" / "secret.parquet").write_bytes(b"pretend citizen data")
+    (repo / "data" / "external" / "thing.json.dvc").write_text("outs: []\n")
+    (repo / "deploy" / "main.tf").write_text("# infra\n")
+    (repo / "pyproject.toml").write_text("[project]\nname='x'\n")
+    for args in (["init", "-q"], ["add", "-A"],
+                 ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "seed"]):
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+    monkeypatch.chdir(repo)
     files = tracked_files()
+
     offenders = [f for f in files if str(f).startswith("data/")]
-    assert offenders == [], f"scan would open protected paths: {offenders[:5]}"
-    # Not vacuous: the repository does track files under data/.
-    tracked_under_data = subprocess.run(
-        ["git", "ls-files", "--", "data/"],
-        cwd=SCRIPT.parents[1], capture_output=True, text=True, check=True,
-    ).stdout.split()
-    assert tracked_under_data, "fixture assumption broken: nothing tracked under data/"
+    assert offenders == [], f"scan would open protected paths: {offenders}"
+    # Non-vacuous: those files really are tracked in this repo -- asserted by
+    # construction above, not by asking git about a protected directory.
+    assert (repo / "data" / "secret.parquet").is_file()
     # And the rest of the tree is still scanned.
     assert Path("pyproject.toml") in files
+    assert Path("deploy/main.tf") in files
 
 
 def test_tracked_files_reads_the_git_index(monkeypatch):
