@@ -2902,9 +2902,13 @@ branches of \eqref{eq:asrun-e} are reachable for an arbitrary call to \texttt{sc
 as-run $\hat e_{\hat\delta(X)}(X)$.
 
 What the clip can still do on that path is truncate a share that is small but genuine: a supported
-action in a large cell can sit below $0.01$, and the floor then caps its residual multiplier at
-100. That is a bias-variance trade on a supported row, which is a different and milder thing than
-carrying an unsupported one. In neither form is the clip evidence for positivity --- the
+action in a large cell can sit below $0.01$, and the floor then bounds the inverse-propensity
+factor at 100. That is only one component of the coefficient \texttt{dr\_scores} applies. The
+residual multiplier is $R_i/(\hat e\,\hat G)$, and the $0.05$ floor on $\hat G$ in
+\eqref{eq:asrun-g} bounds the other factor at 20, so the composite reaches $2{,}000$ before the
+H\'ajek normalisation divides by the mean weight. The clip is a bias-variance trade on a supported
+row, which is a different and milder thing than carrying an unsupported one, but the number that
+bounds it is 2,000 rather than 100. In neither form is the clip evidence for positivity --- the
 restriction above is what supplies it, for the cells that survive.
 
 \subsubsection*{Administrative censoring $\hat G$}
