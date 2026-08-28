@@ -2191,3 +2191,98 @@ class TestCorpusScaleMemory:
         )
         with pytest.raises(ValueError, match="carries 4 band"):
             di._candidate_buckets([row], 16)
+
+
+class TestBandBucketsAreBuiltOneBandAtATime:
+    """Codex P1 on #325, after the raw signatures were already dropped.
+
+    Dropping the 128-element arrays fixed the rows; the bucket map was the
+    larger half and survived it. Building all sixteen bands before filtering
+    singletons costs 16N dictionary entries at peak -- ~21.9M for the corpus
+    -- and nearly all of them are singletons thrown away immediately: a
+    signature colliding with nothing still occupies sixteen.
+    """
+
+    @staticmethod
+    def _rows(n, num_bands, seed=11):
+        import random
+
+        from janasunani.pipeline.dedup_index import _BandedSignature
+
+        rng = random.Random(seed)
+        return [
+            _BandedSignature(
+                ticket_no=f"CMO2024{i:07d}",
+                district=f"D{i % 7}",
+                created_year=2024,
+                block_key=f"D{i % 7}:latin:{i % 5}",
+                identity_key_mobile=(f"m{i // 3}" if i % 3 == 0 else None),
+                identity_key_email=None,
+                # 2% of bands collide, so real buckets exist to be found.
+                bands=tuple(
+                    rng.getrandbits(63) if rng.random() > 0.02 else rng.randrange(40)
+                    for _ in range(num_bands)
+                ),
+            )
+            for i in range(n)
+        ]
+
+    @staticmethod
+    def _all_at_once(rows, num_bands):
+        """The previous implementation, kept here as the thing to match."""
+        from collections import defaultdict
+
+        band = defaultdict(list)
+        for r in rows:
+            for bi, bh in enumerate(r.bands):
+                band[(r.block_key, bi, bh)].append(r.ticket_no)
+        ident = defaultdict(list)
+        for r in rows:
+            for kind, k in (
+                ("mobile", r.identity_key_mobile),
+                ("email", r.identity_key_email),
+            ):
+                if k is not None:
+                    ident[(kind, k)].append(r.ticket_no)
+        return [
+            (b, m) for (b, _i, _h), m in band.items() if len(set(m)) > 1
+        ] + [(None, m) for m in ident.values() if len(set(m)) > 1]
+
+    @staticmethod
+    def _norm(buckets):
+        return sorted((b, tuple(sorted(m))) for b, m in buckets)
+
+    def test_the_buckets_are_exactly_what_the_all_at_once_build_produced(self):
+        """Banding is independent per band index, so a bucket can never span
+        two of them -- which is why the split is safe. Asserted rather than
+        argued, because a wrong bucket here silently changes group membership.
+        """
+        from janasunani.pipeline import dedup_index as di
+
+        rows = self._rows(3000, 8)
+        got = di._candidate_buckets(rows, 8)
+        assert self._norm(got) == self._norm(self._all_at_once(rows, 8))
+        assert got, "fixture must produce real (non-singleton) buckets"
+
+    def test_peak_memory_is_a_fraction_of_the_all_at_once_build(self):
+        import tracemalloc
+
+        from janasunani.pipeline import dedup_index as di
+
+        rows = self._rows(20_000, 16)
+
+        def peak(fn):
+            tracemalloc.start()
+            fn(rows, 16)
+            _, pk = tracemalloc.get_traced_memory()
+            tracemalloc.stop()
+            return pk
+
+        before = peak(self._all_at_once)
+        after = peak(di._candidate_buckets)
+        # Measured ~17x on a corpus-shaped fixture. Asserted well below that
+        # so the test pins the property, not the machine it ran on.
+        assert after * 4 < before, (
+            f"peak {after / 2**20:.1f} MiB vs {before / 2**20:.1f} MiB — "
+            "band buckets are being retained across bands again"
+        )

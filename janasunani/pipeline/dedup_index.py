@@ -1227,11 +1227,36 @@ def _candidate_buckets(rows, num_bands: int) -> list[tuple[Optional[str], list[s
     the all-pairs invariant from #101. This function is the streaming path
     that production uses.
     """
-    band_buckets: dict[tuple[str, int, int], list[str]] = defaultdict(list)
-    for row, bands in _banded(rows, num_bands):
-        for band_index, band_hash in enumerate(bands):
-            band_buckets[(row.block_key, band_index, band_hash)].append(row.ticket_no)
+    # One band at a time, not all sixteen at once.
+    #
+    # Building the full map first and filtering singletons afterwards costs
+    # 16N dictionary entries at peak -- about 21.9M for the corpus, measured
+    # at ~5.2 GiB, which dwarfs the 1.05 GiB the banded rows themselves take
+    # and was enough to exhaust an 8 GiB box on its own. Almost all of those
+    # entries are singletons that are then thrown away: a signature that
+    # collides with nothing still occupies sixteen of them.
+    #
+    # Banding is independent per band index, so a bucket can never span two
+    # of them. Handling one band per pass therefore yields exactly the same
+    # buckets while holding only N entries at a time -- a sixteenth of the
+    # peak -- and the singletons are discarded at the end of each pass
+    # instead of at the end of everything. The extra passes are over a list
+    # already in memory and cost no I/O.
+    out: list[tuple[Optional[str], list[str]]] = []
+    for band_index in range(num_bands):
+        band_buckets: dict[tuple[str, int], list[str]] = defaultdict(list)
+        for row, bands in _banded(rows, num_bands):
+            band_buckets[(row.block_key, bands[band_index])].append(row.ticket_no)
+        out.extend(
+            (block_key, members)
+            for (block_key, _band_hash), members in band_buckets.items()
+            if len(set(members)) > 1
+        )
+        del band_buckets
 
+    # Identity buckets are keyed by the citizen, not by a band, so there is
+    # no equivalent split: two dicts over the rows that carry a key at all,
+    # measured at ~0.38 GiB for the corpus.
     identity_buckets: dict[tuple[str, str], list[str]] = defaultdict(list)
     for row in rows:
         for kind, key in (
@@ -1241,11 +1266,10 @@ def _candidate_buckets(rows, num_bands: int) -> list[tuple[Optional[str], list[s
             if key is not None:
                 identity_buckets[(kind, key)].append(row.ticket_no)
 
-    return [
-        (block_key, members)
-        for (block_key, _band_index, _band_hash), members in band_buckets.items()
-        if len(set(members)) > 1
-    ] + [(None, members) for members in identity_buckets.values() if len(set(members)) > 1]
+    out.extend(
+        (None, members) for members in identity_buckets.values() if len(set(members)) > 1
+    )
+    return out
 
 
 def _find(parent: dict[str, str], item: str) -> str:
