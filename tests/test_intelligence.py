@@ -29,6 +29,7 @@ _WORKLOAD_FIELDS = (
     "duplicate_adjustment",
     "source_name",
     "source_snapshot_id",
+    "grouping_scope_snapshot_id",
 )
 _SPIKE_FIELDS = (
     "slice_district",
@@ -39,6 +40,7 @@ _SPIKE_FIELDS = (
     "distinct_citizens",
     "source_name",
     "source_snapshot_id",
+    "grouping_scope_snapshot_id",
     "interpretation",
 )
 _CLOSURE_FIELDS = (
@@ -57,6 +59,10 @@ _CLOSURE_FIELDS = (
 
 DEDUP_SOURCE = "oltp:complaints+grievance_redactions"
 FAKE_DIGEST = "sha256:" + "a" * 64
+# #317. The grouping scope is a separate digest: a corpus-wide run depends on
+# records outside the slice, so equal source digests no longer imply the same
+# group assignment.
+FAKE_SCOPE = "sha256:" + "c" * 64
 OTHER_DIGEST = "sha256:" + "b" * 64
 
 
@@ -82,7 +88,7 @@ def _write_closure(tmp_path: Path):
     return path
 
 
-def _write_workload(tmp_path: Path, digest: str = FAKE_DIGEST, extra: tuple[str, ...] = (), overrides: dict | None = None):
+def _write_workload(tmp_path: Path, digest: str = FAKE_DIGEST, scope: str = FAKE_SCOPE, extra: tuple[str, ...] = (), overrides: dict | None = None):
     row = {
         "slice_district": "Sambalpur",
         "slice_category": "all",
@@ -92,6 +98,7 @@ def _write_workload(tmp_path: Path, digest: str = FAKE_DIGEST, extra: tuple[str,
         "duplicate_adjustment": "3",
         "source_name": DEDUP_SOURCE,
         "source_snapshot_id": digest,
+        "grouping_scope_snapshot_id": scope,
     }
     if overrides:
         row.update(overrides)
@@ -107,7 +114,7 @@ def _write_workload(tmp_path: Path, digest: str = FAKE_DIGEST, extra: tuple[str,
     return path
 
 
-def _write_spike(tmp_path: Path, digest: str = FAKE_DIGEST, extra: tuple[str, ...] = (), overrides: dict | None = None):
+def _write_spike(tmp_path: Path, digest: str = FAKE_DIGEST, scope: str = FAKE_SCOPE, extra: tuple[str, ...] = (), overrides: dict | None = None):
     row = {
         "slice_district": "Sambalpur",
         "slice_category": "Water",
@@ -117,6 +124,7 @@ def _write_spike(tmp_path: Path, digest: str = FAKE_DIGEST, extra: tuple[str, ..
         "distinct_citizens": "15",
         "source_name": DEDUP_SOURCE,
         "source_snapshot_id": digest,
+        "grouping_scope_snapshot_id": scope,
         "interpretation": "20 filings, 5 problems, 15 citizens. Lift 3.0x vs trailing mean.",
     }
     if overrides:
@@ -265,3 +273,30 @@ def test_closure_still_served_when_workload_spike_missing(tmp_path):
     assert dash.closure.provenance.state == "recorded"
     assert dash.workload.provenance.state == "unavailable"
     assert dash.spike.provenance.state == "unavailable"
+
+
+def test_divergent_grouping_scopes_are_refused_even_when_source_digests_agree(tmp_path):
+    """#317. Corpus-wide grouping depends on records outside a slice, so two
+    runs can agree on the source digest and still carry different group
+    assignments. Serving must refuse that pair, or the mixed-output guard is
+    only checking the half of the provenance that cannot move."""
+    _write_closure(tmp_path)
+    _write_workload(tmp_path, scope="sha256:" + "c" * 64)
+    _write_spike(tmp_path, scope="sha256:" + "d" * 64)
+
+    dash = ArtifactSupervisorProvider(tmp_path).dashboard()
+
+    assert dash.workload.provenance.state == "unavailable"
+    assert dash.spike.provenance.state == "unavailable"
+
+
+def test_matching_scopes_and_digests_still_serve(tmp_path):
+    """The negative case above must not be passing for an unrelated reason."""
+    _write_closure(tmp_path)
+    _write_workload(tmp_path)
+    _write_spike(tmp_path)
+
+    dash = ArtifactSupervisorProvider(tmp_path).dashboard()
+
+    assert dash.workload.provenance.state == "recorded"
+    assert dash.spike.provenance.state == "recorded"

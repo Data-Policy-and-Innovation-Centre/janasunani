@@ -10,8 +10,10 @@ result — that is what this module does, one stage after
 
 Mirrors `redact_grievance.py`'s shape on purpose (argparse entrypoint,
 `def main() -> None` wrapping `asyncio.run`, its own `create_async_engine`,
-`--district`/`--year` with no defaults, batched and resumable): they are the
-same kind of job, one stage apart, over the same slice.
+scope flags with no defaults, batched and resumable): they are the same kind
+of job, one stage apart, over the same records. It diverges in one place:
+this runner also accepts `--all`, because dedup is the only stage whose
+answer depends on which *other* records are in scope.
 
 **Built from `grievance_redactions.grievance_redacted` only.** Never from
 `complaints.grievance` — that column has never met Presidio, and indexing it
@@ -34,7 +36,9 @@ created_on, petitioner_mobile/email); it never selects `complaints.grievance`.
    redacted text and never feeds `shingles()` (dedup.py module docstring
    point 3; see `identity_key()`'s contract). Writes `dedup_signatures`.
 2. `_group_duplicates()` — not batched. It loads every signature already
-   written for the slice (tens of thousands of rows, comfortably in memory),
+   written for the scope (tens of thousands of rows for a district-year,
+   comfortably in memory; 1.37M for `--all`, where that claim has not been
+   verified and #317 tracks measuring it),
    buckets by `(block_key, lsh band)` to find text candidates, adds
    identity-key equality as a second, unblocked source of candidates
    (same-citizen resubmission does not need to fall in the same time
@@ -57,6 +61,18 @@ created_on, petitioner_mobile/email); it never selects `complaints.grievance`.
    duplicate-adjusted analytics consumer.  That consumer must assert the
    match before aggregation; a stale/incomplete lake or a mixture of group
    runs is an error, not a number to publish.
+
+   The digest is per district-year, never per run, so a corpus-wide run
+   still stamps each row with the digest of the slice that row belongs to
+   and slice-scoped consumers keep verifying (`_source_snapshots_by_slice`).
+
+   **One consequence of corpus grouping, for whoever reads these counts.**
+   A group whose members straddle two district-years is counted as a
+   distinct problem in *both* when each is aggregated on its own. That is
+   the right answer per slice — each really did receive a filing about that
+   problem — but it means per-slice distinct-problem counts no longer sum
+   to the corpus figure. Report the corpus number from a corpus
+   aggregation, not by adding slices up.
 
    **Above `REPRESENTATIVE_COMPARISON_CAP` members, a bucket trades recall
    for time (#158).** A campaign-heavy district-year produces buckets in the
@@ -83,10 +99,25 @@ created_on, petitioner_mobile/email); it never selects `complaints.grievance`.
 district-year slice runs to tens of thousands of rows — 55,544 for
 Sambalpur 2024, ~1.5 billion unordered pairs if compared directly. Each
 signature is assigned a `block_key` of `district:script:window_index`
-(`window_index` is `(created_on - Jan 1 of --year).days // --window-days`,
+(`window_index` is `(created_on - DEDUP_WINDOW_EPOCH).days // --window-days`,
 `None`/"undated" for complaints with no `created_on`), and LSH candidate
 generation only buckets within one block. Only pairs that land in the same
-block can ever become candidates.
+block can ever become candidates. The epoch is a fixed absolute date, not
+the run's own scope, so a record's block key is a property of the record;
+it is part of `_index_version` for the same reason the salt marker is.
+
+Because the block key still partitions by district and window, this bounds
+work the same way at 1.37M rows as it does at 55,544 — a corpus-wide run
+does not create one giant bucket.
+
+**Scope is optional, and identity matching is why it matters.** `--slice`,
+`--district` and `--year` narrow a run; `--all` indexes everything. Text
+candidates are blocked, so per-slice runs find the same ones a corpus run
+would. Identity candidates (mobile/email) are deliberately *not* blocked,
+so a same-citizen resubmission that crosses a district or year boundary is
+only visible to a run whose scope contains both sides of it. Looping over
+every district-year finds every text duplicate and no cross-slice identity
+duplicate at all.
 
 **Cross-script recall is explicitly unsupported.** `script` (`"odia"` if the
 redacted text contains any Odia-script codepoint, else `"latin"`) is part of
@@ -145,13 +176,14 @@ import argparse
 import asyncio
 import math
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 import hashlib
 from itertools import combinations
 from typing import Optional
 
 from loguru import logger
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from janasunani.config import settings
@@ -166,6 +198,7 @@ from janasunani.pipeline.dedup import (
     lsh_bands,
     minhash_signature,
     source_record_digest,
+    grouping_scope_id,
     source_snapshot_id_from_record_digests,
     shingles,
 )
@@ -196,6 +229,25 @@ DEFAULT_WINDOW_DAYS = 30
 # finite value in [0, 1] -- build_dedup_index() enforces this before
 # opening a DB connection, since this backfill persists what it computes.
 DEFAULT_DUPLICATE_THRESHOLD = 0.5
+
+# Absolute origin for `_window_index`. Time windows have to be a property of
+# the *record*, not of the run that indexed it, or the same complaint lands in
+# a different block depending on what scope it was indexed under and the two
+# never become candidates.
+#
+# This used to be `date(year, 1, 1)` -- Jan 1 of the slice's --year -- which is
+# well defined only while every run is one district-year. It is not defined at
+# all for a corpus-wide run, and worse, it silently made block keys
+# run-dependent: `_index_version` never carried the epoch, so signatures built
+# under different origins were stamped as mutually current and grouping mixed
+# them with no error. Same failure class the salt marker exists to catch
+# (#136). The epoch is now in the version stamp, so anything built under the
+# old per-year origin is detected as stale and rebuilt.
+#
+# The specific date is arbitrary and only has to be stable and earlier than any
+# complaint in the corpus. It must never be "tidied" -- changing it rewrites
+# every block key, which is why it is versioned rather than merely fixed.
+DEDUP_WINDOW_EPOCH = date(2000, 1, 1)
 
 # Bucket size at which `_verify_bucket` switches from exhaustive all-pairs
 # comparison to fixed-anchor comparison (#158; see the module
@@ -246,7 +298,8 @@ def _window_index(
     created_on: Optional[datetime], epoch: date, window_days: int
 ) -> Optional[int]:
     """Bucket ``created_on`` into a time-window index relative to ``epoch``
-    (Jan 1 of the slice's ``--year``). ``None`` for a missing timestamp —
+    (`DEDUP_WINDOW_EPOCH`, a fixed absolute date — never the run's own scope;
+    see that constant for why). ``None`` for a missing timestamp —
     deliberately not bucket 0, so an undated row does not silently
     block-match every row that happens to fall in the first window; see
     `_block_key`'s "undated" label."""
@@ -302,6 +355,7 @@ def _index_version(
     base = (
         f"shingle_size={DEFAULT_SHINGLE_SIZE} num_hashes={DEFAULT_NUM_HASHES} "
         f"num_bands={DEFAULT_NUM_BANDS} window_days={window_days} "
+        f"epoch={DEDUP_WINDOW_EPOCH.isoformat()} "
         f"threshold={threshold} salt={_salt_marker(salt)}"
     )
     grouping_values = (grouping_algorithm, representative_cap, anchor_count)
@@ -318,30 +372,76 @@ def _index_version(
 # --- stage 1: signatures ---------------------------------------------------
 
 
-async def _count_signature_slice(conn, district: str, year: int) -> tuple[int, int]:
+def _indexable_filters(model) -> list:
+    """Require the dimensions a signature row cannot be written without.
+
+    ``Complaint.district`` and ``Complaint.created_year`` are nullable, while
+    ``DedupSignature`` and ``DedupGroup`` declare both NOT NULL. A scoped run
+    never saw such a record, because SQL ``NULL = 'Sambalpur'`` is NULL and
+    the row was silently filtered out by the scope predicate itself. Removing
+    that predicate for a corpus-wide run removes the accidental filter with
+    it, and the run dies on an integrity error partway through the backfill.
+
+    Stated explicitly so the exclusion is a decision rather than a side effect
+    of how the scope happened to be expressed, and applied on every path so a
+    scoped and an unscoped run agree on which records are indexable.
+    """
+    return [model.district.isnot(None), model.created_year.isnot(None)]
+
+
+def _slice_filters(model, district: Optional[str], year: Optional[int]) -> list:
+    """Scope predicates for ``model``, empty when the scope is unbounded.
+
+    ``None`` means "every district" / "every year", so a corpus-wide run is
+    the absence of a predicate rather than a wildcard value. Both are
+    independently optional: ``--district`` with no ``--year`` is a whole
+    district across all years, which the identity path in particular needs,
+    since a resubmission can cross a year boundary.
+
+    ``model`` is `Complaint` or `DedupSignature` -- both carry ``district``
+    and ``created_year``, and the caller picks whichever table the query is
+    already filtering on.
+    """
+    filters = []
+    if district is not None:
+        filters.append(model.district == district)
+    if year is not None:
+        filters.append(model.created_year == year)
+    return filters
+
+
+def _scope_label(district: Optional[str], year: Optional[int]) -> str:
+    """Human-readable run scope for logs and errors."""
+    if district is None and year is None:
+        return "the whole corpus"
+    return f"{district or 'all districts'}/{year or 'all years'}"
+
+
+async def _count_signature_slice(
+    conn, district: Optional[str], year: Optional[int]
+) -> tuple[int, int]:
     """(redacted complaints in the slice, already indexed)."""
     total = await conn.scalar(
         select(func.count())
         .select_from(GrievanceRedaction)
         .join(Complaint, Complaint.ticket_no == GrievanceRedaction.ticket_no)
         .where(
-            Complaint.district == district,
-            Complaint.created_year == year,
+            *_slice_filters(Complaint, district, year),
+            *_indexable_filters(Complaint),
             GrievanceRedaction.grievance_redacted.isnot(None),
         )
     )
     done = await conn.scalar(
         select(func.count())
         .select_from(DedupSignature)
-        .where(
-            DedupSignature.district == district,
-            DedupSignature.created_year == year,
-        )
+        .where(*_slice_filters(DedupSignature, district, year))
     )
     return int(total or 0), int(done or 0)
 
 
-async def _count_stale_signatures(conn, district: str, year: int, version: str) -> int:
+async def _count_stale_signatures(
+    conn, district: Optional[str], year: Optional[int], version: str
+) -> int:
     """Signatures produced under different parameters than the current ones.
 
     Reported by every run whether or not it acts on them, so a salt rotation
@@ -354,8 +454,7 @@ async def _count_stale_signatures(conn, district: str, year: int, version: str) 
             .select_from(DedupSignature)
             .join(Complaint, Complaint.ticket_no == DedupSignature.ticket_no)
             .where(
-                Complaint.district == district,
-                Complaint.created_year == year,
+                *_slice_filters(Complaint, district, year),
                 DedupSignature.index_version != version,
             )
         )
@@ -364,7 +463,11 @@ async def _count_stale_signatures(conn, district: str, year: int, version: str) 
 
 
 async def _load_pending_signature_batch(
-    conn, district: str, year: int, limit: int, version: str | None = None
+    conn,
+    district: Optional[str],
+    year: Optional[int],
+    limit: int,
+    version: str | None = None,
 ):
     """Redacted complaints in the slice with no current `dedup_signatures` row.
 
@@ -400,8 +503,8 @@ async def _load_pending_signature_batch(
         )
         .join(Complaint, Complaint.ticket_no == GrievanceRedaction.ticket_no)
         .where(
-            Complaint.district == district,
-            Complaint.created_year == year,
+            *_slice_filters(Complaint, district, year),
+            *_indexable_filters(Complaint),
             GrievanceRedaction.grievance_redacted.isnot(None),
             ~done.exists(),
         )
@@ -484,7 +587,7 @@ def _signature_rows_for_source_batch(
     return rows
 
 
-async def _source_digest_mismatches(conn, district: str, year: int):
+async def _source_digest_mismatches(conn, district: Optional[str], year: Optional[int]):
     """Current source records whose existing signature digest is no longer true.
 
     This is deliberately a source read before grouping. Candidate generation
@@ -492,6 +595,19 @@ async def _source_digest_mismatches(conn, district: str, year: int):
     current redacted text, so allowing these two inputs to differ would create
     an unprovable mixed run. Missing legacy digests are handled separately as
     pending signature rows; non-NULL disagreement requires --refresh-stale.
+
+    Returns ``(ticket_no, district, created_year)`` triples -- **identity
+    only, never the text**. Every caller of this needs a count, a membership
+    check, or a ticket list; the redacted text is needed only to rebuild a
+    signature, and `_refresh_mismatched_signatures` re-reads it one bounded
+    batch at a time.
+
+    That is not a tidiness point. The documented run after a corpus redaction
+    is `--all --refresh-stale`, where every one of ~1.37M signatures mismatches
+    at once. Carrying each row's grievance text through this scan would hold
+    the entire redacted corpus in memory before a single signature was
+    rebuilt. The query is streamed for the same reason: the result set is the
+    whole corpus even when the mismatch list is short.
     """
     stmt = (
         select(
@@ -507,16 +623,13 @@ async def _source_digest_mismatches(conn, district: str, year: int):
         .select_from(DedupSignature)
         .outerjoin(Complaint, Complaint.ticket_no == DedupSignature.ticket_no)
         .outerjoin(GrievanceRedaction, GrievanceRedaction.ticket_no == DedupSignature.ticket_no)
-        .where(
-            DedupSignature.district == district,
-            DedupSignature.created_year == year,
-        )
+        .where(*_slice_filters(DedupSignature, district, year))
         .order_by(DedupSignature.ticket_no)
     )
-    result = await conn.execute(stmt)
-    mismatches = []
-    missing_source = []
-    for (
+    mismatches: list[tuple[str, Optional[str], Optional[int]]] = []
+    missing_source: list[str] = []
+    result = await conn.stream(stmt)
+    async for (
         ticket_no,
         stored_digest,
         row_district,
@@ -535,10 +648,36 @@ async def _source_digest_mismatches(conn, district: str, year: int):
             )
         )
         if stored_digest is not None and stored_digest != current:
-            mismatches.append(
-                (ticket_no, redacted_text, row_district, row_year, created_on, mobile, email)
-            )
+            mismatches.append((ticket_no, row_district, row_year))
     return mismatches, missing_source
+
+
+async def _load_source_rows_for_tickets(conn, ticket_nos: list[str]):
+    """Full source rows for exactly these tickets, in the batch shape
+    `_signature_rows_for_source_batch` consumes.
+
+    The other half of keeping `_source_digest_mismatches` text-free: the
+    grievance text comes back only for the batch about to be rebuilt, and is
+    released with it.
+    """
+    stmt = (
+        select(
+            DedupSignature.ticket_no,
+            GrievanceRedaction.grievance_redacted,
+            Complaint.district,
+            Complaint.created_year,
+            Complaint.created_on,
+            Complaint.petitioner_mobile,
+            Complaint.petitioner_email,
+        )
+        .select_from(DedupSignature)
+        .outerjoin(Complaint, Complaint.ticket_no == DedupSignature.ticket_no)
+        .outerjoin(GrievanceRedaction, GrievanceRedaction.ticket_no == DedupSignature.ticket_no)
+        .where(DedupSignature.ticket_no.in_(ticket_nos))
+        .order_by(DedupSignature.ticket_no)
+    )
+    result = await conn.execute(stmt)
+    return result.all()
 
 
 def _source_digest_mismatch_error(count: int) -> ValueError:
@@ -565,15 +704,35 @@ def _source_membership_changed_error(count: int) -> ValueError:
     )
 
 
+def _moved_sources(source_mismatches, district: Optional[str], year: Optional[int]) -> list:
+    """Mismatched sources that left the scope their signature was indexed under.
+
+    Only a *bound* dimension can be left. For a corpus-wide run both are
+    ``None`` and nothing can move out of the corpus, so this compares against
+    the dimensions actually pinned rather than against ``None`` -- otherwise
+    every mismatch reads as moved and the run fails with the wrong error.
+
+    Deliberately one function rather than a copy at each call site: this
+    predicate is evaluated both during signature refresh and again before
+    groups are persisted, and the two drifting apart is exactly how a scope
+    fix gets applied to one path and not the other.
+    """
+    return [
+        row
+        for row in source_mismatches
+        # (ticket_no, district, created_year) -- see _source_digest_mismatches.
+        if (district is not None and row[1] != district)
+        or (year is not None and row[2] != year)
+    ]
+
+
 def _raise_if_source_is_not_current(
-    source_mismatches, missing_source: list[str], district: str, year: int
+    source_mismatches, missing_source: list[str], district: Optional[str], year: Optional[int]
 ) -> None:
     """Fail grouping before a stored signature and current text can diverge."""
     if missing_source:
         raise _missing_source_error(missing_source)
-    moved_sources = [
-        row for row in source_mismatches if row[2] != district or row[3] != year
-    ]
+    moved_sources = _moved_sources(source_mismatches, district, year)
     if moved_sources:
         raise _source_membership_changed_error(len(moved_sources))
     if source_mismatches:
@@ -582,8 +741,8 @@ def _raise_if_source_is_not_current(
 
 async def _index_signatures(
     engine: AsyncEngine,
-    district: str,
-    year: int,
+    district: Optional[str],
+    year: Optional[int],
     salt: str,
     window_days: int,
     threshold: float,
@@ -591,7 +750,7 @@ async def _index_signatures(
     refresh_stale: bool = False,
 ) -> dict[str, int]:
     version = _index_version(window_days, threshold, salt)
-    epoch = date(year, 1, 1)
+    epoch = DEDUP_WINDOW_EPOCH
     processed = 0
     refreshed_tickets: set[str] = set()
 
@@ -602,9 +761,8 @@ async def _index_signatures(
             conn, district, year
         )
     logger.info(
-        "slice {}/{}: {} redacted complaints, {} already indexed",
-        district,
-        year,
+        "{}: {} redacted complaints, {} already indexed",
+        _scope_label(district, year),
         total,
         already,
     )
@@ -621,9 +779,7 @@ async def _index_signatures(
         )
     if missing_source:
         raise _missing_source_error(missing_source)
-    moved_sources = [
-        row for row in source_mismatches if row[2] != district or row[3] != year
-    ]
+    moved_sources = _moved_sources(source_mismatches, district, year)
     if moved_sources:
         raise _source_membership_changed_error(len(moved_sources))
     if source_mismatches and not refresh_stale:
@@ -640,20 +796,42 @@ async def _index_signatures(
             len(source_mismatches),
         )
         now = datetime.now(timezone.utc).replace(tzinfo=None)
-        rows = _signature_rows_for_source_batch(
-            source_mismatches,
-            salt=salt,
-            epoch=epoch,
-            window_days=window_days,
-            version=version,
-            now=now,
-        )
-        async with engine.begin() as conn:
-            await conn.execute(
-                _dialect_upsert(DedupSignature, conn.dialect.name, rows, "ticket_no")
+        # Batched on the same BATCH_SIZE as the pending-signature loop below,
+        # and for the same reason. The documented post-redaction run is
+        # `--all --refresh-stale`, where every one of ~1.37M signatures
+        # mismatches: one pass would fetch the whole redacted corpus, build
+        # 1.37M replacement rows beside it, and hand the lot to a single
+        # multi-row upsert -- millions of bind parameters, past both the
+        # memory envelope and the statement limits, before this loop's
+        # existing batching was ever reached.
+        #
+        # Each batch is its own transaction, so an interrupted refresh leaves
+        # the batches it completed durably rebuilt. That is safe because the
+        # rebuilt rows carry the current digest: a rerun simply finds fewer
+        # mismatches, and the not-yet-rebuilt ones are still found by the scan.
+        mismatched_tickets = [row[0] for row in source_mismatches]
+        for start in range(0, len(mismatched_tickets), BATCH_SIZE):
+            chunk = mismatched_tickets[start : start + BATCH_SIZE]
+            async with engine.begin() as conn:
+                batch = await _load_source_rows_for_tickets(conn, chunk)
+                rows = _signature_rows_for_source_batch(
+                    batch,
+                    salt=salt,
+                    epoch=epoch,
+                    window_days=window_days,
+                    version=version,
+                    now=now,
+                )
+                await conn.execute(
+                    _dialect_upsert(DedupSignature, conn.dialect.name, rows, "ticket_no")
+                )
+            refreshed_tickets.update(chunk)
+            processed += len(rows)
+            logger.info(
+                "source refresh: {}/{} signature(s) rebuilt",
+                min(start + BATCH_SIZE, len(mismatched_tickets)),
+                len(mismatched_tickets),
             )
-        refreshed_tickets.update(row[0] for row in source_mismatches)
-        processed += len(rows)
 
     while True:
         remaining = None if limit is None else limit - processed
@@ -725,23 +903,132 @@ async def _index_signatures(
 # --- stage 2: grouping ------------------------------------------------------
 
 
-async def _load_slice_signatures(conn, district: str, year: int):
+@dataclass(frozen=True, slots=True)
+class _BandedSignature:
+    """One signature row with its bands precomputed and the signature dropped.
+
+    The 128-element MinHash array is only ever used to compute band hashes:
+    exact verification re-reads the redacted text (`_load_redacted_text`) and
+    scores true Jaccard on shingles, never the sketch. So the array has no
+    reason to outlive banding, and at corpus scale it is the whole memory
+    problem -- 1.37M rows x 128 Python ints is roughly 4.6 GiB for the
+    integers plus about 1.3 GiB for the list objects holding them, before
+    SQLAlchemy rows, strings, buckets and union-find state. That does not fit
+    the 8 GiB box.
+
+    Sixteen band hashes in a tuple is about an eighth of that, and the rest of
+    the row is small. `slots=True` because a per-row `__dict__` at this count
+    is itself hundreds of megabytes.
+    """
+
+    ticket_no: str
+    district: str
+    created_year: int
+    block_key: str
+    identity_key_mobile: Optional[str]
+    identity_key_email: Optional[str]
+    #: ``None`` where `minhash_signature` abstained -- nothing to band.
+    bands: Optional[tuple[int, ...]]
+
+
+def _band_signature_row(row, num_bands: int) -> _BandedSignature:
+    """Convert a DB row to its banded form, discarding the raw signature."""
+    return _BandedSignature(
+        ticket_no=row.ticket_no,
+        district=row.district,
+        created_year=row.created_year,
+        block_key=row.block_key,
+        identity_key_mobile=row.identity_key_mobile,
+        identity_key_email=row.identity_key_email,
+        bands=(
+            None
+            if row.signature is None
+            else tuple(lsh_bands(tuple(row.signature), num_bands=num_bands))
+        ),
+    )
+
+
+async def _load_slice_signatures(
+    conn, district: Optional[str], year: Optional[int], num_bands: int = DEFAULT_NUM_BANDS
+) -> list[_BandedSignature]:
+    """Stream the slice's signatures, keeping only what grouping needs.
+
+    Streamed rather than `result.all()` because `--all` selects the whole
+    corpus. Materialising every ORM-decoded row first and converting after
+    would peak at the same size the conversion exists to avoid; the driver
+    hands back a bounded window and each signature is banded and released as
+    it arrives.
+    """
     stmt = select(
         DedupSignature.ticket_no,
+        DedupSignature.district,
+        DedupSignature.created_year,
         DedupSignature.block_key,
         DedupSignature.signature,
         DedupSignature.identity_key_mobile,
         DedupSignature.identity_key_email,
-    ).where(
-        DedupSignature.district == district,
-        DedupSignature.created_year == year,
+    ).where(*_slice_filters(DedupSignature, district, year))
+
+    rows: list[_BandedSignature] = []
+    result = await conn.stream(stmt)
+    async for row in result:
+        rows.append(_band_signature_row(row, num_bands))
+    return rows
+
+
+async def _raise_if_scope_would_split_existing_groups(
+    conn, district: Optional[str], year: Optional[int]
+) -> None:
+    """Refuse a scoped run that would tear apart a wider existing group.
+
+    Grouping recomputes whole and upserts only the tickets it loaded. That is
+    correct while every group is contained in the scope that built it, which
+    was guaranteed while the only possible scope was one district-year.
+
+    Once ``--all`` has unioned a same-citizen resubmission across a district
+    or year boundary, it stops being guaranteed. A later scoped run loads one
+    side of that group, cannot see the other, recomputes its half as a
+    singleton (or a smaller local group) and upserts only those rows. The
+    other half keeps the old ``duplicate_group_id`` and a ``group_size`` that
+    no longer matches how many rows carry it. Nothing errors, and the
+    duplicate-adjusted counts downstream are quietly wrong in both directions.
+
+    So this fails closed instead, in the same spirit as the source-currency
+    check above: the operator is told to widen the scope rather than being
+    allowed to half-rebuild. An unbounded run can never trip it, because
+    nothing lies outside the corpus.
+    """
+    if district is None and year is None:
+        return
+
+    in_scope = select(DedupGroup.duplicate_group_id).where(
+        *_slice_filters(DedupGroup, district, year)
     )
-    result = await conn.execute(stmt)
-    return result.all()
+    # "Outside the scope" is the negation of the whole conjunction, so the
+    # negated predicates are OR-ed. AND-ing them would only find rows outside
+    # *every* bound dimension at once and miss, for example, the same district
+    # in a different year -- which is the common case.
+    outside = or_(*[~predicate for predicate in _slice_filters(DedupGroup, district, year)])
+    straddling = await conn.scalar(
+        select(func.count(func.distinct(DedupGroup.duplicate_group_id))).where(
+            DedupGroup.duplicate_group_id.in_(in_scope),
+            outside,
+        )
+    )
+    if straddling:
+        raise ValueError(
+            f"{straddling} existing duplicate group(s) have members outside "
+            f"{_scope_label(district, year)}, so regrouping this scope alone "
+            "would split them and leave the outside half stamped with a group "
+            "id and size that no longer hold. Rerun with --all, or widen the "
+            "scope to contain them."
+        )
 
 
-async def _source_snapshot_for_signature_slice(conn, district: str, year: int) -> str:
-    """Manifest the exact indexed inputs represented by this group run.
+async def _source_snapshots_by_slice(
+    conn, district: Optional[str], year: Optional[int], grouping_version: str
+) -> tuple[dict[tuple[str, int], str], str]:
+    """Manifest the indexed inputs, **one digest per district-year**.
 
     This intentionally reads the digest stored at signature time, never the
     current redaction row. If OLTP changes without re-indexing, persisted
@@ -749,28 +1036,57 @@ async def _source_snapshot_for_signature_slice(conn, district: str, year: int) -
     lake join fails the public assertion rather than being stamped as current.
     A partial signature run likewise has a manifest only for its actual subset
     and cannot validate a full lake slice.
+
+    Keyed by district-year rather than by run, because that is the unit
+    consumers verify against. `analytics/findings/workload.py` and `spike.py`
+    read the lake for one district-year, recompute `source_snapshot_id` over
+    it, and assert every group row carries that value. A corpus-wide run that
+    stamped one whole-corpus digest onto every row would fail that assertion
+    for every slice, breaking both findings — the digest has to describe the
+    slice the *record* belongs to, not the scope the run happened to use.
+
+    A scoped run yields exactly one entry, so its behaviour is unchanged.
     """
     stmt = (
         select(
             DedupSignature.ticket_no,
+            DedupSignature.district,
+            DedupSignature.created_year,
             DedupSignature.source_record_digest,
+            DedupSignature.index_version,
         )
-        .where(
-            DedupSignature.district == district,
-            DedupSignature.created_year == year,
-        )
+        .where(*_slice_filters(DedupSignature, district, year))
         .order_by(DedupSignature.ticket_no)
     )
     result = await conn.execute(stmt)
-    row_digests = result.all()
-    missing = [ticket_no for ticket_no, digest in row_digests if digest is None]
+    rows = result.all()
+    missing = [row.ticket_no for row in rows if row.source_record_digest is None]
     if missing:
         raise ValueError(
             "dedup groups cannot be stamped with source provenance while "
             f"{len(missing)} signature(s) lack source_record_digest; rerun "
             "janasunani-dedup-index so #137 can rebuild them"
         )
-    return source_snapshot_id_from_record_digests(row_digests)
+
+    by_slice: dict[tuple[str, int], list[tuple[str, str]]] = defaultdict(list)
+    for row in rows:
+        by_slice[(row.district, row.created_year)].append(
+            (row.ticket_no, row.source_record_digest)
+        )
+    per_slice = {
+        slice_key: source_snapshot_id_from_record_digests(record_digests)
+        for slice_key, record_digests in by_slice.items()
+    }
+    # Everything the grouping run read, which is the input set that actually
+    # determined the assignments -- see DedupGroup.grouping_scope_snapshot_id.
+    # For a single-slice run this equals that slice's own digest, so the two
+    # fields agree exactly where they always did.
+    scope = grouping_scope_id(
+        grouping_version,
+        [(row.ticket_no, row.source_record_digest) for row in rows],
+        signature_versions=[(row.ticket_no, row.index_version) for row in rows],
+    )
+    return per_slice, scope
 
 
 async def _load_redacted_text(conn, ticket_nos: list[str]) -> dict[str, str]:
@@ -791,6 +1107,40 @@ async def _load_redacted_text(conn, ticket_nos: list[str]) -> dict[str, str]:
     return text_by_ticket
 
 
+def _banded(rows, num_bands: int):
+    """Yield rows that have bands, banding on the fly if they arrive raw.
+
+    Production reaches here with `_BandedSignature` rows: `_load_slice_signatures`
+    bands each row as the driver hands it over and never keeps the 128-element
+    signature. This accepts a raw DB row too, so the pure bucket functions
+    below stay directly callable from a test with a plain signature.
+
+    The band count is checked rather than assumed. Banding at load time and
+    bucketing at a different `num_bands` would silently produce buckets that
+    are not LSH bands of anything, and the two call sites take the count as a
+    parameter, so the mismatch is reachable.
+
+    Yields ``(row, bands)`` rather than a rebuilt row so a caller's own row
+    type passes through untouched -- the tests build partial rows on purpose.
+    """
+    for row in rows:
+        bands = getattr(row, "bands", None)
+        if bands is None:
+            signature = getattr(row, "signature", None)
+            if signature is None:
+                # `minhash_signature` abstained; there is nothing to band
+                # (dedup.py module docstring point 5).
+                continue
+            bands = tuple(lsh_bands(tuple(signature), num_bands=num_bands))
+        if len(bands) != num_bands:
+            raise ValueError(
+                f"signature for {row.ticket_no} carries {len(bands)} band(s) "
+                f"but bucketing was asked for {num_bands}; the bands were "
+                "computed at load time and must match."
+            )
+        yield row, bands
+
+
 def _text_candidate_pairs(rows, num_bands: int) -> set[tuple[str, str]]:
     """LSH candidate pairs, blocked by `block_key` — a shared band hash
     within the same block is a candidate, never across blocks. Rows with no
@@ -805,11 +1155,8 @@ def _text_candidate_pairs(rows, num_bands: int) -> set[tuple[str, str]]:
     verify against whichever ticket landed first in iteration order.
     """
     buckets: dict[tuple[str, int, int], list[str]] = defaultdict(list)
-    for row in rows:
-        if row.signature is None:
-            continue
-        signature = tuple(row.signature)
-        for band_index, band_hash in enumerate(lsh_bands(signature, num_bands=num_bands)):
+    for row, bands in _banded(rows, num_bands):
+        for band_index, band_hash in enumerate(bands):
             buckets[(row.block_key, band_index, band_hash)].append(row.ticket_no)
 
     pairs: set[tuple[str, str]] = set()
@@ -880,14 +1227,36 @@ def _candidate_buckets(rows, num_bands: int) -> list[tuple[Optional[str], list[s
     the all-pairs invariant from #101. This function is the streaming path
     that production uses.
     """
-    band_buckets: dict[tuple[str, int, int], list[str]] = defaultdict(list)
-    for row in rows:
-        if row.signature is None:
-            continue
-        signature = tuple(row.signature)
-        for band_index, band_hash in enumerate(lsh_bands(signature, num_bands=num_bands)):
-            band_buckets[(row.block_key, band_index, band_hash)].append(row.ticket_no)
+    # One band at a time, not all sixteen at once.
+    #
+    # Building the full map first and filtering singletons afterwards costs
+    # 16N dictionary entries at peak -- about 21.9M for the corpus, measured
+    # at ~5.2 GiB, which dwarfs the 1.05 GiB the banded rows themselves take
+    # and was enough to exhaust an 8 GiB box on its own. Almost all of those
+    # entries are singletons that are then thrown away: a signature that
+    # collides with nothing still occupies sixteen of them.
+    #
+    # Banding is independent per band index, so a bucket can never span two
+    # of them. Handling one band per pass therefore yields exactly the same
+    # buckets while holding only N entries at a time -- a sixteenth of the
+    # peak -- and the singletons are discarded at the end of each pass
+    # instead of at the end of everything. The extra passes are over a list
+    # already in memory and cost no I/O.
+    out: list[tuple[Optional[str], list[str]]] = []
+    for band_index in range(num_bands):
+        band_buckets: dict[tuple[str, int], list[str]] = defaultdict(list)
+        for row, bands in _banded(rows, num_bands):
+            band_buckets[(row.block_key, bands[band_index])].append(row.ticket_no)
+        out.extend(
+            (block_key, members)
+            for (block_key, _band_hash), members in band_buckets.items()
+            if len(set(members)) > 1
+        )
+        del band_buckets
 
+    # Identity buckets are keyed by the citizen, not by a band, so there is
+    # no equivalent split: two dicts over the rows that carry a key at all,
+    # measured at ~0.38 GiB for the corpus.
     identity_buckets: dict[tuple[str, str], list[str]] = defaultdict(list)
     for row in rows:
         for kind, key in (
@@ -897,11 +1266,10 @@ def _candidate_buckets(rows, num_bands: int) -> list[tuple[Optional[str], list[s
             if key is not None:
                 identity_buckets[(kind, key)].append(row.ticket_no)
 
-    return [
-        (block_key, members)
-        for (block_key, _band_index, _band_hash), members in band_buckets.items()
-        if len(set(members)) > 1
-    ] + [(None, members) for members in identity_buckets.values() if len(set(members)) > 1]
+    out.extend(
+        (None, members) for members in identity_buckets.values() if len(set(members)) > 1
+    )
+    return out
 
 
 def _find(parent: dict[str, str], item: str) -> str:
@@ -1004,23 +1372,38 @@ def _verify_bucket(
 
 async def _group_duplicates(
     engine: AsyncEngine,
-    district: str,
-    year: int,
+    district: Optional[str],
+    year: Optional[int],
     window_days: int,
     threshold: float,
     salt: str,
     representative_cap: int = REPRESENTATIVE_COMPARISON_CAP,
     anchor_count: int = LARGE_BUCKET_ANCHOR_COUNT,
 ) -> dict[str, int]:
+    # Computed before the snapshot read, because the grouping scope digest
+    # has to cover the parameters that produced an assignment and not only
+    # which records were read.
+    version = _index_version(
+        window_days,
+        threshold,
+        salt,
+        grouping_algorithm=GROUPING_ALGORITHM,
+        representative_cap=representative_cap,
+        anchor_count=anchor_count,
+    )
+
     async with engine.begin() as conn:
-        rows = await _load_slice_signatures(conn, district, year)
+        rows = await _load_slice_signatures(conn, district, year, DEFAULT_NUM_BANDS)
         source_mismatches, missing_source = await _source_digest_mismatches(
             conn, district, year
         )
         _raise_if_source_is_not_current(
             source_mismatches, missing_source, district, year
         )
-        snapshot_id = await _source_snapshot_for_signature_slice(conn, district, year)
+        await _raise_if_scope_would_split_existing_groups(conn, district, year)
+        snapshots_by_slice, scope_snapshot = await _source_snapshots_by_slice(
+            conn, district, year, version
+        )
 
     if not rows:
         return {
@@ -1117,26 +1500,30 @@ async def _group_duplicates(
     groups = {ticket: _find(parent, ticket) for ticket in all_tickets}
     group_sizes = Counter(groups.values())
 
-    version = _index_version(
-        window_days,
-        threshold,
-        salt,
-        grouping_algorithm=GROUPING_ALGORITHM,
-        representative_cap=representative_cap,
-        anchor_count=anchor_count,
-    )
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    block_key_by_ticket = {row.ticket_no: row.block_key for row in rows}
+    # district/created_year describe the *record*, taken from its signature
+    # row -- not the scope the run was invoked with. Those coincided while
+    # every run was a single district-year, and stop coinciding the moment one
+    # run spans more than one: a corpus-wide run would otherwise stamp NULL
+    # over every group row, which the NOT NULL constraint catches, and a
+    # district-wide run would silently stamp the wrong year, which it does not.
+    signature_by_ticket = {row.ticket_no: row for row in rows}
     group_rows = [
         {
             "ticket_no": ticket_no,
-            "district": district,
-            "created_year": year,
-            "block_key": block_key_by_ticket[ticket_no],
+            "district": signature_by_ticket[ticket_no].district,
+            "created_year": signature_by_ticket[ticket_no].created_year,
+            "block_key": signature_by_ticket[ticket_no].block_key,
             "duplicate_group_id": group_id,
             "group_size": group_sizes[group_id],
             "source_name": DEDUP_SOURCE_NAME,
-            "source_snapshot_id": snapshot_id,
+            "source_snapshot_id": snapshots_by_slice[
+                (
+                    signature_by_ticket[ticket_no].district,
+                    signature_by_ticket[ticket_no].created_year,
+                )
+            ],
+            "grouping_scope_snapshot_id": scope_snapshot,
             "index_version": version,
             "grouped_at": now,
         }
@@ -1245,8 +1632,8 @@ def evaluate_held_out_recall(
 
 
 def build_dedup_index(
-    district: str,
-    year: int,
+    district: Optional[str],
+    year: Optional[int],
     oltp_url: Optional[str] = None,
     salt: Optional[str] = None,
     window_days: int = DEFAULT_WINDOW_DAYS,
@@ -1256,7 +1643,16 @@ def build_dedup_index(
     representative_cap: int = REPRESENTATIVE_COMPARISON_CAP,
     anchor_count: int = LARGE_BUCKET_ANCHOR_COUNT,
 ) -> dict[str, int]:
-    """Index one district-year slice and (re)compute its duplicate groups.
+    """Index a scope and (re)compute its duplicate groups.
+
+    ``district`` and ``year`` are independently optional; ``None`` means
+    unbounded on that dimension, so ``(None, None)`` indexes the whole
+    corpus. Scope is not merely a convenience: identity buckets
+    (mobile/email) are deliberately unblocked, because a resubmission can
+    land months later under any district, so a same-citizen duplicate that
+    crosses a district or year boundary is only ever visible to a run whose
+    scope contains both sides of it. Running 150 district-years in a loop
+    finds the text duplicates and none of those.
 
     Returns per-run counts from both stages. Raises ``ValueError``
     immediately — before opening any DB connection — if no salt is
@@ -1351,6 +1747,16 @@ def main() -> None:
     parser.add_argument("--year", required=False, type=int, default=None, help="created_year to process.")
     parser.add_argument("--slice", required=False, default=None, help="Shorthand for --district/--year as District/YYYY (e.g. Sambalpur/2024).")
     parser.add_argument(
+        "--all",
+        action="store_true",
+        help=(
+            "Index every district and year. Required to run corpus-wide: an "
+            "unscoped invocation errors rather than silently rebuilding 1.37M "
+            "rows. Needed for same-citizen duplicates that cross a district or "
+            "year boundary, which no per-slice run can see."
+        ),
+    )
+    parser.add_argument(
         "--oltp-url", default=None, help="OLTP DB URL (default: settings.OLTP_DB_URL)."
     )
     parser.add_argument(
@@ -1363,7 +1769,10 @@ def main() -> None:
         "--window-days",
         type=int,
         default=DEFAULT_WINDOW_DAYS,
-        help="Time-window width (days) for blocking, within the district-year slice.",
+        help="Time-window width (days) for blocking. Windows are measured from a "
+        "fixed absolute epoch, so a record's window is the same whatever scope "
+        "indexed it; changing this value changes every block key and is "
+        "recorded in the index version.",
     )
     parser.add_argument(
         "--threshold",
@@ -1403,8 +1812,18 @@ def main() -> None:
         if year is not None and year != slice_year:
             parser.error("--year conflicts with --slice year")
         district, year = slice_district, slice_year
-    if district is None or year is None:
-        parser.error("--district/--year or --slice is required")
+    # No scope at all is a corpus-wide run, and it has to be asked for
+    # explicitly. A bare invocation is far more often a forgotten --slice than
+    # a deliberate 1.37M-row rebuild, and the two are indistinguishable from
+    # argv alone.
+    if district is None and year is None and not args.all:
+        parser.error(
+            "no scope given. Pass --slice/--district/--year for part of the "
+            "corpus, or --all to index every district and year. --all is a "
+            "full rebuild over the whole corpus, so it is never implied."
+        )
+    if args.all and (district is not None or year is not None):
+        parser.error("--all cannot be combined with --slice/--district/--year")
 
     counts = build_dedup_index(
         district,
@@ -1418,7 +1837,7 @@ def main() -> None:
     )
     logger.info(
         "done: {} processed this run, {} of {} indexed, {} duplicate groups "
-        "over {} signatures (comparison_pairs={}, large_buckets={}) in slice {}/{}",
+        "over {} signatures (comparison_pairs={}, large_buckets={}) in {}",
         counts["processed"],
         counts["already_indexed"] + counts["processed"],
         counts["total"],
@@ -1426,8 +1845,7 @@ def main() -> None:
         counts["slice_signatures"],
         counts["comparison_pairs"],
         counts["large_buckets"],
-        district,
-        year,
+        _scope_label(district, year),
     )
 
 

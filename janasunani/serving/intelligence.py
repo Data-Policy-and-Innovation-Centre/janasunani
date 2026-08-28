@@ -83,6 +83,9 @@ _WORKLOAD_FIELDS = frozenset(
         "duplicate_adjustment",
         "source_name",
         "source_snapshot_id",
+        # #317. Corpus-wide grouping depends on records outside a slice, so
+        # the slice digest above cannot tell two group assignments apart.
+        "grouping_scope_snapshot_id",
     }
 )
 _SPIKE_FIELDS = frozenset(
@@ -95,6 +98,7 @@ _SPIKE_FIELDS = frozenset(
         "distinct_citizens",
         "source_name",
         "source_snapshot_id",
+        "grouping_scope_snapshot_id",
         "interpretation",
     }
 )
@@ -201,7 +205,9 @@ class ArtifactSupervisorProvider:
             w_row = self._read_raw_workload_row()
             s_row = self._read_raw_spike_row()
             if w_row is not None and s_row is not None:
-                if w_row.get("source_snapshot_id") != s_row.get("source_snapshot_id"):
+                if w_row.get("source_snapshot_id") != s_row.get("source_snapshot_id") or w_row.get(
+                    "grouping_scope_snapshot_id"
+                ) != s_row.get("grouping_scope_snapshot_id"):
                     workload = None
                     spike = None
                     digest_reason = (
@@ -505,7 +511,7 @@ def _read_workload_row(path: Path) -> dict[str, object]:
     total = _parse_nonnegative_int(row["total_filings"])
     distinct = _parse_nonnegative_int(row["distinct_problems"])
     adjustment = _parse_nonnegative_int(row["duplicate_adjustment"])
-    for key in ("slice_district", "slice_category", "slice_period", "source_name", "source_snapshot_id"):
+    for key in ("slice_district", "slice_category", "slice_period", "source_name", "source_snapshot_id", "grouping_scope_snapshot_id"):
         val = row.get(key)
         if not isinstance(val, str) or not val or val.strip() != val:
             raise ValueError(f"workload {key} is missing or has whitespace")
@@ -522,6 +528,7 @@ def _read_workload_row(path: Path) -> dict[str, object]:
         "duplicate_adjustment": adjustment,
         "source_name": row["source_name"],
         "source_snapshot_id": row["source_snapshot_id"],
+        "grouping_scope_snapshot_id": row["grouping_scope_snapshot_id"],
     }
 
 
@@ -538,7 +545,7 @@ def _read_spike_row(path: Path) -> dict[str, object]:
     filings = _parse_nonnegative_int(row["filings"])
     distinct = _parse_nonnegative_int(row["distinct_problems"])
     citizens = _parse_nonnegative_int(row["distinct_citizens"])
-    for key in ("slice_district", "slice_category", "slice_period", "source_name", "source_snapshot_id", "interpretation"):
+    for key in ("slice_district", "slice_category", "slice_period", "source_name", "source_snapshot_id", "grouping_scope_snapshot_id", "interpretation"):
         val = row.get(key)
         if not isinstance(val, str) or not val or val.strip() != val:
             raise ValueError(f"spike {key} is missing or has whitespace")
@@ -555,6 +562,7 @@ def _read_spike_row(path: Path) -> dict[str, object]:
         "distinct_citizens": citizens,
         "source_name": row["source_name"],
         "source_snapshot_id": row["source_snapshot_id"],
+        "grouping_scope_snapshot_id": row["grouping_scope_snapshot_id"],
         "interpretation": row["interpretation"],
     }
 

@@ -209,6 +209,24 @@ Slice-at-a-time by design: everything downstream reads the redacted text, not
 the raw grievance. The dedup index is what the workload and spike findings
 (§2c) count distinct problems with.
 
+Dedup is the one stage where the slice is not just a convenience. Text
+candidates are blocked by district, script and time window, so per-slice runs
+find the same ones a corpus run would — but identity candidates (mobile,
+email) are deliberately unblocked, because a resubmission can land months
+later under any district. A same-citizen duplicate that crosses a district or
+year boundary is only ever visible to a run whose scope contains both sides of
+it, so looping over every slice finds none of them. For the whole corpus:
+
+```bash
+uv run janasunani-dedup-index --all --refresh-stale
+```
+
+`--all` is required rather than implied: a bare invocation errors, because a
+missing `--slice` and a deliberate 1.37M-row rebuild look identical from the
+command line. `--refresh-stale` is required after any redaction run, since
+grouping otherwise fails closed rather than mixing current text with
+signatures built on superseded redactions.
+
 ### 5 · Sample English complaints + documents (evaluation bundles)
 
 ```bash

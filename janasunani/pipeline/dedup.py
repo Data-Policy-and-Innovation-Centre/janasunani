@@ -236,6 +236,68 @@ def source_snapshot_id_from_record_digests(
     return f"sha256:{digest.hexdigest()}"
 
 
+def grouping_scope_id(
+    grouping_version: str,
+    record_digests: Iterable[tuple[str, str]],
+    signature_versions: Iterable[tuple[str, str | None]] = (),
+) -> str:
+    """Digest of the inputs *and* the parameters that produced an assignment.
+
+    `source_snapshot_id_from_record_digests` covers only which records were
+    read. Two runs over the identical record set with a different
+    ``--threshold`` or ``--window-days``, or after the grouping algorithm
+    changes, produce different duplicate groups and an identical record
+    digest -- so artifacts from the two would compare equal and be served as
+    one snapshot. Folding the grouping version in is what makes them differ.
+
+    Deliberately *not* mixed into the per-slice `source_snapshot_id`: a
+    consumer recomputes that one from lake records alone and knows nothing
+    about grouping parameters, so adding them there would make it
+    unverifiable. The two digests answer different questions -- "are these the
+    same source records" and "did the same grouping run produce these rows".
+    """
+    if not isinstance(grouping_version, str) or not grouping_version.strip():
+        raise ValueError("grouping scope id requires a non-blank grouping version")
+    records = source_snapshot_id_from_record_digests(record_digests)
+    digest = hashlib.sha256()
+    digest.update(b"janasunani-dedup-grouping-scope-v2\n")
+    digest.update(grouping_version.encode("utf-8"))
+    digest.update(b"\0")
+    # The versions actually stored on the signatures, not only the one this
+    # run requested. Without --refresh-stale the runner deliberately leaves
+    # stale signatures in place, so a run can group old-salt rows together
+    # with newly indexed new-salt ones -- identity linkage breaks across that
+    # boundary (#136) and the assignments are wrong. A later full refresh
+    # produces different, correct assignments from identical source records
+    # under the identical requested version, so without this the two runs are
+    # indistinguishable and their artifacts compare equal.
+    #
+    # Bound to the ticket, not collapsed to the set of distinct values. A
+    # partial `--refresh-stale --limit` leaves the *same* two versions spread
+    # differently across tickets: {A:v1, B:v1, C:v2} and {A:v1, B:v2, C:v2}
+    # reduce to the same {v1, v2} under the same records and the same
+    # requested version. Those two layouts do not group the same way -- where
+    # identity candidates are separated from text candidates by a time window,
+    # the first can union A/B and the second B/C -- so a slice holding A and B
+    # gets a different distinct-problem count while the two artifacts still
+    # compare equal. The pairing is what distinguishes them.
+    # Keyed rather than compared directly: ticket_no is unique per signature
+    # row so the version is never reached as a tiebreak, but a bare sort would
+    # raise on None the day that stops being true.
+    ordered = sorted(
+        signature_versions,
+        key=lambda pair: (pair[0], pair[1] is None, pair[1] or ""),
+    )
+    for ticket, version in ordered:
+        digest.update(ticket.encode("utf-8"))
+        digest.update(b"\t")
+        digest.update((version or "\x00none").encode("utf-8"))
+        digest.update(b"\n")
+    digest.update(b"\0")
+    digest.update(records.encode("ascii"))
+    return f"sha256:{digest.hexdigest()}"
+
+
 def source_snapshot_id(records: Iterable[Mapping[str, object]]) -> str:
     """Stable manifest of the exact historical inputs used for a dedup slice.
 
@@ -276,6 +338,7 @@ def assert_group_source_snapshot(
     source_tickets = {record["ticket_no"] for record in source_records}
 
     observed: set[tuple[object, object]] = set()
+    scopes: set[object] = set()
     group_tickets: set[str] = set()
     duplicate_group_tickets = 0
     blank_group_tickets = 0
@@ -288,6 +351,7 @@ def assert_group_source_snapshot(
         else:
             group_tickets.add(ticket_no)
         observed.add((row.get("source_name"), row.get("source_snapshot_id")))
+        scopes.add(row.get("grouping_scope_snapshot_id"))
 
     if blank_group_tickets:
         raise DedupSourceSnapshotMismatch(
@@ -311,6 +375,28 @@ def assert_group_source_snapshot(
             "dedup group ticket population does not match the asserted source snapshot: "
             f"missing_group_rows={len(source_tickets - group_tickets)}, "
             f"extra_group_rows={len(group_tickets - source_tickets)}"
+        )
+    # #317. Rows that agree on the source snapshot can still come from
+    # different grouping runs once a run can span slices, because a corpus
+    # grouping depends on records this slice's digest does not cover. Differing
+    # scopes here means the rows were assembled from two assignments.
+    if None in scopes:
+        # Absence is not agreement. Rows written before a4e17c93b820 all carry
+        # NULL here, so a "no two different values" test would pass on {None}
+        # and both findings would publish a blank scope that compares equal to
+        # every other blank one -- the mixed-output hole this field exists to
+        # close, reopened by the legacy case. A migration cannot invent this
+        # provenance; only re-running the index can.
+        raise DedupSourceSnapshotMismatch(
+            "dedup group rows lack grouping-scope provenance "
+            f"({sum(1 for s in scopes if s is None)} distinct NULL scope(s)); "
+            "re-run janasunani-dedup-index to populate "
+            "grouping_scope_snapshot_id"
+        )
+    if len(scopes) > 1:
+        raise DedupSourceSnapshotMismatch(
+            "dedup group rows mix grouping scopes and cannot be combined: "
+            f"observed_scopes={len(scopes)}"
         )
     return expected
 
