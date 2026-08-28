@@ -1063,6 +1063,55 @@ def test_latency_json_payload_multi_variant(tmp_path):
     assert payload["publication_ready"] is False
 
 
+def test_unspecified_sample_slice_is_not_publication_ready():
+    """Codex P1, round 8 on #326: a run must name the population it measured.
+
+    On the real-document path `sample_slice` falls back to "unspecified" when
+    neither --slice nor the manifest's own `slice` supplies one, while
+    `sample_manifest_complete` can still be true — a manifest can account for
+    every staged file without saying which draw those files are. The gate
+    only rejected an explicit False, so the run published an artifact that
+    could not identify its own population.
+    """
+    result = run_benchmark(
+        variant="standard",
+        n_text=1,
+        n_image=1,
+        repeats=2,
+        discard_warm=False,
+        processor_factory=lambda _variant: type(
+            "Processor",
+            (),
+            {
+                "_timing_sink": None,
+                "process": lambda self, **kwargs: self._timing_sink(
+                    {"redact": 0.1, "e2e": 0.2, "ok": 1.0}
+                ),
+            },
+        )(),
+    )
+    real_context = {
+        "host_label": "release-host",
+        "model_release_id": "model-release-1",
+        "sample_slice": "sambalpur-2024",
+        "sample_document_count": 2,
+        "sample_manifest_complete": True,
+    }
+    result["benchmark_context"] = dict(real_context)
+    assert latency_json_payload(result)["publication_ready"] is True
+
+    for label in ("unspecified", "", "   "):
+        result["benchmark_context"] = {**real_context, "sample_slice": label}
+        assert latency_json_payload(result)["publication_ready"] is False, label
+
+    # The synthetic path records no sample_slice at all and is unaffected.
+    result["benchmark_context"] = {
+        "host_label": "release-host",
+        "model_release_id": "model-release-1",
+    }
+    assert latency_json_payload(result)["publication_ready"] is True
+
+
 def test_identified_real_latency_run_is_publication_ready():
     result = run_benchmark(
         variant="standard",

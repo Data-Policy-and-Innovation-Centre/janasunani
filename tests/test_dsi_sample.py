@@ -406,6 +406,31 @@ def test_load_reference_manifest_rejects_a_blank_identity(tmp_path):
     assert got["CMO2024001_complaint_20250101_000000.pdf"].ticket == "CMO2024001"
 
 
+def test_load_reference_manifest_rejects_a_ticket_that_contradicts_its_key(tmp_path):
+    """Codex P1, round 8 on #326: a valid key with the wrong ticket.
+
+    Every key, size and hash check passes, and `load_corpus` prefers the
+    manifest's ticket over the path parse, so the document is filed under the
+    wrong ticket and inherits that ticket's category and provenance.
+    """
+    from janasunani.evaluation.dsi_sample import load_reference_manifest
+
+    header = "ticket\ts3_key\tsize_bytes\tmd5\n"
+
+    wrong = tmp_path / "wrong.tsv"
+    wrong.write_text(
+        header + "CMO2024002\tCMO2024001_complaint_20250101_000000.pdf\t100\tabc\n"
+    )
+    with pytest.raises(ValueError, match="contradicts"):
+        load_reference_manifest(wrong)
+
+    # Hierarchical tickets keep their slashes and must still round-trip.
+    nested = tmp_path / "nested.tsv"
+    key = "OR159/P/2021/00535_complaint_20250101_000001.pdf"
+    nested.write_text(header + f"OR159/P/2021/00535\t{key}\t200\tdef\n")
+    assert load_reference_manifest(nested)[key].ticket == "OR159/P/2021/00535"
+
+
 def test_load_reference_manifest_rejects_a_repeated_key(tmp_path):
     """Codex P1 on #326: a duplicate s3_key silently picked the last row.
 
@@ -418,10 +443,12 @@ def test_load_reference_manifest_rejects_a_repeated_key(tmp_path):
 
     key = "CMO2024001_complaint_20250101_000000.pdf"
     duped = tmp_path / "manifest.tsv"
+    # Both rows must carry the key's own ticket, or the mismatch check below
+    # would catch them first and this would stop testing duplication.
     duped.write_text(
         "ticket\ts3_key\tsize_bytes\tmd5\n"
         f"CMO2024001\t{key}\t100\tabc\n"
-        f"OR159/P/2021/00535\t{key}\t100\tabc\n"
+        f"CMO2024001\t{key}\t999\tdef\n"
     )
     with pytest.raises(ValueError, match="more than once"):
         load_reference_manifest(duped)

@@ -122,7 +122,10 @@ def load_reference_manifest(path: Path | str) -> dict[str, ManifestEntry]:
     the path relative to the corpus root once synced -- so it is directly
     comparable to what :func:`load_corpus` walks.
 
-    Every row must carry a nonblank ``s3_key`` and ``ticket``. A blank key
+    Every row must carry a nonblank ``s3_key`` and ``ticket``, and the ticket
+    must equal the key's prefix before ``_complaint_``: the format makes it
+    derivable, and :func:`load_corpus` trusts the manifest over the parse, so
+    a contradicting row files the document under the wrong ticket. A blank key
     would silently leave the expected-key set and let an equally absent
     document compare equal; a blank ticket would be emitted in place of the
     path parse that would have been right.
@@ -156,6 +159,7 @@ def load_reference_manifest(path: Path | str) -> dict[str, ManifestEntry]:
             )
         duplicated: list[str] = []
         blank: list[str] = []
+        mismatched: list[str] = []
         for row in reader:
             key = (row.get("s3_key") or "").strip()
             ticket = (row.get("ticket") or "").strip()
@@ -177,6 +181,19 @@ def load_reference_manifest(path: Path | str) -> dict[str, ManifestEntry]:
                 blank.append(
                     f"line {reader.line_num}: "
                     + ("no s3_key" if not key else f"{key!r} has no ticket")
+                )
+                continue
+            # The ticket is derivable from the key exactly -- the key is
+            # `<ticket>_complaint_<timestamp>.<ext>`, hierarchical tickets
+            # included -- and `load_corpus` prefers the manifest's ticket over
+            # that parse. So a row pairing a valid key with a different
+            # nonblank ticket passes every key, size and hash check and still
+            # files the document under the wrong ticket, taking its category
+            # and its emitted provenance with it. Requiring the two to agree
+            # is asserting an invariant the format already guarantees.
+            if "_complaint_" in key and key.split("_complaint_")[0] != ticket:
+                mismatched.append(
+                    f"line {reader.line_num}: {key!r} carries ticket {ticket!r}"
                 )
                 continue
             # A repeated key is a broken manifest, not a last-one-wins
@@ -203,6 +220,15 @@ def load_reference_manifest(path: Path | str) -> dict[str, ManifestEntry]:
             "so an equally absent document still compares equal; a row with "
             "no ticket is emitted under an empty one and overrides the path "
             "parse that would have been right."
+        )
+    if mismatched:
+        raise ValueError(
+            f"{path} has {len(mismatched)} row(s) whose ticket contradicts "
+            f"the s3_key: {mismatched[:5]}"
+            + (", ..." if len(mismatched) > 5 else "")
+            + ". The key encodes the ticket, and load_corpus prefers the "
+            "manifest's ticket over the parse, so such a row files the "
+            "document under the wrong ticket and inherits the wrong category."
         )
     if duplicated:
         raise ValueError(

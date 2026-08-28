@@ -1030,6 +1030,24 @@ def latency_json_payload(
     def nonblank(value: object) -> bool:
         return isinstance(value, str) and bool(value.strip())
 
+    def has_identified_sample(context: dict[str, Any]) -> bool:
+        """A real-document run must name the population it measured.
+
+        The synthetic path records no `sample_slice` at all and is not
+        affected. On the real-document path the label falls back to
+        "unspecified" when neither --slice nor a manifest `slice` supplies
+        one, and `sample_manifest_complete` can still be true, because a
+        manifest can account for every staged file without saying which draw
+        those files are. The gate below only rejects an explicit False, so
+        such a run published an artifact that could not identify its own
+        population.
+        """
+        if "sample_slice" not in context:
+            return True
+        return nonblank(context.get("sample_slice")) and (
+            context["sample_slice"] != "unspecified"
+        )
+
     def has_cold_and_warm(result: dict[str, Any]) -> bool:
         temperatures = result.get("temperature_e2e")
         return isinstance(temperatures, dict) and all(
@@ -1086,6 +1104,7 @@ def latency_json_payload(
         # for — so the recorded slice and digest would name a draw that is
         # not what ran.
         and result["benchmark_context"].get("sample_manifest_complete") is not False
+        and has_identified_sample(result["benchmark_context"])
         and nonblank(result.get("git_sha"))
         for result in variants_payload.values()
     )
