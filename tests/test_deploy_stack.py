@@ -1261,6 +1261,73 @@ def test_rehearsal_scripts_are_valid_shell():
         assert result.returncode == 0, f"{path.name} failed bash -n: {result.stderr}"
 
 
+def _extract_preflight_command_block() -> str:
+    """The real PREFLIGHT_ARGS/PREFLIGHT_CMD region of the shipped script.
+
+    Read off disk so these tests exercise the text the operator actually runs,
+    not a copy that can drift away from it.
+    """
+    lines = REHEARSAL_SH_PATH.read_text().splitlines()
+    start = next(i for i, line in enumerate(lines) if line.strip() == "PREFLIGHT_ARGS=()")
+    end = next(
+        i for i, line in enumerate(lines[start:], start)
+        if line.strip().startswith('if ! "${PREFLIGHT_CMD[@]}"')
+    )
+    return "\n".join(lines[start:end])
+
+
+@pytest.mark.parametrize(
+    ("strict", "expect_strict_flag"),
+    [("0", False), ("1", True)],
+)
+def test_demo_rehearsal_preflight_command_survives_set_u(strict, expect_strict_flag):
+    """#331-adjacent: the preflight invocation must not die on an empty array.
+
+    `set -euo pipefail` plus bash 3.2 -- the system bash on the macOS demo
+    laptop -- treats "${PREFLIGHT_ARGS[@]}" on an empty array as an unbound
+    variable, so an unguarded expansion aborted the whole rehearsal in the
+    common (non-strict) case. Run the script's own block and assert the command
+    it builds is right in both modes.
+    """
+    harness = "\n".join(
+        [
+            "set -euo pipefail",
+            f'REHEARSAL_STRICT="{strict}"',
+            _extract_preflight_command_block(),
+            'printf "%s\\n" "${PREFLIGHT_CMD[@]}"',
+        ]
+    )
+    result = subprocess.run(
+        ["bash", "-c", harness], capture_output=True, text=True
+    )
+    assert result.returncode == 0, f"preflight block failed under set -u: {result.stderr}"
+    argv = result.stdout.split()
+    assert argv[:1] == ["uv"], argv
+    assert "janasunani-demo-preflight" in argv, argv
+    assert ("--strict" in argv) is expect_strict_flag, argv
+
+
+def test_demo_rehearsal_empty_arrays_are_length_guarded():
+    """Portability invariant, checkable on any bash.
+
+    CI runs bash 5, where expanding an empty array under `set -u` is legal, so
+    executing the block cannot catch a regression on its own. Require instead
+    that every array the script initialises empty -- the only ones that can
+    actually be empty at expansion time -- is read through a "${#NAME[@]}"
+    length guard. That is the property that makes it safe on bash 3.2.
+    """
+    text = REHEARSAL_SH_PATH.read_text()
+    starts_empty = set(re.findall(r"^\s*([A-Z_]+)=\(\)\s*$", text, re.MULTILINE))
+    assert starts_empty, "expected the script to build argv arrays"
+    guarded = set(re.findall(r'"\$\{#([A-Z_]+)\[@\]\}"', text))
+    unguarded = starts_empty - guarded
+    assert not unguarded, (
+        f"arrays initialised empty but expanded without a length guard: "
+        f"{sorted(unguarded)}. Under set -u on bash 3.2 an empty expansion is "
+        "an unbound variable and aborts the rehearsal."
+    )
+
+
 def test_demo_rehearsal_script_covers_required_phases():
     """Static content check: the rehearsal script must implement Phases A-D
     from the plan (ruff+pytest, health curl, supervisor/history, frontend,
