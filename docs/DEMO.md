@@ -206,8 +206,6 @@ The **13 August freeze** is gated by a single laptop command that proves every [
 ```bash
 make rehearsal
 # runs scripts/demo_rehearsal.sh — see docs/plans/2026-08-08-demo-integration-rehearsal.md Part 2
-# Note: the Make target and script land in PR #203 (chore/demo-rehearsal-script);
-# until that merges, run the individual Phase A–C checks from the plan directly.
 ```
 
 What it checks (four phases, fail-fast):
@@ -222,7 +220,7 @@ Run it **the night before the demo** (see [DEMO_SCRIPT.md](DEMO_SCRIPT.md#pre-de
 | Artifact | Where |
 |---|---|
 | Timed walkthrough (Scenes 0–6) | [DEMO_SCRIPT.md](DEMO_SCRIPT.md) |
-| Automated gate | [`scripts/demo_rehearsal.sh`](../scripts/demo_rehearsal.sh) (via PR #203) |
+| Automated gate | [`scripts/demo_rehearsal.sh`](../scripts/demo_rehearsal.sh) |
 | Integration plan (gates, Table 2, three Sarvam arms) | [`docs/plans/2026-08-08-demo-integration-rehearsal.md`](plans/2026-08-08-demo-integration-rehearsal.md) |
 | Delivery scope & benchmark Table 2 | [DELIVERY.md](DELIVERY.md) Table 1 & 2 |
 

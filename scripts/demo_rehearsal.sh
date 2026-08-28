@@ -128,7 +128,16 @@ phase_a_static() {
   if [ "$REHEARSAL_STRICT" = "1" ]; then
     PREFLIGHT_ARGS+=(--strict)
   fi
-  if ! uv run --extra demo janasunani-demo-preflight "${PREFLIGHT_ARGS[@]}"; then
+  # bash 3.2 -- the system bash on the macOS demo laptop -- treats "${A[@]}" on
+  # an empty array as an unbound variable under `set -u`, so the unguarded
+  # expansion aborts the whole rehearsal whenever REHEARSAL_STRICT is unset.
+  # Build the command instead; the same guard already protects PYTEST_FILES.
+  if [ "${#PREFLIGHT_ARGS[@]}" -gt 0 ]; then
+    PREFLIGHT_CMD=(uv run --extra demo janasunani-demo-preflight "${PREFLIGHT_ARGS[@]}")
+  else
+    PREFLIGHT_CMD=(uv run --extra demo janasunani-demo-preflight)
+  fi
+  if ! "${PREFLIGHT_CMD[@]}"; then
     # Preflight exits 1 on FAIL; advisory WARN still exits 0. In strict mode
     # a WARN becomes FAIL, so failure here is real.
     fail "janasunani-demo-preflight failed"
