@@ -42,8 +42,18 @@ PLAN_MEMBERS = frozenset({"tfstate", "tfstate-prev", "tfplan"})
 
 
 def tracked_files() -> list[Path]:
+    """Tracked paths, excluding ``data/``.
+
+    The exclusion is a data-policy requirement, not an optimisation. AGENTS.md
+    forbids listing or reading anything under ``data/`` without explicit
+    per-path permission, and this check opens every file it is handed. Nothing
+    is lost by skipping it: the workflow step immediately before this one
+    already rejects any tracked file under ``data/`` that is not a ``.dvc``
+    pointer, a ``.gitkeep`` or a provenance sidecar, so a plan archive hidden
+    there fails the build one step earlier and never reaches this scan.
+    """
     out = subprocess.run(
-        ["git", "ls-files", "-z"],
+        ["git", "ls-files", "-z", "--", ".", ":(exclude)data/**"],
         check=True,
         capture_output=True,
     ).stdout

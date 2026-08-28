@@ -119,6 +119,29 @@ def test_this_repository_currently_passes():
     assert result.returncode == 0, result.stdout
 
 
+def test_tracked_files_never_returns_anything_under_data(monkeypatch):
+    """Codex P1 on #321: the scan opens every path it is handed.
+
+    AGENTS.md forbids reading anything under `data/` without explicit
+    per-path permission, and the repository tracks .dvc pointers and
+    provenance sidecars there. Nothing is lost by excluding it: the workflow
+    step before this one already rejects any tracked file under `data/` that
+    is not one of those, so a plan archive hidden there fails a step earlier.
+    """
+    monkeypatch.chdir(SCRIPT.parents[1])
+    files = tracked_files()
+    offenders = [f for f in files if str(f).startswith("data/")]
+    assert offenders == [], f"scan would open protected paths: {offenders[:5]}"
+    # Not vacuous: the repository does track files under data/.
+    tracked_under_data = subprocess.run(
+        ["git", "ls-files", "--", "data/"],
+        cwd=SCRIPT.parents[1], capture_output=True, text=True, check=True,
+    ).stdout.split()
+    assert tracked_under_data, "fixture assumption broken: nothing tracked under data/"
+    # And the rest of the tree is still scanned.
+    assert Path("pyproject.toml") in files
+
+
 def test_tracked_files_reads_the_git_index(monkeypatch):
     monkeypatch.chdir(SCRIPT.parents[1])
     files = tracked_files()
