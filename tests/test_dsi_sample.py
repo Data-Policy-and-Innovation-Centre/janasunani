@@ -366,6 +366,62 @@ def test_load_reference_manifest_reads_the_tsv_and_rejects_a_wrong_one(tmp_path)
         load_reference_manifest(wrong)
 
 
+def test_load_reference_manifest_rejects_a_repeated_key(tmp_path):
+    """Codex P1 on #326: a duplicate s3_key silently picked the last row.
+
+    The disk-versus-manifest set comparison in `load_corpus` still passes on
+    a duplicate, so nothing downstream noticed; but the surviving row is what
+    supplies the ticket used for category lookup and emitted provenance, so
+    two rows for one key made stratification depend on manifest order.
+    """
+    from janasunani.evaluation.dsi_sample import load_reference_manifest
+
+    key = "CMO2024001_complaint_20250101_000000.pdf"
+    duped = tmp_path / "manifest.tsv"
+    duped.write_text(
+        "ticket\ts3_key\tsize_bytes\tmd5\n"
+        f"CMO2024001\t{key}\t100\tabc\n"
+        f"OR159/P/2021/00535\t{key}\t100\tabc\n"
+    )
+    with pytest.raises(ValueError, match="more than once"):
+        load_reference_manifest(duped)
+
+
+def test_load_corpus_requires_the_metadata_for_the_tier_it_was_asked_for(tmp_path):
+    """Codex P1 on #326: a blank column silently downgraded the check.
+
+    Both byte comparisons were written as "compare it if we have it", so a
+    manifest with a blank `size_bytes` or `md5` degraded verify="size" and
+    verify="md5" to the key comparison while the caller believed they had
+    asked for bytes — certifying altered documents on their names alone.
+    """
+    polars = pytest.importorskip("polars")
+
+    from janasunani.evaluation.dsi_sample import ManifestEntry
+
+    docs = tmp_path / "documents"
+    docs.mkdir()
+    name = "CMO2024001_complaint_20250101_000000.pdf"
+    (docs / name).write_bytes(b"the real document")
+
+    parquet = tmp_path / "complaints.parquet"
+    polars.DataFrame(
+        {"ticket_no": ["CMO2024001"], "category": ["Housing"]}
+    ).write_parquet(parquet)
+
+    no_size = {name: ManifestEntry("CMO2024001", None, "abc")}
+    with pytest.raises(ValueError, match="needs a size_bytes"):
+        load_corpus(docs, parquet, manifest=no_size)
+    # The escape hatch still says so deliberately.
+    assert load_corpus(docs, parquet, manifest=no_size, verify="keys")
+
+    no_md5 = {name: ManifestEntry("CMO2024001", len(b"the real document"), None)}
+    with pytest.raises(ValueError, match="needs a md5"):
+        load_corpus(docs, parquet, manifest=no_md5, verify="md5")
+    # size is what this manifest can support, and it still works.
+    assert load_corpus(docs, parquet, manifest=no_md5)
+
+
 def test_load_corpus_catches_altered_bytes_under_the_right_key(tmp_path):
     """Codex P1 on #326: matching keys is not matching content.
 

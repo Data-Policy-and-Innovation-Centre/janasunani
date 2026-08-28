@@ -122,6 +122,10 @@ def load_reference_manifest(path: Path | str) -> dict[str, ManifestEntry]:
     the path relative to the corpus root once synced -- so it is directly
     comparable to what :func:`load_corpus` walks.
 
+    A repeated ``s3_key`` raises: the surviving row would decide the ticket,
+    the category and the provenance for that document, so a duplicate makes
+    stratification depend on manifest order.
+
     ``size_bytes`` and ``md5`` are kept, not discarded. A key comparison
     alone proves only that a file with the right name is present; a
     truncated, stale or replaced document under the expected key passes it,
@@ -145,9 +149,19 @@ def load_reference_manifest(path: Path | str) -> dict[str, ManifestEntry]:
                 f"{path} is not a reference manifest: missing column(s) "
                 f"{sorted(missing)}. Expected ticket, s3_key, size_bytes, md5."
             )
+        duplicated: list[str] = []
         for row in reader:
             key = row.get("s3_key")
             if not key:
+                continue
+            # A repeated key is a broken manifest, not a last-one-wins
+            # question. The disk-versus-manifest set comparison in
+            # `load_corpus` still passes on a duplicate, but the surviving
+            # row supplies the ticket used for category lookup and emitted
+            # provenance -- so two rows for one key silently make
+            # stratification depend on manifest order.
+            if key in entries:
+                duplicated.append(key)
                 continue
             raw_size = (row.get("size_bytes") or "").strip()
             entries[key] = ManifestEntry(
@@ -155,6 +169,15 @@ def load_reference_manifest(path: Path | str) -> dict[str, ManifestEntry]:
                 size_bytes=int(raw_size) if raw_size.isdigit() else None,
                 md5=(row.get("md5") or "").strip() or None,
             )
+    if duplicated:
+        raise ValueError(
+            f"{path} lists {len(duplicated)} s3_key(s) more than once: "
+            f"{sorted(set(duplicated))[:5]}"
+            + (", ..." if len(set(duplicated)) > 5 else "")
+            + ". The key comparison in load_corpus still passes on a "
+            "duplicate, so the row that happens to come last would decide "
+            "the ticket, the category and the provenance for that document."
+        )
     return entries
 
 
@@ -286,6 +309,32 @@ def load_corpus(
         # so it is opt-in for when the corpus is being certified rather than
         # used. keys is the escape hatch for a manifest without the columns.
         if verify != "keys":
+            # The requested tier must actually be available. `size_bytes` is
+            # None for a blank or non-numeric column and `md5` is None for a
+            # blank one, and both checks below are written as "compare it if
+            # we have it" -- so a truncated or malformed manifest silently
+            # downgraded verify="size" and verify="md5" to the key comparison
+            # while the caller believed they had asked for bytes. That is the
+            # certify-altered-documents failure this function exists to stop.
+            # `keys` is the explicit escape hatch for a manifest without the
+            # columns; it should not be reachable by accident.
+            column = "size_bytes" if verify == "size" else "md5"
+            unusable = sorted(
+                record.filename
+                for record in records
+                if getattr(manifest[record.filename], column) is None
+            )
+            if unusable:
+                raise ValueError(
+                    f"verify={verify!r} needs a {column} for every document, "
+                    f"and the pinned manifest has none for {len(unusable)} of "
+                    f"them: {unusable[:3]}"
+                    + (", ..." if len(unusable) > 3 else "")
+                    + ". Comparing only the keys that do carry one would "
+                    "certify the rest on their names alone. Re-sync the "
+                    "manifest, or pass verify='keys' to say so deliberately."
+                )
+
             corrupt: list[str] = []
             for record in records:
                 entry = manifest[record.filename]

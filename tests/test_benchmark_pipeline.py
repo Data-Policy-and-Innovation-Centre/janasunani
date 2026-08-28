@@ -401,13 +401,41 @@ def test_staged_sample_coverage_rejects_malformed_entries(tmp_path):
     assert (missing, unlisted) == ([], ["a.pdf"])
 
 
-def test_staged_sample_coverage_ignores_blank_and_non_string_filenames():
+def test_staged_sample_coverage_rejects_a_row_naming_neither_file_nor_ticket():
+    """Codex P1, round 6 on #326: `{}` is a Mapping, so it slipped through.
+
+    An empty object passed the non-mapping check, failed both identity
+    checks, and was then counted as nothing — so a manifest with valid rows
+    for every staged file plus one empty row still reported perfect coverage
+    and set `sample_manifest_complete`. Same junk-row class as a non-mapping,
+    one level in.
+
+    This supersedes an earlier assertion that blank and non-string filenames
+    were simply *ignored*: with no ticket either, such a row names nothing
+    and is the finding, not an exception to it.
+    """
+    with pytest.raises(ValueError, match="neither a file nor a ticket"):
+        staged_sample_coverage({"documents": [{}]}, ["only.pdf"])
+
+    with pytest.raises(ValueError, match="neither a file nor a ticket"):
+        staged_sample_coverage(
+            {"documents": [{"file": "  "}, {"file": None}, {"file": 7}]},
+            ["only.pdf"],
+        )
+
+    # The whole point: valid rows plus one empty row must not read as perfect.
+    with pytest.raises(ValueError, match="neither a file nor a ticket"):
+        staged_sample_coverage(
+            {"documents": [{"file": "only.pdf", "ticket": "T1"}, {}]},
+            ["only.pdf"],
+        )
+
+    # A blank filename *with* a ticket is still the documented ticket-only
+    # exception: it names an identity, it just cannot be matched by name.
     missing, unlisted = staged_sample_coverage(
-        {"documents": [{"file": "  "}, {"file": None}, {"file": 7}]},
-        ["only.pdf"],
+        {"documents": [{"file": "  ", "ticket": "T1"}]}, ["only.pdf"]
     )
-    assert missing == []
-    assert unlisted == ["only.pdf"]
+    assert (missing, unlisted) == ([], ["only.pdf"])
 
 
 def test_staged_sample_coverage_is_silent_without_a_documents_list():

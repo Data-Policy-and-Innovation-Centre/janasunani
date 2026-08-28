@@ -376,7 +376,9 @@ def staged_sample_coverage(
     Manifest entries without a ``file`` key are simply not counted as
     coverage. The explicit-manifest call path allows ``{"ticket": ...}``
     alone, so such a manifest still *loads* — it just cannot claim the staged
-    files are the drawn ones, because it ties no identity to any of them. An
+    files are the drawn ones, because it ties no identity to any of them. A
+    row carrying *neither* identity is not that exception, it is a junk row,
+    and it raises: counting it as nothing left coverage perfect. An
     earlier version absorbed one unlisted file per unkeyed entry, on the
     reasoning that the count was the most that could be claimed. That was
     wrong: a count is not an identity, and it let a one-file staging beside
@@ -407,6 +409,14 @@ def staged_sample_coverage(
         # hierarchical tickets (~2% of complaints) it exists to protect.
         if has_file and not has_ticket:
             malformed.append(f"entry {position}: {file_name!r} has no ticket")
+            continue
+        # Neither identity is the same junk row as a non-mapping, one level
+        # in: `{}` is a Mapping, so it passed every check above, counted as
+        # nothing, and left coverage perfect. A manifest with valid rows for
+        # every staged file plus one empty object still reported a complete
+        # sample and published.
+        if not has_file and not has_ticket:
+            malformed.append(f"entry {position}: names neither a file nor a ticket")
             continue
         # The other half is fine and is relied on: a row with a ticket and no
         # file cannot be matched by name, so it simply does not count as
