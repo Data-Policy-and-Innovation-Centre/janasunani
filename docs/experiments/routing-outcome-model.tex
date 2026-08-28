@@ -2887,8 +2887,13 @@ N_a/N, & N_{h(x),a}=0\text{ and }N_a>0,\\
 \label{eq:asrun-e}
 \end{equation}
 The marginal backoff prevents an absent cell--flow pair from receiving a residual multiplier of
-100 merely because it hit the clip floor. The clipping is an overlap restriction, not evidence
-for positivity.
+100 merely because it hit the clip floor. The clipping is weight truncation, not an overlap
+restriction: \texttt{EmpiricalSharePropensity.score} clips the value and keeps the observation in
+the evaluated population, so the estimand is unchanged and a row with genuinely no support is
+carried at a bounded weight rather than excluded. That can bias the augmented estimate rather
+than moving the target to a population with adequate overlap. Restricting to the region of common
+support, and reporting how much of the sample that removes, is the fix and is not implemented.
+In neither form is the clip evidence for positivity.
 
 \subsubsection*{Administrative censoring $\hat G$}
 
@@ -2964,7 +2969,11 @@ It is \emph{not} an upper bound, and the direction of the discrepancy is not det
 spread of $\hat G$. Kish ESS is not monotone under multiplying the weights by a positive
 factor: a factor that equalises them raises it. With propensity weights $(10,2)$ the ESS is
 $12^2/104\approx1.38$, and censoring factors $(1,5)$ give composite weights $(10,10)$ and an
-ESS of $2$; factors $(1,0.2)$ instead give $(10,0.4)$ and an ESS of $\approx1.08$. Whether the
+ESS of $2$; factors $(5,1)$ instead give $(50,2)$ and an ESS of $\approx1.08$. Both examples use
+factors the estimator can actually produce: $\omega^G_i=R_i/\max\{0.05,\hat G\}$ is zero on an
+unmatched row and at least $1$ on a matched one, because $\hat G\le1$, so a fractional factor is
+not an as-run possibility. ESS is scale-invariant, so it is the spread of the factors and not
+their level that moves it. Whether the
 2025 cohort's composite ESS sits above or below its reported one is therefore an empirical
 question about how $\hat G$ covaries with $\hat e$ on the matched rows, not something that
 follows from censoring being heavy. Computing the composite ESS is the fix and is tracked
@@ -2987,8 +2996,12 @@ $\hat V_{\hat\delta}-\hat V_{\mathrm{hist}}$. The two differ by the covariance t
 quantities are computed on the same district--year clusters, they move together, and the
 contrast SE is
 $\sqrt{\operatorname{Var}(\hat V_{\hat\delta})+\operatorname{Var}(\hat V_{\mathrm{hist}})
--2\operatorname{Cov}(\cdot,\cdot)}$, which the printed number equals only if the baseline were
-both constant across clusters and uncorrelated with the policy value. Neither holds. The sign
+-2\operatorname{Cov}(\cdot,\cdot)}$. The printed number equals it exactly when
+$\operatorname{Var}(\hat V_{\mathrm{hist}})
+=2\operatorname{Cov}(\hat V_{\hat\delta},\hat V_{\mathrm{hist}})$ --- which a constant,
+uncorrelated baseline satisfies, but so does a baseline with positive variance whose covariance
+with the policy value is half of it. There is no reason to expect that identity to hold here, so
+the two are not interchangeable. The sign
 of the discrepancy is not determined in advance, so this is not a conservative approximation
 either. Differencing the two per draw is the fix and is tracked separately; until then the
 number qualifies the level, not the change.
@@ -3013,8 +3026,11 @@ Boosting with action features removed & Executed fit diagnostic & It measures pr
 without the four joint-action columns; it is not a policy arm or a causal test.\\
 Corrected labelled-population correctness frontier & Implemented, not regenerated & The prior
 aggregate is withdrawn. No $\hat\tau^\star$ is published.\\
-Two-way policy sample split & Available option, not used in headline commands & It diagnoses
-winner's-curse sensitivity and does not repair unmeasured confounding.\\
+Two-way policy sample split & Available option, unsound as implemented & On this path
+\texttt{mu\_observed} comes from the full-training $\hat m$ and the policy direct term from the
+half-fit one, so the residual absorbs the difference between two estimators; it also selects and
+values the policy with the same half-fit model. It is not a valid winner's-curse diagnostic, and
+it does not repair unmeasured confounding.\\
 Hierarchical multinomial propensity & Proposed, not built & The empirical cell share in
 \eqref{eq:asrun-e} is the only executed propensity.\\
 Cox censoring model & Proposed, not built & The Kaplan--Meier estimator in
