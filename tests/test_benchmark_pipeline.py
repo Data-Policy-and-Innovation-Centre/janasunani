@@ -1512,12 +1512,22 @@ def test_probe_ocr_toolchain_records_unavailable_when_tesseract_probe_fails(monk
         "janasunani.pipeline.stages.ocr_extraction.pytesseract_backend._configure_tesseract",
         boom,
     )
+    # Poppler is stubbed rather than skipped on. The claim under test is that
+    # a tesseract failure does not reach poppler's result, and asserting
+    # `!= "unavailable"` tested that only where the pdftoppm *binary* happens
+    # to be installed -- so on a box with pipeline-core but no poppler this
+    # failed the required suite for a reason that has nothing to do with the
+    # behaviour it describes. A sentinel makes the independence exact:
+    # whatever poppler returned has to arrive untouched.
+    monkeypatch.setattr(
+        bench_mod, "_probe_poppler_version", lambda: "pdftoppm 99.99 (sentinel)"
+    )
 
     toolchain = bench_mod._probe_ocr_toolchain()
 
     assert toolchain["tesseract_version"] == "unavailable"
     assert toolchain["tesseract_langs"] == "unavailable"
-    assert toolchain["poppler_version"] != "unavailable"  # unaffected
+    assert toolchain["poppler_version"] == "pdftoppm 99.99 (sentinel)"  # unaffected
 
 
 def test_probe_ocr_toolchain_composes_independent_tesseract_and_poppler_probes():
