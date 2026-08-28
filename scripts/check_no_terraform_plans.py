@@ -86,7 +86,16 @@ def plan_members(path: Path) -> list[str]:
 def main() -> int:
     offenders: list[tuple[Path, list[str]]] = []
     for path in tracked_files():
-        if not path.is_file():  # submodule entries, broken symlinks
+        # Symlinks are skipped before anything opens them, and that is a
+        # data-policy requirement rather than tidiness: `is_file()` follows
+        # the link, so a tracked link outside data/ whose target is inside it
+        # would be read straight through the pathspec exclusion. Nothing is
+        # lost -- git stores the link text, not the pointed-to bytes, so a
+        # symlink is never itself the committed plan archive. The archive, if
+        # tracked, appears under its own path and is scanned there.
+        if path.is_symlink():
+            continue
+        if not path.is_file():  # submodule entries, broken links
             continue
         members = plan_members(path)
         if members:

@@ -142,21 +142,54 @@ def test_tracked_files_never_returns_anything_under_data(tmp_path, monkeypatch):
     (repo / "data" / "external" / "thing.json.dvc").write_text("outs: []\n")
     (repo / "deploy" / "main.tf").write_text("# infra\n")
     (repo / "pyproject.toml").write_text("[project]\nname='x'\n")
-    for args in (["init", "-q"], ["add", "-A"],
+    # -f, because a global core.excludesFile that ignores data/ would leave
+    # the synthetic protected files untracked while the commit still
+    # succeeded on the others -- and then this test would pass even with the
+    # scanner's exclusion removed, which is the vacuousness it exists to rule
+    # out.
+    for args in (["init", "-q"], ["add", "-Af"],
                  ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "seed"]):
         subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+    # Asserted against this throwaway repo's index, never the real one.
+    indexed = subprocess.run(
+        ["git", "ls-files"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.split()
+    assert "data/secret.parquet" in indexed
+    assert "data/external/thing.json.dvc" in indexed
 
     monkeypatch.chdir(repo)
     files = tracked_files()
 
     offenders = [f for f in files if str(f).startswith("data/")]
     assert offenders == [], f"scan would open protected paths: {offenders}"
-    # Non-vacuous: those files really are tracked in this repo -- asserted by
-    # construction above, not by asking git about a protected directory.
-    assert (repo / "data" / "secret.parquet").is_file()
     # And the rest of the tree is still scanned.
     assert Path("pyproject.toml") in files
     assert Path("deploy/main.tf") in files
+
+
+def test_a_symlink_into_data_is_not_followed(tmp_path, monkeypatch):
+    """Codex P1 on #321: the pathspec excludes paths, not link targets.
+
+    `is_file()` follows a symlink, so a tracked link *outside* data/ whose
+    target is inside it was read straight through the exclusion — and would
+    have been reported by name and members if the target were a plan.
+    """
+    repo = tmp_path / "repo"
+    (repo / "data").mkdir(parents=True)
+    _plan_archive(repo / "data" / "hidden-plan")
+    (repo / "public-link").symlink_to(Path("data") / "hidden-plan")
+    (repo / "pyproject.toml").write_text("[project]\nname='x'\n")
+    for args in (["init", "-q"], ["add", "-Af"],
+                 ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "seed"]):
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+    monkeypatch.chdir(repo)
+    # The link itself is tracked and outside data/, so the pathspec returns it.
+    assert Path("public-link") in tracked_files()
+
+    # It must not be followed: no finding, and nothing under data/ opened.
+    assert main() == 0
 
 
 def test_tracked_files_reads_the_git_index(monkeypatch):
