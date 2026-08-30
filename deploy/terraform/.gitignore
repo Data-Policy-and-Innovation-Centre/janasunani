@@ -1,8 +1,24 @@
 # Local state + secrets — never commit.
 .terraform/
+.terraform.tfstate.lock.info
 terraform.tfstate
 terraform.tfstate.*
 terraform.tfvars
 *.auto.tfvars
 crash.log
+crash.*.log
 *.tfstate.*
+
+# Saved plans hold resolved variable values, including secrets.
+*.tfplan
+*.tfplan.*
+plan.out
+tfplan
+
+# Local CLI overrides.
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
