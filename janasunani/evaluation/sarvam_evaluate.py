@@ -29,6 +29,7 @@ from collections import Counter
 from dataclasses import asdict
 from datetime import UTC, datetime
 import hashlib
+import contextlib
 import json
 import os
 import sys
@@ -409,13 +410,38 @@ def _write_record_dump(destination: Path, records: Any) -> Path:
     other half: if the path already exists, ``O_CREAT``'s mode argument is
     ignored, so a dump overwriting a previously world-readable file would
     otherwise keep those permissions.
+
+    The write goes to a temporary sibling and is renamed into place only once
+    every record has landed. Writing ``O_TRUNC`` straight onto the destination
+    destroyed the previous dump the instant the new one opened, so a
+    serialisation error or an interrupt mid-run left a truncated file where
+    complete evidence had been -- and this is unredacted per-page output that
+    a paid run produced, not something a retry reconstructs for free. The
+    startup probe is deliberately non-destructive for the same reason; this
+    closes the other half of it.
+
+    The sibling shares the destination's directory so the rename is on one
+    filesystem and therefore atomic, and it is created 0600 like the final
+    file: it holds the same citizen text.
     """
     destination.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    os.fchmod(fd, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        for record in records:
-            handle.write(json.dumps(asdict(record), default=str) + "\n")
+    tmp = destination.with_name(f".{destination.name}.{os.getpid()}.partial")
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            for record in records:
+                handle.write(json.dumps(asdict(record), default=str) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, destination)
+    except BaseException:
+        # Including KeyboardInterrupt: a Ctrl-C is the interrupt this exists
+        # to survive, and leaving the partial sibling behind would strand
+        # unredacted text at a path nothing later cleans up.
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
     return destination
 
 

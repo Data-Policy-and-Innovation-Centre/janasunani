@@ -1015,9 +1015,18 @@ def test_record_dump_is_0600_from_creation_not_after_the_write(tmp_path):
     destination = tmp_path / "records.jsonl"
     seen_modes: list[int] = []
 
+    def _partial() -> Path:
+        # The write now lands on a temporary sibling and is renamed into place
+        # only once every record is on disk, so mid-write the bytes are there
+        # and `destination` is not. The mode still has to be right from
+        # creation: the partial holds the same unredacted citizen text.
+        partials = list(tmp_path.glob(".records.jsonl.*.partial"))
+        assert len(partials) == 1, partials
+        return partials[0]
+
     def _records():
         for page in range(3):
-            seen_modes.append(destination.stat().st_mode & 0o777)
+            seen_modes.append(_partial().stat().st_mode & 0o777)
             yield _Rec(page=page)
 
     original_umask = os.umask(0o022)
@@ -1029,6 +1038,57 @@ def test_record_dump_is_0600_from_creation_not_after_the_write(tmp_path):
     assert seen_modes == [0o600, 0o600, 0o600]
     assert destination.stat().st_mode & 0o777 == 0o600
     assert len(destination.read_text().splitlines()) == 3
+
+
+def test_a_failed_record_dump_leaves_the_previous_evidence_intact(tmp_path):
+    """Codex P2, round 11 on #326: O_TRUNC destroyed the old dump on open.
+
+    A serialisation error or an interrupt mid-write left a truncated file
+    where a complete one had been. This is unredacted per-page output from a
+    paid run, so it is not something a retry reconstructs for free — and the
+    startup probe is deliberately non-destructive for exactly that reason.
+    """
+    from dataclasses import dataclass
+
+    from janasunani.evaluation.sarvam_evaluate import _write_record_dump
+
+    @dataclass
+    class _Rec:
+        page: int
+
+    destination = tmp_path / "records.jsonl"
+    _write_record_dump(destination, [_Rec(page=1), _Rec(page=2)])
+    prior = destination.read_text()
+    assert len(prior.splitlines()) == 2
+
+    def _explodes():
+        yield _Rec(page=1)
+        raise RuntimeError("serialisation blew up halfway")
+
+    with pytest.raises(RuntimeError, match="blew up"):
+        _write_record_dump(destination, _explodes())
+
+    # The previous dump is untouched, not truncated to the one record that
+    # had been written when the generator raised.
+    assert destination.read_text() == prior
+    # And nothing unredacted is stranded in a partial sibling.
+    assert list(tmp_path.glob(".records.jsonl.*.partial")) == []
+
+    # A KeyboardInterrupt is the interrupt this exists to survive, and it is
+    # a BaseException — the cleanup has to catch it too.
+    def _interrupted():
+        yield _Rec(page=1)
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        _write_record_dump(destination, _interrupted())
+    assert destination.read_text() == prior
+    assert list(tmp_path.glob(".records.jsonl.*.partial")) == []
+
+    # A successful write still replaces it.
+    _write_record_dump(destination, [_Rec(page=9)])
+    assert len(destination.read_text().splitlines()) == 1
+    assert destination.stat().st_mode & 0o777 == 0o600
 
 
 def test_record_dump_narrows_a_pre_existing_world_readable_file(tmp_path):
