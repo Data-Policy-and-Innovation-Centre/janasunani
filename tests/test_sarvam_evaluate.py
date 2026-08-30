@@ -1020,7 +1020,7 @@ def test_record_dump_is_0600_from_creation_not_after_the_write(tmp_path):
         # only once every record is on disk, so mid-write the bytes are there
         # and `destination` is not. The mode still has to be right from
         # creation: the partial holds the same unredacted citizen text.
-        partials = list(tmp_path.glob(".records.jsonl.*.partial"))
+        partials = list(tmp_path.glob(".records.jsonl.*partial"))
         assert len(partials) == 1, partials
         return partials[0]
 
@@ -1038,6 +1038,45 @@ def test_record_dump_is_0600_from_creation_not_after_the_write(tmp_path):
     assert seen_modes == [0o600, 0o600, 0o600]
     assert destination.stat().st_mode & 0o777 == 0o600
     assert len(destination.read_text().splitlines()) == 3
+
+
+def test_record_dump_temp_file_cannot_be_hijacked_by_a_symlink(tmp_path):
+    """Codex P1, round 13 on #326: my atomic write used a predictable path.
+
+    `.<name>.<pid>.partial` is guessable, and the open used O_TRUNC. A local
+    process able to pre-create that path as a symlink would have had the dump
+    follow it — writing unredacted citizen text outside the tree
+    `_checked_record_destination` validates — and `os.replace` would then have
+    installed the symlink as the final dump.
+
+    `mkstemp` creates with O_CREAT|O_EXCL and an unguessable suffix, so a
+    pre-planted path is neither predictable nor reusable.
+    """
+    from dataclasses import dataclass
+
+    from janasunani.evaluation.sarvam_evaluate import _write_record_dump
+
+    @dataclass
+    class _Rec:
+        page: int
+
+    outside = tmp_path / "outside.txt"
+    outside.write_text("must not be touched\n")
+
+    destination = tmp_path / "dump" / "records.jsonl"
+    destination.parent.mkdir()
+
+    # Plant every partial path the old scheme could have produced.
+    for pid in {os.getpid(), os.getpid() + 1, 1}:
+        os.symlink(outside, destination.parent / f".records.jsonl.{pid}.partial")
+
+    _write_record_dump(destination, [_Rec(page=1)])
+
+    # The dump landed at the validated destination and is a real file.
+    assert destination.is_file() and not destination.is_symlink()
+    assert len(destination.read_text().splitlines()) == 1
+    # Nothing was written through any planted link.
+    assert outside.read_text() == "must not be touched\n"
 
 
 def test_probe_rejects_a_writable_dump_in_a_read_only_directory(tmp_path):
@@ -1108,7 +1147,7 @@ def test_a_failed_record_dump_leaves_the_previous_evidence_intact(tmp_path):
     # had been written when the generator raised.
     assert destination.read_text() == prior
     # And nothing unredacted is stranded in a partial sibling.
-    assert list(tmp_path.glob(".records.jsonl.*.partial")) == []
+    assert list(tmp_path.glob(".records.jsonl.*partial")) == []
 
     # A KeyboardInterrupt is the interrupt this exists to survive, and it is
     # a BaseException — the cleanup has to catch it too.
@@ -1119,7 +1158,7 @@ def test_a_failed_record_dump_leaves_the_previous_evidence_intact(tmp_path):
     with pytest.raises(KeyboardInterrupt):
         _write_record_dump(destination, _interrupted())
     assert destination.read_text() == prior
-    assert list(tmp_path.glob(".records.jsonl.*.partial")) == []
+    assert list(tmp_path.glob(".records.jsonl.*partial")) == []
 
     # A successful write still replaces it.
     _write_record_dump(destination, [_Rec(page=9)])

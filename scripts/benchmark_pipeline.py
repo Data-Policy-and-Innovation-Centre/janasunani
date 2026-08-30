@@ -1390,8 +1390,20 @@ def main(argv: list[str] | None = None) -> int:
         # staged files the manifest does not account for, and the no-manifest
         # case — neither of which should stop the run, and neither of which
         # may be published under a sample label they do not describe.
-        _missing, unlisted = staged_sample_coverage(
+        missing, unlisted = staged_sample_coverage(
             sample_manifest, (doc["document_name"] for doc in loaded_docs)
+        )
+        # Rows that name no file are loadable -- that is the documented
+        # ticket-only exception -- but they are not coverage. Such a row is a
+        # manifest document tied to nothing measured, so a manifest with a
+        # valid row per staged file *plus* one ticket-only row described a
+        # larger draw than ran while `unlisted` stayed empty and completeness
+        # stayed true.
+        unkeyed = sum(
+            1
+            for entry in (sample_manifest or {}).get("documents", [])
+            if isinstance(entry, Mapping)
+            and not (isinstance(entry.get("file"), str) and entry["file"].strip())
         )
         # A manifest that does not enumerate its documents is no better than
         # no manifest for this purpose. `{"slice": "Sambalpur/2024"}` — valid
@@ -1401,7 +1413,13 @@ def main(argv: list[str] | None = None) -> int:
         manifest_enumerates = isinstance(
             (sample_manifest or {}).get("documents"), list
         )
-        sample_manifest_complete = manifest_enumerates and not unlisted
+        # `missing` is checked rather than assumed empty. load_staged_documents
+        # does refuse a manifest listing an unstaged file, but completeness is
+        # the claim that the manifest and the measurement describe the same
+        # set, and it should not rest on another function's invariant holding.
+        sample_manifest_complete = (
+            manifest_enumerates and not unlisted and not missing and not unkeyed
+        )
         if sample_manifest is None:
             logger.warning(
                 "no sample_manifest.json in {}; the run cannot say which draw "
@@ -1413,6 +1431,21 @@ def main(argv: list[str] | None = None) -> int:
                 "sample_manifest.json in {} has no 'documents' list, so "
                 "nothing ties these files to the draw it names; the run will "
                 "not be marked publication_ready",
+                args.documents_dir,
+            )
+        elif unkeyed:
+            logger.warning(
+                "sample_manifest.json in {} has {} row(s) naming no file, so "
+                "the manifest describes documents this run did not measure; "
+                "the run will not be marked publication_ready",
+                args.documents_dir,
+                unkeyed,
+            )
+        elif missing:
+            logger.warning(
+                "{} manifest-listed document(s) in {} were not staged; the "
+                "run will not be marked publication_ready",
+                len(missing),
                 args.documents_dir,
             )
         elif unlisted:

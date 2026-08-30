@@ -437,9 +437,19 @@ def _write_record_dump(destination: Path, records: Any) -> Path:
     file: it holds the same citizen text.
     """
     destination.parent.mkdir(parents=True, exist_ok=True)
-    tmp = destination.with_name(f".{destination.name}.{os.getpid()}.partial")
+    # `mkstemp` opens with O_CREAT|O_EXCL at 0600, so it cannot follow or
+    # reuse anything already at the path. The first version of this used a
+    # predictable `.<name>.<pid>.partial` with O_TRUNC: a local process able
+    # to pre-create that path as a symlink would have had this write follow
+    # it, putting unredacted citizen text outside the tree
+    # `_checked_record_destination` validated, and then `os.replace` would
+    # have installed the symlink itself as the dump. Unguessable and
+    # exclusive closes both halves.
+    fd, tmp_name = tempfile.mkstemp(
+        dir=destination.parent, prefix=f".{destination.name}.", suffix=".partial"
+    )
+    tmp = Path(tmp_name)
     try:
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             for record in records:
@@ -449,8 +459,9 @@ def _write_record_dump(destination: Path, records: Any) -> Path:
         os.replace(tmp, destination)
     except BaseException:
         # Including KeyboardInterrupt: a Ctrl-C is the interrupt this exists
-        # to survive, and leaving the partial sibling behind would strand
-        # unredacted text at a path nothing later cleans up.
+        # to survive, and leaving the partial behind would strand unredacted
+        # text at a path nothing later cleans up. Only ever this invocation's
+        # own file, which mkstemp guarantees we created.
         with contextlib.suppress(OSError):
             os.unlink(tmp)
         raise

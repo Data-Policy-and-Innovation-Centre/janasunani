@@ -1153,6 +1153,45 @@ def test_latency_json_payload_multi_variant(tmp_path):
     assert payload["publication_ready"] is False
 
 
+def test_cli_ticket_only_row_blocks_completeness(tmp_path):
+    """Codex P1, round 13 on #326: a ticket-only row is not coverage.
+
+    Such a row loads — that is the documented exception — but it names a
+    manifest document tied to nothing measured. With a valid row per staged
+    file *plus* one ticket-only row, `unlisted` stayed empty and
+    `sample_manifest_complete` stayed true, so a run could publish while its
+    manifest described a larger draw than actually ran.
+    """
+    staged = _stage_document(tmp_path, "CMO20241020862")
+    manifest = {
+        "slice": "Sambalpur/2024",
+        "documents": [
+            {"file": staged.name, "ticket": "CMO20241020862", "s3_key": staged.name},
+            {"ticket": "CMO20249999999"},
+        ],
+    }
+    (tmp_path / "sample_manifest.json").write_text(json.dumps(manifest))
+
+    out = tmp_path / "latency.json"
+    rc = bench_mod.main(
+        ["--fake", "--variant", "standard", "--documents-dir", str(tmp_path),
+         "--repeats", "2", "--output", str(out), "--seed", "42"]
+    )
+    assert rc == 0
+    ctx = json.loads(out.read_text())["benchmark_context"]
+    assert ctx["sample_manifest_complete"] is False
+
+    # Drop the unkeyed row and the same sample is complete again.
+    manifest["documents"] = manifest["documents"][:1]
+    (tmp_path / "sample_manifest.json").write_text(json.dumps(manifest))
+    rc = bench_mod.main(
+        ["--fake", "--variant", "standard", "--documents-dir", str(tmp_path),
+         "--repeats", "2", "--output", str(out), "--seed", "42"]
+    )
+    assert rc == 0
+    assert json.loads(out.read_text())["benchmark_context"]["sample_manifest_complete"] is True
+
+
 def test_staged_verdict_without_a_digest_is_not_publication_ready():
     """Codex P1, round 10 on #326: the slice names a population, not a draw.
 
