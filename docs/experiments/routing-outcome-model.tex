@@ -1681,12 +1681,16 @@ among completers only.
 \begin{table}[h]
 \centering
 \caption{Developmental $\tau=0$ contrasts for the joint department--chain action.
-DM is the direct method; AIPW is the augmented IPCW score. The parenthesised column and ESS
-apply to AIPW. That column is \emph{not} a standard error: it is policy-side fixed-score
-composition dispersion, because \texttt{cluster\_bootstrap\_se} re-means a score vector whose
-H\'ajek denominator was fixed on the full sample and never re-forms the contrast
-(Appendix~\ref{app:asrun}). Values remain descriptive for the post-resolution $\Sproxy=1$
-population.}
+DM is the direct method; AIPW is the augmented IPCW score. Neither of the last two columns means
+what its usual name would suggest, and both understate the weighting they summarise
+(Appendix~\ref{app:asrun}). The parenthesised column is \emph{not} a standard error: it is
+policy-side fixed-score composition dispersion, because \texttt{cluster\_bootstrap\_se} re-means a
+score vector whose H\'ajek denominator was fixed on the full sample, and it never re-forms the
+contrast. ESS/$n$ is \emph{propensity-only} overlap: \texttt{evaluate\_arm} hands
+\texttt{overlap\_report} just $\hat e$ and the match indicator, which forms
+$\mathbf 1\{\cdot\}/\hat e$ without the censoring factor $R/\hat G$ the score actually applies, so
+it describes the matching-and-propensity correction rather than the composite weights. Values
+remain descriptive for the post-resolution $\Sproxy=1$ population.}
 \label{tab:provisional}
 \begin{tabular}{llrrrr}
 \toprule
@@ -1716,8 +1720,8 @@ $\tau^\star$ (issue~\#284).
 
 \emph{The 2025 test period does not replicate the validation gain.} Its common-support population
 has 113,535 rows, with 2,037 excluded. Historical IPCW restricted duration is 49.74 days. For
-the top-three ridge rule, the contrast is 30.53 days by DM but $-2.35$ by AIPW (SE 3.50,
-ESS/$n=0.073$); boosting gives 31.32 by DM but 0.15 by AIPW (SE 4.41,
+the top-three ridge rule, the contrast is 30.53 days by DM but $-2.35$ by AIPW (disp.\ 3.50,
+propensity-only ESS/$n=0.073$); boosting gives 31.32 by DM but 0.15 by AIPW (disp.\ 4.41,
 ESS/$n=0.081$). The unrestricted AIPW contrasts are 15.06 days for ridge and 2.76 for boosting,
 but their ESS/$n$ is only 0.019 and 0.025. The direct-method gains therefore do not survive
 augmentation or temporal holdout. The test period is reported once as an external diagnostic;

@@ -151,7 +151,8 @@ The 19 August refit evaluates 450,567 common-support 2024 rows (3,665 excluded).
 At τ=0, the top-three ridge rule has a 24.50-day direct and 26.77-day augmented
 descriptive contrast; the boosted versions are 23.90 and 12.40 days. The
 unrestricted augmented contrast is unstable: 28.58 days with ridge but 0.50
-with boosting, with ESS only 3–4% of `n`.
+with boosting, with propensity-only ESS just 3–4% of `n` — and the composite
+weights the score applies are heavier still, since that figure omits `R / Ĝ`.
 
 The correctness frontier is withdrawn pending regeneration. A post-review
 audit found that its augmented score was normalized on all evaluation rows
@@ -161,8 +162,11 @@ population, but the corrected aggregate has not been recomputed (#284). There
 is therefore no published `tau_star`.
 
 The untouched 2025 period does not replicate the validation gain. The
-top-three ridge AIPW contrast is −2.35 days (SE 3.50, ESS/`n` 0.073), while
-boosting gives 0.15 days (SE 4.41, ESS/`n` 0.081). Large positive direct-method
+top-three ridge AIPW contrast is −2.35 days (disp. 3.50, propensity-only
+ESS/`n` 0.073), while boosting gives 0.15 days (disp. 4.41, propensity-only
+ESS/`n` 0.081). Neither parenthesised figure is a standard error: the
+bootstrap re-means a fixed score vector and never forms the contrast, and the
+ESS omits the censoring factor the score applies. Large positive direct-method
 contrasts do not survive augmentation or temporal holdout. These test results
 are not used to retune τ or choose a model.
 
