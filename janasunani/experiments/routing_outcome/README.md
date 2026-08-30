@@ -151,8 +151,10 @@ The 19 August refit evaluates 450,567 common-support 2024 rows (3,665 excluded).
 At τ=0, the top-three ridge rule has a 24.50-day direct and 26.77-day augmented
 descriptive contrast; the boosted versions are 23.90 and 12.40 days. The
 unrestricted augmented contrast is unstable: 28.58 days with ridge but 0.50
-with boosting, with propensity-only ESS just 3–4% of `n` — and the composite
-weights the score applies are heavier still, since that figure omits `R / Ĝ`.
+with boosting, with propensity-only ESS just 3–4% of `n`. That figure omits
+the censoring factor `R / Ĝ` the score applies; Kish ESS is not monotone under
+multiplying weights by a positive factor, so whether the composite ESS sits
+above or below it is an empirical question, not a direction.
 
 The correctness frontier is withdrawn pending regeneration. A post-review
 audit found that its augmented score was normalized on all evaluation rows
