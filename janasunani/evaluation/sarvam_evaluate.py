@@ -374,10 +374,23 @@ def _probe_record_destination(destination: Path) -> None:
     permitted -- and finding out at the write costs a whole paid run.
 
     Never truncates. An existing dump from a previous run is evidence; the
-    probe checks it is writable and leaves the bytes alone. For a new file it
-    creates and removes a uniquely named sibling, which tests the directory
-    that the real ``os.open`` will use without inventing a partial file at
-    the destination.
+    probe checks it and leaves the bytes alone. Either way it creates and
+    removes a uniquely named sibling, which tests the directory the real write
+    will use without inventing a partial file at the destination.
+
+    The sibling probe runs *whether or not the destination exists*, and that
+    is not redundant. ``_write_record_dump`` no longer opens the destination:
+    it writes a temporary sibling and ``os.replace``s it into position, so the
+    write needs the parent directory to be writable even when the target file
+    already is. Returning early on an existing dump therefore passed a
+    writable file sitting in a read-only directory, every paid page ran, and
+    the write then failed creating its sibling -- the exact outcome this probe
+    exists to prevent, reintroduced by the change that made the write atomic.
+
+    The ``W_OK`` check on an existing file is kept as well, though a POSIX
+    rename does not strictly need it: it costs nothing, and a destination the
+    operator cannot write is worth refusing before a paid run rather than
+    relying on rename semantics holding everywhere.
     """
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.exists():
@@ -385,7 +398,6 @@ def _probe_record_destination(destination: Path) -> None:
             raise OSError(f"{destination} exists and is not a regular file")
         if not os.access(destination, os.W_OK):
             raise OSError(f"{destination} exists and is not writable")
-        return
     probe = destination.parent / f".{destination.name}.probe-{os.getpid()}"
     try:
         fd = os.open(probe, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

@@ -1040,6 +1040,42 @@ def test_record_dump_is_0600_from_creation_not_after_the_write(tmp_path):
     assert len(destination.read_text().splitlines()) == 3
 
 
+def test_probe_rejects_a_writable_dump_in_a_read_only_directory(tmp_path):
+    """Codex P2, round 12 on #326: my own atomic-write fix broke this probe.
+
+    `_write_record_dump` no longer opens the destination — it writes a
+    sibling and renames it — so the write needs the *directory* writable even
+    when the existing file is. The probe returned early for an existing
+    destination, so this combination passed validation, ran every paid page,
+    and then failed creating the sibling: exactly what the probe exists to
+    prevent.
+    """
+    import pytest as _pytest
+
+    from janasunani.evaluation.sarvam_evaluate import _probe_record_destination
+
+    if os.getuid() == 0:
+        _pytest.skip("root ignores directory permissions")
+
+    holder = tmp_path / "locked"
+    holder.mkdir()
+    destination = holder / "records.jsonl"
+    destination.write_text("prior evidence\n")
+    os.chmod(destination, 0o600)
+    os.chmod(holder, 0o500)  # r-x: the file is writable, the directory is not
+    try:
+        with _pytest.raises(OSError):
+            _probe_record_destination(destination)
+    finally:
+        os.chmod(holder, 0o700)
+
+    # And it still passes when the directory is writable, leaving the
+    # existing evidence untouched.
+    _probe_record_destination(destination)
+    assert destination.read_text() == "prior evidence\n"
+    assert list(holder.glob(".records.jsonl.probe-*")) == []
+
+
 def test_a_failed_record_dump_leaves_the_previous_evidence_intact(tmp_path):
     """Codex P2, round 11 on #326: O_TRUNC destroyed the old dump on open.
 
