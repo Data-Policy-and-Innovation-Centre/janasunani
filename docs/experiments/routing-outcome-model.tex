@@ -1286,9 +1286,10 @@ cluster, the code reports
 \]
 and resamples whole clusters. Lemma~\ref{lem:cluster} explains why cluster dependence can make
 this diagnostic much larger than an observation-level calculation. The current code resamples
-already-computed scores without refitting $G$ or the other nuisances, so the reported number is
-a descriptive measure of sensitivity to cluster composition, not a verified standard error or
-confidence interval for the censored-data policy value.
+already-computed scores without refitting $G$ or the other nuisances, and holds the H\'ajek
+denominator at its full-sample value, so the reported number describes the composition of a fixed
+score vector. It is not a verified standard error or confidence interval for the censored-data
+policy value, and it is not uncertainty for that policy value at all.
 
 %=====================================================================
 \section{Learning a deployable rule}\label{sec:policy}
@@ -1680,12 +1681,16 @@ among completers only.
 \begin{table}[h]
 \centering
 \caption{Developmental $\tau=0$ contrasts for the joint department--chain action.
-DM is the direct method; AIPW is the augmented IPCW score. Standard errors and ESS apply to
-AIPW. Values remain descriptive for the post-resolution $\Sproxy=1$ population.}
+DM is the direct method; AIPW is the augmented IPCW score. The parenthesised column and ESS
+apply to AIPW. That column is \emph{not} a standard error: it is policy-side fixed-score
+composition dispersion, because \texttt{cluster\_bootstrap\_se} re-means a score vector whose
+H\'ajek denominator was fixed on the full sample and never re-forms the contrast
+(Appendix~\ref{app:asrun}). Values remain descriptive for the post-resolution $\Sproxy=1$
+population.}
 \label{tab:provisional}
 \begin{tabular}{llrrrr}
 \toprule
-Outcome model & Candidate set & $\Delta_{\rm DM}$ & $\Delta_{\rm AIPW}$ & (SE) & ESS/$n$\\
+Outcome model & Candidate set & $\Delta_{\rm DM}$ & $\Delta_{\rm AIPW}$ & (disp.) & ESS/$n$\\
 \midrule
 one-hot ridge & top three & 24.50 & 26.77 & 4.04 & 0.194\\
 one-hot ridge & unrestricted & 35.61 & 28.58 & 7.02 & 0.033\\
@@ -3016,24 +3021,29 @@ much $\hat V_{\hat\delta}$ itself would move. Recomputing the arm's self-normali
 every draw is what would turn it into the latter, and is tracked with the contrast fix below. It
 is in no form a causal confidence interval or valid post-policy-selection inference.
 
-\textbf{The reported standard error is policy-value-only, including where it is printed beside a
+\textbf{The reported figure is policy-side only, including where it is printed beside a
 contrast.} \texttt{cluster\_bootstrap\_se} resamples the arm's own score vector; the historical
 IPCW baseline in \eqref{eq:historical-estimators} is not recomputed inside the draw, so the
-difference is never formed per draw. A parenthesised figure such as $26.77\,(4.04)$ therefore
-carries the uncertainty of the policy value $\hat V_{\hat\delta}$, not of
-$\hat V_{\hat\delta}-\hat V_{\mathrm{hist}}$. The two differ by the covariance term: because both
-quantities are computed on the same district--year clusters, they move together, and the
-contrast SE is
+difference is never formed per draw. A parenthesised figure such as $26.77\,(4.04)$ is therefore
+policy-side fixed-score composition variability in the sense just described --- not uncertainty
+for $\hat V_{\hat\delta}$, and still less for
+$\hat V_{\hat\delta}-\hat V_{\mathrm{hist}}$. Two separate gaps sit between it and a contrast SE,
+and both have to close before the number means what its placement suggests. The first is the one
+above: the arm's own H\'ajek denominator is held fixed, so this is not yet uncertainty for the
+policy value either. The second is the covariance term: because both
+quantities would be computed on the same district--year clusters, they would move together, and
+the contrast SE is
 $\sqrt{\operatorname{Var}(\hat V_{\hat\delta})+\operatorname{Var}(\hat V_{\mathrm{hist}})
 -2\operatorname{Cov}(\cdot,\cdot)}$. The printed number equals it exactly when
 $\operatorname{Var}(\hat V_{\mathrm{hist}})
 =2\operatorname{Cov}(\hat V_{\hat\delta},\hat V_{\mathrm{hist}})$ --- which a constant,
 uncorrelated baseline satisfies, but so does a baseline with positive variance whose covariance
 with the policy value is half of it. There is no reason to expect that identity to hold here, so
-the two are not interchangeable. The sign
-of the discrepancy is not determined in advance, so this is not a conservative approximation
-either. Differencing the two per draw is the fix and is tracked separately; until then the
-number qualifies the level, not the change.
+even a properly bootstrapped policy value would not be interchangeable with the contrast. The
+sign of the discrepancy is not determined in advance, so this is not a conservative approximation
+either. Recomputing the arm's self-normalised value inside every draw and differencing the two
+per draw are the same fix, tracked separately; until then the number describes the composition of
+the policy-side scores, and neither the level nor the change.
 
 \subsection{What was run, what merely exists, and what remains proposed}
 
