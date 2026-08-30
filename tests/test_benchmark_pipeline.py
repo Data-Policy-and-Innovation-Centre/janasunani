@@ -11,7 +11,7 @@ import json
 import os
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -401,6 +401,73 @@ def test_staged_sample_coverage_rejects_malformed_entries(tmp_path):
     assert (missing, unlisted) == ([], ["a.pdf"])
 
 
+def test_load_staged_documents_rejects_a_ticket_its_key_contradicts(tmp_path):
+    """Codex P1, round 9 on #326: the row's own s3_key is the check.
+
+    `file_to_ticket` took the manifest's ticket as authoritative. A row
+    pairing a staged file with the wrong nonblank ticket still produced a
+    complete coverage match, so the run clustered under the wrong complaint
+    and could be published. The builder writes `file` as `Path(key).name` and
+    the key is `<ticket>_complaint_<timestamp>.<ext>`, so the key settles both.
+    """
+    ticket = "CMO20241020862"
+    name = _stage_document(tmp_path, ticket).name
+
+    def manifest(**row):
+        return {"slice": "Sambalpur/2024", "documents": [{"file": name, **row}]}
+
+    # The key names this ticket; the row claims another.
+    with pytest.raises(ValueError, match="contradicts"):
+        load_staged_documents(
+            tmp_path, manifest=manifest(ticket="CMO20241099999", s3_key=name)
+        )
+
+    # The other half: the key's basename is not the staged filename.
+    with pytest.raises(ValueError, match="contradicts"):
+        load_staged_documents(
+            tmp_path,
+            manifest=manifest(
+                ticket=ticket, s3_key=f"{ticket}/other_complaint_20250715_234307.pdf"
+            ),
+        )
+
+    # Agreeing rows load. The hierarchical case is the reason `file` exists at
+    # all: sarvam_sample_builder stages under Path(key).name, so the ticket
+    # OR159/P/2021/00535 reaches disk as 00535_complaint_..., and only the
+    # manifest can put the prefix back. The check has to compare the key's
+    # basename to `file` and the key's prefix to `ticket` -- not the two to
+    # each other -- or exactly this row would look contradictory.
+    nested_ticket = "OR159/P/2021/00535"
+    nested_key = f"{nested_ticket}_complaint_20250715_234307.pdf"
+    nested_name = _stage_document(tmp_path, "00535").name
+    assert nested_name == PurePosixPath(nested_key).name
+
+    docs = load_staged_documents(
+        tmp_path,
+        manifest={
+            "slice": "Sambalpur/2024",
+            "documents": [
+                {"file": name, "ticket": ticket, "s3_key": name},
+                {"file": nested_name, "ticket": nested_ticket, "s3_key": nested_key},
+            ],
+        },
+    )
+    assert sorted(d["ticket"] for d in docs) == sorted([ticket, nested_ticket])
+
+    # A row without s3_key keeps the documented ticket-only behaviour.
+    ticket_only = load_staged_documents(
+        tmp_path,
+        manifest={
+            "slice": "Sambalpur/2024",
+            "documents": [
+                {"file": name, "ticket": ticket},
+                {"file": nested_name, "ticket": nested_ticket},
+            ],
+        },
+    )
+    assert sorted(d["ticket"] for d in ticket_only) == sorted([ticket, nested_ticket])
+
+
 def test_staged_sample_coverage_rejects_a_row_naming_neither_file_nor_ticket():
     """Codex P1, round 6 on #326: `{}` is a Mapping, so it slipped through.
 
@@ -605,6 +672,9 @@ def test_real_document_only_run_reaches_publication_ready(tmp_path):
     result["benchmark_context"] = {
         "host_label": "release-host",
         "model_release_id": "model-release-1",
+        "sample_provenance": "staged-documents",
+        "sample_slice": "Sambalpur/2024",
+        "sample_manifest_complete": True,
     }
 
     assert set(result["input_paths"]) == {"document"}
@@ -893,8 +963,19 @@ def test_cli_synthetic_path_benchmark_context_fixture_is_unchanged(tmp_path):
     ctx = data["benchmark_context"]
     assert ctx["fixture"] == "deterministic synthetic grievances without citizen data"
     assert ctx["execution"] == "sequential single-process execution"
-    # No document-sample keys leak onto the synthetic path.
-    assert set(ctx) == {"host_label", "model_release_id", "fixture", "execution"}
+    # No document-sample keys leak onto the synthetic path. `sample_provenance`
+    # is the declaration that there is no sample, not a sample key: the gate
+    # requires it because a context that says nothing cannot be shown to be
+    # synthetic, and a real measurement must not inherit that benefit of the
+    # doubt.
+    assert ctx["sample_provenance"] == "synthetic"
+    assert set(ctx) == {
+        "host_label",
+        "model_release_id",
+        "fixture",
+        "execution",
+        "sample_provenance",
+    }
 
 
 def test_run_benchmark_standard_variant_basic():
@@ -1093,6 +1174,7 @@ def test_unspecified_sample_slice_is_not_publication_ready():
     real_context = {
         "host_label": "release-host",
         "model_release_id": "model-release-1",
+        "sample_provenance": "staged-documents",
         "sample_slice": "sambalpur-2024",
         "sample_document_count": 2,
         "sample_manifest_complete": True,
@@ -1104,12 +1186,21 @@ def test_unspecified_sample_slice_is_not_publication_ready():
         result["benchmark_context"] = {**real_context, "sample_slice": label}
         assert latency_json_payload(result)["publication_ready"] is False, label
 
-    # The synthetic path records no sample_slice at all and is unaffected.
+    # The synthetic path publishes by declaring itself, not by staying silent.
+    result["benchmark_context"] = {
+        "host_label": "release-host",
+        "model_release_id": "model-release-1",
+        "sample_provenance": "synthetic",
+    }
+    assert latency_json_payload(result)["publication_ready"] is True
+
+    # And silence is now a refusal, which is the finding this supersedes:
+    # a staged run through the public API could omit both fields and pass.
     result["benchmark_context"] = {
         "host_label": "release-host",
         "model_release_id": "model-release-1",
     }
-    assert latency_json_payload(result)["publication_ready"] is True
+    assert latency_json_payload(result)["publication_ready"] is False
 
 
 def test_identified_real_latency_run_is_publication_ready():
@@ -1133,6 +1224,7 @@ def test_identified_real_latency_run_is_publication_ready():
     result["benchmark_context"] = {
         "host_label": "release-host",
         "model_release_id": "model-release-1",
+        "sample_provenance": "synthetic",
     }
 
     payload = latency_json_payload(result)
@@ -1178,6 +1270,7 @@ def test_an_incomplete_document_sample_is_not_publication_ready():
     result["benchmark_context"] = {
         "host_label": "release-host",
         "model_release_id": "model-release-1",
+        "sample_provenance": "staged-documents",
         "sample_slice": "Sambalpur/2024",
         "sample_manifest_complete": False,
     }
@@ -1186,10 +1279,21 @@ def test_an_incomplete_document_sample_is_not_publication_ready():
     result["benchmark_context"]["sample_manifest_complete"] = True
     assert latency_json_payload(result)["publication_ready"] is True
 
-    # Absent on the synthetic path, which has no drawn sample to be
-    # incomplete. Only an explicit False blocks, or every existing
-    # synthetic-fixture run would stop publishing.
+    # Supersedes an earlier assertion that a *missing* completeness key still
+    # published. It did, and that was the defect: a staged run assembled
+    # through the public API could omit the key entirely and inherit the
+    # synthetic path's benefit of the doubt. A run that declares staged
+    # documents must now say the manifest accounted for them.
     del result["benchmark_context"]["sample_manifest_complete"]
+    assert latency_json_payload(result)["publication_ready"] is False
+
+    # The synthetic path is what the old exemption was protecting, and it
+    # still publishes -- by saying so.
+    result["benchmark_context"] = {
+        "host_label": "release-host",
+        "model_release_id": "model-release-1",
+        "sample_provenance": "synthetic",
+    }
     assert latency_json_payload(result)["publication_ready"] is True
 
 
@@ -1254,6 +1358,7 @@ def test_real_latency_single_kind_run_can_be_publication_ready():
     result["benchmark_context"] = {
         "host_label": "release-host",
         "model_release_id": "model-release-1",
+        "sample_provenance": "synthetic",
     }
 
     assert set(result["input_paths"]) == {"text"}

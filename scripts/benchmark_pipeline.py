@@ -42,7 +42,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterable, Mapping
 
 from loguru import logger
@@ -85,6 +85,12 @@ DEFAULT_REPEATS = 3
 # Output location (relative to repo root)
 DEFAULT_OUTPUT = Path("outputs/benchmark/latency.json")
 LATENCY_SCHEMA_VERSION = "janasunani.pipeline-latency/v1"
+
+# What the run measured. The publication gate requires one of these to be
+# stated: a context that declares nothing cannot be shown to be synthetic,
+# and a real measurement must not inherit that benefit of the doubt.
+SYNTHETIC_PROVENANCE = "synthetic"
+STAGED_PROVENANCE = "staged-documents"
 
 # Fake per-stage mean seconds (CPU laptop, no GPU). These are not
 # performance claims — they are deterministic stand-ins so the harness
@@ -573,6 +579,7 @@ def load_staged_documents(
     # directory prefix. Only a file missing from the manifest (or no
     # manifest at all) falls back to parsing the filename itself.
     file_to_ticket: dict[str, str] = {}
+    contradicted: list[str] = []
     if manifest is not None:
         manifest_documents = manifest.get("documents")
         if isinstance(manifest_documents, list):
@@ -581,8 +588,44 @@ def load_staged_documents(
                     continue
                 file_name = entry.get("file")
                 manifest_ticket = entry.get("ticket")
-                if file_name and manifest_ticket:
-                    file_to_ticket[file_name] = manifest_ticket
+                if not (file_name and manifest_ticket):
+                    continue
+                # Where the row carries the source key, it decides both other
+                # fields: the builder writes `file` as Path(key).name and the
+                # key is `<ticket>_complaint_<timestamp>.<ext>`. Taking the
+                # row's ticket as authoritative without checking it let a row
+                # pair a staged file with the wrong complaint -- coverage
+                # still reported a complete match, so the run clustered under
+                # that complaint and could still be published.
+                source_key = entry.get("s3_key")
+                if isinstance(source_key, str) and source_key.strip():
+                    key = source_key.strip()
+                    key_ticket = (
+                        key.split("_complaint_")[0] if "_complaint_" in key else None
+                    )
+                    if key_ticket is not None and key_ticket != manifest_ticket:
+                        contradicted.append(
+                            f"{file_name!r}: s3_key names ticket {key_ticket!r}, "
+                            f"row says {manifest_ticket!r}"
+                        )
+                        continue
+                    if PurePosixPath(key).name != file_name:
+                        contradicted.append(
+                            f"{file_name!r}: s3_key basename is "
+                            f"{PurePosixPath(key).name!r}"
+                        )
+                        continue
+                file_to_ticket[file_name] = manifest_ticket
+
+    if contradicted:
+        raise ValueError(
+            f"sample manifest has {len(contradicted)} row(s) whose s3_key "
+            f"contradicts the row: {contradicted[:5]}"
+            + (", ..." if len(contradicted) > 5 else "")
+            + ". The key carries both the ticket and the staged filename, so "
+            "a row that disagrees with it would cluster the run under the "
+            "wrong complaint while coverage still reported a complete match."
+        )
 
     docs: list[dict[str, Any]] = []
     unparsed: list[str] = []
@@ -1030,22 +1073,32 @@ def latency_json_payload(
     def nonblank(value: object) -> bool:
         return isinstance(value, str) and bool(value.strip())
 
-    def has_identified_sample(context: dict[str, Any]) -> bool:
-        """A real-document run must name the population it measured.
+    def has_sample_verdict(context: dict[str, Any]) -> bool:
+        """The artifact must say what it ran on, and absence is not an answer.
 
-        The synthetic path records no `sample_slice` at all and is not
-        affected. On the real-document path the label falls back to
-        "unspecified" when neither --slice nor a manifest `slice` supplies
-        one, and `sample_manifest_complete` can still be true, because a
-        manifest can account for every staged file without saying which draw
-        those files are. The gate below only rejects an explicit False, so
-        such a run published an artifact that could not identify its own
-        population.
+        Keying off the presence of `sample_slice` was the earlier mistake: a
+        real-document run assembled through the public
+        `load_staged_documents` -> `run_benchmark` -> `write_latency_json`
+        path can carry only the host and model labels, and treating that
+        silence as "synthetic, therefore fine" published a real measurement
+        with no manifest and no slice.
+
+        So the context declares which it is. Synthetic needs nothing further.
+        A staged-document run must both name its draw -- "unspecified" is the
+        fallback when neither --slice nor the manifest supplies one, and it
+        names nothing -- and carry a manifest that accounted for every staged
+        file. Anything else, including a context that declares nothing, is
+        not publishable.
         """
-        if "sample_slice" not in context:
+        provenance = context.get("sample_provenance")
+        if provenance == SYNTHETIC_PROVENANCE:
             return True
-        return nonblank(context.get("sample_slice")) and (
-            context["sample_slice"] != "unspecified"
+        if provenance != STAGED_PROVENANCE:
+            return False
+        return (
+            context.get("sample_manifest_complete") is True
+            and nonblank(context.get("sample_slice"))
+            and context["sample_slice"] != "unspecified"
         )
 
     def has_cold_and_warm(result: dict[str, Any]) -> bool:
@@ -1103,8 +1156,7 @@ def latency_json_payload(
         # manifest at all, or staged files the manifest does not account
         # for — so the recorded slice and digest would name a draw that is
         # not what ran.
-        and result["benchmark_context"].get("sample_manifest_complete") is not False
-        and has_identified_sample(result["benchmark_context"])
+        and has_sample_verdict(result["benchmark_context"])
         and nonblank(result.get("git_sha"))
         for result in variants_payload.values()
     )
@@ -1439,6 +1491,7 @@ def main(argv: list[str] | None = None) -> int:
                     f"({len(loaded_docs)} documents, slice {sample_slice})"
                 ),
                 "execution": "sequential single-process execution",
+                "sample_provenance": STAGED_PROVENANCE,
                 "sample_slice": sample_slice,
                 "sample_document_count": len(loaded_docs),
                 "sample_digest": sample_digest,
@@ -1449,6 +1502,7 @@ def main(argv: list[str] | None = None) -> int:
                 "host_label": args.host_label,
                 "model_release_id": args.model_release_id,
                 "fixture": "deterministic synthetic grievances without citizen data",
+                "sample_provenance": SYNTHETIC_PROVENANCE,
                 "execution": "sequential single-process execution",
             }
         results[variant] = result
