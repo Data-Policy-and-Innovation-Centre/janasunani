@@ -454,6 +454,14 @@ def test_load_staged_documents_rejects_a_ticket_its_key_contradicts(tmp_path):
     )
     assert sorted(d["ticket"] for d in docs) == sorted([ticket, nested_ticket])
 
+    # A key with no `_complaint_` marker names no ticket. Skipping the
+    # comparison there was the round-nine hole: the manifest mapping bypasses
+    # filename parsing, so this loaded under WRONG with complete coverage.
+    with pytest.raises(ValueError, match="no ticket|_complaint_"):
+        load_staged_documents(
+            tmp_path, manifest=manifest(ticket="WRONG", s3_key="one.pdf")
+        )
+
     # A row without s3_key keeps the documented ticket-only behaviour.
     ticket_only = load_staged_documents(
         tmp_path,
@@ -675,6 +683,7 @@ def test_real_document_only_run_reaches_publication_ready(tmp_path):
         "sample_provenance": "staged-documents",
         "sample_slice": "Sambalpur/2024",
         "sample_manifest_complete": True,
+        "sample_digest": "a" * 64,
     }
 
     assert set(result["input_paths"]) == {"document"}
@@ -1144,6 +1153,50 @@ def test_latency_json_payload_multi_variant(tmp_path):
     assert payload["publication_ready"] is False
 
 
+def test_staged_verdict_without_a_digest_is_not_publication_ready():
+    """Codex P1, round 10 on #326: the slice names a population, not a draw.
+
+    A public-API caller could declare staged provenance, a real slice and a
+    complete manifest while omitting `sample_digest`, and still publish. Two
+    different staged sets from Sambalpur/2024 are indistinguishable by slice
+    alone — binding the manifest to the measured bytes is exactly what
+    `_document_sample_digest` was added for.
+    """
+    result = run_benchmark(
+        variant="standard",
+        n_text=1,
+        n_image=1,
+        repeats=2,
+        discard_warm=False,
+        processor_factory=lambda _variant: type(
+            "Processor",
+            (),
+            {
+                "_timing_sink": None,
+                "process": lambda self, **kwargs: self._timing_sink(
+                    {"redact": 0.1, "e2e": 0.2, "ok": 1.0}
+                ),
+            },
+        )(),
+    )
+    staged = {
+        "host_label": "release-host",
+        "model_release_id": "model-release-1",
+        "sample_provenance": "staged-documents",
+        "sample_slice": "Sambalpur/2024",
+        "sample_manifest_complete": True,
+        "sample_digest": "a" * 64,
+    }
+    result["benchmark_context"] = dict(staged)
+    assert latency_json_payload(result)["publication_ready"] is True
+
+    for missing in ({k: v for k, v in staged.items() if k != "sample_digest"},
+                    {**staged, "sample_digest": ""},
+                    {**staged, "sample_digest": "   "}):
+        result["benchmark_context"] = missing
+        assert latency_json_payload(result)["publication_ready"] is False
+
+
 def test_unspecified_sample_slice_is_not_publication_ready():
     """Codex P1, round 8 on #326: a run must name the population it measured.
 
@@ -1178,6 +1231,7 @@ def test_unspecified_sample_slice_is_not_publication_ready():
         "sample_slice": "sambalpur-2024",
         "sample_document_count": 2,
         "sample_manifest_complete": True,
+        "sample_digest": "a" * 64,
     }
     result["benchmark_context"] = dict(real_context)
     assert latency_json_payload(result)["publication_ready"] is True
@@ -1273,6 +1327,7 @@ def test_an_incomplete_document_sample_is_not_publication_ready():
         "sample_provenance": "staged-documents",
         "sample_slice": "Sambalpur/2024",
         "sample_manifest_complete": False,
+        "sample_digest": "a" * 64,
     }
     assert latency_json_payload(result)["publication_ready"] is False
 

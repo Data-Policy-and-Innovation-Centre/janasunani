@@ -600,10 +600,21 @@ def load_staged_documents(
                 source_key = entry.get("s3_key")
                 if isinstance(source_key, str) and source_key.strip():
                     key = source_key.strip()
-                    key_ticket = (
-                        key.split("_complaint_")[0] if "_complaint_" in key else None
-                    )
-                    if key_ticket is not None and key_ticket != manifest_ticket:
+                    # A key with no `_complaint_` marker names no ticket, and
+                    # skipping the comparison there was the wrong reading of
+                    # "validate where we can": the manifest mapping bypasses
+                    # filename parsing entirely, so `{file: "one.pdf", ticket:
+                    # "WRONG", s3_key: "one.pdf"}` loaded under WRONG, reported
+                    # complete coverage and stayed publishable. A supplied key
+                    # must be a key.
+                    if "_complaint_" not in key:
+                        contradicted.append(
+                            f"{file_name!r}: s3_key {key!r} carries no "
+                            "'_complaint_' marker, so it names no ticket"
+                        )
+                        continue
+                    key_ticket = key.split("_complaint_")[0]
+                    if key_ticket != manifest_ticket:
                         contradicted.append(
                             f"{file_name!r}: s3_key names ticket {key_ticket!r}, "
                             f"row says {manifest_ticket!r}"
@@ -1095,10 +1106,16 @@ def latency_json_payload(
             return True
         if provenance != STAGED_PROVENANCE:
             return False
+        # The slice names the district and year, not the draw. Two different
+        # staged sets from Sambalpur/2024 are indistinguishable by slice alone,
+        # which is what `_document_sample_digest` exists to settle: it binds
+        # the manifest to the bytes actually measured. A staged verdict without
+        # it identifies a population but not the sample.
         return (
             context.get("sample_manifest_complete") is True
             and nonblank(context.get("sample_slice"))
             and context["sample_slice"] != "unspecified"
+            and nonblank(context.get("sample_digest"))
         )
 
     def has_cold_and_warm(result: dict[str, Any]) -> bool:

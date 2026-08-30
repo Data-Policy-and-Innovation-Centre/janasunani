@@ -40,6 +40,31 @@ def _corpus(spec: dict[str, int]) -> list[DocumentRecord]:
     return out
 
 
+def test_module_documents_the_pinned_corpus_not_the_short_copy():
+    """Codex P1, round 10 on #326: the docstring taught the wrong number.
+
+    It described the corpus as 69,844 documents — the known-short Box copy —
+    while the pinned registry holds 70,029. A caller following it would pass
+    69,844 as the largest tier's budget, so `_draw` would sample rather than
+    return the population whole, and every nested tier would descend from a
+    corpus 185 documents short. Same wrong-population failure the manifest
+    comparison exists to catch, reached through the budget instead of the disk.
+
+    Pinned against the registry so the two cannot drift apart again.
+    """
+    import janasunani.evaluation.dsi_sample as dsi
+    from janasunani.samples import REGISTRY
+
+    doc = dsi.__doc__ or ""
+    assert "70,029 documents across 69,977 tickets" in REGISTRY["dsi_large"].what
+    assert "70,029 documents across 69,977 tickets" in doc
+
+    # 69,844 may appear, but only as the short copy it is — never as the corpus.
+    for line in doc.splitlines():
+        if "69,844" in line:
+            assert "not this number" in line or "Box" in line, line
+
+
 def test_tiers_nest_by_construction():
     """The smaller tier must be a strict subset of the larger one.
 

@@ -1,16 +1,25 @@
 """Nested stratified draws over the DSI clinic reference corpus.
 
 The DSI clinic's ``large_sample`` is the corpus their reported numbers were
-measured on: 69,844 documents across 69,675 tickets, drawn from 100,000
-complaints at seed 1337. Reproducing anything of theirs means working from it
-rather than from a slice of our own choosing.
+measured on: **70,029 documents across 69,977 tickets**, drawn from 100,000
+complaints at seed 1337 (see :mod:`janasunani.samples`, which pins it).
+Reproducing anything of theirs means working from it rather than from a slice
+of our own choosing.
+
+69,844 is *not* this number. It is the count in the known-short Box copy,
+which is missing 189 documents that S3 has, and it appears in this file only as
+the failure that :func:`load_corpus`'s manifest comparison exists to catch.
+Passing it as the largest tier's budget would make ``_draw`` sample 185
+documents out of the verified population instead of returning it whole, and
+every nested tier would then descend from an incomplete corpus --- the same
+wrong-population failure, arrived at through the budget rather than the disk.
 
 It is also 60 GB, and a single pipeline pass over all of it is days of compute.
 So the work is tiered, and the tiers must nest:
 
     latency  (few hundred)  subset of
     quality  (few thousand) subset of
-    corpus   (69,844)
+    corpus   (len(corpus), never a copied constant)
 
 **Nesting is by construction, never by re-seeding.** A seeded re-draw at a
 smaller budget is not a subset of the larger one: ``allocate`` apportions a
@@ -505,6 +514,11 @@ def draw_nested(
     each draw uses the previous tier as its pool, so the result is a strict
     chain of subsets. Verify it with :func:`assert_nested` rather than trusting
     it: this is the property that a re-seeded redraw silently breaks.
+
+    For a tier meant to be the whole corpus, pass ``len(corpus)`` --- a budget
+    at or above the pool returns it whole, while a copied constant that has
+    drifted below the true count silently samples instead, and every smaller
+    tier then descends from that shortfall.
     """
     ordered = sorted(tiers.items(), key=lambda kv: -kv[1])
     out: dict[str, list[DocumentRecord]] = {}
