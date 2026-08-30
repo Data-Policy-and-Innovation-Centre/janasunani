@@ -180,6 +180,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 import hashlib
 from itertools import combinations
+from collections.abc import Iterator
 from typing import Optional
 
 from loguru import logger
@@ -274,6 +275,15 @@ LARGE_BUCKET_ANCHOR_COUNT = 32
 # Stable provenance marker for the bounded grouping policy. Increment this
 # when the algorithm changes even if the cap/anchor defaults do not.
 GROUPING_ALGORITHM = "fixed-anchor-v1"
+
+# Identity buckets carry no block key, so they cannot be scoped to a block
+# the way band buckets are (#336). They are bounded by batching instead: each
+# bucket is one citizen's filings, so this many of them is a small working
+# set even though their members can come from anywhere in the scope. Not a
+# tuning knob -- it trades round trips against peak memory, and only the
+# memory side has a hard limit.
+IDENTITY_BUCKET_BATCH = 2_000
+
 
 # Odia Unicode block. Presence, not majority: any real Odia content in a
 # filing is enough to route it to the Odia-script partition rather than the
@@ -1201,62 +1211,55 @@ def _identity_candidate_pairs(rows) -> set[tuple[str, str]]:
     return pairs
 
 
-def _candidate_buckets(rows, num_bands: int) -> list[tuple[Optional[str], list[str]]]:
-    """Candidate buckets as ``(block_key, members)``, band and identity
-    together.
+def _band_buckets(rows, num_bands: int) -> Iterator[tuple[str, list[str]]]:
+    """Yield non-singleton band buckets as ``(block_key, members)``, one band
+    at a time.
 
-    Returns buckets rather than the pairs inside them. A bucket is quadratic
-    in its membership, so materialising its pairs is what exhausted memory on
-    the Sambalpur slice; the caller streams each bucket and unions as it goes.
+    One band at a time, not all sixteen at once.
 
-    Band buckets are keyed by block, so they respect district/script/time
-    blocking, and carry that block's key in the returned tuple. `_group_duplicates`
-    uses the key to organize overlapping bands before fetching all candidate
-    text once (#158), rather than once per bucket. Identity
-    buckets deliberately are not blocked: a resubmission can land months
-    later and a phone number carries no script (module docstring). They come
-    back with ``None`` in place of a block key -- there is no single block to
-    cache text against, since one identity bucket's members can span the
-    whole slice.
+    Building the full map first and filtering singletons afterwards costs
+    16N dictionary entries at peak -- about 21.9M for the corpus, measured
+    at ~5.2 GiB, which dwarfs the 1.05 GiB the banded rows themselves take
+    and was enough to exhaust an 8 GiB box on its own. Almost all of those
+    entries are singletons that are then thrown away: a signature that
+    collides with nothing still occupies sixteen of them.
 
-    Singleton buckets are dropped -- no pairs, and they would only cost a
-    round trip.
+    Banding is independent per band index, so a bucket can never span two
+    of them. Handling one band per pass therefore yields exactly the same
+    buckets while holding only N entries at a time -- a sixteenth of the
+    peak -- and the singletons are discarded at the end of each pass
+    instead of at the end of everything. The extra passes are over a list
+    already in memory and cost no I/O.
 
-    ``_text_candidate_pairs`` and ``_identity_candidate_pairs`` are retained
-    as the pure, directly-testable statement of what a bucket means, including
-    the all-pairs invariant from #101. This function is the streaming path
-    that production uses.
+    A generator, not a list: `_group_duplicates` consumes one block's buckets
+    and discards them before starting the next, so nothing ever holds every
+    bucket in the scope. Returning a list is what made the corpus run need
+    the buckets twice over -- once here and once in the caller's own
+    per-block index (#336).
     """
-    # One band at a time, not all sixteen at once.
-    #
-    # Building the full map first and filtering singletons afterwards costs
-    # 16N dictionary entries at peak -- about 21.9M for the corpus, measured
-    # at ~5.2 GiB, which dwarfs the 1.05 GiB the banded rows themselves take
-    # and was enough to exhaust an 8 GiB box on its own. Almost all of those
-    # entries are singletons that are then thrown away: a signature that
-    # collides with nothing still occupies sixteen of them.
-    #
-    # Banding is independent per band index, so a bucket can never span two
-    # of them. Handling one band per pass therefore yields exactly the same
-    # buckets while holding only N entries at a time -- a sixteenth of the
-    # peak -- and the singletons are discarded at the end of each pass
-    # instead of at the end of everything. The extra passes are over a list
-    # already in memory and cost no I/O.
-    out: list[tuple[Optional[str], list[str]]] = []
     for band_index in range(num_bands):
         band_buckets: dict[tuple[str, int], list[str]] = defaultdict(list)
         for row, bands in _banded(rows, num_bands):
             band_buckets[(row.block_key, bands[band_index])].append(row.ticket_no)
-        out.extend(
-            (block_key, members)
-            for (block_key, _band_hash), members in band_buckets.items()
-            if len(set(members)) > 1
-        )
+        for (block_key, _band_hash), members in band_buckets.items():
+            if len(set(members)) > 1:
+                yield block_key, members
         del band_buckets
 
-    # Identity buckets are keyed by the citizen, not by a band, so there is
-    # no equivalent split: two dicts over the rows that carry a key at all,
-    # measured at ~0.38 GiB for the corpus.
+
+def _identity_buckets(rows) -> Iterator[list[str]]:
+    """Yield non-singleton identity buckets -- the mobile/email path.
+
+    Identity buckets are keyed by the citizen, not by a band, so there is
+    no per-band split to make: two dicts over the rows that carry a key at
+    all, measured at ~0.38 GiB for the corpus.
+
+    They are deliberately *not* blocked: a resubmission can land months
+    later and a phone number carries no script (module docstring). One
+    identity bucket's members can therefore span the whole scope, which is
+    why `_group_duplicates` verifies them in batches rather than per block,
+    and why they carry no block key.
+    """
     identity_buckets: dict[tuple[str, str], list[str]] = defaultdict(list)
     for row in rows:
         for kind, key in (
@@ -1266,10 +1269,37 @@ def _candidate_buckets(rows, num_bands: int) -> list[tuple[Optional[str], list[s
             if key is not None:
                 identity_buckets[(kind, key)].append(row.ticket_no)
 
-    out.extend(
-        (None, members) for members in identity_buckets.values() if len(set(members)) > 1
-    )
-    return out
+    for members in identity_buckets.values():
+        if len(set(members)) > 1:
+            yield members
+
+
+def _candidate_buckets(rows, num_bands: int) -> list[tuple[Optional[str], list[str]]]:
+    """Candidate buckets as ``(block_key, members)``, band and identity
+    together.
+
+    Returns buckets rather than the pairs inside them. A bucket is quadratic
+    in its membership, so materialising its pairs is what exhausted memory on
+    the Sambalpur slice; the caller streams each bucket and unions as it goes.
+
+    Band buckets carry the key of the block they came from; identity buckets
+    come back with ``None`` in its place, because there is no single block to
+    key them on.
+
+    Singleton buckets are dropped -- no pairs, and they would only cost a
+    round trip.
+
+    This is the whole-scope statement of what a bucket means, including the
+    all-pairs invariant from #101, and is what the bucket tests assert
+    against. **Production does not call it**: `_group_duplicates` streams
+    `_band_buckets` per block and `_identity_buckets` in batches, so that no
+    structure in the grouping pass is sized by the corpus (#336). Keep the
+    two paths agreeing -- `TestBandBucketsAreBuiltOneBandAtATime` is what
+    catches them drifting.
+    """
+    return [(block_key, members) for block_key, members in _band_buckets(rows, num_bands)] + [
+        (None, members) for members in _identity_buckets(rows)
+    ]
 
 
 def _find(parent: dict[str, str], item: str) -> str:
@@ -1428,44 +1458,55 @@ async def _group_duplicates(
     # pairs. Grievance subjects are a couple of hundred characters, so every
     # text in the slice together is only megabytes.
     #
-    # That fixed memory; it left runtime quadratic (#158). Two changes here:
-    # `_verify_bucket` (above) stops generating every pair once a bucket
-    # crosses `representative_cap`, and this loop fetches each candidate
-    # ticket once for all its overlapping LSH and identity buckets. Text and
-    # shingle memory are linear in candidate tickets, not candidate pairs.
+    # That fixed memory; it left runtime quadratic (#158). `_verify_bucket`
+    # (above) stops generating every pair once a bucket crosses
+    # `representative_cap`, and candidate text is fetched once per block
+    # rather than once per bucket.
+    #
+    # Fetching it once for the whole *run* was the next ceiling (#336): text
+    # and shingle memory were linear in the scope's candidate tickets, which
+    # is fine for a district-year and is ~27 GiB for the corpus. Both are now
+    # scoped to a block, which does not grow with the corpus.
     parent: dict[str, str] = {}
-
-    band_buckets_by_block: dict[str, list[list[str]]] = defaultdict(list)
-    identity_buckets: list[list[str]] = []
-    for block_key, members in _candidate_buckets(rows, DEFAULT_NUM_BANDS):
-        unique = sorted(set(members))
-        if block_key is None:
-            identity_buckets.append(unique)
-        else:
-            band_buckets_by_block[block_key].append(unique)
-
-    # Text is small relative to the former pair set. Fetch each candidate
-    # ticket once, in BATCH_SIZE chunks, then reuse it across overlapping LSH
-    # bands *and* identity buckets. This makes database reads linear in unique
-    # candidate tickets rather than one query sequence per candidate bucket.
-    candidate_tickets = sorted(
-        {
-            ticket
-            for buckets in band_buckets_by_block.values()
-            for members in buckets
-            for ticket in members
-        }
-        | {ticket for members in identity_buckets for ticket in members}
-    )
-    async with engine.begin() as conn:
-        text_by_ticket = await _load_redacted_text(conn, candidate_tickets)
-
     verified = 0
     comparisons = 0
     large_buckets = 0
-    shingle_cache: dict[str, set[str]] = {}
-    for buckets_in_block in band_buckets_by_block.values():
-        for members in buckets_in_block:
+
+    # One block at a time, so that nothing here is sized by the corpus (#336).
+    #
+    # `_band_buckets` keys every bucket on `(block_key, band_hash)`, so a band
+    # bucket can never span two blocks. Finishing a block before starting the
+    # next therefore loses nothing -- it is the same set of buckets, verified
+    # in a different order, and union-find connectivity does not depend on the
+    # order pairs arrive in.
+    #
+    # What it buys is that candidate text and the shingle memo live for one
+    # block instead of for the run. `block_key` is district:script:window, so
+    # a block does not grow as the corpus does: measured over all 1,361,842
+    # signatures there are 3,227 blocks, mean 422 rows, p99 3,268, largest
+    # 8,691. Holding the largest of those is ~0.2 GiB against the ~27 GiB a
+    # corpus-wide shingle cache extrapolated to.
+    #
+    # The cost is re-reading text for a ticket that also appears in an
+    # identity bucket, and one round trip per block instead of one for the
+    # run. Both are cheap next to the alternative, which does not fit in RAM.
+    rows_by_block: dict[str, list] = defaultdict(list)
+    for row in rows:
+        rows_by_block[row.block_key].append(row)
+
+    for block_rows in rows_by_block.values():
+        block_buckets = [
+            sorted(set(members))
+            for _block_key, members in _band_buckets(block_rows, DEFAULT_NUM_BANDS)
+        ]
+        if not block_buckets:
+            continue
+        block_tickets = sorted({t for members in block_buckets for t in members})
+        async with engine.begin() as conn:
+            text_by_ticket = await _load_redacted_text(conn, block_tickets)
+        # Fresh per block, as `_verify_bucket`'s docstring has always said.
+        shingle_cache: dict[str, set[str]] = {}
+        for members in block_buckets:
             matches, checked, used_large_policy = _verify_bucket(
                 members,
                 text_by_ticket,
@@ -1478,22 +1519,57 @@ async def _group_duplicates(
             verified += matches
             comparisons += checked
             large_buckets += used_large_policy
+        del block_buckets, block_tickets, text_by_ticket, shingle_cache
 
-    # Identity buckets are unblocked by construction (module docstring), but
-    # share the same candidate-text/shingle cache as LSH buckets above.
-    for members in identity_buckets:
-        matches, checked, used_large_policy = _verify_bucket(
-            members,
-            text_by_ticket,
-            shingle_cache,
-            parent,
-            threshold,
-            representative_cap,
-            anchor_count,
-        )
-        verified += matches
-        comparisons += checked
-        large_buckets += used_large_policy
+    del rows_by_block
+
+    # Identity buckets are unblocked by construction (module docstring), so
+    # there is no block to scope them to. They are bounded a different way:
+    # each one is a single citizen's filings, so a batch of them is small
+    # even though the batch's members can come from anywhere in the scope.
+    identity_batch: list[list[str]] = []
+
+    async def _verify_identity_batch(batch: list[list[str]]) -> tuple[int, int, int]:
+        if not batch:
+            return 0, 0, 0
+        tickets = sorted({t for members in batch for t in members})
+        async with engine.begin() as conn:
+            text_by_ticket = await _load_redacted_text(conn, tickets)
+        shingle_cache: dict[str, set[str]] = {}
+        batch_verified = batch_comparisons = batch_large = 0
+        for members in batch:
+            matches, checked, used_large_policy = _verify_bucket(
+                members,
+                text_by_ticket,
+                shingle_cache,
+                parent,
+                threshold,
+                representative_cap,
+                anchor_count,
+            )
+            batch_verified += matches
+            batch_comparisons += checked
+            batch_large += used_large_policy
+        return batch_verified, batch_comparisons, batch_large
+
+    for members in _identity_buckets(rows):
+        identity_batch.append(sorted(set(members)))
+        if len(identity_batch) >= IDENTITY_BUCKET_BATCH:
+            batch_verified, batch_comparisons, batch_large = await _verify_identity_batch(
+                identity_batch
+            )
+            verified += batch_verified
+            comparisons += batch_comparisons
+            large_buckets += batch_large
+            identity_batch = []
+
+    batch_verified, batch_comparisons, batch_large = await _verify_identity_batch(
+        identity_batch
+    )
+    verified += batch_verified
+    comparisons += batch_comparisons
+    large_buckets += batch_large
+    del identity_batch
 
     all_tickets = [row.ticket_no for row in rows]
     # Singletons still need a group id, so every ticket is seeded through find().

@@ -834,7 +834,19 @@ class TestBucketVerificationPolicy:
         assert matches == 1
         assert di._find(parent, "a") == di._find(parent, "b")
 
-    def test_overlapping_bands_fetch_each_candidate_text_once(self, dup_oltp, monkeypatch):
+    def test_overlapping_bands_in_a_block_fetch_each_candidate_text_once(
+        self, dup_oltp, monkeypatch
+    ):
+        """#158: a ticket sitting in several overlapping band buckets is
+        fetched once, not once per bucket.
+
+        #336 rescoped that guarantee from the run to the block. One fetch for
+        every candidate ticket in the scope is what did not fit corpus-wide,
+        so the promise is now "once per block, plus once per identity batch".
+        On this fixture that is three block fetches -- the January window, the
+        September window, and the Odia-script window all produce buckets --
+        and one identity batch.
+        """
         import janasunani.pipeline.dedup_index as di
 
         original = di._load_redacted_text
@@ -848,8 +860,12 @@ class TestBucketVerificationPolicy:
         async_url, _ = dup_oltp
         counts = build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt=_SALT)
 
-        assert len(fetches) == 1
-        assert fetches[0] == tuple(sorted(set(fetches[0])))
+        assert len(fetches) == 4
+        # The #158 property itself: T1, T2 and T3 share the January block and
+        # collide on more than one band. One fetch has to cover all three.
+        assert any({"T1", "T2", "T3"} <= set(fetch) for fetch in fetches)
+        for fetch in fetches:
+            assert fetch == tuple(sorted(set(fetch)))
         assert counts["comparison_pairs"] >= counts["verified_pairs"]
         assert counts["large_buckets"] == 0
 
@@ -1166,10 +1182,14 @@ class TestGroupingStreamsBucketsInsteadOfMaterialisingPairs:
         import janasunani.pipeline.dedup_index as di
 
         source = inspect.getsource(di._group_duplicates)
-        assert "_candidate_buckets" in source
+        assert "_band_buckets" in source
+        assert "_identity_buckets" in source
         # Assignment, not any mention: a comment referring to the old helpers
         # is fine, a variable holding every pair is the thing being guarded.
         assert not re.search(r"^\s*candidate_pairs\s*=", source, re.M)
+        # #336: production must not call the whole-scope helper. It builds
+        # every bucket in the scope at once, which is the thing being avoided.
+        assert not re.search(r"_candidate_buckets\s*\(", source)
 
     def test_singleton_buckets_are_dropped(self):
         """No pairs in them, and they would each cost a database round trip."""
@@ -2273,9 +2293,12 @@ class TestBandBucketsAreBuiltOneBandAtATime:
 
         def peak(fn):
             tracemalloc.start()
-            fn(rows, 16)
+            # Materialise, so a generator is measured on the same footing as
+            # the list the old build returned.
+            held = list(fn(rows, 16))
             _, pk = tracemalloc.get_traced_memory()
             tracemalloc.stop()
+            assert held
             return pk
 
         before = peak(self._all_at_once)
@@ -2286,3 +2309,138 @@ class TestBandBucketsAreBuiltOneBandAtATime:
             f"peak {after / 2**20:.1f} MiB vs {before / 2**20:.1f} MiB — "
             "band buckets are being retained across bands again"
         )
+
+
+class TestGroupingIsScopedPerBlock:
+    """#336. Corpus-wide grouping needed ~59 GB because every structure in the
+    pass was sized by the scope: buckets for the whole run held twice, then
+    candidate text and a shingle memo for every candidate ticket at once.
+
+    Measured on Sambalpur/2024 (55,544 of 1,361,842 signatures) the grouping
+    pass peaked at 3,169 MB against a 788 MB baseline, which extrapolates to
+    ~59 GB on a 15.7 GB box. `block_key` is district:script:window, so a block
+    does not grow with the corpus -- 3,227 blocks, mean 422 rows, largest
+    8,691 -- and scoping the caches to a block makes the peak flat in corpus
+    size.
+    """
+
+    @staticmethod
+    def _rows(n, num_bands, blocks=4, seed=17):
+        import random
+
+        from janasunani.pipeline.dedup_index import _BandedSignature
+
+        rng = random.Random(seed)
+        return [
+            _BandedSignature(
+                ticket_no=f"CMO2024{i:07d}",
+                district="Sambalpur",
+                created_year=2024,
+                block_key=f"Sambalpur:latin:{i % blocks}",
+                identity_key_mobile=(f"m{i // 3}" if i % 3 == 0 else None),
+                identity_key_email=None,
+                bands=tuple(
+                    rng.getrandbits(63) if rng.random() > 0.05 else rng.randrange(30)
+                    for _ in range(num_bands)
+                ),
+            )
+            for i in range(n)
+        ]
+
+    def test_band_buckets_is_a_generator(self):
+        """A list is what made the corpus run hold every bucket twice: once
+        in the helper's return value and once in the caller's own index."""
+        import inspect
+
+        from janasunani.pipeline import dedup_index as di
+
+        rows = self._rows(200, 8)
+        assert inspect.isgenerator(di._band_buckets(rows, 8))
+        assert inspect.isgenerator(di._identity_buckets(rows))
+
+    def test_verifying_block_by_block_finds_exactly_the_same_band_buckets(self):
+        """The correctness core of the change. `_band_buckets` keys on
+        ``(block_key, band_hash)``, so a band bucket can never span two
+        blocks -- which is why a block can be finished before the next one
+        starts. Asserted rather than argued: a bucket that went missing here
+        would silently drop duplicates."""
+        from collections import defaultdict
+
+        from janasunani.pipeline import dedup_index as di
+
+        rows = self._rows(2000, 8, blocks=5)
+
+        whole_scope = sorted(
+            (block_key, tuple(sorted(set(members))))
+            for block_key, members in di._band_buckets(rows, 8)
+        )
+
+        rows_by_block = defaultdict(list)
+        for row in rows:
+            rows_by_block[row.block_key].append(row)
+        per_block = sorted(
+            (block_key, tuple(sorted(set(members))))
+            for block_rows in rows_by_block.values()
+            for block_key, members in di._band_buckets(block_rows, 8)
+        )
+
+        assert per_block == whole_scope
+        assert whole_scope, "fixture must produce real (non-singleton) buckets"
+
+    def test_candidate_text_is_never_fetched_for_the_whole_scope_at_once(
+        self, dup_oltp, monkeypatch
+    ):
+        """The memory property, over the real fixture and the real code path.
+
+        One fetch for every candidate ticket in the scope is exactly what did
+        not fit. The fixture spans several windows and both scripts, so a
+        block-scoped fetch is necessarily smaller than the scope."""
+        from janasunani.pipeline import dedup_index as di
+
+        async_url, _ = dup_oltp
+        calls: list[list[str]] = []
+        real = di._load_redacted_text
+
+        async def recording(conn, ticket_nos):
+            calls.append(list(ticket_nos))
+            return await real(conn, ticket_nos)
+
+        monkeypatch.setattr(di, "_load_redacted_text", recording)
+        counts = build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt="s")
+
+        assert counts["groups"] > 0
+        assert len(calls) > 1, "text was still fetched in a single pass"
+        every_candidate = {t for call in calls for t in call}
+        assert max(len(call) for call in calls) < len(every_candidate), (
+            "one fetch covered every candidate ticket in the scope -- the "
+            "caches are scope-sized again"
+        )
+
+    def test_identity_buckets_are_verified_in_batches(self, dup_oltp, monkeypatch):
+        """Identity buckets carry no block key, so batching is the only thing
+        bounding them. With a batch size of one, each identity bucket must
+        cost its own fetch."""
+        from janasunani.pipeline import dedup_index as di
+
+        async_url, _ = dup_oltp
+        calls: list[list[str]] = []
+        real = di._load_redacted_text
+
+        async def recording(conn, ticket_nos):
+            calls.append(list(ticket_nos))
+            return await real(conn, ticket_nos)
+
+        monkeypatch.setattr(di, "_load_redacted_text", recording)
+        monkeypatch.setattr(di, "IDENTITY_BUCKET_BATCH", 1)
+        batched = build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt="s")
+        batched_calls = len(calls)
+
+        calls.clear()
+        monkeypatch.setattr(di, "IDENTITY_BUCKET_BATCH", 10_000)
+        unbatched = build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt="s")
+
+        assert batched_calls > len(calls), "batch size did not change the fetches"
+        # Batching is a memory knob, never an answer knob.
+        assert batched["groups"] == unbatched["groups"]
+        assert batched["verified_pairs"] == unbatched["verified_pairs"]
+        assert batched["comparison_pairs"] == unbatched["comparison_pairs"]
