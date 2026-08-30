@@ -3004,8 +3004,17 @@ reported as absence of augmented support, not treated as corroboration of the di
 
 For descriptive uncertainty the code resamples whole district--year clusters 200 times with
 seed 20260811 and recomputes the mean of already-fitted scores. It does not refit $G$, $m$, $p$
-or $e$ inside a bootstrap draw. The resulting standard error measures sensitivity to cluster
-composition; it is not a causal confidence interval or valid post-policy-selection inference.
+or $e$ inside a bootstrap draw, and it does not re-form the arm's own estimator either:
+\texttt{dr\_scores} applies the H\'ajek factor $n/\sum_iw_i$ once, against the full-sample weight
+sum, and \texttt{cluster\_bootstrap\_se} then takes \texttt{scores[idx].mean()} on a fixed score
+vector without recomputing that denominator for the resampled rows. So the self-normalised ratio
+estimator is held fixed while only its numerator's composition varies.
+
+That makes this a fixed-score composition diagnostic rather than uncertainty for the policy-value
+estimator: it answers how much the mean of these scores moves when clusters are redrawn, not how
+much $\hat V_{\hat\delta}$ itself would move. Recomputing the arm's self-normalised value inside
+every draw is what would turn it into the latter, and is tracked with the contrast fix below. It
+is in no form a causal confidence interval or valid post-policy-selection inference.
 
 \textbf{The reported standard error is policy-value-only, including where it is printed beside a
 contrast.} \texttt{cluster\_bootstrap\_se} resamples the arm's own score vector; the historical
