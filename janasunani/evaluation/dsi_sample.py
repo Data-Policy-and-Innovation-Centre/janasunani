@@ -230,6 +230,13 @@ def load_reference_manifest(path: Path | str) -> dict[str, ManifestEntry]:
             "no ticket is emitted under an empty one and overrides the path "
             "parse that would have been right."
         )
+    if not entries and not blank and not duplicated and not mismatched:
+        raise ValueError(
+            f"{path} parsed zero rows. A manifest with no documents verifies "
+            "vacuously against any corpus -- including an empty directory -- "
+            "and load_corpus would then return that emptiness as a verified "
+            "population. Re-pull the manifest from DVC."
+        )
     if mismatched:
         raise ValueError(
             f"{path} has {len(mismatched)} row(s) whose ticket contradicts "
@@ -259,6 +266,7 @@ def load_corpus(
     category_column: str = "category",
     manifest: Mapping[str, "ManifestEntry"] | None = None,
     verify: str = "size",
+    expected_documents: int | None = None,
 ) -> list[DocumentRecord]:
     """Join documents on disk to their complaint category.
 
@@ -347,6 +355,22 @@ def load_corpus(
         )
 
     if manifest is not None:
+        # A manifest and a corpus can agree with each other and still both be
+        # wrong. The set comparison below is symmetric, so a strict subset of
+        # the pinned population -- the same 100 documents listed and staged,
+        # or a header-only manifest beside an empty directory -- passes it
+        # vacuously, and draw_nested then emits well-formed tier manifests for
+        # a fraction of the corpus. Only a count known independently of both
+        # can catch that, so callers drawing the pinned reference corpus pass
+        # `expected_documents` (70,029; see janasunani.samples).
+        if expected_documents is not None and len(manifest) != expected_documents:
+            raise ValueError(
+                f"the pinned manifest lists {len(manifest)} document(s), not "
+                f"the expected {expected_documents}. A manifest and a corpus "
+                "that agree with each other can still both be a subset of the "
+                "population the numbers are supposed to describe, and the "
+                "disk-versus-manifest comparison cannot see that."
+            )
         if verify not in {"keys", "size", "md5"}:
             raise ValueError(
                 f"verify must be 'keys', 'size' or 'md5', got {verify!r}"

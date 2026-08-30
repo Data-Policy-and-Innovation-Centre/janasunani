@@ -391,6 +391,48 @@ def test_load_reference_manifest_reads_the_tsv_and_rejects_a_wrong_one(tmp_path)
         load_reference_manifest(wrong)
 
 
+def test_a_manifest_and_corpus_can_agree_and_both_be_wrong(tmp_path):
+    """Codex P1, round 14 on #326: the set comparison is symmetric.
+
+    A header-only manifest beside an empty directory, or the same strict
+    subset listed and staged, passes verification vacuously — and
+    `draw_nested` then emits well-formed tier manifests for a fraction of the
+    population. Only a count known independently of both can catch it.
+    """
+    polars = pytest.importorskip("polars")
+
+    from janasunani.evaluation.dsi_sample import (
+        ManifestEntry,
+        load_reference_manifest,
+    )
+
+    # Zero rows is refused outright: it would verify against anything.
+    header_only = tmp_path / "empty.tsv"
+    header_only.write_text("ticket\ts3_key\tsize_bytes\tmd5\n")
+    with pytest.raises(ValueError, match="zero rows"):
+        load_reference_manifest(header_only)
+
+    # A consistent strict subset needs the independent count.
+    docs = tmp_path / "documents"
+    docs.mkdir()
+    name = "CMO2024001_complaint_20250101_000000.pdf"
+    (docs / name).write_bytes(b"the real document")
+
+    parquet = tmp_path / "complaints.parquet"
+    polars.DataFrame(
+        {"ticket_no": ["CMO2024001"], "category": ["Housing"]}
+    ).write_parquet(parquet)
+
+    subset = {name: ManifestEntry("CMO2024001", len(b"the real document"), "abc")}
+    # Manifest and disk agree, so verification alone is satisfied.
+    assert load_corpus(docs, parquet, manifest=subset)
+    # The pinned population is larger, and that is only visible from outside.
+    with pytest.raises(ValueError, match="not the expected"):
+        load_corpus(docs, parquet, manifest=subset, expected_documents=70_029)
+    # The right count still passes.
+    assert load_corpus(docs, parquet, manifest=subset, expected_documents=1)
+
+
 def test_load_reference_manifest_rejects_a_blank_identity(tmp_path):
     """Codex P1, round 7 on #326: a blank column is not a valid row.
 
