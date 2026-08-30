@@ -40,7 +40,7 @@
 \title{Outcome-Based Routing of Public Grievances\\
 \large From an administrative decision to a causal policy question}
 \author{Janasunani 2.0 --- DPIC}
-\date{19 August 2026}
+\date{25 August 2026}
 
 \begin{document}
 \maketitle
@@ -575,6 +575,25 @@ population, with no post-treatment conditioning anywhere.
 
 \subsection{Target and nuisance}\label{sec:nuisance-def}
 
+The unhatted functions above are population quantities. A hat means that a function has been
+estimated from a finite sample. It helps to attach one ordinary-language question to each hat:
+\begin{description}[leftmargin=2.2cm,style=nextline]
+\item[$\hat m_a(x)$] How many restricted days does the fitted model predict for a grievance like
+$x$ if its initial assigned flow were $a$?
+\item[$\hat p_a(x)$] What fitted probability of substantive action does that same counterfactual
+assignment receive?
+\item[$\hat e_a(x)$] How often did the historical assignment regime send grievances like $x$ to
+$a$? This is the propensity, not a prediction of whether $a$ is good.
+\item[$\hat G(t\mid x,a)$] How likely was a grievance with those recorded characteristics to have
+remained observable through duration $t$ before the administrative extract cut it off?
+\end{description}
+Ridge and duration boosting are two alternative ways of estimating the \emph{same} function
+$m$. A separate boosted classifier followed by isotonic calibration estimates $p$. Neither
+duration model estimates $e$ or $G$: the executed propensity is an empirical assignment share,
+and the executed censoring curve is a stratified Kaplan--Meier estimate. Appendix~\ref{app:asrun}
+records the exact as-run specifications and keeps them separate from models that were proposed
+but never fitted.
+
 The functions in \eqref{eq:nuisance}, together with the propensity $e_a(x)$ and censoring
 curve $G(t\mid x,a)$ of \S\ref{sec:ident}, are \emph{nuisance functions}: infinite-dimensional
 objects that appear in the identification formula for the target but are not themselves of
@@ -953,7 +972,7 @@ used throughout:
 \psi_i(\delta)
 =\hat m_{\delta(X_i)}(X_i)
 +\frac{\one{A_i=\delta(X_i)}\ R_i}
-      {\hat e_{\delta(X_i)}(X_i)\ \hat G\bigl(Y_i\mid X_i,A_i\bigr)}
+      {\hat e_{\delta(X_i)}(X_i)\ \hat G\bigl(Y_i-\mid X_i,A_i\bigr)}
 \Bigl(Y_i-\hat m_{\delta(X_i)}(X_i)\Bigr)\;}
 \label{eq:score}
 \end{equation}
@@ -964,9 +983,17 @@ take that same action, correct the prediction by the observed error, scaled up i
 proportion to how often that action was taken and how likely the case was to have been observed
 at all.}
 
+There are five steps in that sentence. The direct term predicts the policy's route. The indicator
+retains only rows on which history happened to take that route. The residual measures the fitted
+model's error under the observed route. Dividing by $\hat e$ lets rare historical matches stand
+for the many comparable rows that did not match. Multiplying by $R/\hat G$ lets durations that
+were observable before the extract stand for comparable durations that were administratively
+censored. Thus $\hat p$ chooses which routes clear the policy floor, while $\hat e$ and $\hat G$
+do not choose a route at all: they enter only when the chosen rule is evaluated.
+
 Corollary~\ref{cor:censored-dr} states the exact robustness claim: $G$ must be correct in both
 branches, and then either $m$ or $e$ may be correct. A correct outcome regression alone does
-not protect against misspecified censoring, because $R/G(Y)$ changes the conditional mean of
+not protect against misspecified censoring, because $R/G(Y-)$ changes the conditional mean of
 the residual when $G$ is wrong. Replacing $Y$ by $C$ and dropping the censoring factor gives the
 complete-data augmented estimator of $V_C$, which is what Corollary~\ref{cor:feasible} needs to
 calibrate $\tau$.
@@ -1025,6 +1052,53 @@ This is consistent for the same limit, since the weights converge to mean one, b
 influence: one observation with tiny $\hat e$ moves \eqref{eq:hajek} by at most the residual
 range, whereas in the unnormalised form it can move the estimate without limit.
 
+\subsubsection{Candidate and historical values, compared like with like}
+
+The historical regime is stochastic, so it does not have a match indicator against itself. Let
+$q_i=R_i/\hat G(Y_i-\mid X_i,A_i)$. The two historical estimates used by the code are
+\begin{equation}
+\hat V^{\rm DM}_{T,\rm hist}=\frac1{n_\star}\sum_i\hat m_{A_i}(X_i),
+\qquad
+\hat V^{\rm IPCW}_{T,\rm hist}=\frac{\sum_iq_iY_i}{\sum_iq_i}.
+\label{eq:historical-estimators}
+\end{equation}
+The first averages fitted values at the routes history actually drew. The second is a
+H\'ajek-normalised IPCW mean of observed restricted durations. It is not itself an AIPW score:
+there is no deterministic historical action with which to form a match indicator. The report's
+legacy ``AIPW contrast'' name refers to the candidate-policy side of the comparison.
+
+Contrasts are therefore formed only within estimator families,
+\begin{equation}
+\hat\Delta_{\rm DM}(\delta)=\hat V^{\rm DM}_{T,\rm hist}-\hat V^{\rm DM}_T(\delta),
+\qquad
+\hat\Delta_{\rm Aug}(\delta)=\hat V^{\rm IPCW}_{T,\rm hist}-\hat V^{\rm SN}_T(\delta).
+\label{eq:like-with-like}
+\end{equation}
+Subtracting a direct candidate value from the IPCW baseline, or an augmented candidate value
+from the direct baseline, would confound a routing contrast with a difference between estimators.
+
+Correctness is evaluated on the single labelled index set
+$\mathcal L=\{i:C_i\text{ is observed}\}$, of size $n_C$. Set
+$v_i(\delta)=\one{A_i=\delta(X_i)}/\hat e_{\delta(X_i)}(X_i)$. Then
+\begin{align}
+\hat V^{\rm DM}_C(\delta)
+&=\frac1{n_C}\sum_{i\in\mathcal L}\hat p_{\delta(X_i)}(X_i),
+\label{eq:correct-dm}\\
+\hat V^{\rm SN}_C(\delta)
+&=\frac1{n_C}\sum_{i\in\mathcal L}\hat p_{\delta(X_i)}(X_i)
++\frac{\sum_{i\in\mathcal L}v_i(\delta)
+  \{C_i-\hat p_{A_i}(X_i)\}}
+ {\sum_{i\in\mathcal L}v_i(\delta)},
+\label{eq:correct-aug}\\
+\hat V_{C,\rm hist}&=\frac1{n_C}\sum_{i\in\mathcal L}C_i.
+\label{eq:correct-hist}
+\end{align}
+There is no $G$ in \eqref{eq:correct-aug}: the executed correctness analysis first restricts
+every array --- outcomes, predictions, matches and propensities --- to the same labelled
+population, then normalises. If no historical row matches the policy, the code leaves the
+residual correction at zero and reports ESS zero; the direct term remains a model extrapolation,
+not augmented evidence.
+
 \begin{remark*}[What not to do]
 It is tempting to control variance by truncating the \emph{score} $\psi_i$ to a plausible range.
 That is not variance reduction but bias: the truncation point interacts with the propensity draw
@@ -1048,6 +1122,17 @@ Conditional on the training folds, the fitted nuisance is fixed on the evaluatio
 elementary variance calculation and Chebyshev's inequality control the resulting remainder.
 This is the precise result proved in Appendix~\ref{app:causal}; no empirical-process limit
 theory is assumed.
+
+The executed chronology is related to, but not identical to, literal $K$-fold cross-fitting.
+The duration models, raw correctness classifier, empirical propensity and eligible action sets
+are fitted on 2021--23. Duration and policy values are then evaluated in later periods. Two
+exceptions must be stated rather than hidden under ``out of period'': the correctness classifier
+is isotonically calibrated on labelled 2024 rows, and $G$ is estimated separately within each
+split's full arrival cohort. Hence 2024 is out of period for the raw models but is not held out
+from correctness calibration; 2025 is the temporal check after calibration. The optional
+two-way district--year policy split was aimed at the winner's curse rather than nuisance
+overfitting, but as implemented it is unsound and is not a valid diagnostic for it
+(Appendix~\ref{app:asrun}); it was not enabled in the headline commands. Appendix~\ref{app:asrun} gives the full timeline.
 
 \subsection{Layer 5: which model estimates what}\label{sec:models}
 
@@ -1078,34 +1163,46 @@ Used only through the threshold $p_a(x)\ge\tau$, so what matters is ranking and
 uninterpretable, hence the isotonic step.\\
 \addlinespace
 $e_a(x)$ \newline propensity &
-Hierarchical multinomial logistic: department, then flow within department &
-Appears in a denominator, so tail behaviour dominates. Tree ensembles produce poorly calibrated
-extreme probabilities --- exactly the wrong failure mode. A penalised parametric model with
-explicit shrinkage toward the marginal is safer, and the hierarchy matches the institutional
-structure while pooling thin cells.\\
+Empirical flow share within category--district, with marginal backoff and clipping &
+Appears only in a denominator, so tail behaviour dominates. This transparent first pass is what
+was executed. The hierarchical multinomial model originally proposed here was not built; it
+remains the intended replacement for thin cells.\\
 \addlinespace
 $G(t\mid x,a)$ \newline censoring &
-Kaplan--Meier within coarse strata, or Cox on $X$ &
+Kaplan--Meier within district--year arrival cohorts &
 Censoring is administrative, so $G$ is nearly a deterministic function of the arrival date.
-Little is gained by flexibility and the stratified estimator is transparent.\\
+The split-specific stratified estimator is what was executed. A Cox model was proposed but not
+built.\\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \subsubsection{Where ridge enters}
 
-The duration model in the log scale is
-\[
-\log(1+Y_i)=\beta'\phi(X_i)+\alpha_{d(i)}+\gamma_{r_0(i)}+\lambda\,n_{\text{esc},i}
-+\theta\,\frac{Q_{r_0}(t_{0i})}{\text{cap}_{r_0}}+\varepsilon_i,
-\]
-with one-hot department and entry-role fixed effects, chain length, and normalised congestion. Ridge
-rather than ordinary least squares because the design carries many high-cardinality categorical
-effects, and the $\ell_2$ penalty shrinks thinly-supported levels toward zero, which is exactly
-the partial pooling one wants. The coefficients are interpretable: $\lambda$ is the proportional
-cost of an additional handoff, $\gamma_{r_0}$ ranks entry roles by speed. Both are structural
-quantities in \eqref{eq:micro}, so the linear specification is not merely convenient --- it is
-the estimating equation the mechanism implies.
+Write $z^{\rm OH}(x,a)$ for the executed one-hot design and $\omega_i^G$ for the IPCW training
+weight. The fitted ridge is
+\begin{equation}
+(\hat\beta_0,\hat\beta_R)=\argmin_{\beta_0,\beta}
+\sum_{i\in\mathrm{train}}\omega_i^G
+\left\{\log(1+Y_i)-\beta_0-z^{\rm OH}(X_i,A_i)'\beta\right\}^2
++\alpha\lVert\beta\rVert_2^2,
+\qquad \alpha=1.
+\label{eq:ridge-asrun}
+\end{equation}
+Ridge rather than ordinary least squares because the design carries many high-cardinality
+categorical effects; the $\ell_2$ penalty shrinks thinly supported levels toward zero. The
+executed design includes recorded case characteristics, calendar terms, department, entry and
+last roles, and chain length. It does \emph{not} include congestion or trailing performance.
+
+The richer target design would add terms such as
+\begin{equation}
+\log(1+Y_i)=\beta_0+z^{\rm OH}(X_i,A_i)'\beta
++\theta\frac{Q_{r_0}(t_{0i})}{\operatorname{cap}_{r_0}}
++\kappa\,\operatorname{Perf}_{r_0}(t_{0i})+\varepsilon_i,
+\label{eq:ridge-target}
+\end{equation}
+but \eqref{eq:ridge-target} was not fitted. It describes the mechanism one would like to adjust
+for, not the estimator behind the reported numbers.
 
 Every department, role, district, block, category, mode, and office identifier is nominal. Its
 integer code records equality only; it carries neither distance nor order. The ridge design
@@ -1125,6 +1222,31 @@ Boosting also cannot be given an arbitrary integer order and called invariant: a
 each nominal code by a five-fold cross-fitted target encoding on the training data, then fits the
 tree ensemble. Validation and test rows use only the training-fitted mapping; unseen levels fall
 back to the training mean. Tests permute every nominal code and require unchanged predictions.
+
+In compact notation the duration fit is
+\begin{equation}
+\hat f_B(x,a)=\hat f_0+\eta\sum_{b=1}^{B}\hat h_b\{z^{\rm TE}(x,a)\},
+\qquad
+\hat m^B_a(x)=\hat s_{g(x)}\exp\{\hat f_B(x,a)\}-1,
+\label{eq:boost-duration}
+\end{equation}
+where $z^{\rm TE}$ is the five-fold target-encoded design and $\hat s_g$ is the smearing factor.
+This is an alternative estimate of $m$, not an estimate of the propensity.
+
+The separate correctness classifier produces the raw probability
+\[
+\hat q_a(x)=\operatorname{logit}^{-1}\{\hat F_p(z^{\rm TE}(x,a))\}.
+\]
+On labelled validation rows the implementation fits the nondecreasing map
+\begin{equation}
+\hat c_{\rm iso}=\argmin_{c\ \mathrm{nondecreasing}}
+\sum_{i\in\mathcal L_{\rm val}}
+\left[C_i-c\{\hat q_{A_i}(X_i)\}\right]^2,
+\qquad
+\hat p_a(x)=\hat c_{\rm iso}\{\hat q_a(x)\}.
+\label{eq:isotonic}
+\end{equation}
+Thus the floor $\tau$ is applied to calibrated $\hat p$, never to the raw boosted score.
 
 It must be selected on out-of-sample criteria, and it will not always win. Here the ridge is in
 fact the better out-of-sample model (\S\ref{sec:ev-fit}), which selects it for the primary
@@ -1164,9 +1286,10 @@ cluster, the code reports
 \]
 and resamples whole clusters. Lemma~\ref{lem:cluster} explains why cluster dependence can make
 this diagnostic much larger than an observation-level calculation. The current code resamples
-already-computed scores without refitting $G$ or the other nuisances, so the reported number is
-a descriptive measure of sensitivity to cluster composition, not a verified standard error or
-confidence interval for the censored-data policy value.
+already-computed scores without refitting $G$ or the other nuisances, and holds the H\'ajek
+denominator at its full-sample value, so the reported number describes the composition of a fixed
+score vector. It is not a verified standard error or confidence interval for the censored-data
+policy value, and it is not uncertainty for that policy value at all.
 
 %=====================================================================
 \section{Learning a deployable rule}\label{sec:policy}
@@ -1211,6 +1334,23 @@ speed--correctness frontier, far more informative than any single point on it. R
 the floor is unattainable remain in every point on the curve under the highest-correctness
 fallback. Missing predictions are an error, not a reason to let a missing-value mean silently
 change the evaluated population as $\tau$ changes.
+
+The population quantity in \eqref{eq:taustar} is not automatically the fitted threshold. Let
+$q$ denote either the direct or the self-normalised augmented correctness estimator. The code
+labels these DM and AIPW and computes
+\begin{equation}
+\hat\tau_q=\min\left\{\tau\in\mathcal T:
+\hat V^q_C(\hat\delta_\tau)\ge\hat V_{C,\rm hist}\right\},
+\label{eq:tauhat}
+\end{equation}
+using the fixed grid in Appendix~\ref{app:asrun}. It publishes one $\hat\tau^\star$ only if both
+sets are nonempty and $\hat\tau_{\rm DM}=\hat\tau_{\rm AIPW}$. Here ``AIPW'' names the
+self-normalised augmented correctness value in \eqref{eq:correct-aug}. If neither estimator finds a
+feasible point, the answer is ``no feasible floor on this grid'', not the largest grid value.
+If the two estimates disagree, the threshold is unresolved. The previous frontier normalised
+the two correctness estimators on inconsistent populations; the code now implements
+\eqref{eq:correct-dm}--\eqref{eq:correct-aug}, but those aggregates have not been regenerated.
+Consequently no validated $\hat\tau^\star$ is currently published or live.
 
 \subsection{From a rule to a deployable policy}
 
@@ -1541,12 +1681,21 @@ among completers only.
 \begin{table}[h]
 \centering
 \caption{Developmental $\tau=0$ contrasts for the joint department--chain action.
-DM is the direct method; AIPW is the augmented IPCW score. Standard errors and ESS apply to
-AIPW. Values remain descriptive for the post-resolution $\Sproxy=1$ population.}
+DM is the direct method; AIPW is the augmented IPCW score. Neither of the last two columns means
+what its usual name would suggest; each omits a component of the correction the score applies, and
+in neither case is the direction of the resulting discrepancy determined
+(Appendix~\ref{app:asrun}). The parenthesised column is \emph{not} a standard error: it is
+policy-side fixed-score composition dispersion, because \texttt{cluster\_bootstrap\_se} re-means a
+score vector whose H\'ajek denominator was fixed on the full sample, and it never re-forms the
+contrast. ESS/$n$ is \emph{propensity-only} overlap: \texttt{evaluate\_arm} hands
+\texttt{overlap\_report} just $\hat e$ and the match indicator, which forms
+$\mathbf 1\{\cdot\}/\hat e$ without the censoring factor $R/\hat G$ the score actually applies, so
+it describes the matching-and-propensity correction rather than the composite weights. Values
+remain descriptive for the post-resolution $\Sproxy=1$ population.}
 \label{tab:provisional}
 \begin{tabular}{llrrrr}
 \toprule
-Outcome model & Candidate set & $\Delta_{\rm DM}$ & $\Delta_{\rm AIPW}$ & (SE) & ESS/$n$\\
+Outcome model & Candidate set & $\Delta_{\rm DM}$ & $\Delta_{\rm AIPW}$ & (disp.) & ESS/$n$\\
 \midrule
 one-hot ridge & top three & 24.50 & 26.77 & 4.04 & 0.194\\
 one-hot ridge & unrestricted & 35.61 & 28.58 & 7.02 & 0.033\\
@@ -1572,8 +1721,8 @@ $\tau^\star$ (issue~\#284).
 
 \emph{The 2025 test period does not replicate the validation gain.} Its common-support population
 has 113,535 rows, with 2,037 excluded. Historical IPCW restricted duration is 49.74 days. For
-the top-three ridge rule, the contrast is 30.53 days by DM but $-2.35$ by AIPW (SE 3.50,
-ESS/$n=0.073$); boosting gives 31.32 by DM but 0.15 by AIPW (SE 4.41,
+the top-three ridge rule, the contrast is 30.53 days by DM but $-2.35$ by AIPW (disp.\ 3.50,
+propensity-only ESS/$n=0.073$); boosting gives 31.32 by DM but 0.15 by AIPW (disp.\ 4.41,
 ESS/$n=0.081$). The unrestricted AIPW contrasts are 15.06 days for ridge and 2.76 for boosting,
 but their ESS/$n$ is only 0.019 and 0.025. The direct-method gains therefore do not survive
 augmentation or temporal holdout. The test period is reported once as an external diagnostic;
@@ -1623,8 +1772,10 @@ valid censored-data inference is \notbuilt.\\
 Closure proxy $\Sproxy$ and outcome $C$ (Defs.~\ref{def:threestate}--\ref{def:Sproxy}) & Built for classified resolved closures; does not identify $\Sstar$.\\
 Restricted mean and censoring weights (Def.~\ref{def:rmst}, Thm.~\ref{thm:ipcw}) & Built.\\
 Smearing (\S\ref{sec:smear}) & Built, per stratum.\\
-Cross-fitting (\S\ref{sec:crossfit}) & Supplied by the chronological split: nuisances are fitted on 2021--23 and evaluated on 2024--25, so evaluation rows are out of period rather than merely out of fold.\\
-Sample splitting for the rule (\S\ref{sec:policy}) & Built as an option; the winner's curse is priced rather than assumed away.\\
+Nuisance separation (\S\ref{sec:crossfit}) & Duration, raw correctness, propensity and eligible
+sets use 2021--23 training. Correctness is calibrated on 2024, while $G$ is fitted on each
+split's full arrival cohort; only the qualified chronology in Appendix~\ref{app:asrun} is built.\\
+Sample splitting for the rule (\S\ref{sec:policy}) & Built as an option, but unsound as implemented (Appendix~\ref{app:asrun}); the winner's curse is neither priced nor assumed away.\\
 $\tau$ calibration (Cor.~\ref{cor:feasible}) & Code corrected to score one labelled population. \emph{Not recomputed}: the prior frontier is withdrawn pending a rerun (\S\ref{sec:ev-provisional}, issue~\#284).\\
 \midrule
 $\Sstar$ from pre-treatment inputs & \notbuilt. \emph{Highest priority.} The legacy \code{S} column is $\Sproxy$, read from closure-time information. A case still open past the horizon is dropped although $\min(T,L)$ is known.\\
@@ -2632,5 +2783,312 @@ candidate thresholds in a single pass, so the cost is that of the sort.
 The reportable summary is the \emph{breakdown point}
 $\Gamma^\dagger=\inf\{\Gamma:0\in[\underline\Delta(\Gamma),\overline\Delta(\Gamma)]\}$, the
 strength of unmeasured confounding at which the conclusion first fails.
+
+%=====================================================================
+\section{As-run estimator specification}\label{app:asrun}
+%=====================================================================
+
+This appendix is the reproducibility layer for the developmental results in
+\S\ref{sec:evidence}. It records choices that change the fitted quantities or their evaluation.
+The locked Python environment in \code{uv.lock} records remaining software defaults. Nothing in
+this appendix upgrades the analysis from observational diagnostics to causal or deployment
+evidence.
+
+\subsection{Populations, action and chronology}
+
+The target population remains $\Sstar=1$, but the executable population is
+$\Sproxy=1$, inferred after resolution from the closing record. The two must not be identified
+with each other. Duration uses $Y=\min(T,365)$. Correctness uses only
+$\mathcal L=\{i:C_i\text{ is determined}\}$; undetermined $C$ is excluded, never set to zero.
+
+The treatment identifier is
+\[
+A=\code{department\_id::complete\_role\_chain/v1}.
+\]
+The recorded pre-assignment case features used in the fit are district, category, block, filing
+mode, intake office and self-assignment, plus filing month and quarter. Counterfactual action
+features are department, entry role, last role and number of roles in the complete chain. Every
+identifier is nominal. Missing role counts are imputed as 2, unparseable months as 6, and
+quarter is derived from the resulting month. Congestion, trailing performance, responsible
+assigning office, offered menu, named-node choices and the resolution-period choice are absent.
+
+\begin{longtable}{p{2.2cm}p{4.8cm}p{7.0cm}}
+\caption{Chronology of the executed fits and evaluations.}\label{tab:asrun-time}\\
+\toprule
+Period & What is fitted & What is evaluated or selected\\
+\midrule
+\endfirsthead
+\toprule
+Period & What is fitted & What is evaluated or selected\\
+\midrule
+\endhead
+2021--23 training &
+$\hat m$ on $\Sproxy=1$ rows with positive IPCW weight; raw $\hat q$ on labelled
+$\Sproxy=1$ rows; $\hat e$ and candidate sets on the full arrival cohort. &
+Feature levels, target encodings, outcome models, raw correctness classifier, empirical
+propensities and supported actions. The training censoring curve is fitted on the full training
+arrival cohort.\\
+\addlinespace
+2024 validation &
+The isotonic map for $\hat p$ on labelled validation rows; a validation-specific $\hat G$ on the
+full 2024 arrival cohort. &
+Duration-model comparison and developmental OPE. This period is later than the raw model fits,
+but is not held out from correctness calibration.\\
+\addlinespace
+2025 test &
+A test-specific $\hat G$ on the full 2025 arrival cohort; no retuning of $m$, $p$, $e$, the
+candidate set or $\tau$. &
+Temporal developmental check. The augmented duration contrast does not reproduce the positive
+2024 result.\\
+\bottomrule
+\end{longtable}
+
+The optional policy-split flag refits the policy-selection outcome model on one of two balanced
+district--year cluster partitions. It was intended as a winner's-curse diagnostic rather than the
+chronological nuisance separation above, but as implemented it is not one --- see the fitted-model
+discussion below --- and it was not enabled in the headline reproduction commands.
+
+\subsection{The four fitted functions}
+
+\subsubsection*{Restricted duration $\hat m$}
+
+For ridge, nominal inputs are one-hot encoded with unseen levels ignored; numeric inputs are
+scaled without centring. Equation~\eqref{eq:ridge-asrun} is fitted by LSQR with intercept,
+$\alpha=1$, and IPCW sample weights. For gradient boosting, nominal inputs use five-fold shuffled
+target encoding fitted on training rows. The boosted duration regression uses squared-error loss,
+$B=200$ trees, maximum depth 6, learning rate $0.1$, and random state 0. Both models target
+$\log(1+Y)$.
+
+A separate no-action boosting fit removes all four action columns, keeps the remaining feature
+and model specification, and uses random state 1. It produced the fit-diagnostic row in
+Table~\ref{tab:fit}; it was not used to choose or evaluate a routing policy.
+
+For model $j\in\{R,B\}$, let
+$\hat\varepsilon_i^j=\log(1+Y_i)-\hat f_j(X_i,A_i)$. In district--year stratum $g$ the fitted
+smearing factor is
+\begin{equation}
+\hat s_g^j=\frac1{n_g}\sum_{i:g(i)=g}\exp(\hat\varepsilon_i^j),
+\qquad
+\hat m_a^j(x)=\hat s_{g(x)}^j\exp\{\hat f_j(x,a)\}-1.
+\label{eq:asrun-smear}
+\end{equation}
+A stratum receives its own factor only with at least 50 training residuals; otherwise the pooled
+training factor is used.
+
+\subsubsection*{Correctness $\hat p$}
+
+The raw classifier uses five-fold shuffled binary target encoding, binomial log-loss, 150 trees,
+maximum depth 4, learning rate $0.1$, and random state 0. It is fitted only where $C$ is known.
+The final $\hat p$ is the isotonic map in \eqref{eq:isotonic}, fitted on labelled 2024 rows. The
+policy threshold is always applied to this calibrated probability.
+
+\subsubsection*{Historical assignment $\hat e$}
+
+Let $h(x)$ be the category--district cell, $N_{h,a}$ the number of 2021--23 arrivals assigned to
+flow $a$ in that cell, $N_h=\sum_aN_{h,a}$, and $N_a/N$ the marginal share of $a$. The executed
+raw propensity is
+\begin{equation}
+\tilde e_a(x)=
+\begin{cases}
+N_{h(x),a}/N_{h(x)}, & N_{h(x),a}>0,\\
+N_a/N, & N_{h(x),a}=0\text{ and }N_a>0,\\
+0.01, & N_a=0,
+\end{cases}
+\qquad
+\hat e_a(x)=\min\{0.99,\max\{0.01,\tilde e_a(x)\}\}.
+\label{eq:asrun-e}
+\end{equation}
+The marginal backoff prevents an absent cell--flow pair from receiving a residual multiplier of
+100 merely because it hit the clip floor. The clip itself is weight truncation and not an overlap
+restriction: \texttt{EmpiricalSharePropensity.score} bounds the value and keeps the observation,
+so it changes a weight rather than the target population.
+
+The overlap restriction is done elsewhere, and it is executed. \texttt{EligibleSets.fit} admits a
+cell--action pair only at $N_{h,a}\ge10$ training assignments, and \texttt{run\_ope.run} then
+restricts the evaluation frame to the cells supported in \emph{every} arm, reporting the excluded
+count as \texttt{n\_excluded} beside \texttt{n\_supported\_cells}. Every policy action reaching
+\eqref{eq:score} therefore has positive in-cell support by construction, so the marginal and floor
+branches of \eqref{eq:asrun-e} are reachable for an arbitrary call to \texttt{score} but not for an
+as-run $\hat e_{\hat\delta(X)}(X)$.
+
+What the clip can still do on that path is truncate a share that is small but genuine: a supported
+action in a large cell can sit below $0.01$, and the floor then bounds the inverse-propensity
+factor at 100. That is only one component of the coefficient \texttt{dr\_scores} applies. The
+residual multiplier is $R_i/(\hat e\,\hat G)$, and the $0.05$ floor on $\hat G$ in
+\eqref{eq:asrun-g} bounds the other factor at 20, so the composite reaches $2{,}000$ before the
+H\'ajek normalisation divides by the mean weight. The clip is a bias-variance trade on a supported
+row, which is a different and milder thing than carrying an unsupported one, but the number that
+bounds it is 2,000 rather than 100. In neither form is the clip evidence for positivity --- the
+restriction above is what supplies it, for the cells that survive.
+
+\subsubsection*{Administrative censoring $\hat G$}
+
+Within district--year stratum $g$, let $n_g(u)$ be the full arrival cohort at risk just before
+$u$ and $d_g^D(u)$ the administrative censoring events at $u$. The executed curve is
+\begin{equation}
+\hat G_g(t-)=\prod_{u<t}\left\{1-\frac{d_g^D(u)}{n_g(u)}\right\},
+\qquad
+\omega_i^G=\frac{R_i}{\max\{0.05,\hat G_{g(i)}(Y_i-)\}}.
+\label{eq:asrun-g}
+\end{equation}
+Here $R_i=1$ when the restricted outcome is known: the grievance closed, or it remained observed
+through day 365. A grievance censored before day 365 has $R_i=0$ and weight zero. Each split's
+$G$ is fitted on its full arrival cohort because fitting on $\Sproxy=1$ would condition on
+resolution and produce a degenerate curve. If an evaluation stratum has no matching full-cohort
+stratum, the code uses weight one for known outcomes and zero otherwise, and the missing stratum
+must be visible in diagnostics.
+
+\subsection{Policy construction and evaluation}
+
+Let $N_{h,a}$ now denote training support for the joint action. The candidate set is
+\begin{equation}
+\widehat{\mathcal A}_K(h)=\operatorname{TopK}_{a}\{N_{h,a}:N_{h,a}\ge10\}.
+\label{eq:asrun-candidates}
+\end{equation}
+The headline supported arm uses $K=3$; the wider diagnostic arm uses $K=50$. Evaluation is
+restricted to cells with nonempty support for both reported arms. For each row, every candidate
+is rescored while $x$ is held fixed. Duration and correctness ties follow the fixed candidate
+order inherited from training frequency. The fitted policy is
+\begin{equation}
+\hat\delta_\tau(x)=
+\begin{cases}
+\argmin_{a\in\widehat{\mathcal A}_K(h(x)):\hat p_a(x)\ge\tau}\hat m_a(x),
+&\text{if at least one candidate clears the floor},\\
+\argmax_{a\in\widehat{\mathcal A}_K(h(x))}\hat p_a(x),&\text{otherwise}.
+\end{cases}
+\label{eq:asrun-policy}
+\end{equation}
+The fixed sweep is
+\begin{equation}
+\mathcal T=\{0,.02,.05,.08,.10,.15,.20,.25,.30,.35,.40,.45,.50,.60,.70,.80\}.
+\label{eq:asrun-grid}
+\end{equation}
+For every point, duration uses \eqref{eq:hajek}, historical values use
+\eqref{eq:historical-estimators}, correctness uses
+\eqref{eq:correct-dm}--\eqref{eq:correct-hist}, and contrasts use
+\eqref{eq:like-with-like}. The policy-side propensity is always
+$\hat e_{\hat\delta_\tau(X_i)}(X_i)$. The residual is centred at the same fitted model used in
+the direct term --- \textbf{except under \texttt{-{}-policy-split}}, where it is not.
+\texttt{run()} computes \texttt{mu\_observed} from the full-training $\hat m$ before
+\texttt{\_split\_policy\_model} is called, then passes the half-fit model to
+\texttt{score\_policy}, whose output becomes the policy direct term. On that path the two $\hat
+m$ terms come from different fits, so the residual absorbs the difference between two
+estimators rather than one model's error --- the failure \texttt{dr\_scores} warns about in its
+own docstring. That path additionally selects \emph{and} values the policy with the same
+half-fit model, so it does not provide the independent partition a winner's-curse diagnostic
+needs. Numbers in this document are from runs without \texttt{-{}-policy-split}; the flag is
+tracked as unsound rather than merely approximate. Weight reliability is reported through
+\[
+\operatorname{ESS}=\frac{(\sum_iw_i)^2}{\sum_iw_i^2},
+\qquad
+w_i=\frac{\mathbf 1\{A_i=\hat\delta(X_i)\}}{\hat e_{\hat\delta(X_i)}(X_i)}.
+\]
+\textbf{The reported ESS is propensity-only overlap.} The weight above omits the censoring
+factor $R_i/\hat G(Y_i-)$ that the augmented score in \eqref{eq:score} actually applies, because
+\texttt{evaluate\_arm} passes only $\hat e$ and the match indicator to \texttt{overlap\_report}.
+The composite weight the estimator uses is $\mathbf 1\{\cdot\}\,R_i/(\hat e\,\hat G)$, so the
+figure below describes the matching-and-propensity correction alone and not the correction as
+applied. Read it as an overlap diagnostic for $\hat e$, not as the precision of the augmented
+estimate.
+
+It is \emph{not} an upper bound, and the direction of the discrepancy is not determined by the
+spread of $\hat G$. Kish ESS is not monotone under multiplying the weights by a positive
+factor: a factor that equalises them raises it. With propensity weights $(10,2)$ the ESS is
+$12^2/104\approx1.38$, and censoring factors $(1,5)$ give composite weights $(10,10)$ and an
+ESS of $2$; factors $(5,1)$ instead give $(50,2)$ and an ESS of $\approx1.08$. Both examples use
+factors the estimator can actually produce: $\omega^G_i=R_i/\max\{0.05,\hat G\}$ is zero on an
+\emph{unobserved} row and at least $1$ on an observed one, because $\hat G\le1$, so a fractional
+factor is not an as-run possibility. Observation is $R_i$ and is separate from policy matching:
+\texttt{evaluate\_arm} forms \texttt{matched} as $A_i=\hat\delta(X_i)$, and an observed
+policy-unmatched row still carries a factor of at least $1$, its composite weight being zeroed
+later by the match indicator rather than by $\omega^G$. In the actionable evaluation the
+distinction is moot in one direction: every selected row is resolved, so $R_i=1$ throughout. ESS
+is scale-invariant, so it is the spread of the factors and not their level that moves it. Whether the
+2025 cohort's composite ESS sits above or below its reported one is therefore an empirical
+question about how $\hat G$ covaries with $\hat e$ on the matched rows, not something that
+follows from censoring being heavy. Computing the composite ESS is the fix and is tracked
+separately.
+
+When no row matches, the self-normalised correction is set to zero and ESS is zero; this is
+reported as absence of augmented support, not treated as corroboration of the direct estimate.
+
+For descriptive uncertainty the code resamples whole district--year clusters 200 times with
+seed 20260811 and recomputes the mean of already-fitted scores. It does not refit $G$, $m$, $p$
+or $e$ inside a bootstrap draw, and it does not re-form the arm's own estimator either:
+\texttt{dr\_scores} applies the H\'ajek factor $n/\sum_iw_i$ once, against the full-sample weight
+sum, and \texttt{cluster\_bootstrap\_se} then takes \texttt{scores[idx].mean()} on a fixed score
+vector without recomputing that denominator for the resampled rows. So the self-normalised ratio
+estimator is held fixed while only its numerator's composition varies.
+
+That makes this a fixed-score composition diagnostic rather than uncertainty for the policy-value
+estimator: it answers how much the mean of these scores moves when clusters are redrawn, not how
+much $\hat V_{\hat\delta}$ itself would move. Recomputing the arm's self-normalised value inside
+every draw is what would turn it into the latter, and is tracked with the contrast fix below. It
+is in no form a causal confidence interval or valid post-policy-selection inference.
+
+\textbf{The reported figure is policy-side only, including where it is printed beside a
+contrast.} \texttt{cluster\_bootstrap\_se} resamples the arm's own score vector; the historical
+IPCW baseline in \eqref{eq:historical-estimators} is not recomputed inside the draw, so the
+difference is never formed per draw. A parenthesised figure such as $26.77\,(4.04)$ is therefore
+policy-side fixed-score composition variability in the sense just described --- not uncertainty
+for $\hat V_{\hat\delta}$, and still less for
+$\hat V_{\hat\delta}-\hat V_{\mathrm{hist}}$. Two separate gaps sit between it and a contrast SE,
+and both have to close before the number means what its placement suggests. The first is the one
+above: the arm's own H\'ajek denominator is held fixed, so this is not yet uncertainty for the
+policy value either. The second is the covariance term: because both
+quantities would be computed on the same district--year clusters, they would move together, and
+the contrast SE is
+$\sqrt{\operatorname{Var}(\hat V_{\hat\delta})+\operatorname{Var}(\hat V_{\mathrm{hist}})
+-2\operatorname{Cov}(\cdot,\cdot)}$. The printed number equals it exactly when
+$\operatorname{Var}(\hat V_{\mathrm{hist}})
+=2\operatorname{Cov}(\hat V_{\hat\delta},\hat V_{\mathrm{hist}})$ --- which a constant,
+uncorrelated baseline satisfies, but so does a baseline with positive variance whose covariance
+with the policy value is half of it. There is no reason to expect that identity to hold here, so
+even a properly bootstrapped policy value would not be interchangeable with the contrast. The
+sign of the discrepancy is not determined in advance, so this is not a conservative approximation
+either. Recomputing the arm's self-normalised value inside every draw and differencing the two
+per draw are the same fix, tracked separately; until then the number describes the composition of
+the policy-side scores, and neither the level nor the change.
+
+\subsection{What was run, what merely exists, and what remains proposed}
+
+\begin{longtable}{p{4.2cm}p{3.0cm}p{6.8cm}}
+\caption{Status of estimator components at 25 August 2026.}\label{tab:asrun-status}\\
+\toprule
+Component & Status & Interpretation\\
+\midrule
+\endfirsthead
+\toprule
+Component & Status & Interpretation\\
+\midrule
+\endhead
+Ridge and boosted $\hat m$; calibrated boosted $\hat p$; empirical $\hat e$; stratified $\hat G$
+& Executed & These functions underlie the reported developmental 2024 and 2025 values.\\
+Top-three and top-50 $\tau=0$ duration arms & Executed & The reported direct and augmented
+contrasts evaluate these arms; they establish no replicated gain.\\
+Boosting with action features removed & Executed fit diagnostic & It measures predictive fit
+without the four joint-action columns; it is not a policy arm or a causal test.\\
+Corrected labelled-population correctness frontier & Implemented, not regenerated & The prior
+aggregate is withdrawn. No $\hat\tau^\star$ is published.\\
+Two-way policy sample split & Available option, unsound as implemented & On this path
+\texttt{mu\_observed} comes from the full-training $\hat m$ and the policy direct term from the
+half-fit one, so the residual absorbs the difference between two estimators; it also selects and
+values the policy with the same half-fit model. It is not a valid winner's-curse diagnostic, and
+it does not repair unmeasured confounding.\\
+Hierarchical multinomial propensity & Proposed, not built & The empirical cell share in
+\eqref{eq:asrun-e} is the only executed propensity.\\
+Cox censoring model & Proposed, not built & The Kaplan--Meier estimator in
+\eqref{eq:asrun-g} is the only executed censoring model.\\
+Congestion and trailing performance & Proposed, not built & They are absent from the as-run
+conditioning set, so unconfoundedness is not established.\\
+Marginal sensitivity analysis; negative controls and placebos & Mathematics or design only,
+not run & The document specifies them, but no current evidence reports their results.\\
+Multi-role queue replay & Proposed, not built & The analysis does not estimate equilibrium or
+interference effects of changing many routes at once.\\
+Valid causal uncertainty and deployment rule & Not established & The bootstrap is descriptive;
+assignment provenance, intake-time $\Sstar$, treatment versions and operational validation remain
+unresolved.\\
+\bottomrule
+\end{longtable}
 
 \end{document}

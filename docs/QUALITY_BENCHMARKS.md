@@ -73,14 +73,29 @@ historical R2/R3 equality must not be interpreted.
 
 **Temporal evaluation.** Durations are restricted at a 365-day horizon. The
 policy comparison is limited to declared common support and reports direct and
-augmented estimators separately.
+augmented estimators separately. The duration models, raw correctness model,
+empirical propensity and eligible sets are fitted on 2021–23. The correctness
+model is then isotonically calibrated on labelled 2024 rows, so 2024 is not a
+holdout for correctness calibration even though it is later than the raw fits;
+2025 is the subsequent temporal check. Administrative censoring is estimated
+separately within each split's full arrival cohort rather than carried forward
+from training. The design document's as-run appendix records the exact fitted
+functions, safeguards and evaluation formulas.
 
-| Cohort | Common-support n | Model | Direct Δ | Augmented Δ (SE) | ESS / n |
+| Cohort | Common-support n | Model | Direct Δ | Augmented Δ (disp.) | Propensity-only ESS / n |
 |---|---:|---|---:|---:|---:|
 | Validation 2024 | 450,567 | Ridge, top-three actions | 24.50 | 26.77 (4.04) | 0.194 |
 | Validation 2024 | 450,567 | Boosting, top-three actions | 23.90 | 12.40 (4.12) | 0.168 |
 | Test 2025 | 113,535 | Ridge, top-three actions | 30.53 | −2.35 (3.50) | 0.073 |
 | Test 2025 | 113,535 | Boosting, top-three actions | 31.32 | 0.15 (4.41) | 0.081 |
+
+The parenthesised column is **not** a standard error and the ESS column is **not** the augmented
+estimator's. `cluster_bootstrap_se` re-means a score vector whose Hájek denominator was fixed on
+the full sample and never re-forms the contrast, so the figure is policy-side fixed-score
+composition dispersion. `overlap_report` receives only the propensity and the match indicator, so
+`ESS / n` describes `1{A = δ(X)} / ê` without the censoring factor `R / Ĝ` the score applies.
+Neither number is uncertainty for, or overlap of, the quantity beside it. The as-run appendix of
+the design document carries the derivation.
 
 **Status: no routing gain established.** The positive validation contrast does
 not replicate under the augmented estimator in the untouched 2025 period.
