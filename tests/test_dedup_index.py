@@ -2418,7 +2418,7 @@ class TestGroupingIsScopedPerBlock:
 
     def test_identity_buckets_are_verified_in_batches(self, dup_oltp, monkeypatch):
         """Identity buckets carry no block key, so batching is the only thing
-        bounding them. With a batch size of one, each identity bucket must
+        bounding them. With a one-ticket budget, each identity bucket must
         cost its own fetch."""
         from janasunani.pipeline import dedup_index as di
 
@@ -2431,12 +2431,12 @@ class TestGroupingIsScopedPerBlock:
             return await real(conn, ticket_nos)
 
         monkeypatch.setattr(di, "_load_redacted_text", recording)
-        monkeypatch.setattr(di, "IDENTITY_BUCKET_BATCH", 1)
+        monkeypatch.setattr(di, "IDENTITY_BATCH_TICKETS", 1)
         batched = build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt="s")
         batched_calls = len(calls)
 
         calls.clear()
-        monkeypatch.setattr(di, "IDENTITY_BUCKET_BATCH", 10_000)
+        monkeypatch.setattr(di, "IDENTITY_BATCH_TICKETS", 10_000_000)
         unbatched = build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt="s")
 
         assert batched_calls > len(calls), "batch size did not change the fetches"
@@ -2444,3 +2444,71 @@ class TestGroupingIsScopedPerBlock:
         assert batched["groups"] == unbatched["groups"]
         assert batched["verified_pairs"] == unbatched["verified_pairs"]
         assert batched["comparison_pairs"] == unbatched["comparison_pairs"]
+
+
+class TestLargeBucketShingleRetention:
+    """#336. Identity buckets are wildly uneven: measured over the corpus,
+    13,428 non-singleton buckets cover 1,355,855 of 1,361,842 signatures and
+    the largest holds 201,965 of them. Nothing can split one bucket, since
+    every member is compared against the anchors -- so the bucket has to be
+    survivable, which means not keeping a shingle set per member.
+    """
+
+    @staticmethod
+    def _bucket(n):
+        members = [f"T{i:04d}" for i in range(n)]
+        text = {t: f"grievance about the road near ward {t}" for t in members}
+        return members, text
+
+    def test_large_bucket_memoises_only_its_anchors(self):
+        from janasunani.pipeline import dedup_index as di
+
+        members, text = self._bucket(300)
+        shingle_cache: dict[str, set[str]] = {}
+        _matches, _checked, used_large_policy = di._verify_bucket(
+            members, text, shingle_cache, {}, 0.9, 200, 8
+        )
+
+        assert used_large_policy is True
+        assert set(shingle_cache) == set(members[:8]), (
+            "non-anchors are read once and must not be memoised"
+        )
+
+    def test_small_bucket_still_memoises_every_member(self):
+        """#158's reuse is on the exhaustive path and must survive #336."""
+        from janasunani.pipeline import dedup_index as di
+
+        members, text = self._bucket(10)
+        shingle_cache: dict[str, set[str]] = {}
+        _matches, _checked, used_large_policy = di._verify_bucket(
+            members, text, shingle_cache, {}, 0.9, 200, 8
+        )
+
+        assert used_large_policy is False
+        assert set(shingle_cache) == set(members)
+
+    def test_a_cached_non_anchor_is_reused_rather_than_recomputed(self):
+        """Not adding to the cache is not the same as ignoring it. A member
+        another bucket already paid for is still read from the memo."""
+        from janasunani.pipeline import dedup_index as di
+
+        members, text = self._bucket(300)
+        seeded = members[100]
+        shingle_cache = {seeded: shingles(text[seeded])}
+        before = shingle_cache[seeded]
+
+        di._verify_bucket(members, text, shingle_cache, {}, 0.9, 200, 8)
+
+        assert shingle_cache[seeded] is before
+
+    def test_the_answer_does_not_depend_on_what_was_cached(self):
+        """The cache is a memo, never an input to the decision."""
+        from janasunani.pipeline import dedup_index as di
+
+        members, text = self._bucket(300)
+
+        cold = di._verify_bucket(members, text, {}, {}, 0.9, 200, 8)
+        warm_cache = {t: shingles(text[t]) for t in members}
+        warm = di._verify_bucket(members, text, warm_cache, {}, 0.9, 200, 8)
+
+        assert cold == warm

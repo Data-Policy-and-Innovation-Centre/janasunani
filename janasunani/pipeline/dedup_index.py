@@ -178,9 +178,9 @@ import math
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
+from collections.abc import Iterator
 import hashlib
 from itertools import combinations
-from collections.abc import Iterator
 from typing import Optional
 
 from loguru import logger
@@ -277,13 +277,19 @@ LARGE_BUCKET_ANCHOR_COUNT = 32
 GROUPING_ALGORITHM = "fixed-anchor-v1"
 
 # Identity buckets carry no block key, so they cannot be scoped to a block
-# the way band buckets are (#336). They are bounded by batching instead: each
-# bucket is one citizen's filings, so this many of them is a small working
-# set even though their members can come from anywhere in the scope. Not a
-# tuning knob -- it trades round trips against peak memory, and only the
-# memory side has a hard limit.
-IDENTITY_BUCKET_BATCH = 2_000
-
+# the way band buckets are (#336). They are bounded by batching instead --
+# by member count, not by bucket count.
+#
+# Bucket count is the wrong unit because identity buckets are wildly uneven.
+# Measured over the corpus: 13,428 non-singleton buckets covering 1,355,855
+# of 1,361,842 signatures, the largest holding 201,965 of them. A batch of
+# "2,000 buckets" is a few hundred tickets or a quarter of the corpus
+# depending on which buckets it gets.
+#
+# A single bucket larger than this still forms its own batch -- nothing can
+# split one bucket, since every member is compared against the anchors. What
+# keeps that bounded is `_verify_bucket` not retaining non-anchor shingles.
+IDENTITY_BATCH_TICKETS = 25_000
 
 # Odia Unicode block. Presence, not majority: any real Odia content in a
 # filing is enough to route it to the Odia-script partition rather than the
@@ -1354,8 +1360,11 @@ def _verify_bucket(
     merely the final connectivity.
 
     At ``cap`` members or more: fixed-anchor comparison (#158; see the module
-    docstring for the full rationale and the accepted recall trade). The first
-    ``anchor_count`` sorted tickets are deterministic anchors. Every unordered
+    docstring for the full rationale and the accepted recall trade). Only the
+    anchors are memoised on this path -- a non-anchor is read once, against
+    every anchor, and caching it would make ``shingle_cache`` as large as the
+    bucket (#336). The first ``anchor_count`` sorted tickets are deterministic
+    anchors. Every unordered
     anchor pair is scored once, then every remaining member is scored against
     every anchor, including when it already matched another anchor. Exact work
     is ``C(anchor_count, 2) + anchor_count * (members - anchor_count)``, at most
@@ -1392,9 +1401,19 @@ def _verify_bucket(
             _union(parent, a, b)
             verified += 1
     for member in members[len(anchors) :]:
+        # Deliberately not `shingles_for`: a non-anchor is compared against
+        # the anchors and then never looked at again in this bucket, so
+        # memoising it only grows the caller's cache (#336). Reuse an entry
+        # another bucket already put there, but never add one. The largest
+        # identity bucket in the corpus has 201,965 members; caching those
+        # is ~4 GiB of shingle sets that are each read once.
+        cached = shingle_cache.get(member)
+        member_shingles = (
+            cached if cached is not None else shingles(text_by_ticket.get(member, ""))
+        )
         for anchor in anchors:
             comparisons += 1
-            if jaccard_similarity(shingles_for(anchor), shingles_for(member)) >= threshold:
+            if jaccard_similarity(shingles_for(anchor), member_shingles) >= threshold:
                 _union(parent, anchor, member)
                 verified += 1
     return verified, comparisons, True
@@ -1552,9 +1571,12 @@ async def _group_duplicates(
             batch_large += used_large_policy
         return batch_verified, batch_comparisons, batch_large
 
+    identity_batch_tickets = 0
     for members in _identity_buckets(rows):
-        identity_batch.append(sorted(set(members)))
-        if len(identity_batch) >= IDENTITY_BUCKET_BATCH:
+        unique = sorted(set(members))
+        identity_batch.append(unique)
+        identity_batch_tickets += len(unique)
+        if identity_batch_tickets >= IDENTITY_BATCH_TICKETS:
             batch_verified, batch_comparisons, batch_large = await _verify_identity_batch(
                 identity_batch
             )
@@ -1562,6 +1584,7 @@ async def _group_duplicates(
             comparisons += batch_comparisons
             large_buckets += batch_large
             identity_batch = []
+            identity_batch_tickets = 0
 
     batch_verified, batch_comparisons, batch_large = await _verify_identity_batch(
         identity_batch
