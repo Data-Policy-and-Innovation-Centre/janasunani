@@ -6,6 +6,7 @@ Recorded / dry-run only; no live Sarvam call.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -834,3 +835,364 @@ def test_every_supported_extract_field_type_is_accepted():
             # a separate, already-covered rule, not part of this guard.
             field["properties"] = {"child": {"type": "string", "description": "child field"}}
         _validate_extract_schema({"type": "object", "properties": {"field": field}})
+
+
+def test_unwrap_extract_result_reads_the_live_result_envelope():
+    """GET /doc-ai/v1/job/{id}/results nests the schema fields under `result`.
+
+    Regression for the 2026-08-25 Sambalpur/2024 run: the unwrapper knew
+    `results` (plural list) and `data` but not `result` (singular), so it fell
+    through to returning the envelope. The caller's
+    `payload.get("grievance_category")` then read one level too high, every
+    `sarvam_category` recorded as null, and the scorecard reported 0.000
+    accuracy for a measurement that had never been taken.
+    """
+    from janasunani.evaluation.sarvam_evaluate import _unwrap_extract_result
+
+    envelope = {
+        "job_id": "01a036cc",
+        "type": "extract",
+        "status": "completed",
+        "usage": {"pages": 1},
+        "version": "1",
+        "annotations": {"grievance_category": {"confidence": 0.9}},
+        "source_map": {},
+        "result": {
+            "grievance_category": "Social Welfare",
+            "summary": "Pension not disbursed.",
+            "district": "Sambalpur",
+            "grievance_text": "...",
+        },
+    }
+
+    unwrapped = _unwrap_extract_result(envelope)
+
+    assert unwrapped["grievance_category"] == "Social Welfare"
+    assert unwrapped["district"] == "Sambalpur"
+    # The envelope's own keys must not leak through as if they were fields.
+    assert "annotations" not in unwrapped
+    assert "job_id" not in unwrapped
+
+
+def test_unwrap_extract_result_keeps_the_other_known_shapes():
+    from janasunani.evaluation.sarvam_evaluate import _unwrap_extract_result
+
+    assert _unwrap_extract_result({"results": [{"district": "Sambalpur"}]}) == {
+        "district": "Sambalpur"
+    }
+    assert _unwrap_extract_result({"data": {"district": "Sambalpur"}}) == {
+        "district": "Sambalpur"
+    }
+    assert _unwrap_extract_result([{"district": "Sambalpur"}]) == {"district": "Sambalpur"}
+    assert _unwrap_extract_result({"district": "Sambalpur"}) == {"district": "Sambalpur"}
+    assert _unwrap_extract_result(None) == {}
+
+
+def test_unwrap_extract_result_prefers_result_over_a_stale_sibling():
+    """`result` wins: a response carrying both must not silently pick the other."""
+    from janasunani.evaluation.sarvam_evaluate import _unwrap_extract_result
+
+    both = {
+        "result": {"grievance_category": "Housing"},
+        "data": {"grievance_category": "WRONG"},
+    }
+    assert _unwrap_extract_result(both)["grievance_category"] == "Housing"
+
+
+def test_save_records_destination_must_be_inside_the_data_tree(tmp_path):
+    """The dump is unredacted citizen text, so the destination is not free-form.
+
+    Codex P1 on #309: an operator passing `--save-records records.jsonl` or a
+    path under `docs/` got the file created without complaint, leaving
+    unredacted grievance text somewhere git was watching.
+    """
+    import pytest
+
+    from janasunani.config import DATA_DIR
+    from janasunani.evaluation.sarvam_evaluate import _checked_record_destination
+
+    inside = DATA_DIR / "external" / "run" / "records.jsonl"
+    assert _checked_record_destination(inside) == inside.resolve()
+
+    for bad in (
+        Path("records.jsonl"),
+        Path("docs/records.jsonl"),
+        DATA_DIR / ".." / "docs" / "records.jsonl",
+        tmp_path / "records.jsonl",
+    ):
+        with pytest.raises(ValueError, match="governed data tree"):
+            _checked_record_destination(bad)
+
+
+def test_save_records_is_validated_before_any_page_is_processed(tmp_path, monkeypatch):
+    """Codex P2 on #326: a knowable path error must not cost a paid run.
+
+    The check used to run at the write, after every page had been rendered,
+    submitted to Sarvam and scored — and the command then returned before
+    writing the aggregate outputs, so the spend bought nothing at all.
+
+    `discover_pages` is the first thing that touches the input, so asserting
+    it is never reached is what pins "before any page is processed".
+    """
+    from janasunani.evaluation import sarvam_evaluate
+
+    input_dir = tmp_path / "pages"
+    input_dir.mkdir()
+    (input_dir / "CMO1_complaint_20250101_000000.pdf").write_bytes(b"%PDF-1.3 stub")
+
+    def _explode(*args, **kwargs):  # pragma: no cover - must not be called
+        raise AssertionError("discover_pages reached despite an invalid --save-records")
+
+    monkeypatch.setattr(sarvam_evaluate, "discover_pages", _explode)
+
+    rc = sarvam_evaluate.main(
+        [
+            "--input-dir",
+            str(input_dir),
+            "--out",
+            str(tmp_path / "out"),
+            "--dry-run",
+            "--save-records",
+            str(tmp_path / "records.jsonl"),  # outside data/
+        ]
+    )
+    assert rc == 1
+
+
+def test_save_records_unwritable_destination_fails_before_the_run(tmp_path, monkeypatch):
+    """Codex P2, round 4 on #326: being inside data/ is not being writable.
+
+    A parent that is an existing file passes the location check and then
+    raises inside `_write_record_dump` — after every page has been rendered,
+    sent to a paid provider and scored.
+    """
+    from janasunani.config import DATA_DIR
+    from janasunani.evaluation import sarvam_evaluate
+
+    input_dir = tmp_path / "pages"
+    input_dir.mkdir()
+    (input_dir / "CMO1_complaint_20250101_000000.pdf").write_bytes(b"%PDF-1.3 stub")
+
+    # Inside the governed tree, but its parent is a regular file.
+    blocker = DATA_DIR / "external" / "not_a_dir_probe"
+    blocker.parent.mkdir(parents=True, exist_ok=True)
+    blocker.write_text("i am a file\n")
+
+    def _explode(*a, **k):  # pragma: no cover - must not be reached
+        raise AssertionError("discover_pages reached despite an unusable destination")
+
+    monkeypatch.setattr(sarvam_evaluate, "discover_pages", _explode)
+    try:
+        rc = sarvam_evaluate.main(
+            ["--input-dir", str(input_dir), "--out", str(tmp_path / "out"),
+             "--dry-run", "--save-records", str(blocker / "records.jsonl")]
+        )
+    finally:
+        blocker.unlink()
+    assert rc == 1
+
+
+def test_record_dump_is_0600_from_creation_not_after_the_write(tmp_path):
+    """The dump must never be readable by other local users, not even briefly.
+
+    Codex P1 on #326: `destination.open("w")` under the usual 022 umask
+    creates the file 0644 and the old code narrowed it only after the last
+    record was written, so unredacted citizen text sat world-readable for the
+    length of the write -- and permanently if the run was interrupted.
+
+    Asserted mid-write, via a records iterable that checks the mode on its
+    way past. Checking only the finished file would pass against the old
+    chmod-afterwards code too, which is the bug.
+    """
+    from dataclasses import dataclass
+
+    from janasunani.evaluation.sarvam_evaluate import _write_record_dump
+
+    @dataclass
+    class _Rec:
+        page: int
+
+    destination = tmp_path / "records.jsonl"
+    seen_modes: list[int] = []
+
+    def _partial() -> Path:
+        # The write now lands on a temporary sibling and is renamed into place
+        # only once every record is on disk, so mid-write the bytes are there
+        # and `destination` is not. The mode still has to be right from
+        # creation: the partial holds the same unredacted citizen text.
+        partials = list(tmp_path.glob(".records.jsonl.*partial"))
+        assert len(partials) == 1, partials
+        return partials[0]
+
+    def _records():
+        for page in range(3):
+            seen_modes.append(_partial().stat().st_mode & 0o777)
+            yield _Rec(page=page)
+
+    original_umask = os.umask(0o022)
+    try:
+        _write_record_dump(destination, _records())
+    finally:
+        os.umask(original_umask)
+
+    assert seen_modes == [0o600, 0o600, 0o600]
+    assert destination.stat().st_mode & 0o777 == 0o600
+    assert len(destination.read_text().splitlines()) == 3
+
+
+def test_record_dump_temp_file_cannot_be_hijacked_by_a_symlink(tmp_path):
+    """Codex P1, round 13 on #326: my atomic write used a predictable path.
+
+    `.<name>.<pid>.partial` is guessable, and the open used O_TRUNC. A local
+    process able to pre-create that path as a symlink would have had the dump
+    follow it — writing unredacted citizen text outside the tree
+    `_checked_record_destination` validates — and `os.replace` would then have
+    installed the symlink as the final dump.
+
+    `mkstemp` creates with O_CREAT|O_EXCL and an unguessable suffix, so a
+    pre-planted path is neither predictable nor reusable.
+    """
+    from dataclasses import dataclass
+
+    from janasunani.evaluation.sarvam_evaluate import _write_record_dump
+
+    @dataclass
+    class _Rec:
+        page: int
+
+    outside = tmp_path / "outside.txt"
+    outside.write_text("must not be touched\n")
+
+    destination = tmp_path / "dump" / "records.jsonl"
+    destination.parent.mkdir()
+
+    # Plant every partial path the old scheme could have produced.
+    for pid in {os.getpid(), os.getpid() + 1, 1}:
+        os.symlink(outside, destination.parent / f".records.jsonl.{pid}.partial")
+
+    _write_record_dump(destination, [_Rec(page=1)])
+
+    # The dump landed at the validated destination and is a real file.
+    assert destination.is_file() and not destination.is_symlink()
+    assert len(destination.read_text().splitlines()) == 1
+    # Nothing was written through any planted link.
+    assert outside.read_text() == "must not be touched\n"
+
+
+def test_probe_rejects_a_writable_dump_in_a_read_only_directory(tmp_path):
+    """Codex P2, round 12 on #326: my own atomic-write fix broke this probe.
+
+    `_write_record_dump` no longer opens the destination — it writes a
+    sibling and renames it — so the write needs the *directory* writable even
+    when the existing file is. The probe returned early for an existing
+    destination, so this combination passed validation, ran every paid page,
+    and then failed creating the sibling: exactly what the probe exists to
+    prevent.
+    """
+    import pytest as _pytest
+
+    from janasunani.evaluation.sarvam_evaluate import _probe_record_destination
+
+    if os.getuid() == 0:
+        _pytest.skip("root ignores directory permissions")
+
+    holder = tmp_path / "locked"
+    holder.mkdir()
+    destination = holder / "records.jsonl"
+    destination.write_text("prior evidence\n")
+    os.chmod(destination, 0o600)
+    os.chmod(holder, 0o500)  # r-x: the file is writable, the directory is not
+    try:
+        with _pytest.raises(OSError):
+            _probe_record_destination(destination)
+    finally:
+        os.chmod(holder, 0o700)
+
+    # And it still passes when the directory is writable, leaving the
+    # existing evidence untouched.
+    _probe_record_destination(destination)
+    assert destination.read_text() == "prior evidence\n"
+    assert list(holder.glob(".records.jsonl.probe-*")) == []
+
+
+def test_a_failed_record_dump_leaves_the_previous_evidence_intact(tmp_path):
+    """Codex P2, round 11 on #326: O_TRUNC destroyed the old dump on open.
+
+    A serialisation error or an interrupt mid-write left a truncated file
+    where a complete one had been. This is unredacted per-page output from a
+    paid run, so it is not something a retry reconstructs for free — and the
+    startup probe is deliberately non-destructive for exactly that reason.
+    """
+    from dataclasses import dataclass
+
+    from janasunani.evaluation.sarvam_evaluate import _write_record_dump
+
+    @dataclass
+    class _Rec:
+        page: int
+
+    destination = tmp_path / "records.jsonl"
+    _write_record_dump(destination, [_Rec(page=1), _Rec(page=2)])
+    prior = destination.read_text()
+    assert len(prior.splitlines()) == 2
+
+    def _explodes():
+        yield _Rec(page=1)
+        raise RuntimeError("serialisation blew up halfway")
+
+    with pytest.raises(RuntimeError, match="blew up"):
+        _write_record_dump(destination, _explodes())
+
+    # The previous dump is untouched, not truncated to the one record that
+    # had been written when the generator raised.
+    assert destination.read_text() == prior
+    # And nothing unredacted is stranded in a partial sibling.
+    assert list(tmp_path.glob(".records.jsonl.*partial")) == []
+
+    # A KeyboardInterrupt is the interrupt this exists to survive, and it is
+    # a BaseException — the cleanup has to catch it too.
+    def _interrupted():
+        yield _Rec(page=1)
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        _write_record_dump(destination, _interrupted())
+    assert destination.read_text() == prior
+    assert list(tmp_path.glob(".records.jsonl.*partial")) == []
+
+    # A successful write still replaces it.
+    _write_record_dump(destination, [_Rec(page=9)])
+    assert len(destination.read_text().splitlines()) == 1
+    assert destination.stat().st_mode & 0o777 == 0o600
+
+
+def test_record_dump_narrows_a_pre_existing_world_readable_file(tmp_path):
+    """O_CREAT's mode is ignored when the path already exists, so fchmod does it."""
+    from dataclasses import dataclass
+
+    from janasunani.evaluation.sarvam_evaluate import _write_record_dump
+
+    @dataclass
+    class _Rec:
+        page: int
+
+    destination = tmp_path / "records.jsonl"
+    destination.write_text("stale\n")
+    destination.chmod(0o644)
+
+    _write_record_dump(destination, [_Rec(page=1)])
+
+    assert destination.stat().st_mode & 0o777 == 0o600
+    assert "stale" not in destination.read_text()
+
+
+def test_save_records_destination_rejects_traversal_after_resolution():
+    """`data/../docs/x` must not pass on the strength of its prefix."""
+    import pytest
+
+    from janasunani.config import DATA_DIR
+    from janasunani.evaluation.sarvam_evaluate import _checked_record_destination
+
+    escaped = DATA_DIR / "external" / ".." / ".." / "docs" / "leak.jsonl"
+    with pytest.raises(ValueError, match="governed data tree"):
+        _checked_record_destination(escaped)

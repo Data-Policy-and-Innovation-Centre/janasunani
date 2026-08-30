@@ -42,8 +42,13 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
-from typing import Any, Callable
+from pathlib import Path, PurePosixPath
+from typing import Any, Callable, Iterable, Mapping
+
+from loguru import logger
+
+from janasunani.evaluation.sarvam_sample_builder import IMAGE_SUFFIXES
+from janasunani.pipeline.ticket import ticket_from_relpath
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -80,6 +85,12 @@ DEFAULT_REPEATS = 3
 # Output location (relative to repo root)
 DEFAULT_OUTPUT = Path("outputs/benchmark/latency.json")
 LATENCY_SCHEMA_VERSION = "janasunani.pipeline-latency/v1"
+
+# What the run measured. The publication gate requires one of these to be
+# stated: a context that declares nothing cannot be shown to be synthetic,
+# and a real measurement must not inherit that benefit of the doubt.
+SYNTHETIC_PROVENANCE = "synthetic"
+STAGED_PROVENANCE = "staged-documents"
 
 # Fake per-stage mean seconds (CPU laptop, no GPU). These are not
 # performance claims — they are deterministic stand-ins so the harness
@@ -204,30 +215,44 @@ def compute_stage_stats(
     }
 
 
-def _input_kind(ticket: str) -> str:
-    if ticket.startswith("SYN-TXT-"):
-        return "text"
-    if ticket.startswith("SYN-IMG-"):
+def _document_kind(doc: Mapping[str, Any]) -> str:
+    """What kind of input a document dict represents.
+
+    Read off the doc's own fields, not its ticket string. This used to be
+    ``_input_kind(ticket)``, matching on a ``"SYN-TXT-"``/``"SYN-IMG-"``
+    prefix — a fixture-generator convention, not a property of the input.
+    Every real ticket (``CMO20241020862``, ...) fell through to
+    "unspecified", which made ``has_clean_full_path_coverage`` below
+    structurally unsatisfiable for a real-document run: it requires the
+    "document" path to have measurements, and none were ever attributed to
+    it. The loader already knows what it built: bytes present means a
+    scanned document, text present (and no bytes) means free text.
+    """
+    if doc.get("document_bytes") is not None:
         return "document"
+    if doc.get("text") is not None:
+        return "text"
     return "unspecified"
 
 
 def _stats_by_input(
     times_by_stage: dict[str, list[float]],
     tickets_by_stage: dict[str, list[str]],
+    kinds_by_stage: dict[str, list[str]],
 ) -> dict[str, dict[str, dict[str, Any]]]:
     result: dict[str, dict[str, dict[str, Any]]] = {}
     kinds = sorted(
-        {_input_kind(ticket) for tickets in tickets_by_stage.values() for ticket in tickets}
+        {kind for stage_kinds in kinds_by_stage.values() for kind in stage_kinds}
     )
     for kind in kinds:
         result[kind] = {}
         for stage, times in times_by_stage.items():
             tickets = tickets_by_stage.get(stage, [])
+            stage_kinds = kinds_by_stage.get(stage, [])
             selected = [
                 (seconds, ticket)
-                for seconds, ticket in zip(times, tickets)
-                if _input_kind(ticket) == kind
+                for seconds, ticket, doc_kind in zip(times, tickets, stage_kinds)
+                if doc_kind == kind
             ]
             result[kind][stage] = compute_stage_stats(
                 [seconds for seconds, _ in selected],
@@ -303,6 +328,355 @@ def synthesize_documents(
         )
     # Deterministic shuffle so order is not fixture-grouped
     rng.shuffle(docs)
+    return docs
+
+
+# ---------------------------------------------------------------------------
+# Real-document fixtures — a staged sample, not synthetic text
+# ---------------------------------------------------------------------------
+
+# Documents this loader accepts: PDFs plus the image types
+# ``sarvam_sample_builder`` also treats as one-page documents. A staging
+# directory is expected to hold only these plus, optionally,
+# ``sample_manifest.json``.
+SUPPORTED_DOCUMENT_SUFFIXES: frozenset[str] = frozenset({".pdf"}) | IMAGE_SUFFIXES
+
+
+def _staged_document_paths(directory: Path) -> list[Path]:
+    """Supported document files directly under ``directory``, sorted.
+
+    Sorted so the file list — and therefore the fallback digest in
+    ``_document_sample_digest`` — does not depend on filesystem iteration
+    order.
+    """
+    return sorted(
+        path
+        for path in directory.iterdir()
+        if path.is_file() and path.suffix.lower() in SUPPORTED_DOCUMENT_SUFFIXES
+    )
+
+
+def staged_sample_coverage(
+    manifest: Mapping[str, Any] | None, staged_names: Iterable[str]
+) -> tuple[list[str], list[str]]:
+    """Compare what the manifest says was drawn with what is on disk.
+
+    Returns ``(missing, unlisted)``: manifest documents that were not staged,
+    and staged documents the manifest does not account for. Both are sorted.
+
+    The two halves are not symmetric, and the callers treat them differently.
+    A *missing* document means the sample measured is a strict subset of the
+    sample drawn while still being labelled with the manifest's slice, seed
+    and digest — the artifact would name a draw it did not run on, which is
+    the defect this whole input path exists to close. An *unlisted* document
+    means the reverse, and cannot be an error here: a manifest is allowed to
+    cover only some of the staged files (the ticket for the rest falls back
+    to filename parsing, deliberately, see ``load_staged_documents``). It
+    still means the measured set is not the drawn set, so it blocks
+    publication rather than the run.
+
+    Raises ``ValueError`` if a filename is listed more than once. That is a
+    broken manifest rather than a coverage question, and collapsing it into
+    the set made it invisible in the worst way -- see the check below.
+
+    Manifest entries without a ``file`` key are simply not counted as
+    coverage. The explicit-manifest call path allows ``{"ticket": ...}``
+    alone, so such a manifest still *loads* — it just cannot claim the staged
+    files are the drawn ones, because it ties no identity to any of them. A
+    row carrying *neither* identity is not that exception, it is a junk row,
+    and it raises: counting it as nothing left coverage perfect. An
+    earlier version absorbed one unlisted file per unkeyed entry, on the
+    reasoning that the count was the most that could be claimed. That was
+    wrong: a count is not an identity, and it let a one-file staging beside
+    ``{"documents": [{"ticket": "CMO1"}]}`` report perfect coverage while
+    nothing connected the two.
+    """
+    entries = (manifest or {}).get("documents")
+    if not isinstance(entries, list):
+        return [], []
+
+    listed: set[str] = set()
+    duplicated: list[str] = []
+    malformed: list[str] = []
+    for position, entry in enumerate(entries):
+        # A non-mapping row is not a manifest entry at all. Skipping it let a
+        # manifest with valid rows for every staged file plus one junk row
+        # report a perfect match and publish.
+        if not isinstance(entry, Mapping):
+            malformed.append(f"entry {position}: not an object ({type(entry).__name__})")
+            continue
+        file_name = entry.get("file")
+        ticket = entry.get("ticket")
+        has_file = isinstance(file_name, str) and file_name.strip()
+        has_ticket = isinstance(ticket, str) and ticket.strip()
+        # A row naming a file but no ticket is the dangerous half of the
+        # asymmetry: it counts as coverage while `load_staged_documents`
+        # silently falls back to basename parsing, which is lossy for the
+        # hierarchical tickets (~2% of complaints) it exists to protect.
+        if has_file and not has_ticket:
+            malformed.append(f"entry {position}: {file_name!r} has no ticket")
+            continue
+        # Neither identity is the same junk row as a non-mapping, one level
+        # in: `{}` is a Mapping, so it passed every check above, counted as
+        # nothing, and left coverage perfect. A manifest with valid rows for
+        # every staged file plus one empty object still reported a complete
+        # sample and published.
+        if not has_file and not has_ticket:
+            malformed.append(f"entry {position}: names neither a file nor a ticket")
+            continue
+        # The other half is fine and is relied on: a row with a ticket and no
+        # file cannot be matched by name, so it simply does not count as
+        # coverage and the run is not publishable. That is the explicit-
+        # manifest call path, and it is tested.
+        if has_file:
+            if file_name in listed:
+                duplicated.append(file_name)
+            listed.add(file_name)
+
+    if malformed:
+        raise ValueError(
+            f"sample manifest has {len(malformed)} malformed entr(ies): "
+            f"{malformed[:5]}"
+            + (", ..." if len(malformed) > 5 else "")
+            + ". A row that cannot be read is not coverage, and skipping it "
+            "let a manifest with one junk row still report a perfect match."
+        )
+
+    # A repeated `file` is a broken manifest, not a coverage question, so it
+    # raises rather than being folded into `missing`/`unlisted`. Collapsed
+    # into the set it was invisible: a manifest claiming `one.pdf` for both
+    # T1 and T2 against a one-file staging reported nothing missing and
+    # nothing unlisted -- a perfect match -- while `file_to_ticket` kept only
+    # the last entry and the run measured one document under a manifest
+    # claiming two.
+    if duplicated:
+        raise ValueError(
+            f"sample manifest lists {len(duplicated)} filename(s) more than "
+            f"once: {sorted(set(duplicated))[:5]}"
+            + (", ..." if len(set(duplicated)) > 5 else "")
+            + ". Each staged file must appear once, or the ticket it is "
+            "attributed to depends on entry order and the document count "
+            "the manifest claims is not the count that runs."
+        )
+
+    staged = set(staged_names)
+    return sorted(listed - staged), sorted(staged - listed)
+
+
+def _document_sample_digest(
+    directory: Path, manifest: Mapping[str, Any] | None
+) -> str:
+    """Stable digest identifying the on-disk sample, for provenance.
+
+    Two components go in, for two different jobs. The manifest (when
+    present) gives *identity* — the draw/seed/slice — and is stable across
+    a re-stage to a different path. Every staged file's actual bytes give
+    *integrity*. Hashing only the manifest (the original version of this
+    function) made a content change on disk invisible: a bad re-download, a
+    swapped page, or a stale manifest sitting beside different bytes than
+    it describes all left the digest — and the manifest-count cross-check
+    in ``load_staged_documents`` — unchanged as long as filenames and
+    counts still lined up, even though the processor would read something
+    the manifest never claimed. Hashing filename + content per file (not
+    the full path) keeps the re-stage stability the manifest-only version
+    had, while an equal-count substitution now moves the digest.
+    """
+    hasher = hashlib.sha256()
+    if manifest is not None:
+        hasher.update(json.dumps(manifest, sort_keys=True).encode("utf-8"))
+    for path in _staged_document_paths(directory):
+        hasher.update(path.name.encode("utf-8"))
+        hasher.update(hashlib.sha256(path.read_bytes()).digest())
+    return hasher.hexdigest()
+
+
+def load_staged_documents(
+    directory: Path | str,
+    manifest: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Load a real staged document sample for benchmarking.
+
+    Returns the same dict shape as ``synthesize_documents``: ticket, text
+    (always None here — these are scanned documents, not free text),
+    document_name, document_bytes, district. Reading real bytes means the
+    OCR stage actually runs against real scans, unlike the text-only half
+    of the synthetic fixture.
+
+    ``directory`` is a flat staging directory of supported document files
+    (see ``SUPPORTED_DOCUMENT_SUFFIXES``) named
+    ``"<ticket>_complaint_<timestamp>.<ext>"`` — the layout
+    ``janasunani.evaluation.sarvam_sample_builder.build_sample`` writes.
+
+    Ticket ids come from the manifest's ``documents`` array (each entry has
+    ``ticket``/``s3_key``/``file``) when one is available, matched by
+    filename; only a file the manifest does not cover falls back to
+    ``janasunani.pipeline.ticket.ticket_from_relpath`` on the bare filename
+    (the same parser the pipeline itself uses, so a fallback ticket here
+    still clusters with the same key it would downstream). The fallback is
+    lossy for hierarchical tickets: ~2% of complaints have a ticket like
+    ``OR159/P/2021/00535``, but ``sarvam_sample_builder`` stages files under
+    ``Path(key).name`` — the directory part of the ticket is discarded
+    before the file ever reaches disk, so without a manifest entry the
+    parser can only recover the trailing segment (``00535``). Two distinct
+    complaints that happen to share that trailing segment then collapse
+    into one ticket, and therefore one cluster, corrupting the
+    ticket-clustered SEs this harness exists to report. Stage with the
+    manifest to avoid this; the fallback is a best-effort floor, not a fix.
+
+    If ``manifest`` is not given and ``directory/sample_manifest.json``
+    exists, it is loaded and used for: per-file ticket ids (above), the
+    sample's district (from its ``"slice"`` field, formatted
+    ``"<district>/<year>"``), and a completeness check against what is
+    actually staged. A missing manifest is not an error — the loader still
+    works from the directory's filenames alone, just without a district, the
+    completeness check, or protection against the hierarchical-ticket
+    collision above (and ``main`` will refuse to mark such a run
+    publication-ready).
+
+    Raises:
+        FileNotFoundError: ``directory`` does not exist or is not a
+            directory.
+        ValueError: the directory has no supported documents, a filename
+            cannot be parsed into a ticket, or the manifest lists a document
+            that is not staged. An empty document list must never reach
+            ``run_benchmark`` silently — its own "no documents" error talks
+            about ``n_text + n_image``, which would misdescribe a directory
+            problem as a document-count-flag problem. A partially staged
+            sample must not run at all: it would measure a subset of the
+            draw under the full draw's label.
+    """
+    directory = Path(directory)
+    if not directory.is_dir():
+        raise FileNotFoundError(
+            f"--documents-dir {directory} does not exist or is not a directory"
+        )
+
+    if manifest is None:
+        manifest_path = directory / "sample_manifest.json"
+        if manifest_path.is_file():
+            manifest = json.loads(manifest_path.read_text())
+
+    files = _staged_document_paths(directory)
+    if not files:
+        raise ValueError(
+            f"no supported documents ({sorted(SUPPORTED_DOCUMENT_SUFFIXES)}) "
+            f"found in {directory}; refusing to silently benchmark an empty "
+            "sample. Point --documents-dir at a staged sample, e.g. one "
+            "written by janasunani-build-sarvam-sample."
+        )
+
+    district: str | None = None
+    if manifest:
+        slice_label = manifest.get("slice")
+        if slice_label:
+            district = str(slice_label).split("/", 1)[0]
+    if not district:
+        district = "unspecified"
+
+    # The manifest's own ticket, keyed by staged filename, is authoritative
+    # where it exists: it is the ticket that was actually drawn, before
+    # sarvam_sample_builder's Path(key).name staging step discarded any
+    # directory prefix. Only a file missing from the manifest (or no
+    # manifest at all) falls back to parsing the filename itself.
+    file_to_ticket: dict[str, str] = {}
+    contradicted: list[str] = []
+    if manifest is not None:
+        manifest_documents = manifest.get("documents")
+        if isinstance(manifest_documents, list):
+            for entry in manifest_documents:
+                if not isinstance(entry, Mapping):
+                    continue
+                file_name = entry.get("file")
+                manifest_ticket = entry.get("ticket")
+                if not (file_name and manifest_ticket):
+                    continue
+                # Where the row carries the source key, it decides both other
+                # fields: the builder writes `file` as Path(key).name and the
+                # key is `<ticket>_complaint_<timestamp>.<ext>`. Taking the
+                # row's ticket as authoritative without checking it let a row
+                # pair a staged file with the wrong complaint -- coverage
+                # still reported a complete match, so the run clustered under
+                # that complaint and could still be published.
+                source_key = entry.get("s3_key")
+                if isinstance(source_key, str) and source_key.strip():
+                    key = source_key.strip()
+                    # A key with no `_complaint_` marker names no ticket, and
+                    # skipping the comparison there was the wrong reading of
+                    # "validate where we can": the manifest mapping bypasses
+                    # filename parsing entirely, so `{file: "one.pdf", ticket:
+                    # "WRONG", s3_key: "one.pdf"}` loaded under WRONG, reported
+                    # complete coverage and stayed publishable. A supplied key
+                    # must be a key.
+                    if "_complaint_" not in key:
+                        contradicted.append(
+                            f"{file_name!r}: s3_key {key!r} carries no "
+                            "'_complaint_' marker, so it names no ticket"
+                        )
+                        continue
+                    key_ticket = key.split("_complaint_")[0]
+                    if key_ticket != manifest_ticket:
+                        contradicted.append(
+                            f"{file_name!r}: s3_key names ticket {key_ticket!r}, "
+                            f"row says {manifest_ticket!r}"
+                        )
+                        continue
+                    if PurePosixPath(key).name != file_name:
+                        contradicted.append(
+                            f"{file_name!r}: s3_key basename is "
+                            f"{PurePosixPath(key).name!r}"
+                        )
+                        continue
+                file_to_ticket[file_name] = manifest_ticket
+
+    if contradicted:
+        raise ValueError(
+            f"sample manifest has {len(contradicted)} row(s) whose s3_key "
+            f"contradicts the row: {contradicted[:5]}"
+            + (", ..." if len(contradicted) > 5 else "")
+            + ". The key carries both the ticket and the staged filename, so "
+            "a row that disagrees with it would cluster the run under the "
+            "wrong complaint while coverage still reported a complete match."
+        )
+
+    docs: list[dict[str, Any]] = []
+    unparsed: list[str] = []
+    for path in files:
+        ticket = file_to_ticket.get(path.name) or ticket_from_relpath(path.name)
+        if ticket is None:
+            unparsed.append(path.name)
+            continue
+        docs.append(
+            {
+                "ticket": ticket,
+                "text": None,
+                "document_name": path.name,
+                "document_bytes": path.read_bytes(),
+                "district": district,
+            }
+        )
+    if unparsed:
+        raise ValueError(
+            f"{len(unparsed)} file(s) in {directory} do not match the staged "
+            "naming convention '<ticket>_complaint_<timestamp>.<ext>' and "
+            f"cannot be assigned a ticket: {unparsed[:5]}"
+            + (", ..." if len(unparsed) > 5 else "")
+        )
+
+    missing, _unlisted = staged_sample_coverage(
+        manifest, (doc["document_name"] for doc in docs)
+    )
+    if missing:
+        raise ValueError(
+            f"{len(missing)} document(s) listed in the sample manifest at "
+            f"{directory} are not staged there: {missing[:5]}"
+            + (", ..." if len(missing) > 5 else "")
+            + ". Benchmarking the remainder would measure a strict subset of "
+            "the drawn sample while labelling the artifact with the "
+            "manifest's slice, seed and digest. Re-stage the sample (a "
+            "failed Glacier restore is the usual cause) or point "
+            "--documents-dir at a directory whose manifest matches it."
+        )
+
     return docs
 
 
@@ -457,6 +831,7 @@ def _measure_with_processor(
     """
     per_stage_times: dict[str, list[float]] = {k: [] for k in ALL_KEYS}
     per_stage_tickets: dict[str, list[str]] = {k: [] for k in ALL_KEYS}
+    per_stage_kinds: dict[str, list[str]] = {k: [] for k in ALL_KEYS}
     temperature_times: dict[str, list[float]] = {"cold": [], "warm": []}
     temperature_tickets: dict[str, list[str]] = {"cold": [], "warm": []}
     has_completed_request = False
@@ -471,6 +846,7 @@ def _measure_with_processor(
 
     for doc in docs:
         ticket = doc["ticket"]
+        kind = _document_kind(doc)
         for r in range(repeats):
             attempts += 1
             is_warm = discard_warm and r == 0
@@ -525,9 +901,11 @@ def _measure_with_processor(
                 for stage_name, seconds in captured.items():
                     per_stage_times.setdefault(stage_name, []).append(seconds)
                     per_stage_tickets.setdefault(stage_name, []).append(ticket)
+                    per_stage_kinds.setdefault(stage_name, []).append(kind)
                 if E2E_KEY not in captured:
                     per_stage_times[E2E_KEY].append(elapsed)
                     per_stage_tickets[E2E_KEY].append(ticket)
+                    per_stage_kinds[E2E_KEY].append(kind)
             else:
                 # Fake timing path — deterministic, fast, no sleep unless
                 # BENCHMARK_FAKE_SLEEP is set (for manual wall-clock checks).
@@ -544,14 +922,17 @@ def _measure_with_processor(
                     continue
                 per_stage_times[E2E_KEY].append(timings.e2e)
                 per_stage_tickets[E2E_KEY].append(ticket)
+                per_stage_kinds[E2E_KEY].append(kind)
                 for stage in STAGES:
                     per_stage_times[stage].append(timings.per_stage[stage])
                     per_stage_tickets[stage].append(ticket)
+                    per_stage_kinds[stage].append(kind)
 
     # Return merged structure for compute_stage_stats
     return {
         "times": per_stage_times,  # type: ignore[return-value]
         "tickets": per_stage_tickets,  # type: ignore[return-value]
+        "kinds": per_stage_kinds,  # type: ignore[return-value]
         "attempts": attempts,
         "completed_attempts": completed_attempts,
         "failed_attempts": attempts - completed_attempts,
@@ -619,6 +1000,7 @@ def run_benchmark(
     )
     per_stage_times: dict[str, list[float]] = raw["times"]  # type: ignore[assignment]
     per_stage_tickets: dict[str, list[str]] = raw["tickets"]  # type: ignore[assignment]
+    per_stage_kinds: dict[str, list[str]] = raw["kinds"]  # type: ignore[assignment]
 
     stages_stats: dict[str, dict[str, Any]] = {}
     for key in per_stage_times:
@@ -647,7 +1029,7 @@ def run_benchmark(
         "timestamp": timestamp,
         "git_sha": git_sha,
         "stages": stages_stats,
-        "input_paths": _stats_by_input(per_stage_times, per_stage_tickets),
+        "input_paths": _stats_by_input(per_stage_times, per_stage_tickets, per_stage_kinds),
         "temperature_e2e": {
             temperature: compute_stage_stats(
                 raw["temperature_times"][temperature],
@@ -702,6 +1084,40 @@ def latency_json_payload(
     def nonblank(value: object) -> bool:
         return isinstance(value, str) and bool(value.strip())
 
+    def has_sample_verdict(context: dict[str, Any]) -> bool:
+        """The artifact must say what it ran on, and absence is not an answer.
+
+        Keying off the presence of `sample_slice` was the earlier mistake: a
+        real-document run assembled through the public
+        `load_staged_documents` -> `run_benchmark` -> `write_latency_json`
+        path can carry only the host and model labels, and treating that
+        silence as "synthetic, therefore fine" published a real measurement
+        with no manifest and no slice.
+
+        So the context declares which it is. Synthetic needs nothing further.
+        A staged-document run must both name its draw -- "unspecified" is the
+        fallback when neither --slice nor the manifest supplies one, and it
+        names nothing -- and carry a manifest that accounted for every staged
+        file. Anything else, including a context that declares nothing, is
+        not publishable.
+        """
+        provenance = context.get("sample_provenance")
+        if provenance == SYNTHETIC_PROVENANCE:
+            return True
+        if provenance != STAGED_PROVENANCE:
+            return False
+        # The slice names the district and year, not the draw. Two different
+        # staged sets from Sambalpur/2024 are indistinguishable by slice alone,
+        # which is what `_document_sample_digest` exists to settle: it binds
+        # the manifest to the bytes actually measured. A staged verdict without
+        # it identifies a population but not the sample.
+        return (
+            context.get("sample_manifest_complete") is True
+            and nonblank(context.get("sample_slice"))
+            and context["sample_slice"] != "unspecified"
+            and nonblank(context.get("sample_digest"))
+        )
+
     def has_cold_and_warm(result: dict[str, Any]) -> bool:
         temperatures = result.get("temperature_e2e")
         return isinstance(temperatures, dict) and all(
@@ -711,14 +1127,34 @@ def latency_json_payload(
         )
 
     def has_clean_full_path_coverage(result: dict[str, Any]) -> bool:
+        # This used to hardcode requiring BOTH "text" and "document" paths
+        # to have clean e2e coverage, which matched the synthetic default
+        # (always mixes text grievances and image documents) but made a
+        # --documents-dir run structurally unpublishable: real staged
+        # scans are all "document" kind, so there is legitimately no
+        # "text" path, and the gate could never pass regardless of how
+        # clean the run was. The gate should require clean coverage for
+        # whatever input kinds this run actually exercised — every one of
+        # them, not a fixed pair. A mixed run (synthetic default) still has
+        # to show clean "text" and "document" coverage; a document-only run
+        # only has to show it for "document".
+        #
+        # "unspecified" never counts as coverage, whether or not other
+        # kinds are also present: it means at least one measurement's input
+        # kind (see _document_kind) could not be determined, which is
+        # exactly the provenance gap this gate exists to catch.
         if result.get("failed_attempts") != 0:
             return False
         input_paths = result.get("input_paths")
-        return isinstance(input_paths, dict) and all(
-            isinstance(input_paths.get(path_name), dict)
-            and isinstance(input_paths[path_name].get("e2e"), dict)
-            and input_paths[path_name]["e2e"].get("n", 0) > 0
-            for path_name in ("text", "document")
+        if not isinstance(input_paths, dict) or not input_paths:
+            return False
+        if "unspecified" in input_paths:
+            return False
+        return all(
+            isinstance(stats, dict)
+            and isinstance(stats.get("e2e"), dict)
+            and stats["e2e"].get("n", 0) > 0
+            for stats in input_paths.values()
         )
 
     publication_ready = bool(variants_payload) and all(
@@ -731,6 +1167,13 @@ def latency_json_payload(
         and isinstance(result.get("benchmark_context"), dict)
         and nonblank(result["benchmark_context"].get("host_label"))
         and nonblank(result["benchmark_context"].get("model_release_id"))
+        # Absent on the synthetic path, which has no sample to be
+        # incomplete; only an explicit False blocks. False means the
+        # measured document set is not the drawn document set — no
+        # manifest at all, or staged files the manifest does not account
+        # for — so the recorded slice and digest would name a draw that is
+        # not what ran.
+        and has_sample_verdict(result["benchmark_context"])
         and nonblank(result.get("git_sha"))
         for result in variants_payload.values()
     )
@@ -802,14 +1245,45 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--n-docs",
         type=int,
-        default=DEFAULT_N_TEXT,
-        help="Number of synthetic text grievances (default: 20).",
+        default=None,
+        help=(
+            "Number of synthetic text grievances (default: 20 when "
+            "--documents-dir is not given). Mutually exclusive with "
+            "--documents-dir, which determines its own document count."
+        ),
     )
     parser.add_argument(
         "--n-image-docs",
         type=int,
-        default=DEFAULT_N_IMAGE,
-        help="Number of synthetic image documents (default: 10).",
+        default=None,
+        help=(
+            "Number of synthetic image documents (default: 10 when "
+            "--documents-dir is not given). Mutually exclusive with "
+            "--documents-dir, which determines its own document count."
+        ),
+    )
+    parser.add_argument(
+        "--documents-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Directory of a real staged document sample to benchmark "
+            "instead of the synthetic fixture (see load_staged_documents). "
+            "Mutually exclusive with --n-docs/--n-image-docs. If the "
+            "directory has a sample_manifest.json (written by "
+            "janasunani-build-sarvam-sample), it supplies district/slice "
+            "and a document-count cross-check."
+        ),
+    )
+    parser.add_argument(
+        "--slice",
+        default=None,
+        help=(
+            "Label for the staged sample's slice (e.g. 'Sambalpur/2024'), "
+            "recorded in benchmark_context. Only used with --documents-dir; "
+            "defaults to the sample_manifest.json 'slice' field, or "
+            "'unspecified' if there is no manifest."
+        ),
     )
     parser.add_argument(
         "--repeats",
@@ -866,10 +1340,131 @@ def main(argv: list[str] | None = None) -> int:
     # Validate repeats
     if args.repeats < 1:
         parser.error("--repeats must be >= 1")
-    if args.n_docs < 0 or args.n_image_docs < 0:
-        parser.error("--n-docs and --n-image-docs must be >= 0")
-    if args.n_docs + args.n_image_docs == 0:
-        parser.error("at least one of --n-docs or --n-image-docs must be > 0")
+
+    # --documents-dir (real staged sample) and --n-docs/--n-image-docs
+    # (synthetic fixture counts) configure two different document sources;
+    # letting both through would silently pick one and ignore the other.
+    # --n-docs/--n-image-docs default to None (not DEFAULT_N_TEXT/
+    # DEFAULT_N_IMAGE) precisely so this can tell "not passed" from
+    # "explicitly passed the default value".
+    loaded_docs: list[dict[str, Any]] | None = None
+    sample_manifest: dict[str, Any] | None = None
+    sample_slice: str | None = None
+    sample_digest: str | None = None
+    sample_manifest_complete = False
+    if args.documents_dir is not None:
+        if args.n_docs is not None or args.n_image_docs is not None:
+            parser.error(
+                "--documents-dir is mutually exclusive with --n-docs/"
+                "--n-image-docs: the staged sample determines its own "
+                "document count, so passing both is contradictory."
+            )
+        manifest_path = args.documents_dir / "sample_manifest.json"
+        if manifest_path.is_file():
+            sample_manifest = json.loads(manifest_path.read_text())
+        try:
+            loaded_docs = load_staged_documents(
+                args.documents_dir, manifest=sample_manifest
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            parser.error(str(exc))
+        manifest_slice = (sample_manifest or {}).get("slice")
+        # A conflicting --slice is refused, not preferred. The override exists
+        # to *supply* a label the manifest does not carry, not to rename a
+        # draw: taking the CLI value while the manifest still counted as
+        # complete produced an artifact labelled with one district-year and
+        # measured on another, and the publication gate would approve it.
+        if args.slice and manifest_slice and args.slice != manifest_slice:
+            parser.error(
+                f"--slice {args.slice!r} contradicts the sample manifest in "
+                f"{args.documents_dir}, which records {manifest_slice!r}. "
+                "The manifest describes the draw these documents came from; "
+                "--slice can supply a label when there is no manifest, but it "
+                "cannot rename one. Drop --slice, or point --documents-dir at "
+                "the sample you meant."
+            )
+        sample_slice = args.slice or manifest_slice or "unspecified"
+        sample_digest = _document_sample_digest(args.documents_dir, sample_manifest)
+        # load_staged_documents has already refused a manifest that lists a
+        # document nobody staged. What is left is the other direction —
+        # staged files the manifest does not account for, and the no-manifest
+        # case — neither of which should stop the run, and neither of which
+        # may be published under a sample label they do not describe.
+        missing, unlisted = staged_sample_coverage(
+            sample_manifest, (doc["document_name"] for doc in loaded_docs)
+        )
+        # Rows that name no file are loadable -- that is the documented
+        # ticket-only exception -- but they are not coverage. Such a row is a
+        # manifest document tied to nothing measured, so a manifest with a
+        # valid row per staged file *plus* one ticket-only row described a
+        # larger draw than ran while `unlisted` stayed empty and completeness
+        # stayed true.
+        unkeyed = sum(
+            1
+            for entry in (sample_manifest or {}).get("documents", [])
+            if isinstance(entry, Mapping)
+            and not (isinstance(entry.get("file"), str) and entry["file"].strip())
+        )
+        # A manifest that does not enumerate its documents is no better than
+        # no manifest for this purpose. `{"slice": "Sambalpur/2024"}` — valid
+        # JSON, hand-written or truncated — makes staged_sample_coverage
+        # return nothing in either direction, which is indistinguishable from
+        # a perfect match unless the enumeration itself is required.
+        manifest_enumerates = isinstance(
+            (sample_manifest or {}).get("documents"), list
+        )
+        # `missing` is checked rather than assumed empty. load_staged_documents
+        # does refuse a manifest listing an unstaged file, but completeness is
+        # the claim that the manifest and the measurement describe the same
+        # set, and it should not rest on another function's invariant holding.
+        sample_manifest_complete = (
+            manifest_enumerates and not unlisted and not missing and not unkeyed
+        )
+        if sample_manifest is None:
+            logger.warning(
+                "no sample_manifest.json in {}; the run cannot say which draw "
+                "it measured, so it will not be marked publication_ready",
+                args.documents_dir,
+            )
+        elif not manifest_enumerates:
+            logger.warning(
+                "sample_manifest.json in {} has no 'documents' list, so "
+                "nothing ties these files to the draw it names; the run will "
+                "not be marked publication_ready",
+                args.documents_dir,
+            )
+        elif unkeyed:
+            logger.warning(
+                "sample_manifest.json in {} has {} row(s) naming no file, so "
+                "the manifest describes documents this run did not measure; "
+                "the run will not be marked publication_ready",
+                args.documents_dir,
+                unkeyed,
+            )
+        elif missing:
+            logger.warning(
+                "{} manifest-listed document(s) in {} were not staged; the "
+                "run will not be marked publication_ready",
+                len(missing),
+                args.documents_dir,
+            )
+        elif unlisted:
+            logger.warning(
+                "{} staged document(s) in {} are not accounted for by its "
+                "sample_manifest.json ({}...); the measured set is not the "
+                "drawn set, so the run will not be marked publication_ready",
+                len(unlisted),
+                args.documents_dir,
+                unlisted[:5],
+            )
+    else:
+        n_docs = DEFAULT_N_TEXT if args.n_docs is None else args.n_docs
+        n_image_docs = DEFAULT_N_IMAGE if args.n_image_docs is None else args.n_image_docs
+        if n_docs < 0 or n_image_docs < 0:
+            parser.error("--n-docs and --n-image-docs must be >= 0")
+        if n_docs + n_image_docs == 0:
+            parser.error("at least one of --n-docs or --n-image-docs must be > 0")
+        args.n_docs, args.n_image_docs = n_docs, n_image_docs
 
     discard_warm = not args.no_warm_discard
     if args.repeats == 1 and discard_warm:
@@ -921,8 +1516,9 @@ def main(argv: list[str] | None = None) -> int:
     for variant in variants:
         result = run_benchmark(
             variant=variant,
-            n_text=args.n_docs,
-            n_image=args.n_image_docs,
+            n_text=0 if loaded_docs is not None else args.n_docs,
+            n_image=0 if loaded_docs is not None else args.n_image_docs,
+            docs=loaded_docs,
             repeats=args.repeats,
             discard_warm=discard_warm,
             seed=args.seed,
@@ -931,12 +1527,34 @@ def main(argv: list[str] | None = None) -> int:
             is_fake=is_fake,
         )
         result["processor_startup_seconds"] = startup.get("seconds")
-        result["benchmark_context"] = {
-            "host_label": args.host_label,
-            "model_release_id": args.model_release_id,
-            "fixture": "deterministic synthetic grievances without citizen data",
-            "execution": "sequential single-process execution",
-        }
+        if loaded_docs is not None:
+            # Real-document path: this is the actual defect being fixed —
+            # an artifact that says what it ran on. Additive keys only; the
+            # synthetic-path dict below (host_label, model_release_id,
+            # fixture, execution) is unchanged so existing consumers of
+            # those keys and of the exact "fixture" string do not break.
+            result["benchmark_context"] = {
+                "host_label": args.host_label,
+                "model_release_id": args.model_release_id,
+                "fixture": (
+                    f"real staged document sample "
+                    f"({len(loaded_docs)} documents, slice {sample_slice})"
+                ),
+                "execution": "sequential single-process execution",
+                "sample_provenance": STAGED_PROVENANCE,
+                "sample_slice": sample_slice,
+                "sample_document_count": len(loaded_docs),
+                "sample_digest": sample_digest,
+                "sample_manifest_complete": sample_manifest_complete,
+            }
+        else:
+            result["benchmark_context"] = {
+                "host_label": args.host_label,
+                "model_release_id": args.model_release_id,
+                "fixture": "deterministic synthetic grievances without citizen data",
+                "sample_provenance": SYNTHETIC_PROVENANCE,
+                "execution": "sequential single-process execution",
+            }
         results[variant] = result
         e2e = result["stages"][E2E_KEY]
         print(
