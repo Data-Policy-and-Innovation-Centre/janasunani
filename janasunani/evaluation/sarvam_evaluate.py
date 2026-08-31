@@ -26,8 +26,10 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from dataclasses import asdict
 from datetime import UTC, datetime
 import hashlib
+import contextlib
 import json
 import os
 import sys
@@ -337,9 +339,155 @@ def _load_metadata_join(
     return mapping
 
 
+def _checked_record_destination(path: Path) -> Path:
+    """Resolve ``--save-records`` and refuse anywhere outside ``data/``.
+
+    The dump is **unredacted**: every record carries the citizen's own words
+    plus whatever the provider returned. ``data/`` is the one tree the data
+    policy governs and the one git ignores wholesale, so a dump landing
+    anywhere else is a file nobody is watching. ``docs/records.jsonl`` or a
+    bare ``records.jsonl`` at the repo root would previously have been created
+    without complaint and would then sit in `git status` waiting to be added.
+
+    Resolved before comparison so ``data/../docs/x.jsonl`` and a symlink into
+    the tree are both rejected rather than passing a prefix check.
+    """
+    from janasunani.config import DATA_DIR
+
+    resolved = Path(path).expanduser().resolve()
+    root = DATA_DIR.resolve()
+    if not resolved.is_relative_to(root):
+        raise ValueError(
+            f"--save-records must write inside {root} (the governed data tree), "
+            f"not {resolved}. The dump is unredacted citizen text: it may not be "
+            "written where it could be committed or shared by accident."
+        )
+    return resolved
+
+
+def _probe_record_destination(destination: Path) -> None:
+    """Fail now if the dump could not be written, without destroying anything.
+
+    Writability is a property of the directory plus, where the target already
+    exists, of that file. Neither can be established from the path alone --
+    ``_checked_record_destination`` proves only that the location is
+    permitted -- and finding out at the write costs a whole paid run.
+
+    Never truncates. An existing dump from a previous run is evidence; the
+    probe checks it and leaves the bytes alone. Either way it creates and
+    removes a uniquely named sibling, which tests the directory the real write
+    will use without inventing a partial file at the destination.
+
+    The sibling probe runs *whether or not the destination exists*, and that
+    is not redundant. ``_write_record_dump`` no longer opens the destination:
+    it writes a temporary sibling and ``os.replace``s it into position, so the
+    write needs the parent directory to be writable even when the target file
+    already is. Returning early on an existing dump therefore passed a
+    writable file sitting in a read-only directory, every paid page ran, and
+    the write then failed creating its sibling -- the exact outcome this probe
+    exists to prevent, reintroduced by the change that made the write atomic.
+
+    The ``W_OK`` check on an existing file is kept as well, though a POSIX
+    rename does not strictly need it: it costs nothing, and a destination the
+    operator cannot write is worth refusing before a paid run rather than
+    relying on rename semantics holding everywhere.
+    """
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        if not destination.is_file():
+            raise OSError(f"{destination} exists and is not a regular file")
+        if not os.access(destination, os.W_OK):
+            raise OSError(f"{destination} exists and is not writable")
+    probe = destination.parent / f".{destination.name}.probe-{os.getpid()}"
+    try:
+        fd = os.open(probe, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.close(fd)
+    finally:
+        try:
+            probe.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _write_record_dump(destination: Path, records: Any) -> Path:
+    """Write the unredacted per-page dump, 0600 from the moment it exists.
+
+    The mode has to be applied at creation, not after the write. Under the
+    usual ``022`` umask ``Path.open("w")`` creates the file ``0644``, so the
+    citizen text was world-readable on the host for the entire write and was
+    narrowed only once the last record had landed -- a window that grows with
+    the run. An interrupt before the ``chmod`` left it ``0644`` permanently.
+
+    ``os.open`` applies the mode as the file is created. ``fchmod`` covers the
+    other half: if the path already exists, ``O_CREAT``'s mode argument is
+    ignored, so a dump overwriting a previously world-readable file would
+    otherwise keep those permissions.
+
+    The write goes to a temporary sibling and is renamed into place only once
+    every record has landed. Writing ``O_TRUNC`` straight onto the destination
+    destroyed the previous dump the instant the new one opened, so a
+    serialisation error or an interrupt mid-run left a truncated file where
+    complete evidence had been -- and this is unredacted per-page output that
+    a paid run produced, not something a retry reconstructs for free. The
+    startup probe is deliberately non-destructive for the same reason; this
+    closes the other half of it.
+
+    The sibling shares the destination's directory so the rename is on one
+    filesystem and therefore atomic, and it is created 0600 like the final
+    file: it holds the same citizen text.
+    """
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    # `mkstemp` opens with O_CREAT|O_EXCL at 0600, so it cannot follow or
+    # reuse anything already at the path. The first version of this used a
+    # predictable `.<name>.<pid>.partial` with O_TRUNC: a local process able
+    # to pre-create that path as a symlink would have had this write follow
+    # it, putting unredacted citizen text outside the tree
+    # `_checked_record_destination` validated, and then `os.replace` would
+    # have installed the symlink itself as the dump. Unguessable and
+    # exclusive closes both halves.
+    fd, tmp_name = tempfile.mkstemp(
+        dir=destination.parent, prefix=f".{destination.name}.", suffix=".partial"
+    )
+    tmp = Path(tmp_name)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            for record in records:
+                handle.write(json.dumps(asdict(record), default=str) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, destination)
+    except BaseException:
+        # Including KeyboardInterrupt: a Ctrl-C is the interrupt this exists
+        # to survive, and leaving the partial behind would strand unredacted
+        # text at a path nothing later cleans up. Only ever this invocation's
+        # own file, which mkstemp guarantees we created.
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+    return destination
+
+
 def _unwrap_extract_result(payload: Any) -> dict[str, Any]:
-    """Unwrap the various shapes ``adapter.extract`` may return."""
+    """Unwrap the various shapes ``adapter.extract`` may return.
+
+    ``result`` (singular) is the shape the live API actually returns and is
+    checked first. GET /doc-ai/v1/job/{job_id}/results answers with the
+    envelope ``{job_id, type, status, usage, result, annotations, version}``
+    and the schema's fields live under ``result``.
+
+    Omitting it was silent rather than loud: the final ``return payload``
+    fallback handed back the envelope, and the caller's
+    ``payload.get("grievance_category")`` then read one level too high and
+    got ``None``. The 2026-08-25 Sambalpur/2024 run billed 200 Extract pages
+    and recorded ``sarvam_category`` as null on all 198 scored pages for
+    exactly this reason, which scored as 0.000 accuracy rather than as a
+    missing measurement. A shape this function does not recognise must not
+    look like a confident empty answer.
+    """
     if isinstance(payload, dict):
+        if isinstance(payload.get("result"), dict):
+            return payload["result"]
         if "results" in payload and isinstance(payload["results"], list) and payload["results"]:
             first = payload["results"][0]
             if isinstance(first, dict):
@@ -385,6 +533,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--audit-db", type=Path, default=None, help="Sarvam egress audit log (default: <out>/sarvam_audit.sqlite).")
     parser.add_argument("--dry-run", action="store_true", help="Render and run pytesseract only. No Sarvam call, no spend.")
     parser.add_argument("--dump-text", action="store_true", help="Print both transcripts. Debugging only; refuses more than one page.")
+    parser.add_argument(
+        "--save-records",
+        type=Path,
+        default=None,
+        help=(
+            "Persist one JSON line per scored page (ticket, page id, pytesseract "
+            "text, Sarvam markdown/category/summary, pipeline category/summary, "
+            "gold category, handwritten, language) to this path. Unredacted and "
+            "carries real ticket ids and grievance text — write it under a "
+            "controlled data/ location only, never under outputs/ or git."
+        ),
+    )
     return parser
 
 
@@ -398,6 +558,32 @@ def main(argv: list[str] | None = None) -> int:
     if not input_dir.is_dir():
         logger.error(f"input dir not found: {input_dir}")
         return 1
+
+    # Resolved here rather than at the write, which is after every page has
+    # been rendered, sent to a paid provider and scored. A bad path is knowable
+    # at startup, and finding out at the end costs the whole run — the command
+    # then returned 1 before writing the aggregate outputs too, so the money
+    # bought nothing. Held for the actual write below.
+    record_destination: Path | None = None
+    if args.save_records:
+        try:
+            record_destination = _checked_record_destination(args.save_records)
+            # Prove it can actually be written, not merely that it sits in a
+            # permitted directory. A parent that is an existing file, a
+            # read-only directory or a bad permission all pass the location
+            # check and then raise inside _write_record_dump -- after every
+            # page has been rendered, submitted to a paid provider and
+            # scored.
+            #
+            # Non-destructively. The first version of this probe called
+            # _write_record_dump directly, which opens O_TRUNC: pointing
+            # --save-records at a previous run's dump erased it before any
+            # other check ran, and an early return then left neither the old
+            # evidence nor a replacement.
+            _probe_record_destination(record_destination)
+        except (ValueError, OSError) as exc:
+            logger.error(f"--save-records destination is unusable: {exc}")
+            return 1
 
     try:
         schema = get_schema(args.schema_version)
@@ -679,6 +865,17 @@ def main(argv: list[str] | None = None) -> int:
     # Pass arm + slice so scorecard correctly hides non-measured arms (digitise vs extract)
     # and renders the selected slice (not demo constant).
     report = build_scorecard(records, slice_label=args.slice, arm=args.arm)
+
+    # Optional per-page record dump. The aggregate path deliberately keeps no
+    # provider payloads (`contains_text_or_provider_payloads: False` in the
+    # checkpoint), so without this the transcripts, categories and summaries are
+    # computed, scored and discarded. Reference examples need them kept, and the
+    # help text is explicit that the file is unredacted.
+    if record_destination is not None:
+        _write_record_dump(record_destination, records)
+        logger.success(
+            f"records -> {record_destination} ({len(records)} pages, unredacted)"
+        )
 
     # Write markdown + base scorecard first, then overwrite JSON with enriched payload
     try:
