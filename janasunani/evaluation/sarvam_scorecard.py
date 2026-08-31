@@ -36,6 +36,7 @@ recorded Sarvam markdown fixtures; no live network call is made.
 
 from __future__ import annotations
 
+import html
 import json
 import random
 import re
@@ -43,7 +44,7 @@ import unicodedata
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple, Sequence
 
 from janasunani.config import DEMO_SLICE_DISTRICT, DEMO_SLICE_LABEL, DEMO_SLICE_YEAR
 from janasunani.evaluation.stats import (
@@ -120,6 +121,49 @@ def normalize_text(text: str | None) -> str:
     # collapse whitespace (including newlines to single space for comparison)
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+def unescape_label(label: str | None) -> str | None:
+    """Return *label* in its readable form, undoing HTML entity escaping.
+
+    Some ``complaints.category`` values reached the lake double-escaped:
+    ``Scheme & Benefits`` is stored as ``Scheme &amp;amp; Benefits``. Unescaping
+    is applied repeatedly until it reaches a fixed point so both single and
+    double escaping resolve, with a bounded loop so a pathological value cannot
+    spin. Returns ``None`` for a missing or blank label.
+    """
+    if label is None:
+        return None
+    text = unicodedata.normalize("NFC", str(label))
+    for _ in range(3):
+        decoded = html.unescape(text)
+        if decoded == text:
+            break
+        text = decoded
+    text = re.sub(r"\s+", " ", text).strip()
+    return text or None
+
+
+def category_key(label: str | None) -> str | None:
+    """Comparison key for a category label, or ``None`` if there is no label.
+
+    Category accuracy compares a stored gold label against a model's answer.
+    The schema enum offers the readable form (``Scheme & Benefits``), so an
+    exact-equality comparison against the escaped stored form would score every
+    correct prediction for that category as wrong. Comparisons must go through
+    this function rather than ``==`` on the raw strings.
+
+    ``None`` never equals ``None`` for scoring purposes: callers filter on a
+    present gold label first, so a missing prediction cannot match.
+    """
+    cleaned = unescape_label(label)
+    return cleaned.casefold() if cleaned else None
+
+
+def _labels_match(gold: str | None, predicted: str | None) -> bool:
+    """True when *predicted* is the same category as *gold*, ignoring escaping."""
+    gold_key = category_key(gold)
+    return gold_key is not None and gold_key == category_key(predicted)
 
 
 # ---------------------------------------------------------------------------
@@ -360,39 +404,91 @@ def sample_compliance(n_pages: int, slice_label: str | None = None) -> dict[str,
 # Per-category accuracy — the spread that headlines hide
 # ---------------------------------------------------------------------------
 
+class TicketCategories(NamedTuple):
+    """One category per ticket, with the tickets whose pages disagreed."""
+
+    gold: dict[str, str | None]
+    pipeline: dict[str, str | None]
+    sarvam: dict[str, str | None]
+    ambiguous_sarvam: set[str]
+    ambiguous_pipeline: set[str]
+
+
+def aggregate_ticket_categories(pages: Sequence[PageRecord]) -> TicketCategories:
+    """Collapse per-page categories to one value per ticket.
+
+    Category is a property of the grievance, not of a page. Extract is invoked
+    per page (``sarvam_evaluate.py:604``) and schema v2 makes
+    ``grievance_category`` ``required``, so every page must answer — including
+    cover sheets and attachments that have no category to give.
+
+    **Disagreement is recorded, never resolved by position.** Keeping the first
+    non-null answer lets a forced guess on page one mask a correct answer on
+    the grievance-bearing page. Majority is no better: it favours whichever
+    page type is most numerous, usually the attachments. Without knowing which
+    page bears the grievance there is no defensible winner, so a ticket whose
+    pages disagree is returned with ``None`` and named in the ambiguous sets.
+
+    Both the headline metric and ``per_category_table`` must go through this.
+    They had separate copies of this loop, and fixing only one made the
+    per-category rows contradict the headline for the same ticket.
+    """
+    gold: dict[str, str | None] = {}
+    pipeline: dict[str, str | None] = {}
+    sarvam: dict[str, str | None] = {}
+    seen_pipeline: dict[str, set[str]] = defaultdict(set)
+    seen_sarvam: dict[str, set[str]] = defaultdict(set)
+
+    for p in pages:
+        for target, seen, val in [
+            (gold, None, p.gold_category),
+            (pipeline, seen_pipeline, p.pipeline_category),
+            (sarvam, seen_sarvam, p.sarvam_category),
+        ]:
+            key = category_key(val)
+            if seen is not None and key is not None:
+                seen[p.ticket].add(key)
+            if p.ticket not in target:
+                target[p.ticket] = val
+            elif target[p.ticket] is None and val is not None:
+                target[p.ticket] = val
+
+    ambiguous_sarvam = {t for t, vals in seen_sarvam.items() if len(vals) > 1}
+    ambiguous_pipeline = {t for t, vals in seen_pipeline.items() if len(vals) > 1}
+    for ticket in ambiguous_sarvam:
+        sarvam[ticket] = None
+    for ticket in ambiguous_pipeline:
+        pipeline[ticket] = None
+    return TicketCategories(gold, pipeline, sarvam, ambiguous_sarvam, ambiguous_pipeline)
+
+
 def per_category_table(pages: list[PageRecord]) -> dict[str, dict[str, Any]]:
     """Per-category accuracy for pipeline vs Sarvam, grouped by gold label.
 
     One row per gold_category value (e.g. Police 0.85 vs Welfare 0.51).
-    De-duplicated by ticket like the headline metric (one category per
-    ticket). Tickets without a gold label are omitted.
+    De-duplicated by ticket through :func:`aggregate_ticket_categories`, the
+    same path the headline uses, so a ticket cannot be ambiguous in one and
+    correct in the other. Tickets without a gold label are omitted.
 
     Returns mapping category -> {n_tickets, pipeline_accuracy,
     sarvam_accuracy, pipeline_correct, sarvam_correct, difference}.
     """
-    ticket_gold: dict[str, str | None] = {}
-    ticket_pipe: dict[str, str | None] = {}
-    ticket_sarvam: dict[str, str | None] = {}
-    for p in pages:
-        for d, val in [
-            (ticket_gold, p.gold_category),
-            (ticket_pipe, p.pipeline_category),
-            (ticket_sarvam, p.sarvam_category),
-        ]:
-            if p.ticket not in d:
-                d[p.ticket] = val
-            elif d[p.ticket] is None and val is not None:
-                d[p.ticket] = val
-    # group tickets by gold category
+    aggregated = aggregate_ticket_categories(pages)
+    ticket_gold = aggregated.gold
+    ticket_pipe = aggregated.pipeline
+    ticket_sarvam = aggregated.sarvam
+    # Group tickets by gold category. The row label is the readable form, so
+    # escaped and unescaped spellings of one category are a single row.
     groups: dict[str, list[str]] = defaultdict(list)
     for ticket, gold in ticket_gold.items():
-        if gold is not None:
-            groups[gold].append(ticket)
+        readable = unescape_label(gold)
+        if readable is not None:
+            groups[readable].append(ticket)
     out: dict[str, dict[str, Any]] = {}
     for category in sorted(groups):
         tickets = groups[category]
-        pipe_correct = [1 if ticket_pipe.get(t) == category else 0 for t in tickets]
-        sarv_correct = [1 if ticket_sarvam.get(t) == category else 0 for t in tickets]
+        pipe_correct = [1 if _labels_match(category, ticket_pipe.get(t)) else 0 for t in tickets]
+        sarv_correct = [1 if _labels_match(category, ticket_sarvam.get(t)) else 0 for t in tickets]
         pipe_acc = sum(pipe_correct) / len(pipe_correct) if pipe_correct else 0.0
         sarv_acc = sum(sarv_correct) / len(sarv_correct) if sarv_correct else 0.0
         out[category] = {
@@ -531,26 +627,16 @@ def build_scorecard(
     n_pages = len(pages)
     n_tickets = len({p.ticket for p in pages})
 
-    # Category arm — paired, ticket-clustered. De-duplicate by ticket for
-    # category (one category per ticket/document, not per page).
-    # If a ticket appears on multiple pages, its category should be consistent;
-    # we take the first non-None and require consistency (warn if not).
-    ticket_gold: dict[str, str | None] = {}
-    ticket_pipe: dict[str, str | None] = {}
-    ticket_sarvam: dict[str, str | None] = {}
-    for p in pages:
-        for d, val in [
-            (ticket_gold, p.gold_category),
-            (ticket_pipe, p.pipeline_category),
-            (ticket_sarvam, p.sarvam_category),
-        ]:
-            if p.ticket not in d:
-                d[p.ticket] = val
-            elif d[p.ticket] is None and val is not None:
-                d[p.ticket] = val
-            elif val is not None and d[p.ticket] is not None and d[p.ticket] != val:
-                # Inconsistent label for same ticket — keep first, note later
-                pass
+    # Category arm — paired, ticket-clustered. One value per ticket via the
+    # shared aggregator, which records page disagreement rather than resolving
+    # it by position. per_category_table uses the same call, so a ticket cannot
+    # be ambiguous in the headline and correct in the per-category rows.
+    _agg = aggregate_ticket_categories(pages)
+    ticket_gold = _agg.gold
+    ticket_pipe = _agg.pipeline
+    ticket_sarvam = _agg.sarvam
+    ambiguous_sarvam = _agg.ambiguous_sarvam
+    ambiguous_pipeline = _agg.ambiguous_pipeline
 
     # Only tickets with a gold label contribute to paired accuracy
     # Arm-aware: digitise-only does not score category (gold Category requires Extract)
@@ -561,8 +647,12 @@ def build_scorecard(
         cat_tickets = [t for t in ticket_gold if ticket_gold[t] is not None]
         cat_clusters = cat_tickets  # one per ticket
         if cat_tickets:
-            pipe_correct = [1 if ticket_pipe.get(t) == ticket_gold[t] else 0 for t in cat_tickets]
-            sarvam_correct = [1 if ticket_sarvam.get(t) == ticket_gold[t] else 0 for t in cat_tickets]
+            pipe_correct = [
+                1 if _labels_match(ticket_gold[t], ticket_pipe.get(t)) else 0 for t in cat_tickets
+            ]
+            sarvam_correct = [
+                1 if _labels_match(ticket_gold[t], ticket_sarvam.get(t)) else 0 for t in cat_tickets
+            ]
             pipe_rate = sum(pipe_correct) / len(pipe_correct) if pipe_correct else 0.0
             sarvam_rate = sum(sarvam_correct) / len(sarvam_correct) if sarvam_correct else 0.0
             diff = paired_difference(sarvam_correct, pipe_correct, cat_clusters)
@@ -575,6 +665,17 @@ def build_scorecard(
                 "ci_low": diff["ci_low"],
                 "ci_high": diff["ci_high"],
                 "n_clusters": diff["n_clusters"],
+                # Tickets whose pages disagreed. These score as incorrect
+                # because no page's answer is defensible, so a high count means
+                # the marginal rates understate the provider rather than
+                # measuring it. Reported so that is visible instead of being
+                # absorbed into the accuracy figure.
+                "sarvam_ambiguous_tickets": len(
+                    [t for t in cat_tickets if t in ambiguous_sarvam]
+                ),
+                "pipeline_ambiguous_tickets": len(
+                    [t for t in cat_tickets if t in ambiguous_pipeline]
+                ),
                 "interpretation": "difference + CI is the result; marginal rates are description (#127)",
             }
         else:

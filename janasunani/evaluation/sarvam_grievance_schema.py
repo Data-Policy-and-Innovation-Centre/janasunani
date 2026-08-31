@@ -3,8 +3,13 @@
 This module is the single source for the JSON schema passed to
 ``SarvamVisionAdapter.extract(schema=...)`` in the benchmark. The schema is
 versioned so a later change cannot silently shift the headline category
-accuracy number; callers pin ``--schema-version v1`` and the scorecard
-records the version.
+accuracy number, and the scorecard records the version it ran under.
+
+**Use v2, which is the default. Do not pass ``--schema-version v1`` unless you
+are deliberately reproducing the 2026-08-25 run.** v1's category field has no
+enum and no ``required``, which is why that run billed 200 pages and returned
+free-text subject lines on 11 of 87 grievances. Passing the flag explicitly
+overrides the default and buys that outcome again, at full price.
 
 The illustrative schema in the rehearsal plan (Part 5) is reproduced
 verbatim here as ``GRIEVANCE_EXTRACT_FIELDS_V1``. Field names are aligned
@@ -27,7 +32,11 @@ from __future__ import annotations
 
 from typing import Any
 
-SCHEMA_VERSION = "v1"
+#: v2 is the default because v1 cannot answer its own declared primary
+#: outcome: its category field has no enum, so the 2026-08-25 run billed 200
+#: pages and returned free-text subject lines. v1 stays reachable so that run
+#: can be reproduced exactly; nothing else should select it.
+SCHEMA_VERSION = "v2"
 SCHEMA_VERSION_V1 = "v1"
 
 #: The field map. Not sendable on its own — see ``GRIEVANCE_EXTRACT_SCHEMA_V1``.
@@ -56,8 +65,106 @@ GRIEVANCE_EXTRACT_SCHEMA_V1: dict[str, Any] = {
     "properties": GRIEVANCE_EXTRACT_FIELDS_V1,
 }
 
+SCHEMA_VERSION_V2 = "v2"
+
+#: The 35 labels ``complaints.category`` actually takes, read off the lake on
+#: 2026-08-25. ``Scheme & Benefits`` is stored double-escaped as
+#: ``Scheme &amp;amp; Benefits``; the enum carries the readable form and the
+#: comparison unescapes before matching, because asking a model to emit an
+#: HTML entity would be absurd and would fail for the wrong reason.
+GRIEVANCE_CATEGORIES: tuple[str, ...] = (
+    "Accident",
+    "Agriculture & Farming",
+    "BSKY",
+    "CMRF",
+    "COVID-19",
+    "Culture",
+    "Disaster Management",
+    "Education",
+    "Energy",
+    "Environment",
+    "Excise",
+    "Financial Assistance",
+    "General",
+    "Health Care",
+    "Housing",
+    "ICDS",
+    "Infrastructure",
+    "Irrigation",
+    "Land Matters",
+    "Legal",
+    "Miscellaneous",
+    "Pension/Retirement Benefits",
+    "Police Case",
+    "Public Utility",
+    "Scheme & Benefits",
+    "School & College",
+    "Service Matters",
+    "Social Welfare",
+    "Sports",
+    "Tourism",
+    "Traffic",
+    "Transport",
+    "Waste Management",
+    "Water Supply",
+    "Women Issues",
+)
+
+#: v2 field map. Two changes, both forced by the 2026-08-25 run.
+#:
+#: ``grievance_category`` gains an ``enum``. v1 described it as the
+#: "taxonomy of complaints.grievance_category" and then never said what that
+#: taxonomy was, so the model had nothing to choose from and answered with
+#: free-text subject lines — the specific relief each petitioner asked for, or
+#: the name of an administrative wing — none of which is a value the taxonomy
+#: takes. It matched gold on 0 of the 11 grievances where it answered at all,
+#: which measured our schema rather than the provider.
+#:
+#: ``district`` is dropped. It is a structured column on ``complaints`` that is
+#: recorded at intake and known with certainty for every grievance, so paying
+#: an extraction endpoint to read it back off a scan buys nothing. It was also
+#: the best-populated field in the run, 100 of 198 pages against the category's
+#: 11, because it sits on the letterhead: the budget went to the one field we
+#: already had. Reinstate it only as an explicit intake-accuracy cross-check,
+#: and say so if you do.
+GRIEVANCE_EXTRACT_FIELDS_V2: dict[str, dict[str, Any]] = {
+    "grievance_category": {
+        "type": "string",
+        "enum": list(GRIEVANCE_CATEGORIES),
+        "description": (
+            "The single grievance category. Choose exactly one value from enum."
+        ),
+    },
+    "summary": {
+        "type": "string",
+        "description": "One-paragraph grievance summary",
+    },
+    "grievance_text": {
+        "type": "string",
+        "description": "Full grievance text (redacted prose)",
+    },
+}
+
+#: ``grievance_category`` is declared ``required``. JSON Schema properties are
+#: optional by default, so without this a run could return only ``summary`` and
+#: ``grievance_text`` and omit the field the benchmark exists to measure --
+#: which is close to what the 2026-08-25 run did, answering the category on 11
+#: of 87 grievances. The enum fixes *what* the model may say; this fixes
+#: *whether* it has to say it. The other two fields stay optional: a page with
+#: no legible prose returning no ``grievance_text`` is a real outcome, not a
+#: malformed response.
+#:
+#: v1 deliberately gains nothing here. It stays byte-for-byte what the
+#: 2026-08-25 run sent, or that run stops being reproducible.
+GRIEVANCE_EXTRACT_SCHEMA_V2: dict[str, Any] = {
+    "type": "object",
+    "properties": GRIEVANCE_EXTRACT_FIELDS_V2,
+    "required": ["grievance_category"],
+}
+
 SUPPORTED_SCHEMA_VERSIONS: dict[str, dict[str, Any]] = {
     "v1": GRIEVANCE_EXTRACT_SCHEMA_V1,
+    "v2": GRIEVANCE_EXTRACT_SCHEMA_V2,
 }
 
 

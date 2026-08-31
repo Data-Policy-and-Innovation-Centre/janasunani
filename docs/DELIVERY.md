@@ -15,6 +15,21 @@ status: Internal
 > intake-time actionability and congestion remain unresolved, so it supports no
 > routing gain, deployable threshold, causal impact or recommendation. See
 > [QUALITY_BENCHMARKS.md](QUALITY_BENCHMARKS.md#routing--outcome-not-destination).
+>
+> **Sarvam spend resumed, 25 August 2026.** "No new paid calls" and "new spend
+> is paused" below describe the position up to 14 August and are superseded. A
+> 200-page stratified draw from Sambalpur/2024 ran on 25 August across both
+> endpoints, ₹300 at list price, 87 grievances. It supersedes the cached
+> aggregate and changes three statements below: a latency distribution now
+> exists (digitise median 6 s a page, extract 11 s, derived from the egress
+> audit log, 5 s polling resolution); divergence is 0.995 on 198 scored pages
+> with a character ratio of 1.56, not 1.3345 on 56; and a category grade now
+> exists but measures our own v1 schema, which offered no enum, rather than the
+> provider. Still absent, and still blocking any **OCR accuracy** claim
+> specifically: a hand-transcribed reference (#53). It does not block the
+> latency or category results above, which have their own referees — the
+> egress audit log and the recorded category. Schema v2 is now the pinned
+> default.
 
 ## What is built
 

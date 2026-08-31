@@ -8,8 +8,10 @@ but promotes it to a proper evaluation module with:
   extract = structured fields vs gold category + BART summary, both = ₹1.50/page)
 * ``--join-metadata``  (lake/OLTP slice for gold_category, pipeline_category,
   pipeline_summary, handwritten, language — redacted metadata only)
-* ``--schema-version v1``  (pins :mod:`sarvam_grievance_schema` before any
-  output is read, per #127)
+* ``--schema-version v2``  (the default; pins :mod:`sarvam_grievance_schema`
+  before any output is read, per #127. Omit the flag. ``v1`` reproduces the
+  2026-08-25 run, whose category field had neither an enum nor a ``required``
+  and which therefore answered the primary outcome on 11 of 87 grievances)
 
 Live Sarvam calls are identical to the sample runner: one async job per page
 via :class:`SarvamVisionAdapter`, audit-logged with ticket/stage/provider/

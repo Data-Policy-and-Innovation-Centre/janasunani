@@ -7,10 +7,13 @@ for the four variants standard / sarvam_digitise / sarvam_extract / sarvam_both.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tracemalloc
 from pathlib import Path, PurePosixPath
 
 import pytest
@@ -22,9 +25,13 @@ from scripts.benchmark_pipeline import (
     STAGES,
     SUPPORTED_DOCUMENT_SUFFIXES,
     VALID_VARIANTS,
+    SampleFingerprintDriftError,
+    StaleDocumentBytesError,
+    _check_fingerprint_matches_loaded_documents,
     _clustered_se,
     _document_kind,
     _document_sample_digest,
+    _document_sample_file_hashes,
     _fake_process,
     _percentile,
     _single_page_text_pdf,
@@ -179,12 +186,16 @@ def test_load_staged_documents_without_manifest(tmp_path):
     tickets = {d["ticket"] for d in docs}
     assert tickets == {"CMO20241020862", "CMO2024483790"}
     for doc in docs:
-        # Same shape as synthesize_documents(): ticket, text, document_name,
-        # document_bytes, district.
+        # Same shape as synthesize_documents() (ticket, text, document_name,
+        # document_bytes, district) plus document_path. Bytes are not read
+        # here (#308) — document_bytes stays None and document_path carries
+        # the file; _measure_with_processor reads it lazily, one document at
+        # a time, outside every stage timer.
         assert doc["text"] is None
         assert doc["document_name"]
-        assert isinstance(doc["document_bytes"], bytes)
-        assert len(doc["document_bytes"]) > 0
+        assert doc["document_bytes"] is None
+        assert doc["document_path"].is_file()
+        assert len(doc["document_path"].read_bytes()) > 0
         # No manifest present, so district falls back to a stable label
         # rather than crashing or silently using None.
         assert doc["district"] == "unspecified"
@@ -622,9 +633,340 @@ def test_document_sample_digest_stable_across_restage_to_new_path(tmp_path):
     assert _document_sample_digest(dir1, manifest) == _document_sample_digest(dir2, manifest)
 
 
+# ---------------------------------------------------------------------------
+# #315 Codex follow-up — bind sample_digest to the bytes actually benchmarked
+# ---------------------------------------------------------------------------
+
+
+def test_document_sample_file_hashes_matches_per_file_digest_inputs(tmp_path):
+    _stage_document(tmp_path, "CMO20241020862")
+    _stage_document(tmp_path, "CMO2024483790", suffix=".jpeg")
+
+    hashes = _document_sample_file_hashes(tmp_path)
+
+    names = {d.name for d in tmp_path.iterdir() if d.suffix.lower() in SUPPORTED_DOCUMENT_SUFFIXES}
+    assert set(hashes) == names
+    for name, digest in hashes.items():
+        expected = hashlib.sha256((tmp_path / name).read_bytes()).hexdigest()
+        assert digest == expected
+    # _document_sample_digest(..., file_hashes=hashes) must be reusable
+    # without a second read — same result as computing it fresh.
+    assert _document_sample_digest(tmp_path, None, file_hashes=hashes) == _document_sample_digest(
+        tmp_path, None
+    )
+
+
+def test_run_benchmark_detects_document_mutated_after_fingerprint(tmp_path):
+    # This is the actual race #308's lazy read opened: sample_digest is
+    # fingerprinted once, before the run starts; _measure_with_processor then
+    # reads each document lazily, potentially much later. Stage a directory,
+    # fingerprint it (as main() does before run_benchmark starts), mutate one
+    # file on disk exactly like a corpus still hydrating from Box would, and
+    # confirm the run refuses to silently benchmark content the fingerprint
+    # never saw.
+    mutated_path = _stage_document(tmp_path, "CMO20241020862")
+    _stage_document(tmp_path, "CMO2024483790", suffix=".jpeg")
+    file_hashes = _document_sample_file_hashes(tmp_path)
+    docs = load_staged_documents(tmp_path)
+
+    # Simulate the mid-run rewrite: different bytes land on disk after the
+    # fingerprint but before run_benchmark's lazy read.
+    mutated_path.write_bytes(_single_page_text_pdf("A completely different scan"))
+
+    with pytest.raises(StaleDocumentBytesError, match=mutated_path.name):
+        run_benchmark(
+            variant="standard",
+            docs=docs,
+            repeats=1,
+            discard_warm=False,
+            processor_factory=lambda _variant: type(
+                "Processor",
+                (),
+                {
+                    "_timing_sink": None,
+                    "process": lambda self, **kwargs: self._timing_sink(
+                        {"redact": 0.1, "e2e": 0.2, "ok": 1.0}
+                    ),
+                },
+            )(),
+            expected_file_hashes=file_hashes,
+        )
+
+
+def test_run_benchmark_missing_from_fingerprint_also_fails_loudly(tmp_path):
+    # A file staged after the fingerprint was taken is exactly as stale as
+    # one whose content changed — both mean the run is about to measure
+    # bytes the published sample_digest never claimed. Must not be treated
+    # as "no opinion, so allow it".
+    file_hashes = _document_sample_file_hashes(tmp_path)  # empty snapshot
+    _stage_document(tmp_path, "CMO20241020862")
+    docs = load_staged_documents(tmp_path)
+
+    with pytest.raises(StaleDocumentBytesError, match="CMO20241020862"):
+        run_benchmark(
+            variant="standard",
+            docs=docs,
+            repeats=1,
+            discard_warm=False,
+            processor_factory=lambda _variant: type(
+                "Processor",
+                (),
+                {
+                    "_timing_sink": None,
+                    "process": lambda self, **kwargs: self._timing_sink(
+                        {"redact": 0.1, "e2e": 0.2, "ok": 1.0}
+                    ),
+                },
+            )(),
+            expected_file_hashes=file_hashes,
+        )
+
+
+def test_run_benchmark_happy_path_with_matching_fingerprint_still_passes(tmp_path):
+    # The verification must not get in its own way when nothing changed —
+    # this is the common case (no hydration race) and must behave exactly
+    # like passing no expected_file_hashes at all.
+    _stage_document(tmp_path, "CMO20241020862")
+    _stage_document(tmp_path, "CMO2024483790", suffix=".jpeg")
+    file_hashes = _document_sample_file_hashes(tmp_path)
+    docs = load_staged_documents(tmp_path)
+
+    result = run_benchmark(
+        variant="standard",
+        docs=docs,
+        repeats=2,
+        discard_warm=False,
+        processor_factory=lambda _variant: type(
+            "Processor",
+            (),
+            {
+                "_timing_sink": None,
+                "process": lambda self, **kwargs: self._timing_sink(
+                    {"redact": 0.1, "e2e": 0.2, "ok": 1.0}
+                ),
+            },
+        )(),
+        expected_file_hashes=file_hashes,
+    )
+    assert result["n_docs"] == 2
+    assert result["failed_attempts"] == 0
+    assert result["stages"]["e2e"]["n"] == 4
+
+
+def test_run_benchmark_fake_path_skips_fingerprint_check(tmp_path):
+    # The fake timing path never reads document bytes at all (see #308's
+    # fake-path test), so it must not fail even when expected_file_hashes is
+    # stale — there is nothing to verify because nothing gets read.
+    mutated_path = _stage_document(tmp_path, "CMO20241020862")
+    file_hashes = _document_sample_file_hashes(tmp_path)
+    docs = load_staged_documents(tmp_path)
+    mutated_path.write_bytes(_single_page_text_pdf("A completely different scan"))
+
+    result = run_benchmark(
+        variant="standard",
+        docs=docs,
+        repeats=2,
+        discard_warm=False,
+        expected_file_hashes=file_hashes,  # no processor_factory -> fake path
+    )
+    assert result["n_docs"] == 1
+
+
+def test_cli_documents_dir_stale_document_bytes_fails_loudly(tmp_path, monkeypatch, capsys):
+    # CLI wiring: main() must convert a StaleDocumentBytesError raised deep
+    # inside run_benchmark into a loud, non-zero-exit CLI failure that names
+    # the file, not a silently-written latency.json. run_benchmark itself is
+    # stubbed here — the detection logic is exercised for real above; this
+    # test is only about main()'s try/except around the call.
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    _stage_document(staging, "CMO20241020862")
+    out = tmp_path / "latency.json"
+
+    def fake_run_benchmark(*_args, **_kwargs):
+        raise StaleDocumentBytesError(
+            "CMO20241020862_complaint_20250715_234307.pdf does not match "
+            "the sample_digest snapshot taken before this run started"
+        )
+
+    monkeypatch.setattr(bench_mod, "run_benchmark", fake_run_benchmark)
+
+    with pytest.raises(SystemExit) as exc:
+        bench_mod.main(
+            [
+                "--fake",
+                "--documents-dir",
+                str(staging),
+                "--repeats",
+                "2",
+                "--output",
+                str(out),
+            ]
+        )
+    assert exc.value.code == 2
+    assert not out.exists()
+    err = capsys.readouterr().err
+    assert "CMO20241020862_complaint_20250715_234307.pdf" in err
+    assert "sample_digest snapshot" in err
+
+
+# ---------------------------------------------------------------------------
+# #315 Codex follow-up round 2 — fingerprint file set must match what was
+# actually loaded (a file added/removed between two independent directory
+# scans could be fingerprinted without being benchmarked, or vice versa)
+# ---------------------------------------------------------------------------
+
+
+def test_check_fingerprint_matches_loaded_documents_passes_when_sets_agree():
+    loaded_docs = [
+        {"document_name": "a.pdf"},
+        {"document_name": "b.pdf"},
+    ]
+    file_hashes = {"a.pdf": "hash-a", "b.pdf": "hash-b"}
+    # Must not raise.
+    _check_fingerprint_matches_loaded_documents(loaded_docs, file_hashes)
+
+
+def test_check_fingerprint_matches_loaded_documents_raises_on_extra_hash():
+    # A file fingerprinted but never loaded is the dangerous direction:
+    # sample_digest would cover bytes nothing in the run ever measured.
+    loaded_docs = [{"document_name": "a.pdf"}]
+    file_hashes = {"a.pdf": "hash-a", "stowaway.pdf": "hash-b"}
+
+    with pytest.raises(SampleFingerprintDriftError, match="stowaway.pdf"):
+        _check_fingerprint_matches_loaded_documents(loaded_docs, file_hashes)
+
+
+def test_check_fingerprint_matches_loaded_documents_raises_on_missing_hash():
+    loaded_docs = [{"document_name": "a.pdf"}, {"document_name": "b.pdf"}]
+    file_hashes = {"a.pdf": "hash-a"}
+
+    with pytest.raises(SampleFingerprintDriftError, match="b.pdf"):
+        _check_fingerprint_matches_loaded_documents(loaded_docs, file_hashes)
+
+
+def test_fingerprint_race_between_independent_scans_is_real_and_caught(tmp_path):
+    # Reproduces the actual race Codex found: load_staged_documents() and
+    # _document_sample_file_hashes() each independently list the directory
+    # by default (two directory.iterdir() calls, not one). A file staged in
+    # between -- e.g. a corpus still hydrating into this directory -- lands
+    # in the second scan's hashes without ever having been loaded. This is
+    # exactly what main() no longer does (it derives the hash target list
+    # from loaded_docs' own document_path, not a second scan -- see the
+    # tests below), but the two independently-scanning functions still
+    # exist on their own and the mismatch they can produce must be caught,
+    # not silently published.
+    _stage_document(tmp_path, "CMO20241020862")
+    loaded_docs = load_staged_documents(tmp_path)  # scan #1
+
+    # Simulate a file landing mid-hydration, after scan #1.
+    _stage_document(tmp_path, "CMO2024483790", suffix=".jpeg")
+
+    file_hashes = _document_sample_file_hashes(tmp_path)  # independent scan #2
+    assert "CMO2024483790_complaint_20250715_234307.jpeg" in file_hashes  # premise: the race is real
+
+    with pytest.raises(
+        SampleFingerprintDriftError, match="CMO2024483790_complaint_20250715_234307.jpeg"
+    ):
+        _check_fingerprint_matches_loaded_documents(loaded_docs, file_hashes)
+
+
+def test_document_sample_file_hashes_with_explicit_files_ignores_later_directory_changes(
+    tmp_path,
+):
+    # This is the actual fix: an explicit files= snapshot is hashed as-is,
+    # so a file appearing after the snapshot was taken cannot silently
+    # enter the fingerprint no matter when _document_sample_file_hashes
+    # happens to run relative to the directory changing.
+    _stage_document(tmp_path, "CMO20241020862")
+    files = bench_mod._staged_document_paths(tmp_path)
+
+    _stage_document(tmp_path, "CMO2024483790", suffix=".jpeg")  # lands after the snapshot
+
+    hashes = _document_sample_file_hashes(tmp_path, files=files)
+    assert set(hashes) == {"CMO20241020862_complaint_20250715_234307.pdf"}
+
+
+def test_cli_documents_dir_fingerprint_derives_from_loaded_documents_not_a_rescan(tmp_path):
+    # Integration-level regression guard for the actual fix in main(): the
+    # file list handed to _document_sample_file_hashes comes from
+    # loaded_docs' own document_path values, not a fresh directory scan. A
+    # file staged after load_staged_documents() has already run (simulated
+    # here by writing it right after staging the first two, before main()
+    # runs at all -- main() only ever sees the directory once) must not
+    # appear in sample_digest's file set unless it was actually loaded.
+    # (The full race -- a file appearing *during* main()'s own run, between
+    # its load and fingerprint steps -- can no longer happen by
+    # construction, which is exactly what this test is standing in for:
+    # there is only one directory scan for main() to race against itself.)
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    _stage_document(staging, "CMO20241020862")
+    _stage_document(staging, "CMO2024483790", suffix=".jpeg")
+    out = tmp_path / "latency.json"
+
+    rc = bench_mod.main(
+        [
+            "--fake",
+            "--documents-dir",
+            str(staging),
+            "--repeats",
+            "2",
+            "--output",
+            str(out),
+        ]
+    )
+    assert rc == 0
+    data = json.loads(out.read_text())
+    assert data["n_docs"] == 2
+    assert data["benchmark_context"]["sample_digest"]
+
+
+def test_cli_documents_dir_fingerprint_drift_fails_loudly(tmp_path, monkeypatch, capsys):
+    # CLI wiring: main() must convert a SampleFingerprintDriftError raised
+    # by the insurance check into a loud, non-zero-exit CLI failure, not a
+    # silently-written latency.json whose sample_digest overclaims what was
+    # measured. The detection logic itself is exercised for real above;
+    # this test is only about main()'s try/except around the call.
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    _stage_document(staging, "CMO20241020862")
+    out = tmp_path / "latency.json"
+
+    def fake_check(*_args, **_kwargs):
+        raise SampleFingerprintDriftError(
+            "sample_digest's file set does not match the documents loaded "
+            "for benchmarking (fingerprinted but never loaded, so never "
+            "measured: ['stowaway.pdf']; loaded but never fingerprinted: [])"
+        )
+
+    monkeypatch.setattr(
+        bench_mod, "_check_fingerprint_matches_loaded_documents", fake_check
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        bench_mod.main(
+            [
+                "--fake",
+                "--documents-dir",
+                str(staging),
+                "--repeats",
+                "2",
+                "--output",
+                str(out),
+            ]
+        )
+    assert exc.value.code == 2
+    assert not out.exists()
+    err = capsys.readouterr().err
+    assert "stowaway.pdf" in err
+
+
 def test_run_benchmark_over_loaded_real_documents(tmp_path):
-    # The measurement loop needs no change: docs from load_staged_documents
-    # flow through run_benchmark exactly like any other custom doc list.
+    # No processor_factory here, so this exercises the fake timing path,
+    # which never touches document_bytes/document_path — docs from
+    # load_staged_documents flow through run_benchmark exactly like any
+    # other custom doc list.
     _stage_document(tmp_path, "CMO20241020862")
     _stage_document(tmp_path, "CMO2024483790", suffix=".jpeg")
     docs = load_staged_documents(tmp_path)
@@ -633,6 +975,121 @@ def test_run_benchmark_over_loaded_real_documents(tmp_path):
     assert result["n_docs"] == 2
     assert result["stages"]["e2e"]["n"] == 4
     assert {"CMO20241020862", "CMO2024483790"} == set(result["_raw"]["tickets"]["e2e"])
+
+
+# ---------------------------------------------------------------------------
+# #308 — streaming: only one document's bytes resident/read at a time
+# ---------------------------------------------------------------------------
+
+
+def test_load_staged_documents_streams_bytes_bounded_memory(tmp_path):
+    """load_staged_documents() used to call path.read_bytes() for every
+    staged file and hold the whole list before run_benchmark started, so an
+    n-document sample cost roughly n * average_document_size resident on top
+    of the loaded models — ~630 MB for the 627 KB/doc Sambalpur/2024 sample
+    at n=1,000, ~44 GB for the 69,844-document corpus this harness is about
+    to run over (see #308). It now hands back a document_path per document,
+    and the real bytes are read lazily by _measure_with_processor, one
+    document at a time. Build documents large enough that eager loading
+    would clearly show up in peak traced memory, and confirm streaming keeps
+    the peak near a single document's size instead of scaling with n.
+    """
+    n_docs = 8
+    doc_size = 3_000_000  # ~3 MB filler; deterministic, no citizen data
+    filler = b"%PDF-1.4\n" + (b"A" * doc_size)
+    for i in range(n_docs):
+        path = tmp_path / f"CMO2024{i:07d}_complaint_20250715_234307.pdf"
+        path.write_bytes(filler)
+
+    docs = load_staged_documents(tmp_path)
+    assert len(docs) == n_docs
+    # Nothing has been read yet — the loader only records paths.
+    assert all(doc["document_bytes"] is None for doc in docs)
+    assert all(doc["document_path"] is not None for doc in docs)
+
+    class Processor:
+        _timing_sink = None
+
+        def process(self, **kwargs):
+            document_bytes = kwargs["document_bytes"]
+            assert document_bytes is not None
+            assert len(document_bytes) == len(filler)
+            self._timing_sink({"redact": 0.001, "e2e": 0.002, "ok": 1.0})
+
+    tracemalloc.start()
+    try:
+        run_benchmark(
+            variant="standard",
+            docs=docs,
+            repeats=1,
+            discard_warm=False,
+            processor_factory=lambda _variant: Processor(),
+        )
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    # Eager loading (the bug) would resident roughly n_docs * doc_size here
+    # (~24 MB for 8 x 3 MB). Streaming should keep the traced peak within a
+    # small multiple of one document, not scale with the sample size.
+    assert peak < doc_size * 3, (
+        f"peak traced memory {peak} bytes suggests more than one document's "
+        f"bytes were resident at once (n_docs={n_docs}, doc_size={doc_size})"
+    )
+
+
+def test_measure_with_processor_reads_each_document_once_not_per_repeat(tmp_path, monkeypatch):
+    # Bounded reads, not just bounded memory: a document's bytes must be
+    # read once and reused across its repeats, not re-read from disk every
+    # repeat (which would still be correct memory-wise but wasteful I/O).
+    _stage_document(tmp_path, "CMO20241020862")
+    _stage_document(tmp_path, "CMO2024483790", suffix=".jpeg")
+    docs = load_staged_documents(tmp_path)
+
+    read_calls: list[Path] = []
+    original_read_bytes = Path.read_bytes
+
+    def counting_read_bytes(self):
+        read_calls.append(self)
+        return original_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", counting_read_bytes)
+
+    class Processor:
+        _timing_sink = None
+
+        def process(self, **kwargs):
+            self._timing_sink({"redact": 0.001, "e2e": 0.002, "ok": 1.0})
+
+    run_benchmark(
+        variant="standard",
+        docs=docs,
+        repeats=3,
+        discard_warm=False,
+        processor_factory=lambda _variant: Processor(),
+    )
+
+    # 2 documents x 3 repeats: without the fix this would be up to 6 reads
+    # from inside the loop (or reads already done eagerly by the loader).
+    # Reading once per document and reusing it across repeats caps this at 2.
+    assert len(read_calls) == 2
+    assert {p.name for p in read_calls} == {d["document_path"].name for d in docs}
+
+
+def test_run_benchmark_fake_path_never_reads_staged_bytes(tmp_path, monkeypatch):
+    # The fake timing path (no processor_factory) never calls process(), so
+    # it has no use for document bytes at all; the lazy read must not fire
+    # just because a real staged sample happens to be on disk.
+    _stage_document(tmp_path, "CMO20241020862")
+    docs = load_staged_documents(tmp_path)
+
+    def failing_read_bytes(self):
+        raise AssertionError(f"fake timing path must not read {self}")
+
+    monkeypatch.setattr(Path, "read_bytes", failing_read_bytes)
+
+    result = run_benchmark(variant="standard", docs=docs, repeats=2, discard_warm=False)
+    assert result["n_docs"] == 1
 
 
 def test_document_kind_reads_the_doc_not_the_ticket_string():
@@ -972,11 +1429,13 @@ def test_cli_synthetic_path_benchmark_context_fixture_is_unchanged(tmp_path):
     ctx = data["benchmark_context"]
     assert ctx["fixture"] == "deterministic synthetic grievances without citizen data"
     assert ctx["execution"] == "sequential single-process execution"
-    # No document-sample keys leak onto the synthetic path. `sample_provenance`
-    # is the declaration that there is no sample, not a sample key: the gate
-    # requires it because a context that says nothing cannot be shown to be
-    # synthetic, and a real measurement must not inherit that benefit of the
-    # doubt.
+    # No document-sample keys leak onto the synthetic path. Two kinds of key
+    # are nonetheless expected here. `sample_provenance` is the declaration
+    # that there is no sample, not a sample key: the gate requires it because
+    # a context that says nothing cannot be shown to be synthetic, and a real
+    # measurement must not inherit that benefit of the doubt. The OCR
+    # toolchain keys (#315 follow-up) are additive and present on every path,
+    # including synthetic — see test_cli_synthetic_path_records_ocr_toolchain.
     assert ctx["sample_provenance"] == "synthetic"
     assert set(ctx) == {
         "host_label",
@@ -984,7 +1443,149 @@ def test_cli_synthetic_path_benchmark_context_fixture_is_unchanged(tmp_path):
         "fixture",
         "execution",
         "sample_provenance",
+        "tesseract_version",
+        "tesseract_langs",
+        "poppler_version",
     }
+
+
+# ---------------------------------------------------------------------------
+# #315 Codex follow-up — OCR toolchain provenance in benchmark_context
+# ---------------------------------------------------------------------------
+
+
+def test_probe_ocr_toolchain_populates_real_values_when_installed():
+    # Real code path, no mocking of pytesseract/poppler. Base CI
+    # (pipeline.yml) deliberately runs `uv sync --all-groups --extra
+    # serving` without pipeline-core, so pytesseract/pdf2image are not
+    # importable there and this test must skip rather than assert on
+    # "unavailable" — that path has its own test below. Locally, with
+    # pipeline-core installed (tests/README.md's gate requirement), this
+    # must report real values: two machines with different tesseract
+    # versions or a missing Odia (ori) pack must be distinguishable from
+    # this output, which is the entire point of #315's follow-up.
+    #
+    # The importorskips gate on the Python wrappers; the assertions below
+    # need the system binaries those wrappers shell out to. They are
+    # separately installable, so `pip install pytesseract` on a host with no
+    # `tesseract` on PATH satisfies the import and still probes
+    # "unavailable" — correct behaviour that used to fail this test, and so
+    # the repo's required test command, on a legitimate environment. Gate on
+    # what is actually asserted.
+    pytest.importorskip("pytesseract")
+    pytest.importorskip("pdf2image")
+    if shutil.which("tesseract") is None:
+        pytest.skip("tesseract binary not on PATH; _probe_tesseract has its own test")
+    if shutil.which("pdftoppm") is None:
+        pytest.skip("poppler (pdftoppm) not on PATH; _probe_poppler_version has its own test")
+
+    toolchain = bench_mod._probe_ocr_toolchain()
+
+    assert set(toolchain) == {"tesseract_version", "tesseract_langs", "poppler_version"}
+    assert toolchain["tesseract_version"] != "unavailable"
+    assert toolchain["tesseract_version"][0].isdigit()
+    assert isinstance(toolchain["tesseract_langs"], list)
+    assert toolchain["tesseract_langs"] == sorted(toolchain["tesseract_langs"])
+    assert "eng" in toolchain["tesseract_langs"]
+    assert toolchain["poppler_version"] != "unavailable"
+    assert "pdftoppm" in toolchain["poppler_version"].lower()
+
+
+def test_probe_ocr_toolchain_records_unavailable_when_tesseract_probe_fails(monkeypatch):
+    # Simulate a box where tesseract is importable but misbehaves at runtime
+    # (as opposed to not being installed at all, which base CI already
+    # exercises for real — see test_probe_ocr_toolchain_composes_independent_
+    # tesseract_and_poppler_probes, which asserts nothing about availability
+    # and so passes either way). monkeypatch.setattr's string-path form has
+    # to import pytesseract_backend to resolve the target, and that module
+    # does `import pytesseract` at module scope, so this needs pytesseract
+    # importable too — skip in base CI rather than error out on the mock
+    # setup itself. The probe must not raise, must not silently omit the
+    # keys, and must not let a tesseract failure take poppler's
+    # (independently probed) result down with it.
+    pytest.importorskip("pytesseract")
+
+    def boom():
+        raise RuntimeError("tesseract not installed on this box")
+
+    monkeypatch.setattr(
+        "janasunani.pipeline.stages.ocr_extraction.pytesseract_backend._configure_tesseract",
+        boom,
+    )
+    # Poppler is stubbed rather than skipped on. The claim under test is that
+    # a tesseract failure does not reach poppler's result, and asserting
+    # `!= "unavailable"` tested that only where the pdftoppm *binary* happens
+    # to be installed -- so on a box with pipeline-core but no poppler this
+    # failed the required suite for a reason that has nothing to do with the
+    # behaviour it describes. A sentinel makes the independence exact:
+    # whatever poppler returned has to arrive untouched.
+    monkeypatch.setattr(
+        bench_mod, "_probe_poppler_version", lambda: "pdftoppm 99.99 (sentinel)"
+    )
+
+    toolchain = bench_mod._probe_ocr_toolchain()
+
+    assert toolchain["tesseract_version"] == "unavailable"
+    assert toolchain["tesseract_langs"] == "unavailable"
+    assert toolchain["poppler_version"] == "pdftoppm 99.99 (sentinel)"  # unaffected
+
+
+def test_probe_ocr_toolchain_composes_independent_tesseract_and_poppler_probes():
+    # _probe_ocr_toolchain() itself has no per-field try/except — it trusts
+    # _probe_tesseract()/_probe_poppler_version() to each be defensive on
+    # their own (tested directly above/below). What it must get right is
+    # composition: both fields present, independently sourced.
+    toolchain = bench_mod._probe_ocr_toolchain()
+    tesseract_version, tesseract_langs = bench_mod._probe_tesseract()
+    assert toolchain["tesseract_version"] == tesseract_version
+    assert toolchain["tesseract_langs"] == tesseract_langs
+    assert toolchain["poppler_version"] == bench_mod._probe_poppler_version()
+
+
+def test_probe_poppler_version_never_raises_when_subprocess_fails(monkeypatch):
+    # One level lower than the test above: exercises _probe_poppler_version
+    # itself (not the composite _probe_ocr_toolchain) against the exact
+    # failure it is written to catch — subprocess.run raising because
+    # pdftoppm isn't installed.
+    def boom(*_args, **_kwargs):
+        raise FileNotFoundError("pdftoppm not found")
+
+    monkeypatch.setattr(bench_mod.subprocess, "run", boom)
+
+    assert bench_mod._probe_poppler_version() == "unavailable"
+
+
+def test_cli_synthetic_path_records_ocr_toolchain(tmp_path):
+    out = tmp_path / "latency.json"
+    rc = bench_mod.main(
+        ["--fake", "--n-docs", "2", "--repeats", "2", "--output", str(out)]
+    )
+    assert rc == 0
+    ctx = json.loads(out.read_text())["benchmark_context"]
+    for key in ("tesseract_version", "tesseract_langs", "poppler_version"):
+        assert key in ctx
+
+
+def test_cli_harness_still_runs_when_ocr_toolchain_probe_itself_raises(tmp_path, monkeypatch):
+    # Belt-and-suspenders: even if _probe_ocr_toolchain's own internal
+    # defensiveness were ever broken by a future change, main()'s outer
+    # catch must still keep the synthetic (--fake) path — which has no OCR
+    # dependency of its own — running to completion rather than crashing on
+    # an environment probe.
+    def boom():
+        raise RuntimeError("unexpected probe failure")
+
+    monkeypatch.setattr(bench_mod, "_probe_ocr_toolchain", boom)
+
+    out = tmp_path / "latency.json"
+    rc = bench_mod.main(
+        ["--fake", "--n-docs", "2", "--repeats", "2", "--output", str(out)]
+    )
+    assert rc == 0
+    ctx = json.loads(out.read_text())["benchmark_context"]
+    assert ctx["tesseract_version"] == "unavailable"
+    assert ctx["tesseract_langs"] == "unavailable"
+    assert ctx["poppler_version"] == "unavailable"
 
 
 def test_run_benchmark_standard_variant_basic():

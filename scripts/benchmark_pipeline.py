@@ -227,8 +227,12 @@ def _document_kind(doc: Mapping[str, Any]) -> str:
     "document" path to have measurements, and none were ever attributed to
     it. The loader already knows what it built: bytes present means a
     scanned document, text present (and no bytes) means free text.
+    ``document_path`` counts the same as ``document_bytes`` here —
+    ``load_staged_documents`` hands back a path instead of pre-read bytes
+    (see #308) so a document is still a "document" before its bytes are
+    ever read.
     """
-    if doc.get("document_bytes") is not None:
+    if doc.get("document_bytes") is not None or doc.get("document_path") is not None:
         return "document"
     if doc.get("text") is not None:
         return "text"
@@ -463,8 +467,109 @@ def staged_sample_coverage(
     return sorted(listed - staged), sorted(staged - listed)
 
 
+class StaleDocumentBytesError(RuntimeError):
+    """A staged document's bytes changed after the sample was fingerprinted.
+
+    ``main()`` fingerprints the staged sample (``sample_digest`` /
+    ``_document_sample_file_hashes``) once, before the run starts.
+    ``_measure_with_processor`` then reads each document's actual bytes
+    lazily — one document at a time, potentially much later for a large
+    corpus (see #308) — to keep memory bounded. That gap is a real window: a
+    file rewritten mid-run (e.g. a corpus still hydrating from Box while the
+    benchmark is already running against it) is read with content the
+    published ``sample_digest`` never claimed. Raised eagerly, outside the
+    per-attempt failure tracking in ``_measure_with_processor`` — a silently
+    wrong provenance digest on a publishable artifact is exactly the defect
+    this guards against, not a processing failure to count and continue
+    past.
+    """
+
+
+class SampleFingerprintDriftError(RuntimeError):
+    """The fingerprinted file set differs from the documents actually loaded.
+
+    ``load_staged_documents`` and ``_document_sample_file_hashes`` each list
+    ``directory`` independently by default (two separate ``iterdir()``
+    calls). A file staged between those two scans — the same live-hydration
+    scenario ``StaleDocumentBytesError`` guards against, just at the
+    directory-listing level instead of a single file's bytes — could end up
+    fingerprinted into ``sample_digest`` without ever being loaded (and
+    therefore never benchmarked or verified), or loaded without ever being
+    fingerprinted. Either way the published digest would describe a file set
+    the run never actually measured. ``main()`` closes the race at the
+    source: it derives the file list to fingerprint from ``loaded_docs``'
+    own ``document_path`` entries (a single directory scan, inside
+    ``load_staged_documents``) rather than a second, independent scan. This
+    error is the cheap, explicit insurance on top of that — checked, not
+    assumed — for any caller (present or future) that fingerprints from an
+    independently-scanned file list instead.
+    """
+
+
+def _document_sample_file_hashes(
+    directory: Path, files: list[Path] | None = None
+) -> dict[str, str]:
+    """SHA-256 hex digest of each staged document's current bytes, by name.
+
+    Reads every file once, the same work ``_document_sample_digest`` already
+    folds into its aggregate digest — exposed per-file so a caller can
+    fingerprint the sample up front and later verify individual documents
+    against that snapshot at the point they are actually read (see
+    ``StaleDocumentBytesError`` and ``run_benchmark``'s
+    ``expected_file_hashes``), without a second full pass over the
+    directory. Bytes are hashed and discarded one file at a time — nothing
+    beyond one file's bytes is ever resident, same as the eager-read fix in
+    #308.
+
+    ``files``, when given, is hashed as-is instead of scanning ``directory``
+    independently. ``main()`` passes the ``document_path`` values from
+    ``load_staged_documents``'s own return, so the fingerprint covers
+    exactly the documents that were actually loaded (see
+    ``SampleFingerprintDriftError``) rather than whatever a second,
+    independent directory listing happens to see — a real difference while a
+    staging directory is actively being hydrated. The default (``None``)
+    scans fresh, which is correct for a standalone call with no
+    already-loaded document list to reuse.
+    """
+    if files is None:
+        files = _staged_document_paths(directory)
+    return {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in files
+    }
+
+
+def _check_fingerprint_matches_loaded_documents(
+    loaded_docs: list[dict[str, Any]],
+    file_hashes: Mapping[str, str],
+) -> None:
+    """Raise ``SampleFingerprintDriftError`` if the two file sets disagree.
+
+    Cheap insurance on top of ``main()`` deriving ``_document_sample_file_hashes``'s
+    ``files=`` from ``loaded_docs`` itself: an explicit, fast check rather
+    than trusting that derivation silently. ``loaded_docs`` is what
+    ``run_benchmark`` will actually iterate and measure; ``file_hashes``'
+    keys are what ``sample_digest`` claims to describe. They must name
+    exactly the same documents.
+    """
+    loaded_names = {doc["document_name"] for doc in loaded_docs}
+    hashed_names = set(file_hashes)
+    if loaded_names != hashed_names:
+        only_hashed = sorted(hashed_names - loaded_names)
+        only_loaded = sorted(loaded_names - hashed_names)
+        raise SampleFingerprintDriftError(
+            "sample_digest's file set does not match the documents loaded "
+            f"for benchmarking (fingerprinted but never loaded, so never "
+            f"measured: {only_hashed}; loaded but never fingerprinted: "
+            f"{only_loaded}). The staged directory likely changed between "
+            "listing and fingerprinting — re-run once staging/hydration has "
+            "settled."
+        )
+
+
 def _document_sample_digest(
-    directory: Path, manifest: Mapping[str, Any] | None
+    directory: Path,
+    manifest: Mapping[str, Any] | None,
+    file_hashes: Mapping[str, str] | None = None,
 ) -> str:
     """Stable digest identifying the on-disk sample, for provenance.
 
@@ -480,13 +585,20 @@ def _document_sample_digest(
     the manifest never claimed. Hashing filename + content per file (not
     the full path) keeps the re-stage stability the manifest-only version
     had, while an equal-count substitution now moves the digest.
+
+    ``file_hashes``, when given, must be ``_document_sample_file_hashes``'s
+    output for the same ``directory`` — reused so a caller that also wants
+    the per-file map (e.g. ``main()``, to pass as ``run_benchmark``'s
+    ``expected_file_hashes``) reads each file once, not twice.
     """
+    if file_hashes is None:
+        file_hashes = _document_sample_file_hashes(directory)
     hasher = hashlib.sha256()
     if manifest is not None:
         hasher.update(json.dumps(manifest, sort_keys=True).encode("utf-8"))
-    for path in _staged_document_paths(directory):
-        hasher.update(path.name.encode("utf-8"))
-        hasher.update(hashlib.sha256(path.read_bytes()).digest())
+    for name in sorted(file_hashes):
+        hasher.update(name.encode("utf-8"))
+        hasher.update(bytes.fromhex(file_hashes[name]))
     return hasher.hexdigest()
 
 
@@ -496,11 +608,22 @@ def load_staged_documents(
 ) -> list[dict[str, Any]]:
     """Load a real staged document sample for benchmarking.
 
-    Returns the same dict shape as ``synthesize_documents``: ticket, text
-    (always None here — these are scanned documents, not free text),
-    document_name, document_bytes, district. Reading real bytes means the
-    OCR stage actually runs against real scans, unlike the text-only half
-    of the synthetic fixture.
+    Returns dicts shaped like ``synthesize_documents``'s (ticket, text,
+    document_name, document_bytes, district) plus one extra key,
+    ``document_path``. Unlike ``synthesize_documents`` — whose synthetic
+    bytes are already in memory, generated, not read — a staged sample's
+    bytes live on disk, and a real slice-sized draw is large enough that
+    reading every file up front is not free: the staged Sambalpur/2024
+    sample alone averages 627 KB/document, and #308 was filed when a
+    69,844-document, 60 GB corpus made that arithmetic a bounded-RAM problem
+    rather than a theoretical one. So ``document_bytes`` here is always
+    ``None`` and ``document_path`` carries the file instead; the actual read
+    happens later, one document at a time, in
+    ``_measure_with_processor`` — deliberately outside every per-stage
+    timer, so disk I/O is never attributed to a model stage (see that
+    function for where). Reading real bytes (whenever it happens) means the
+    OCR stage actually runs against real scans, unlike the text-only half of
+    the synthetic fixture.
 
     ``directory`` is a flat staging directory of supported document files
     (see ``SUPPORTED_DOCUMENT_SUFFIXES``) named
@@ -532,6 +655,15 @@ def load_staged_documents(
     completeness check, or protection against the hierarchical-ticket
     collision above (and ``main`` will refuse to mark such a run
     publication-ready).
+
+    ``main()`` fingerprints this same directory afterward
+    (``_document_sample_file_hashes``) for ``sample_digest``, from the
+    ``document_path`` this function already put in each returned dict —
+    not a second, independent directory scan. Two independent scans of a
+    staging directory that is actively being hydrated can each see a
+    different file set (see ``SampleFingerprintDriftError``); deriving the
+    fingerprint's file list from what was actually loaded here closes that
+    race at the source instead of trusting two scans to agree.
 
     Raises:
         FileNotFoundError: ``directory`` does not exist or is not a
@@ -650,7 +782,8 @@ def load_staged_documents(
                 "ticket": ticket,
                 "text": None,
                 "document_name": path.name,
-                "document_bytes": path.read_bytes(),
+                "document_bytes": None,
+                "document_path": path,
                 "district": district,
             }
         )
@@ -809,6 +942,105 @@ def _get_git_sha() -> str | None:
     return None
 
 
+def _probe_tesseract() -> tuple[str, list[str] | str]:
+    """Best-effort (version, sorted available languages) for tesseract.
+
+    Resolves the binary exactly as the real OCR stage does —
+    ``pytesseract_backend._configure_tesseract()``, which checks
+    ``TESSERACT_CMD``/PATH/the bundled ``~/.local/tesseract`` install in that
+    order — not a naive PATH lookup, so a box using the bundled install is
+    reported accurately. Never raises: returns ``("unavailable",
+    "unavailable")`` if tesseract, or even the ``pipeline-core`` extra
+    itself, is unavailable. The two probes are independent (a broken version
+    call must not blank out a working language list, or vice versa).
+    """
+    version: str = "unavailable"
+    langs: list[str] | str = "unavailable"
+    try:
+        import pytesseract
+        from janasunani.pipeline.stages.ocr_extraction.pytesseract_backend import (
+            _configure_tesseract,
+        )
+
+        _configure_tesseract()
+        try:
+            version = str(pytesseract.get_tesseract_version())
+        except Exception:
+            pass
+        try:
+            langs = sorted(pytesseract.get_languages(config=""))
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return version, langs
+
+
+def _probe_poppler_version() -> str:
+    """Best-effort poppler/pdftoppm version banner.
+
+    Resolves the binary exactly as ``page_renderer`` does —
+    ``page_renderer.POPPLER_PATH`` (the bundled ``~/.local/poppler`` install,
+    falling back to ``/usr/bin``, falling back to plain PATH) — the same
+    value ``render_page`` passes to ``pdf2image``. Never raises: returns
+    ``"unavailable"`` if pdftoppm cannot be run at all (missing binary,
+    ``pipeline-core`` extra absent, etc).
+    """
+    try:
+        from janasunani.pipeline.stages.ocr_extraction import page_renderer
+
+        pdftoppm_cmd = (
+            str(Path(page_renderer.POPPLER_PATH) / "pdftoppm")
+            if page_renderer.POPPLER_PATH
+            else "pdftoppm"
+        )
+        result = subprocess.run(
+            [pdftoppm_cmd, "-v"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        # pdftoppm prints its version banner ("pdftoppm version X.YY.Z") to
+        # stderr regardless of exit code; take the first line either stream
+        # produced rather than trusting the exit code.
+        banner = (result.stderr or result.stdout or "").strip().splitlines()
+        if banner:
+            return banner[0].strip()
+    except Exception:
+        pass
+    return "unavailable"
+
+
+def _probe_ocr_toolchain() -> dict[str, Any]:
+    """Best-effort provenance for the OCR toolchain this run would use.
+
+    Two artifacts from the same corpus, produced by different tesseract
+    versions (a laptop's 5.5.1 vs. a freshly-provisioned box's 5.3.4), or by
+    one machine silently missing the Odia (`ori`) traineddata, must not be
+    indistinguishable in ``benchmark_context`` — a missing language pack is a
+    null-scored-as-zero: OCR quietly degrades with no error and no trace in
+    the artifact.
+
+    Never raises (composes ``_probe_tesseract``/``_probe_poppler_version``,
+    both independently defensive). A machine with no tesseract/poppler
+    installed, or missing the ``pipeline-core`` extra entirely (e.g. plain
+    CI), must not crash the harness on import or on the synthetic
+    (``--fake``) path — this is called unconditionally for every run. Each
+    field is the real value or the literal string ``"unavailable"``: never
+    omitted, so an absent key is never mistaken for "not recorded" when it
+    means "checked and absent". This is an environment probe, not a
+    measurement — called outside ``run_benchmark``/``_measure_with_processor``
+    entirely, nowhere near a stage timer.
+    """
+    tesseract_version, tesseract_langs = _probe_tesseract()
+    return {
+        "tesseract_version": tesseract_version,
+        "tesseract_langs": tesseract_langs,
+        "poppler_version": _probe_poppler_version(),
+    }
+
+
 def _measure_with_processor(
     variant: str,
     docs: list[dict[str, Any]],
@@ -816,6 +1048,7 @@ def _measure_with_processor(
     discard_warm: bool,
     processor_factory: Callable[[str], Any] | None,
     sleep_fake: bool = False,
+    expected_file_hashes: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Run processor over docs repeats times, collect per-stage wall seconds.
 
@@ -828,6 +1061,17 @@ def _measure_with_processor(
     method with the same signature as ``PipelineGrievanceProcessor.process``.
     The factory is called once per variant (models warmed once). If it is
     None, fake timings are used (no real processor).
+
+    ``expected_file_hashes`` (filename -> sha256 hex, from
+    ``_document_sample_file_hashes``) is the fingerprint taken before this
+    run started. When given, every document read from ``document_path``
+    below is re-hashed and checked against it, raising
+    ``StaleDocumentBytesError`` on any mismatch — closing the window between
+    that snapshot and this function's lazy, one-document-at-a-time read
+    (#308) during which a file could be rewritten out from under the run,
+    e.g. by a corpus still hydrating from Box. ``None`` (the default) skips
+    the check, which is correct for synthetic docs and any caller that never
+    took a snapshot to check against.
     """
     per_stage_times: dict[str, list[float]] = {k: [] for k in ALL_KEYS}
     per_stage_tickets: dict[str, list[str]] = {k: [] for k in ALL_KEYS}
@@ -847,6 +1091,43 @@ def _measure_with_processor(
     for doc in docs:
         ticket = doc["ticket"]
         kind = _document_kind(doc)
+        # Resolve this document's bytes once, here — before the per-repeat
+        # loop and its perf_counter() calls below, never inside them. A read
+        # inside the timed region would land inside whichever stage runs
+        # first (ocr) and inflate its measured latency with disk I/O that
+        # has nothing to do with the model (#308). load_staged_documents()
+        # hands back document_path instead of pre-read bytes for exactly
+        # this reason: reading here, one document at a time, keeps at most
+        # one document's bytes resident rather than the whole staged
+        # sample. Read once and reuse for every repeat of this document
+        # (not re-read per repeat) — still outside the timer either way,
+        # but no reason to hit disk more than once for the same file. The
+        # fake path (processor is None) never touches document bytes, so
+        # the read is skipped entirely there.
+        document_bytes = doc.get("document_bytes")
+        document_path = doc.get("document_path")
+        if document_bytes is None and document_path is not None and processor is not None:
+            resolved_path = Path(document_path)
+            document_bytes = resolved_path.read_bytes()
+            if expected_file_hashes is not None:
+                # Verification stays here too — after the read, still before
+                # the per-repeat timer loop below. One sha256 over bytes
+                # already in memory is cheap next to OCR, and it must never
+                # be silently skipped: a document missing from the snapshot
+                # (staged after fingerprinting) is exactly as stale as one
+                # whose hash no longer matches.
+                actual_hash = hashlib.sha256(document_bytes).hexdigest()
+                expected_hash = expected_file_hashes.get(resolved_path.name)
+                if expected_hash is None or actual_hash != expected_hash:
+                    raise StaleDocumentBytesError(
+                        f"{resolved_path.name} does not match the "
+                        "sample_digest snapshot taken before this run "
+                        f"started (expected sha256 {expected_hash!r}, got "
+                        f"{actual_hash!r}). The file changed on disk between "
+                        "fingerprinting and being read — e.g. a corpus still "
+                        "hydrating from Box. Re-stage the sample (or wait "
+                        "for hydration to finish) before benchmarking it."
+                    )
         for r in range(repeats):
             attempts += 1
             is_warm = discard_warm and r == 0
@@ -865,7 +1146,7 @@ def _measure_with_processor(
                         ticket_no=ticket,
                         text=doc.get("text"),
                         document_name=doc.get("document_name"),
-                        document_bytes=doc.get("document_bytes"),
+                        document_bytes=document_bytes,
                         district=doc.get("district"),
                     )
                 except Exception as exc:  # noqa: BLE001
@@ -953,6 +1234,7 @@ def run_benchmark(
     seed: int = 42,
     sleep_fake: bool = False,
     is_fake: bool | None = None,
+    expected_file_hashes: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Run one benchmark variant and return structured results.
 
@@ -969,6 +1251,11 @@ def run_benchmark(
             is non-zero for manual checks; default False for fast tests.
         is_fake: whether this result is synthetic fake timing (non-publishable).
             If None, inferred from processor_factory is None.
+        expected_file_hashes: filename -> sha256 hex fingerprint taken before
+            this run started (see ``_document_sample_file_hashes``). Passed
+            straight to ``_measure_with_processor``, which raises
+            ``StaleDocumentBytesError`` if a document's bytes no longer match
+            when actually read. ``None`` (the default) skips the check.
 
     Returns dict with keys variant, n_docs, repeats, warm_discarded,
     git_sha, timestamp, stages (per-stage stats), is_fake_timing, etc.
@@ -997,6 +1284,7 @@ def run_benchmark(
         discard_warm=discard_warm,
         processor_factory=processor_factory,
         sleep_fake=sleep_fake,
+        expected_file_hashes=expected_file_hashes,
     )
     per_stage_times: dict[str, list[float]] = raw["times"]  # type: ignore[assignment]
     per_stage_tickets: dict[str, list[str]] = raw["tickets"]  # type: ignore[assignment]
@@ -1352,6 +1640,7 @@ def main(argv: list[str] | None = None) -> int:
     sample_slice: str | None = None
     sample_digest: str | None = None
     sample_manifest_complete = False
+    sample_file_hashes: dict[str, str] | None = None
     if args.documents_dir is not None:
         if args.n_docs is not None or args.n_image_docs is not None:
             parser.error(
@@ -1384,7 +1673,34 @@ def main(argv: list[str] | None = None) -> int:
                 "the sample you meant."
             )
         sample_slice = args.slice or manifest_slice or "unspecified"
-        sample_digest = _document_sample_digest(args.documents_dir, sample_manifest)
+        # Fingerprint the sample once, here, before the run reads anything --
+        # sample_file_hashes is threaded into run_benchmark below so each
+        # document's later, lazy read (#308) is checked against this exact
+        # snapshot rather than trusted blind. file_hashes= reuses that same
+        # read for sample_digest instead of a second pass over the directory.
+        #
+        # The file list to hash comes from loaded_docs' own document_path
+        # entries, not a fresh directory scan: load_staged_documents() above
+        # already scanned the directory once. A second, independent scan
+        # here (the original shape) can see a different file set while a
+        # staging directory is actively being hydrated -- a file staged in
+        # between could be fingerprinted into sample_digest without ever
+        # being loaded (and therefore never benchmarked or verified), or the
+        # reverse. Reusing the already-loaded paths closes that race at the
+        # source; _check_fingerprint_matches_loaded_documents below is the
+        # cheap, explicit check on top, in case a future change reintroduces
+        # an independent scan somewhere in this path.
+        staged_files = [doc["document_path"] for doc in loaded_docs]
+        sample_file_hashes = _document_sample_file_hashes(
+            args.documents_dir, files=staged_files
+        )
+        try:
+            _check_fingerprint_matches_loaded_documents(loaded_docs, sample_file_hashes)
+        except SampleFingerprintDriftError as exc:
+            parser.error(str(exc))
+        sample_digest = _document_sample_digest(
+            args.documents_dir, sample_manifest, file_hashes=sample_file_hashes
+        )
         # load_staged_documents has already refused a manifest that lists a
         # document nobody staged. What is left is the other direction —
         # staged files the manifest does not account for, and the no-manifest
@@ -1512,20 +1828,47 @@ def main(argv: list[str] | None = None) -> int:
                 startup["seconds"] = time.perf_counter() - started
             return warmed["processor"]
 
+    # Probed once — the OCR toolchain does not vary per variant within a
+    # single process — and merged into every variant's benchmark_context
+    # below (additive keys, both the real-document and synthetic paths) so
+    # two artifacts from different machines are distinguishable by tesseract
+    # version and available language packs, not just by host_label.
+    # _probe_ocr_toolchain() is already internally defensive (never raises),
+    # but this call site adds an outer belt-and-suspenders catch: an
+    # environment probe must never be the reason the harness — including the
+    # synthetic/--fake path, which has no OCR dependency of its own — fails
+    # to run at all.
+    try:
+        ocr_toolchain = _probe_ocr_toolchain()
+    except Exception:
+        ocr_toolchain = {
+            "tesseract_version": "unavailable",
+            "tesseract_langs": "unavailable",
+            "poppler_version": "unavailable",
+        }
+
     results: dict[str, dict[str, Any]] = {}
     for variant in variants:
-        result = run_benchmark(
-            variant=variant,
-            n_text=0 if loaded_docs is not None else args.n_docs,
-            n_image=0 if loaded_docs is not None else args.n_image_docs,
-            docs=loaded_docs,
-            repeats=args.repeats,
-            discard_warm=discard_warm,
-            seed=args.seed,
-            sleep_fake=args.sleep_fake,
-            processor_factory=processor_factory,
-            is_fake=is_fake,
-        )
+        try:
+            result = run_benchmark(
+                variant=variant,
+                n_text=0 if loaded_docs is not None else args.n_docs,
+                n_image=0 if loaded_docs is not None else args.n_image_docs,
+                docs=loaded_docs,
+                repeats=args.repeats,
+                discard_warm=discard_warm,
+                seed=args.seed,
+                sleep_fake=args.sleep_fake,
+                processor_factory=processor_factory,
+                is_fake=is_fake,
+                expected_file_hashes=sample_file_hashes,
+            )
+        except StaleDocumentBytesError as exc:
+            # A staged document changed under us mid-run (e.g. a corpus
+            # still hydrating from Box) — fail loudly with the filename
+            # rather than publish a sample_digest that no longer describes
+            # what was actually measured.
+            parser.error(str(exc))
         result["processor_startup_seconds"] = startup.get("seconds")
         if loaded_docs is not None:
             # Real-document path: this is the actual defect being fixed —
@@ -1546,6 +1889,7 @@ def main(argv: list[str] | None = None) -> int:
                 "sample_document_count": len(loaded_docs),
                 "sample_digest": sample_digest,
                 "sample_manifest_complete": sample_manifest_complete,
+                **ocr_toolchain,
             }
         else:
             result["benchmark_context"] = {
@@ -1554,6 +1898,7 @@ def main(argv: list[str] | None = None) -> int:
                 "fixture": "deterministic synthetic grievances without citizen data",
                 "sample_provenance": SYNTHETIC_PROVENANCE,
                 "execution": "sequential single-process execution",
+                **ocr_toolchain,
             }
         results[variant] = result
         e2e = result["stages"][E2E_KEY]
