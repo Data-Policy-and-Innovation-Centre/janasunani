@@ -16,3 +16,15 @@ if [ -n "$bad_files" ]; then
   echo "Keep Terraform state, tfvars, env files, and private keys local." >&2
   exit 1
 fi
+
+# Terraform plan archives, by content rather than by name. The filename check
+# above cannot catch these: `terraform plan -out=` takes any name, and the
+# documented example (`-out=tfplan`) has no suffix at all. Without this the
+# only content scan lives in CI, which sees the plan after the push that has
+# already disclosed the embedded state.
+#
+# Deliberately `python3`, not `uv run`: the script is stdlib-only so the hook
+# keeps working before any `uv sync` and cannot be skipped by a broken
+# environment. If python3 is missing the hook fails, which is the safe
+# direction for a check whose job is to stop secrets entering history.
+python3 "$(git rev-parse --show-toplevel)/scripts/check_no_terraform_plans.py" --staged
