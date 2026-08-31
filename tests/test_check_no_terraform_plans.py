@@ -324,3 +324,48 @@ def test_pre_commit_hook_invokes_the_staged_scan():
     assert "--staged" in invocation[0]
     # stdlib-only by design, so the hook works before any `uv sync`.
     assert invocation[0].lstrip().startswith("python3 ")
+
+
+# ---------------------------------------------------------------------------
+# Codex P2 on #321: staged *filenames* were passed to `git ls-files` as
+# pathspecs, so a name that is pathspec magic was reinterpreted rather than
+# selected. Both directions were reproduced before the fix.
+# ---------------------------------------------------------------------------
+
+
+def test_a_plan_named_like_pathspec_magic_cannot_exclude_itself(tmp_path):
+    # Reproduced on ab5dcee: this exact archive passed the staged scan,
+    # because `:(exclude,glob)**` was read as a pathspec that excluded
+    # everything rather than as the filename it is.
+    repo = _repo(tmp_path)
+    _plan_archive(repo / ":(exclude,glob)**")
+    _git(repo, "--literal-pathspecs", "add", ":(exclude,glob)**")
+
+    result = _run_staged(repo)
+
+    assert result.returncode == 1
+    assert "tfstate" in result.stdout
+
+
+def test_a_staged_filename_cannot_re_include_data(tmp_path):
+    # The other direction, and the one with a data-policy consequence: a
+    # staged file whose name is `:(glob)**` must not widen the scan back over
+    # data/, which the check must never open.
+    repo = _repo(tmp_path)
+    (repo / "data").mkdir()
+    _plan_archive(repo / "data" / "secret")
+    _git(repo, "add", "-f", "data/secret")
+    _git(repo, "commit", "-qm", "data")
+
+    (repo / ":(glob)**").write_text("harmless\n")
+    _git(repo, "--literal-pathspecs", "add", ":(glob)**")
+
+    result = _run_staged(repo)
+
+    assert result.returncode == 0, result.stdout
+    assert "data/secret" not in result.stdout
+
+
+def test_staged_scan_uses_literal_pathspecs():
+    source = SCRIPT.read_text()
+    assert "--literal-pathspecs" in source
