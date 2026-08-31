@@ -254,17 +254,15 @@ def main(argv: list[str] | None = None) -> int:
 
     offenders: list[tuple[Path, list[str]]] = []
     for path in tracked_files():
-        # Cheap pre-filters only. The guarantee that nothing is read through
-        # a link lives in `_open_nofollow`, which checks every component --
-        # `is_symlink()` describes just the last one, and an ancestor
-        # replaced by a link is the case that reached data/. Nothing is lost
-        # by skipping links: git stores the link text, not the pointed-to
-        # bytes, so a symlink is never itself the committed archive, which is
-        # scanned at its own path.
-        if path.is_symlink():
-            continue
-        if not path.is_file():  # submodule entries, broken links
-            continue
+        # No `is_symlink()`/`is_file()` prefilter here, deliberately. Both
+        # stat through a symlinked ancestor -- `lstat("public/payload")` and
+        # `stat("public/payload")` on the `public -> data` case -- and
+        # AGENTS.md forbids inspecting metadata under data/, not merely
+        # reading it. `_open_nofollow` is the only gate, and it never stats:
+        # it opens each component with O_NOFOLLOW and fails closed. The cases
+        # the prefilters used to cover still resolve correctly -- a directory
+        # or submodule entry opens but is not a zip, and a broken or
+        # symlinked path fails to open at all.
         members = plan_members(path)
         if members:
             offenders.append((path, members))

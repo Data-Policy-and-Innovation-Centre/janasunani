@@ -9,6 +9,7 @@ cannot see.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import zipfile
@@ -438,3 +439,65 @@ def test_staged_scan_never_touches_the_filesystem_for_content(tmp_path):
 
     assert result.returncode == 1
     assert "artifact.bin" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Codex P2 on #321, follow-up: the cheap prefilters still statted through a
+# symlinked ancestor. AGENTS.md forbids inspecting metadata under data/, not
+# only reading it, so the prefilters were removed rather than reordered.
+# ---------------------------------------------------------------------------
+
+
+def test_no_metadata_is_read_through_a_symlinked_ancestor(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    (repo / "data").mkdir()
+    (repo / "public").mkdir()
+    _plan_archive(repo / "data" / "payload")
+    (repo / "public" / "payload").write_text("placeholder\n")
+    _git(repo, "add", "-f", "data/payload", "public/payload")
+    _git(repo, "commit", "-qm", "seed2")
+    (repo / "public" / "payload").unlink()
+    (repo / "public").rmdir()
+    (repo / "public").symlink_to(repo / "data")
+
+    touched: list[str] = []
+    real_stat, real_lstat = os.stat, os.lstat
+
+    def record(fn):
+        def wrapper(path, *a, **kw):
+            if isinstance(path, (str, Path)) and "public" in str(path):
+                touched.append(str(path))
+            return fn(path, *a, **kw)
+
+        return wrapper
+
+    monkeypatch.setattr(os, "stat", record(real_stat))
+    monkeypatch.setattr(os, "lstat", record(real_lstat))
+    monkeypatch.chdir(repo)
+
+    assert main() == 0
+    assert touched == [], touched
+
+
+def test_a_directory_entry_is_not_mistaken_for_an_archive(tmp_path, monkeypatch):
+    # The removed `is_file()` prefilter used to skip these; opening a
+    # directory now fails on the read instead, which must not raise.
+    repo = _repo(tmp_path)
+    (repo / "adir").mkdir()
+    (repo / "adir" / "keep").write_text("x\n")
+    _git(repo, "add", "adir/keep")
+    _git(repo, "commit", "-qm", "dir")
+
+    monkeypatch.chdir(repo)
+    assert main() == 0
+    assert plan_members(Path("adir")) == []
+
+
+def test_a_broken_symlink_does_not_crash_the_scan(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    (repo / "dangling").symlink_to(repo / "nothing-here")
+    _git(repo, "add", "dangling")
+    _git(repo, "commit", "-qm", "dangling")
+
+    monkeypatch.chdir(repo)
+    assert main() == 0
