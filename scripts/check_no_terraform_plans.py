@@ -126,8 +126,15 @@ def staged_entries() -> list[tuple[Path, str]]:
     if not paths:
         return []
 
+    # `--literal-pathspecs` because these are filenames, not pathspecs we
+    # wrote. Without it a staged file whose *name* is pathspec magic is
+    # reinterpreted rather than selected, and it fails both ways: a plan named
+    # `:(exclude,glob)**` excludes itself and passes the scan, while a file
+    # named `:(glob)**` re-includes paths this check must never open,
+    # `data/` among them. The exclusion above is ours and keeps its magic;
+    # it runs in a separate call for exactly that reason.
     listing = subprocess.run(
-        ["git", "ls-files", "-s", "-z", "--", *paths],
+        ["git", "--literal-pathspecs", "ls-files", "-s", "-z", "--", *paths],
         check=True,
         capture_output=True,
     ).stdout
