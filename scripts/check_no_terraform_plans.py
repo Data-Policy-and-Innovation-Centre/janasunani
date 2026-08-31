@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import os
 import subprocess
 import sys
 import zipfile
@@ -70,7 +71,55 @@ def tracked_files() -> list[Path]:
     return [Path(name) for name in out.decode("utf-8").split("\0") if name]
 
 
-def _members_of(source: Path | io.BytesIO) -> list[str]:
+def _open_nofollow(path: Path) -> int | None:
+    """Open ``path`` for reading, refusing a symlink at *any* component.
+
+    ``Path.is_symlink()`` only describes the final component, so it does not
+    see an ancestor that has been replaced by a link: with the index still
+    listing ``public/payload`` and the worktree holding ``public -> data``,
+    ``public/payload`` is not a symlink and opening it reads ``data/payload``
+    straight through the ``:(exclude)data/**`` pathspec.
+
+    Walking the components with ``O_NOFOLLOW`` closes that, and closes it
+    without a race: each directory is opened relative to the previous one, so
+    there is no window between deciding a path is safe and opening it.
+    """
+    parts = path.parts
+    if not parts:
+        return None
+    if path.is_absolute():
+        start, parts = parts[0], parts[1:]
+    else:
+        start = "."
+    if not parts:
+        return None
+
+    try:
+        dir_fd = os.open(start, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError:
+        return None
+
+    try:
+        for component in parts[:-1]:
+            try:
+                nxt = os.open(
+                    component,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                    dir_fd=dir_fd,
+                )
+            except OSError:
+                return None
+            os.close(dir_fd)
+            dir_fd = nxt
+        try:
+            return os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
+        except OSError:
+            return None
+    finally:
+        os.close(dir_fd)
+
+
+def _members_of(source: Path | io.BytesIO | io.BufferedReader) -> list[str]:
     """Plan-archive entry names in ``source``, which may be a path or bytes."""
     try:
         with zipfile.ZipFile(source) as archive:
@@ -85,15 +134,24 @@ def _members_of(source: Path | io.BytesIO) -> list[str]:
 
 
 def plan_members(path: Path) -> list[str]:
-    """Entry names identifying ``path`` as a Terraform plan archive, if any."""
-    try:
-        with path.open("rb") as handle:
-            if handle.read(4) != ZIP_MAGIC:
-                return []
-    except OSError:
+    """Entry names identifying ``path`` as a Terraform plan archive, if any.
+
+    Opened through :func:`_open_nofollow`, so a symlink anywhere in the path
+    yields no members rather than a read of whatever it points at.
+    """
+    fd = _open_nofollow(path)
+    if fd is None:
         return []
 
-    return _members_of(path)
+    try:
+        with os.fdopen(fd, "rb") as handle:
+            if handle.read(4) != ZIP_MAGIC:
+                return []
+            handle.seek(0)
+            return _members_of(handle)
+    except OSError:
+        # Directories and unreadable entries land here; neither is an archive.
+        return []
 
 
 def plan_members_of_blob(data: bytes) -> list[str]:
@@ -196,13 +254,13 @@ def main(argv: list[str] | None = None) -> int:
 
     offenders: list[tuple[Path, list[str]]] = []
     for path in tracked_files():
-        # Symlinks are skipped before anything opens them, and that is a
-        # data-policy requirement rather than tidiness: `is_file()` follows
-        # the link, so a tracked link outside data/ whose target is inside it
-        # would be read straight through the pathspec exclusion. Nothing is
-        # lost -- git stores the link text, not the pointed-to bytes, so a
-        # symlink is never itself the committed plan archive. The archive, if
-        # tracked, appears under its own path and is scanned there.
+        # Cheap pre-filters only. The guarantee that nothing is read through
+        # a link lives in `_open_nofollow`, which checks every component --
+        # `is_symlink()` describes just the last one, and an ancestor
+        # replaced by a link is the case that reached data/. Nothing is lost
+        # by skipping links: git stores the link text, not the pointed-to
+        # bytes, so a symlink is never itself the committed archive, which is
+        # scanned at its own path.
         if path.is_symlink():
             continue
         if not path.is_file():  # submodule entries, broken links
