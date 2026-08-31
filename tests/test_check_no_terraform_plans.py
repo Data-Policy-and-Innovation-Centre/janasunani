@@ -219,3 +219,108 @@ def test_the_regex_alone_would_have_missed_it(tmp_path):
     # Both of the names the regex lets through are caught by content.
     for name in ("tfplan", "plan.out"):
         assert plan_members(_plan_archive(tmp_path / name, ("tfstate",)))
+
+
+# ---------------------------------------------------------------------------
+# Codex P1 on #321, second round: the pre-commit hook matched filenames only,
+# so a plan saved under an arbitrary name was committed and pushed — which is
+# the disclosure — and only then rejected by CI. These cover the staged scan
+# that closes that window.
+# ---------------------------------------------------------------------------
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout
+
+
+def _repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@example.com")
+    _git(repo, "config", "user.name", "T")
+    (repo / "README.md").write_text("seed\n")
+    _git(repo, "add", "README.md")
+    _git(repo, "commit", "-qm", "seed")
+    return repo
+
+
+def _run_staged(repo: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), "--staged"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_staged_scan_catches_a_plan_under_an_unignored_name(tmp_path):
+    # The exact case in the finding: `deploy/terraform/saved` matches no
+    # suffix pattern and no .gitignore rule, so only a content scan sees it.
+    repo = _repo(tmp_path)
+    (repo / "deploy" / "terraform").mkdir(parents=True)
+    _plan_archive(repo / "deploy" / "terraform" / "saved")
+    _git(repo, "add", "deploy/terraform/saved")
+
+    result = _run_staged(repo)
+
+    assert result.returncode == 1
+    assert "deploy/terraform/saved" in result.stdout
+    assert "tfstate" in result.stdout
+
+
+def test_staged_scan_reads_the_index_not_the_worktree(tmp_path):
+    # A pre-commit check must judge what is being committed. Stage the plan,
+    # then overwrite the worktree copy with innocuous text: the commit still
+    # carries the archive, so the check must still fail.
+    repo = _repo(tmp_path)
+    _plan_archive(repo / "artifact.bin")
+    _git(repo, "add", "artifact.bin")
+    (repo / "artifact.bin").write_text("harmless now\n")
+
+    result = _run_staged(repo)
+
+    assert result.returncode == 1
+    assert "artifact.bin" in result.stdout
+
+
+def test_staged_scan_passes_on_an_ordinary_zip(tmp_path):
+    repo = _repo(tmp_path)
+    deck = repo / "deck.pptx"
+    with zipfile.ZipFile(deck, "w") as archive:
+        archive.writestr("ppt/presentation.xml", "<p/>")
+    _git(repo, "add", "deck.pptx")
+
+    assert _run_staged(repo).returncode == 0
+
+
+def test_staged_scan_passes_when_nothing_is_staged(tmp_path):
+    assert _run_staged(_repo(tmp_path)).returncode == 0
+
+
+def test_staged_scan_does_not_follow_a_symlink(tmp_path):
+    # Same data-policy reason as the worktree scan: git stores the link text,
+    # so a symlink is never itself the archive, and following one would read
+    # through the data/ exclusion.
+    repo = _repo(tmp_path)
+    outside = tmp_path / "outside_plan"
+    _plan_archive(outside)
+    (repo / "link").symlink_to(outside)
+    _git(repo, "add", "link")
+
+    assert _run_staged(repo).returncode == 0
+
+
+def test_pre_commit_hook_invokes_the_staged_scan():
+    hook = (Path(__file__).resolve().parents[1] / ".githooks" / "pre-commit").read_text()
+    invocation = [
+        line
+        for line in hook.splitlines()
+        if "check_no_terraform_plans.py" in line and not line.lstrip().startswith("#")
+    ]
+    assert len(invocation) == 1, invocation
+    assert "--staged" in invocation[0]
+    # stdlib-only by design, so the hook works before any `uv sync`.
+    assert invocation[0].lstrip().startswith("python3 ")
