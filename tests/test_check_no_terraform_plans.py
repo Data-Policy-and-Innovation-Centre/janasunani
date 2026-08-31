@@ -369,3 +369,72 @@ def test_a_staged_filename_cannot_re_include_data(tmp_path):
 def test_staged_scan_uses_literal_pathspecs():
     source = SCRIPT.read_text()
     assert "--literal-pathspecs" in source
+
+
+# ---------------------------------------------------------------------------
+# Codex P2 on #321: `is_symlink()` describes only the final component, so an
+# ancestor replaced by a link was followed into data/.
+# ---------------------------------------------------------------------------
+
+
+def test_a_symlinked_ancestor_is_not_followed_into_data(tmp_path, monkeypatch):
+    # Reproduced before the fix: the index still lists `public/payload`, the
+    # worktree has `public -> data`, so `public/payload` is not itself a
+    # symlink and opening it read `data/payload` through the
+    # `:(exclude)data/**` pathspec.
+    repo = _repo(tmp_path)
+    (repo / "data").mkdir()
+    (repo / "public").mkdir()
+    _plan_archive(repo / "data" / "payload")
+    (repo / "public" / "payload").write_text("placeholder\n")
+    _git(repo, "add", "-f", "data/payload", "public/payload")
+    _git(repo, "commit", "-qm", "seed2")
+
+    (repo / "public" / "payload").unlink()
+    (repo / "public").rmdir()
+    (repo / "public").symlink_to(repo / "data")
+
+    monkeypatch.chdir(repo)
+    # Precondition: the case only bites because this is False.
+    assert Path("public/payload").is_symlink() is False
+    assert main() == 0
+
+
+def test_open_nofollow_refuses_a_link_at_the_final_component(tmp_path):
+    from scripts.check_no_terraform_plans import _open_nofollow
+
+    target = _plan_archive(tmp_path / "real")
+    link = tmp_path / "link"
+    link.symlink_to(target)
+
+    assert _open_nofollow(link) is None
+    assert plan_members(link) == []
+    # The archive is still found at its own path.
+    assert plan_members(target) == ["tfplan", "tfstate"]
+
+
+def test_open_nofollow_refuses_a_link_at_an_ancestor(tmp_path):
+    from scripts.check_no_terraform_plans import _open_nofollow
+
+    real_dir = tmp_path / "real_dir"
+    real_dir.mkdir()
+    _plan_archive(real_dir / "payload")
+    (tmp_path / "via_link").symlink_to(real_dir)
+
+    assert _open_nofollow(tmp_path / "via_link" / "payload") is None
+    assert plan_members(tmp_path / "via_link" / "payload") == []
+
+
+def test_staged_scan_never_touches_the_filesystem_for_content(tmp_path):
+    # The staged mode reads blobs with `git cat-file`, so symlinked ancestors
+    # cannot arise there at all: deleting the worktree copy entirely leaves
+    # the staged archive still detectable.
+    repo = _repo(tmp_path)
+    _plan_archive(repo / "artifact.bin")
+    _git(repo, "add", "artifact.bin")
+    (repo / "artifact.bin").unlink()
+
+    result = _run_staged(repo)
+
+    assert result.returncode == 1
+    assert "artifact.bin" in result.stdout
