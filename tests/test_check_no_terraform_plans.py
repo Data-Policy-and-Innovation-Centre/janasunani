@@ -819,3 +819,45 @@ def test_the_real_repository_pointers_still_validate():
         text=True,
     )
     assert result.returncode == 0, result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Codex P1 on #321, follow-up: recognising a key says nothing about its value,
+# and JSON syntax says nothing about a sidecar's schema.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text, expected_ok",
+    [
+        ("outs:\n- md5: abc\n  path: thing\ncmd: dvc repro\n", True),
+        # Prose does not survive the scalar cap, per the sidecar checker.
+        ("outs:\n- md5: abc\n  path: thing\ncmd: " + "x" * 201 + "\n", False),
+        ("outs:\n- md5: abc\n  path: " + "y" * 201 + "\n", False),
+        ("outs:\n- md5: abc\n  path: thing\ndesc: " + "z" * 250 + "\n", False),
+    ],
+)
+def test_recognised_fields_still_bound_their_values(text, expected_ok):
+    assert (dvc_pointer_problem(text) is None) is expected_ok
+
+
+def test_the_scalar_cap_reports_by_length_never_by_content():
+    # This runs in CI, whose logs are public: refusing to publish something
+    # and then printing it defeats the gate.
+    secret = "Ram Kumar 9876543210 Sambalpur " * 10
+    problem = dvc_pointer_problem(f"outs:\n- md5: a\n  path: p\ncmd: {secret}\n")
+
+    assert problem is not None
+    assert "Ram Kumar" not in problem
+    assert "9876543210" not in problem
+    assert "characters" in problem
+
+
+def test_pre_commit_runs_the_provenance_schema_check():
+    hook = (
+        Path(__file__).resolve().parents[1] / ".githooks" / "pre-commit"
+    ).read_text()
+    assert "check_provenance_sidecars.py" in hook
+    # The staged blob, not the worktree file: those differ once a file is
+    # staged and then edited.
+    assert "cat-file blob" in hook

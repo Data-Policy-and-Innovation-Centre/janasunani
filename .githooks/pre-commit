@@ -28,3 +28,39 @@ fi
 # environment. If python3 is missing the hook fails, which is the safe
 # direction for a check whose job is to stop secrets entering history.
 python3 "$(git rev-parse --show-toplevel)/scripts/check_no_terraform_plans.py" --staged
+
+# Provenance sidecars, against the schema rather than against JSON syntax.
+# `scripts/check_provenance_sidecars.py` is the owner of that schema -- an
+# allowlist of keys with a 200-character scalar cap -- and CI already runs it.
+# Without this the hook only knew the file parsed, so citizen text staged as
+# valid JSON at an allowlisted name was committed and rejected only after the
+# push.
+#
+# The staged blob is checked, not the worktree file: those differ once a file
+# is staged and then edited, and the blob is what gets committed.
+root="$(git rev-parse --show-toplevel)"
+staged_sidecars="$(
+  git diff --cached --name-only -z --diff-filter=ACMR -- \
+    'data/external/provenance.json' \
+    'data/external/**/provenance.json' \
+    'data/external/*.provenance.json' \
+    'data/external/**/*.provenance.json' |
+    tr '\0' '\n'
+)"
+if [ -n "$staged_sidecars" ]; then
+  tmpdir="$(mktemp -d)"
+  trap 'rm -rf "$tmpdir"' EXIT
+  copies=""
+  printf '%s\n' "$staged_sidecars" | while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    mkdir -p "$tmpdir/$(dirname "$path")"
+    git cat-file blob ":$path" > "$tmpdir/$path"
+  done
+  # Run from inside the temp tree and pass relative paths, so a rejection
+  # names `data/external/...` as the author sees it rather than a temp path.
+  copies="$(cd "$tmpdir" && find . -type f | sed 's|^\./||')"
+  if [ -n "$copies" ]; then
+    # shellcheck disable=SC2086
+    (cd "$tmpdir" && python3 "$root/scripts/check_provenance_sidecars.py" $copies)
+  fi
+fi
