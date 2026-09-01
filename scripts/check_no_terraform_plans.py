@@ -111,7 +111,10 @@ def _members_of(source: Path | io.BytesIO | io.BufferedReader) -> list[str]:
     except (zipfile.BadZipFile, OSError):
         return []
 
-    return sorted({name for name in names if Path(name).name in PLAN_MEMBERS})
+    # Only the base name is returned, never the archive path it sat under.
+    # The directory part is attacker-chosen text and `report()` prints into
+    # public CI logs; the base name is one of PLAN_MEMBERS and so is safe.
+    return sorted({Path(name).name for name in names if Path(name).name in PLAN_MEMBERS})
 
 
 def damaged_plan_members(data: bytes) -> list[str]:

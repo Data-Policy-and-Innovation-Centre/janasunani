@@ -86,7 +86,9 @@ def test_a_plan_written_under_a_directory_prefix_is_caught(tmp_path):
     # Layout has moved across Terraform versions, so members are matched on
     # their base name rather than the full entry path.
     plan = _plan_archive(tmp_path / "p", ("plan/tfstate",))
-    assert plan_members(plan) == ["plan/tfstate"]
+    # Reported by base name only: the directory part is attacker-chosen and
+    # the message reaches public CI logs.
+    assert plan_members(plan) == ["tfstate"]
 
 
 def test_an_ordinary_zip_is_not_a_plan(tmp_path):
@@ -911,3 +913,57 @@ def test_rejections_still_say_where_and_why():
     assert problem is not None
     assert "line 4" in problem
     assert "top-level key" in problem
+
+
+# ---------------------------------------------------------------------------
+# Codex P1 on #321, final: the hook word-split its argument list, and an
+# archive member's directory reached the log.
+# ---------------------------------------------------------------------------
+
+
+def test_a_zip_member_directory_never_reaches_the_message(tmp_path):
+    plan = _plan_archive(
+        tmp_path / "p", ("Ram Kumar 9876543210 Sambalpur/tfstate",)
+    )
+
+    members = plan_members(plan)
+
+    assert members == ["tfstate"]
+    assert not any("Ram Kumar" in member for member in members)
+
+
+def test_pre_commit_passes_sidecar_paths_without_word_splitting():
+    hook = (
+        Path(__file__).resolve().parents[1] / ".githooks" / "pre-commit"
+    ).read_text()
+    # NUL-delimited: a path with a space must stay one argument.
+    assert "-print0" in hook
+    assert "xargs -0" in hook
+
+
+def test_a_sidecar_path_with_a_space_is_still_checked(tmp_path):
+    # Exercises the hook's argument handling against a real repository.
+    repo = _repo(tmp_path)
+    hooks = repo / ".githooks"
+    hooks.mkdir()
+    root = Path(__file__).resolve().parents[1]
+    (hooks / "pre-commit").write_text((root / ".githooks" / "pre-commit").read_text())
+    (hooks / "pre-commit").chmod(0o755)
+    (repo / "scripts").mkdir()
+    for name in ("check_provenance_sidecars.py", "check_no_terraform_plans.py"):
+        (repo / "scripts" / name).write_text((root / "scripts" / name).read_text())
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "hooks")
+    _git(repo, "config", "core.hooksPath", ".githooks")
+
+    (repo / "data" / "external").mkdir(parents=True)
+    bad = repo / "data" / "external" / "my sidecar.provenance.json"
+    bad.write_text('{"complaint": "citizen text"}')
+    _git(repo, "add", "-f", "data/external/my sidecar.provenance.json")
+
+    result = subprocess.run(
+        ["git", "commit", "-m", "sidecar"], cwd=repo, capture_output=True, text=True
+    )
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "my sidecar.provenance.json" in (result.stdout + result.stderr)
