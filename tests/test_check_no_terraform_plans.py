@@ -861,3 +861,53 @@ def test_pre_commit_runs_the_provenance_schema_check():
     # The staged blob, not the worktree file: those differ once a file is
     # staged and then edited.
     assert "cat-file blob" in hook
+
+
+# ---------------------------------------------------------------------------
+# Codex P1 on #321, follow-up: a per-value cap is not an aggregate bound, and
+# a diagnostic that quotes the offending line publishes it.
+# ---------------------------------------------------------------------------
+
+
+def test_text_split_across_many_fields_is_still_bounded(tmp_path, monkeypatch):
+    # Every scalar stays under the per-value cap while the payload does not.
+    repo = _repo(tmp_path)
+    (repo / "data" / "raw").mkdir(parents=True)
+    lines = ["outs:", "- md5: abc", "  path: thing"]
+    lines += [f"  desc: Ram Kumar 9876543210 Sambalpur entry {i}" for i in range(600)]
+    (repo / "data" / "raw" / "big.dvc").write_text("\n".join(lines) + "\n")
+    _git(repo, "add", "-f", "data/raw/big.dvc")
+    _git(repo, "commit", "-qm", "big")
+
+    monkeypatch.chdir(repo)
+    assert main() == 1
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Ram Kumar 9876543210: Sambalpur\n",
+        "outs:\n- md5: a\n  path: p\nRam Kumar 9876543210: x\n",
+        "outs:\n- md5: a\n  path: p\n  Ram Kumar 9876543210: x\n",
+        "Ram Kumar 9876543210 Sambalpur\n",
+        "outs:\n- md5: a\n  path: p\n-Ram Kumar 9876543210\n",
+    ],
+)
+def test_no_diagnostic_ever_quotes_the_file(text):
+    # CI logs are public. Refusing to publish something and then printing it
+    # in the rejection defeats the gate.
+    problem = dvc_pointer_problem(text)
+
+    assert problem is not None
+    assert "Ram Kumar" not in problem
+    assert "9876543210" not in problem
+    assert "Sambalpur" not in problem
+
+
+def test_rejections_still_say_where_and_why():
+    # Withholding content must not make the message useless to the author.
+    problem = dvc_pointer_problem("outs:\n- md5: a\n  path: p\nnotes: hello\n")
+
+    assert problem is not None
+    assert "line 4" in problem
+    assert "top-level key" in problem
