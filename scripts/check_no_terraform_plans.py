@@ -42,7 +42,9 @@ from __future__ import annotations
 
 import argparse
 import io
+import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -528,13 +530,41 @@ def main(argv: list[str] | None = None) -> int:
     return report(offenders + allowlisted_offenders(tracked_allowlisted_entries()))
 
 
+def in_public_log() -> bool:
+    """Whether output is going somewhere the world can read.
+
+    GitHub sets both of these on every runner. The pre-commit hook runs on the
+    author's machine, where the file is already in front of them and redacting
+    it would only make the message useless.
+    """
+    return bool(os.environ.get("GITHUB_ACTIONS") or os.environ.get("CI"))
+
+
+def safe_path(path: Path) -> str:
+    """A printable form of ``path``, redacted when the log is public.
+
+    A filename under ``data/`` can itself be the disclosure --
+    ``data/raw/Ram-Kumar-9876543210.dvc`` names a citizen in the path rather
+    than in the contents. In CI the directory and suffix are kept, since they
+    say what kind of file is wrong and where, and the stem becomes a digest of
+    itself so the author can identify it locally without it being published.
+
+    Paths outside ``data/`` are printed whole. They are source paths, they are
+    not protected, and a reviewer needs to read them.
+    """
+    if path.parts[:1] != ("data",) or not in_public_log():
+        return str(path)
+    digest = hashlib.sha256(path.name.encode("utf-8")).hexdigest()[:12]
+    return f"{path.parent}/<redacted:{digest}>{path.suffix}"
+
+
 def report(offenders: list[tuple[Path, list[str]]]) -> int:
     if not offenders:
         return 0
 
     print("The following tracked files must not be in Git:")
     for path, reasons in offenders:
-        print(f"  {path}  ({', '.join(reasons)})")
+        print(f"  {safe_path(path)}  ({', '.join(reasons)})")
     print()
 
     # Say why, or the next person deletes the file and saves it elsewhere.
@@ -558,7 +588,9 @@ def report(offenders: list[tuple[Path, list[str]]]) -> int:
             "Files under data/ are exempt from the data rules only for what "
             "they are: an empty marker, a DVC pointer, or a provenance "
             "sidecar. Anything else there is refused. Rejected content is "
-            "withheld on purpose: these logs are public."
+            "withheld on purpose, and in CI the filename is shown as "
+            "`sha256(name)[:12]` because a name under data/ can itself be "
+            "the disclosure: these logs are public."
         )
     return 1
 
