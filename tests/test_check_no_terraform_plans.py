@@ -9,6 +9,7 @@ cannot see.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -1094,3 +1095,62 @@ def test_an_unruled_key_would_be_refused_not_accepted():
     assert problem is not None
     assert "no value rule" in problem
     assert "Ram Kumar" not in problem
+
+
+# ---------------------------------------------------------------------------
+# Codex P1 on #321: a filename under data/ can itself be the disclosure, and
+# report() printed the whole path into public CI logs.
+# ---------------------------------------------------------------------------
+
+
+def test_a_protected_filename_is_redacted_in_ci(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    (repo / "data" / "raw").mkdir(parents=True)
+    (repo / "data" / "raw" / "Ram-Kumar-9876543210.dvc").write_text("not a pointer\n")
+    _git(repo, "add", "-f", "data/raw/Ram-Kumar-9876543210.dvc")
+    _git(repo, "commit", "-qm", "named")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT)],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "GITHUB_ACTIONS": "true"},
+    )
+
+    assert result.returncode == 1
+    assert "Ram-Kumar" not in result.stdout
+    assert "9876543210" not in result.stdout
+    # Still says where and what kind, and stays identifiable locally.
+    assert "data/raw/" in result.stdout
+    assert ".dvc" in result.stdout
+    digest = hashlib.sha256(b"Ram-Kumar-9876543210.dvc").hexdigest()[:12]
+    assert digest in result.stdout
+
+
+def test_the_same_run_names_the_file_locally(tmp_path):
+    # The hook runs on the author's machine, where the file is already in
+    # front of them; redacting there would only make the message useless.
+    repo = _repo(tmp_path)
+    (repo / "data" / "raw").mkdir(parents=True)
+    (repo / "data" / "raw" / "Ram-Kumar-9876543210.dvc").write_text("not a pointer\n")
+    _git(repo, "add", "-f", "data/raw/Ram-Kumar-9876543210.dvc")
+    _git(repo, "commit", "-qm", "named")
+
+    env = {k: v for k, v in os.environ.items() if k not in {"CI", "GITHUB_ACTIONS"}}
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT)], cwd=repo, capture_output=True, text=True, env=env
+    )
+
+    assert result.returncode == 1
+    assert "data/raw/Ram-Kumar-9876543210.dvc" in result.stdout
+
+
+def test_source_paths_outside_data_are_never_redacted(monkeypatch):
+    from scripts.check_no_terraform_plans import safe_path
+
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+
+    assert safe_path(Path("deploy/terraform/tfplan")) == "deploy/terraform/tfplan"
+    assert safe_path(Path("scripts/thing.py")) == "scripts/thing.py"
+    assert "<redacted:" in safe_path(Path("data/raw/x.dvc"))
