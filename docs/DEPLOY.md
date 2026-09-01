@@ -43,8 +43,8 @@ what runs *on* the CPU box is Docker Compose ([deploy/docker-compose.yml](../dep
 | State | production data on an external named volume | **nothing stateful** |
 | Cost | ~always-on t3 | ~$1/hr only while up |
 
-Both share one **IAM instance role** (no static keys) scoped to three existing
-S3 buckets, and neither holds a GitHub credential — you clone the private repo
+Both share one **IAM instance role** (no static keys) scoped to four S3
+buckets (three pre-existing, one Terraform-managed), and neither holds a GitHub credential — you clone the private repo
 (and its private `dpic` dependency) via **SSH agent forwarding** (`ssh -A`).
 
 **Region** `ap-south-1` · GPU pinned to **`ap-south-1a`** (g6 isn't offered in 1c).
@@ -53,10 +53,25 @@ Current live CPU box: `i-0ef24e15a80ba7128`, EIP `52.66.116.80`.
 ## Prerequisites (local machine)
 
 - Terraform, AWS CLI v2, an SSH keypair (default `~/.ssh/id_ed25519[.pub]`).
-- AWS credentials with rights to create EC2/EIP/IAM/security groups.
+- AWS credentials with rights to create EC2/EIP/IAM/security groups, and to
+  administer S3 buckets. The apply creates `janasunani-documents-dsi-reference`
+  and sets its tags, lifecycle, versioning, encryption and public-access block,
+  so credentials scoped to EC2/EIP/IAM alone will get through `plan` and fail
+  partway into `apply`, after some resources already exist.
 - The three S3 buckets already exist (Terraform does **not** manage them):
   `janasunani-documents-main`, `dpic-dvc-cache` (prefix `janasunani`),
   `grievance-database-backups-main`.
+- A fourth, `janasunani-documents-dsi-reference`, **is** managed by Terraform
+  (`reference_bucket.tf`) and is created by the apply below. It holds the DSI
+  clinic benchmark corpus, and its invariant is **no transition or expiration
+  actions** — never that it has no lifecycle rule at all. It does have one, and
+  that is the mechanism: Terraform owns the lifecycle configuration precisely so
+  an archival rule added through the console shows up as drift. The single rule
+  aborts abandoned multipart uploads and moves nothing between storage classes.
+  Do not "clean it up" as console drift; deleting it is what would let a real
+  transition rule land unnoticed. The instance role gets `s3:GetObject` on it and
+  nothing else: the box that runs the benchmarks must not be able to alter what
+  it is measuring.
 
 ## 1 · Provision the infrastructure
 
@@ -571,12 +586,14 @@ The GPU box is create/destroy (toggle `gpu_box_count`), never stop/start.
 `aws_region` (ap-south-1), `admin_cidr` (no default — your IP/32),
 `instance_type` (t3.xlarge), `root_volume_gb` (150), `gpu_box_count` (0),
 `gpu_instance_type` (g6.xlarge), `gpu_availability_zone` (ap-south-1a),
-`ssh_public_key_path` (`~/.ssh/id_ed25519.pub`), and the three bucket vars.
+`ssh_public_key_path` (`~/.ssh/id_ed25519.pub`), and the four bucket vars.
 [ci.tf](../deploy/terraform/ci.tf) adds `create_github_oidc_provider` (default
 `true` — see its comment on the one-per-account OIDC provider limit).
 
 **Buckets:** documents `janasunani-documents-main` · DVC cache
-`dpic-dvc-cache/janasunani` · DB backups `grievance-database-backups-main`.
+`dpic-dvc-cache/janasunani` · DB backups `grievance-database-backups-main` ·
+DSI reference corpus `janasunani-documents-dsi-reference` (no transition or
+expiration actions, read-only to the box, Terraform-managed).
 
 **Secrets/vars for the automated deploy** (§4): see the table there —
 `DPIC_GITHUB_SSH_KEY` (existing, repo secret) vs. `BOX_SSH_KEY` +

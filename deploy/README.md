@@ -86,7 +86,11 @@ rollback): [docs/DEPLOY.md](../docs/DEPLOY.md) §"Automated demo deploy".
 ## Terraform (summary — details in [terraform/README.md](terraform/README.md))
 
 - **CPU box**: always-on t3.large, Elastic IP, IAM instance role scoped to the
-  three project buckets (documents / DVC-cache prefix / backups). SSH is locked
+  four project buckets: read/write on documents, the DVC-cache prefix and
+  backups, and **read-only** `s3:GetObject` on the DSI reference corpus, so
+  the box that runs the benchmarks cannot alter what it is measuring. The
+  reference bucket is the one Terraform creates, so `apply` needs credentials
+  that can administer S3, not only EC2/EIP/IAM. SSH is locked
   to `admin_cidr` — when your IP rotates (VPN on/off), update
   `terraform.tfvars` and re-apply; use `curl -4 -s ifconfig.me` (plain curl may
   return IPv6).

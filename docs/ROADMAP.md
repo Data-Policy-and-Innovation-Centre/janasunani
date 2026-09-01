@@ -90,7 +90,7 @@ The only place phase status is recorded.
 | 14 | II | **Spam & duplicate detection** *(b)* | 🔄 *(55,544/55,544 indexed into 10,963 groups; bounded low-signal regression and binary actionability development scorer measured; officer gold and a release gate remain)* |
 | 15 | II | **Structured analytics I**: metrics layer, dashboards, spikes *(c)* — metric-registry slice: governed total-filings definition and protected grouped releases; cluster/citizen metrics remain unavailable pending dedup lake artifacts | 🔄 |
 | 16 | II | **A/B instrumentation + retrospective impact evidence** *(d)* | 🔄 *(draft design and developmental routing-outcome diagnostics built; assignment, exposure, shadow execution, locked power inputs and a governed pilot remain unbuilt)* |
-| 17 | II | **Sarvam benchmark + provider registry + egress control** *(e)* | 🔄 *(200-page paid run on Sambalpur/2024, 25 Aug 2026, ₹300 list: latency distribution and divergence 0.995 measured, category grade measures our own v1 schema not the provider; schema v2 pinned; no hand-transcribed OCR accuracy set (#53))* |
+| 17 | II | **Sarvam benchmark + provider registry + egress control** *(e)* | 🔄 *(cached provider evidence and governed local release wiring built; no hand-transcribed OCR accuracy set and no new paid calls)* |
 | 18 | III | Evaluation harness & operational safety (RBAC, restore, observability) | ⬜ |
 | 19 | III | Model & pipeline platform (one recipe, release manifest, API v1) | 🔄 *(immutable local release/materialization slice built; no reviewed production manifest, shared recipe or API-v1 policy yet)* |
 | 20 | III | Structured analytics II (adjusted comparisons, NL query) | ⬜ |
@@ -1956,8 +1956,10 @@ Self-host on Docker. S3 is the only stateful AWS dependency. Terraform
   stateful survives. Sarvam-30B at 4-bit is at the limit of a 24 GB L4 and 105B is
   beyond it, so the exit ramp may need a larger instance type.
 - DVC remote `s3://dpic-dvc-cache/janasunani` (dump, lake, models); documents in
-  `s3://janasunani-documents-main`; backups in `grievance-database-backups-main`.
-  Do not DVC-track the OLTP DB.
+  `s3://janasunani-documents-main`; backups in `grievance-database-backups-main`;
+  the DSI benchmark corpus in `s3://janasunani-documents-dsi-reference`, the one
+  bucket Terraform manages, carrying no rule that transitions or expires an
+  object so it never needs a Glacier restore. Do not DVC-track the OLTP DB.
 
 ### Testing policy (every phase)
 

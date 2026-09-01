@@ -9,7 +9,11 @@ crash.log
 crash.*.log
 *.tfstate.*
 
-# Saved plans hold resolved variable values, including secrets.
+# Saved plans hold resolved variable values, including secrets: a plan archive
+# embeds tfstate/tfstate-prev — live account, instance, subnet and SSH-CIDR
+# values. The *.tfstate* patterns above do not match a .tfplan, because a plan
+# is a zip that *contains* state rather than being named like it, so these
+# patterns are load-bearing rather than redundant.
 *.tfplan
 *.tfplan.*
 plan.out
