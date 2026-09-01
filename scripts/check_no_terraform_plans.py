@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
 import subprocess
 import sys
 import zipfile
@@ -139,26 +140,41 @@ def plan_members_of_blob(data: bytes) -> list[str]:
     return members or damaged_plan_members(data)
 
 
-DVC_POINTER_MAX_BYTES = 100_000
-POINTER_PATHSPEC = "data/**/*.dvc"
+ALLOWLISTED_MAX_BYTES = 100_000
+
+# Mirrors the allowlist in the raw-data step of .github/workflows/data-check.yml.
+# Every name that step lets through must be validated here, or the exemption
+# becomes a way in: the predicate checks the name and nothing else.
+ALLOWLIST_PATHSPECS = (
+    "data/**/*.dvc",
+    "data/*.dvc",
+    "data/**/.gitkeep",
+    "data/.gitkeep",
+    "data/external/**/provenance.json",
+    "data/external/**/*.provenance.json",
+)
 
 
-def tracked_pointer_entries() -> list[tuple[Path, str]]:
-    """``(path, sha)`` for tracked ``.dvc`` files under ``data/``."""
+def _ls_files_entries(pathspecs: tuple[str, ...]) -> list[tuple[Path, str]]:
     listing = subprocess.run(
-        ["git", "ls-files", "-s", "-z", "--", POINTER_PATHSPEC],
+        ["git", "ls-files", "-s", "-z", "--", *pathspecs],
         check=True,
         capture_output=True,
     ).stdout
     return _parse_ls_files(listing)
 
 
-def staged_pointer_entries() -> list[tuple[Path, str]]:
+def tracked_allowlisted_entries() -> list[tuple[Path, str]]:
+    """``(path, sha)`` for every tracked blob the data allowlist exempts."""
+    return _ls_files_entries(ALLOWLIST_PATHSPECS)
+
+
+def staged_allowlisted_entries() -> list[tuple[Path, str]]:
     """The same, restricted to what is staged for the next commit."""
     changed = subprocess.run(
         [
             "git", "diff", "--cached", "--name-only", "-z",
-            "--diff-filter=ACMR", "--", POINTER_PATHSPEC,
+            "--diff-filter=ACMR", "--", *ALLOWLIST_PATHSPECS,
         ],
         check=True,
         capture_output=True,
@@ -182,30 +198,87 @@ def blob_size(sha: str) -> int:
     return int(out.decode("utf-8").strip())
 
 
-def pointer_offenders(entries: list[tuple[Path, str]]) -> list[tuple[Path, list[str]]]:
-    """``.dvc`` paths under ``data/`` that are not DVC pointers.
+def dvc_pointer_problem(text: str) -> str | None:
+    """Why ``text`` is not a DVC pointer, or ``None`` if it is one.
 
-    The exclusion that keeps this scan out of ``data/`` left a hole, because
-    the allowlist in ``data-check.yml`` accepts *any* name ending ``.dvc``
-    without checking what it is, and ``.gitignore`` un-ignores
-    ``data/raw/*.dvc``. A saved plan committed as ``data/raw/saved.dvc``
-    therefore passed the raw-data predicate and the content scan alike, and
-    carried the account id and SSH ingress CIDRs into history.
+    Parsed structurally rather than searched. A substring test for ``outs:``
+    passes any prose that happens to contain those bytes, which is no test at
+    all. Deliberately hand-rolled: this module is stdlib-only so the hook runs
+    before any `uv sync`, and PyYAML is not available to it.
+
+    A pointer is a YAML mapping with a top-level ``outs:`` list whose items
+    carry a ``path`` and a hash. Nothing else at top level is required, but
+    every line must fit that shape.
+    """
+    lines = [line.rstrip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return "empty"
+
+    if not any(line == "outs:" for line in lines):
+        return "no top-level `outs:` list"
+
+    items: list[dict[str, str]] = []
+    current: dict[str, str] | None = None
+    in_outs = False
+    for line in lines:
+        if not line.startswith((" ", "-")):  # a top-level key
+            in_outs = line == "outs:"
+            current = None
+            if ":" not in line:
+                return f"not a YAML mapping at {line!r}"
+            continue
+        if not in_outs:
+            continue
+        stripped = line.strip()
+        if stripped.startswith("- "):
+            current = {}
+            items.append(current)
+            stripped = stripped[2:]
+        if current is None or ":" not in stripped:
+            return f"not a pointer entry at {line!r}"
+        key, _, value = stripped.partition(":")
+        current[key.strip()] = value.strip()
+
+    if not items:
+        return "`outs:` list is empty"
+    for item in items:
+        if "path" not in item:
+            return "an `outs:` entry has no `path`"
+        if not {"md5", "hash", "etag", "checksum"} & set(item):
+            return "an `outs:` entry has no hash"
+    return None
+
+
+def allowlisted_offenders(
+    entries: list[tuple[Path, str]],
+) -> list[tuple[Path, list[str]]]:
+    """Allowlisted ``data/`` blobs that are not what their name claims.
+
+    Excluding ``data/`` from the content scan is a data-policy requirement,
+    but it means the raw-data allowlist is the only thing standing between a
+    tracked file and Git. That predicate checks the *name*: `.gitkeep`, any
+    `*.dvc`, and the provenance sidecars. So a saved plan committed as
+    ``data/raw/saved.dvc`` or ``data/raw/.gitkeep`` passed every check.
 
     Reading these blobs is a deliberate, narrow exception to the data rule
-    and stays inside it in the way that matters. A pointer is a few hundred
-    bytes of YAML holding an md5, a size and a path -- not citizen data --
-    and it is read precisely to prove that is all it is. Anything at all
-    large is refused on its size alone, via ``git cat-file -s``, so no bulk
-    file under ``data/`` is ever read.
+    and stays inside it in the way that matters. Each is meant to be a marker,
+    a few hundred bytes of pointer YAML, or a provenance sidecar -- not
+    citizen data -- and each is read precisely to prove that is all it is.
+    Size is taken from ``git cat-file -s`` first and anything large is refused
+    unread, so no bulk file under ``data/`` is ever opened.
     """
     offenders: list[tuple[Path, list[str]]] = []
     for path, sha in entries:
         size = blob_size(sha)
-        if size > DVC_POINTER_MAX_BYTES:
-            offenders.append(
-                (path, [f"{size} bytes, far larger than a DVC pointer"])
-            )
+        name = path.name
+
+        if name == ".gitkeep":
+            if size:
+                offenders.append((path, [f"a .gitkeep marker must be empty; {size} bytes"]))
+            continue
+
+        if size > ALLOWLISTED_MAX_BYTES:
+            offenders.append((path, [f"{size} bytes, far larger than {name} should be"]))
             continue
 
         data = blob_bytes(sha)
@@ -215,8 +288,23 @@ def pointer_offenders(entries: list[tuple[Path, str]]) -> list[tuple[Path, list[
                 (path, [f"zip archive containing: {', '.join(members)}"] if members
                  else ["a zip archive, not a pointer"])
             )
-        elif b"outs:" not in data:
-            offenders.append((path, ["no `outs:` key: not a DVC pointer"]))
+            continue
+
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            offenders.append((path, ["not text: cannot be a pointer or sidecar"]))
+            continue
+
+        if name.endswith(".dvc"):
+            problem = dvc_pointer_problem(text)
+            if problem:
+                offenders.append((path, [f"not a DVC pointer: {problem}"]))
+        else:  # provenance sidecar
+            try:
+                json.loads(text)
+            except ValueError as exc:
+                offenders.append((path, [f"not valid JSON: {exc}"]))
     return offenders
 
 
@@ -297,7 +385,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.staged:
         return report(
-            scan_staged() + pointer_offenders(staged_pointer_entries())
+            scan_staged() + allowlisted_offenders(staged_allowlisted_entries())
         )
 
     # Reads blobs, never the worktree: see `tracked_entries`. Nothing here
@@ -309,7 +397,7 @@ def main(argv: list[str] | None = None) -> int:
         if members:
             offenders.append((path, members))
 
-    return report(offenders + pointer_offenders(tracked_pointer_entries()))
+    return report(offenders + allowlisted_offenders(tracked_allowlisted_entries()))
 
 
 def report(offenders: list[tuple[Path, list[str]]]) -> int:
