@@ -54,6 +54,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from check_provenance_sidecars import check_document  # noqa: E402
 
+# The local file header signature. It marks the start of a zip *and* the
+# start of every entry within one, which is why the damaged-archive scan
+# looks for it repeatedly rather than only at offset zero.
 ZIP_MAGIC = b"PK\x03\x04"
 
 # Members the Terraform plan format writes. `tfstate` is the state the plan
@@ -152,7 +155,6 @@ def _plan_members_in(entries: list[tuple[str, bool]]) -> list[str]:
     )
 
 
-LOCAL_HEADER = b"PK\x03\x04"
 # Offsets into a zip local file header: the name length is a two-byte
 # little-endian field at 26, and the name itself begins at 30.
 NAME_LENGTH_OFFSET = 26
@@ -178,7 +180,7 @@ def damaged_plan_members(data: bytes) -> list[str]:
     the declared length separates them, and the format supplies it.
     """
     found: set[str] = set()
-    position = data.find(LOCAL_HEADER)
+    position = data.find(ZIP_MAGIC)
     while position != -1:
         name_end = position + NAME_OFFSET
         if name_end <= len(data):
@@ -194,13 +196,17 @@ def damaged_plan_members(data: bytes) -> list[str]:
                     base = name.rsplit("/", 1)[-1]
                     if base in PLAN_MEMBERS:
                         found.add(base)
-        position = data.find(LOCAL_HEADER, position + 1)
+        position = data.find(ZIP_MAGIC, position + 1)
     return sorted(found)
 
 
 def plan_members_of_blob(data: bytes) -> list[str]:
     """Plan member names in a blob, including one that will not parse."""
-    if not data.startswith(ZIP_MAGIC):
+    # Not `startswith`: a self-extracting archive carries an executable stub
+    # ahead of the first entry, and zipfile opens it regardless -- it finds
+    # the central directory from the end. Gating on offset zero let a plan
+    # with any leading bytes through untouched.
+    if ZIP_MAGIC not in data:
         return []
     entries = _archive_entries(io.BytesIO(data))
     if not entries:
@@ -576,7 +582,7 @@ def allowlisted_offenders(
             continue
 
         data = blob_bytes(sha)
-        if data.startswith(ZIP_MAGIC):
+        if ZIP_MAGIC in data:
             members = plan_members_of_blob(data)
             offenders.append(
                 (path, [f"zip archive containing: {', '.join(members)}"] if members
