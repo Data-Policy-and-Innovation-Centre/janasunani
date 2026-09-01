@@ -275,7 +275,7 @@ def _scalar_problem(key: str, value: str) -> str | None:
     return f"{key!r} has no value rule in this checker"
 
 
-def dvc_pointer_problem(text: str) -> str | None:
+def dvc_pointer_problem(text: str, stem: str | None = None) -> str | None:
     """Why ``text`` is not a DVC pointer, or ``None`` if it is one.
 
     Parsed structurally rather than searched, and closed rather than lenient:
@@ -368,6 +368,16 @@ def dvc_pointer_problem(text: str) -> str | None:
             return "an `outs:` entry has no `path`"
         if not {"md5", "hash", "etag", "checksum"} & set(item):
             return "an `outs:` entry has no hash"
+        # A pointer names the file beside it: `foo.csv.dvc` tracks `foo.csv`.
+        # Tying `path` to the pointer's own stem is what stops the field being
+        # a free string -- a path syntactically fine but carrying citizen
+        # information, `Ram-Kumar-9876543210`, has nowhere to sit, because the
+        # only accepted value is a name the filename already carries and the
+        # naming policy already governs. All 23 pointers in this repository
+        # satisfy it, which is DVC's own convention rather than a rule
+        # invented here.
+        if stem is not None and item["path"] != stem:
+            return "an `outs:` entry does not name the file beside it"
     return None
 
 
@@ -400,7 +410,11 @@ def allowlisted_offenders(
             continue
 
         if size > ALLOWLISTED_MAX_BYTES:
-            offenders.append((path, [f"{size} bytes, far larger than {name} should be"]))
+            # No filename in the reason: report() redacts the path field, and
+            # a name interpolated here would walk straight past that.
+            offenders.append(
+                (path, [f"{size} bytes, over the {ALLOWLISTED_MAX_BYTES}-byte cap"])
+            )
             continue
 
         data = blob_bytes(sha)
@@ -419,7 +433,7 @@ def allowlisted_offenders(
             continue
 
         if name.endswith(".dvc"):
-            problem = dvc_pointer_problem(text)
+            problem = dvc_pointer_problem(text, stem=name[: -len(".dvc")])
             if problem:
                 offenders.append((path, [f"not a DVC pointer: {problem}"]))
         else:  # provenance sidecar
@@ -540,22 +554,43 @@ def in_public_log() -> bool:
     return bool(os.environ.get("GITHUB_ACTIONS") or os.environ.get("CI"))
 
 
+# Directory names DVC and this repository create, which carry no citizen
+# information and are worth keeping in a message so it says where to look.
+SAFE_DATA_DIRS = frozenset({"data", "raw", "external", "clean", "interim", "processed"})
+
+
+def _redact(component: str) -> str:
+    return f"<redacted:{hashlib.sha256(component.encode('utf-8')).hexdigest()[:12]}>"
+
+
 def safe_path(path: Path) -> str:
     """A printable form of ``path``, redacted when the log is public.
 
-    A filename under ``data/`` can itself be the disclosure --
-    ``data/raw/Ram-Kumar-9876543210.dvc`` names a citizen in the path rather
-    than in the contents. In CI the directory and suffix are kept, since they
-    say what kind of file is wrong and where, and the stem becomes a digest of
-    itself so the author can identify it locally without it being published.
+    A path can be the disclosure on its own, in the leaf --
+    ``data/raw/Ram-Kumar-9876543210.dvc`` -- or in a directory above it --
+    ``data/raw/Ram-Kumar-9876543210/file.dvc``. So every component under
+    ``data/`` is redacted unless it is one of the fixed directory names this
+    repository and DVC create, which say where to look and carry nothing.
 
-    Paths outside ``data/`` are printed whole. They are source paths, they are
-    not protected, and a reviewer needs to read them.
+    The leaf keeps its suffix, which says what kind of file is wrong, and the
+    author can recompute `sha256(component)[:12]` locally to identify it.
+
+    Paths outside ``data/`` print whole: they are source paths, they are not
+    protected, and a reviewer has to be able to read them.
     """
     if path.parts[:1] != ("data",) or not in_public_log():
         return str(path)
-    digest = hashlib.sha256(path.name.encode("utf-8")).hexdigest()[:12]
-    return f"{path.parent}/<redacted:{digest}>{path.suffix}"
+
+    parts = []
+    for index, component in enumerate(path.parts):
+        if component in SAFE_DATA_DIRS:
+            parts.append(component)
+            continue
+        if index == len(path.parts) - 1:
+            parts.append(f"{_redact(Path(component).stem)}{Path(component).suffix}")
+        else:
+            parts.append(_redact(component))
+    return "/".join(parts)
 
 
 def report(offenders: list[tuple[Path, list[str]]]) -> int:
@@ -588,9 +623,10 @@ def report(offenders: list[tuple[Path, list[str]]]) -> int:
             "Files under data/ are exempt from the data rules only for what "
             "they are: an empty marker, a DVC pointer, or a provenance "
             "sidecar. Anything else there is refused. Rejected content is "
-            "withheld on purpose, and in CI the filename is shown as "
-            "`sha256(name)[:12]` because a name under data/ can itself be "
-            "the disclosure: these logs are public."
+            "withheld on purpose, and in CI each protected path component is "
+            "shown as `sha256(component)[:12]` -- the leaf keeps its "
+            "suffix -- because a name under data/ can itself be the "
+            "disclosure: these logs are public."
         )
     return 1
 
