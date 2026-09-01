@@ -1483,6 +1483,12 @@ def test_the_accepted_keys_are_the_ones_the_repository_actually_uses():
         ("x_9876_543210.dvc", True),
         ("x.9876.543210.dvc", True),
         ("aadhaar-1234 5678 9012.dvc", True),
+        # Written the way a phone number is printed.
+        ("(987) 654-3210.dvc", True),
+        ("x-(9876)543210.dvc", True),
+        ("a[9876]543210.dvc", True),
+        ("987/654/3210.dvc", True),
+        ("+91 98765 43210.dvc", True),
         # Real names from this repository, which must keep passing.
         ("Dump20250730.sql.dvc", False),
         ("historical_gold_180.jsonl.dvc", False),

@@ -233,7 +233,10 @@ HASH_NAMES = frozenset({"md5", "sha256", "sha1", "etag", "checksum", "crc32"})
 # Aadhaar 12. Measured before choosing the threshold: across all 39 path
 # components in this repository the worst group holds 8 digits, so this
 # refuses the identifier shapes with margin and breaks nothing.
-DIGIT_GROUP = re.compile(r"\d(?:[\d\s._-]*\d)?")
+# The separator class is everything people put *between* digits when they
+# write a number down -- parentheses and slashes included, as in
+# `(987) 654-3210`. Anything not in this class ends the group.
+DIGIT_GROUP = re.compile(r"\d(?:[\d\s._\-()\[\]/+]*\d)?")
 IDENTIFIER_DIGITS = 9
 
 # Shapes that are an identifier whatever field they sit in.
