@@ -1710,8 +1710,45 @@ def test_the_byte_fallback_separates_a_member_from_a_directory():
 
     # A zip stores a directory as an entry whose name ends in `/`. One
     # occurrence not followed by a slash is what distinguishes them, and a
-    # real member's name is followed by the extra field or compressed data.
-    assert damaged_plan_members(b"...tfstate/...") == []
-    assert damaged_plan_members(b"...tfstate{...") == ["tfstate"]
+    # real member's name sits between the header's length fields (NUL here)
+    # and the extra field or compressed data.
+    assert damaged_plan_members(b"\x00tfstate/\x00") == []
+    assert damaged_plan_members(b"\x00tfstate{") == ["tfstate"]
     # Both present: the file member wins.
-    assert damaged_plan_members(b"tfstate/ and tfstate{") == ["tfstate"]
+    assert damaged_plan_members(b"\x00tfstate/ and \x00tfstate{") == ["tfstate"]
+    # A longer name that merely contains the token is not a member.
+    assert damaged_plan_members(b"\x00mytfstate.json\x00") == []
+
+
+# ---------------------------------------------------------------------------
+# Codex P2 on #321: the byte fallback matched a plan token inside a longer
+# name, so `mytfstate.json` in a damaged archive read as a plan.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "member, expected",
+    [
+        # Real plan members, at the root and under a directory.
+        (("tfstate", '{"serial": 1}'), ["tfstate"]),
+        (("plan/tfstate", '{"serial": 1}'), ["tfstate"]),
+        # A directory, and longer names that merely contain the token.
+        (("tfstate/", ""), []),
+        (("mytfstate.json", '{"a": 1}'), []),
+        (("tfstateold", '{"a": 1}'), []),
+        (("backup-tfstate-2", '{"a": 1}'), []),
+    ],
+)
+def test_the_byte_fallback_respects_name_boundaries(member, expected):
+    data = _zip_of(member)
+
+    assert plan_members_of_blob(data[: len(data) - 40]) == expected
+
+
+def test_the_boundary_rule_never_costs_a_real_detection():
+    # The direction that matters: a missed plan is the failure this exists to
+    # prevent. Checked across truncations rather than at one.
+    data = _zip_of(("tfstate", '{"serial": 1, "secret": "acct-123"}'))
+
+    for cut in (10, 20, 30, 40, 50, 60):
+        assert plan_members_of_blob(data[: len(data) - cut]) == ["tfstate"], cut

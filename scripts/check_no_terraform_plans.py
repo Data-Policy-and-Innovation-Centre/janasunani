@@ -152,6 +152,11 @@ def _plan_members_in(entries: list[tuple[str, bool]]) -> list[str]:
     )
 
 
+def _is_name_byte(byte: bytes) -> bool:
+    """Whether ``byte`` could be part of a longer file name."""
+    return byte.isalnum() or byte in {b"_", b"-", b"."}
+
+
 def damaged_plan_members(data: bytes) -> list[str]:
     """Plan member names visible in a zip that will not parse.
 
@@ -177,7 +182,14 @@ def damaged_plan_members(data: bytes) -> list[str]:
             # risking a real plan: its name is followed by the extra field or
             # the compressed data, and every occurrence would have to be a
             # slash for this to miss one.
-            if data[start + len(needle) : start + len(needle) + 1] != b"/":
+            before = data[start - 1 : start] if start else b""
+            after = data[start + len(needle) : start + len(needle) + 1]
+            # Both boundaries, for the same reason. `/` after it means a
+            # directory; a name character before or after it means a longer
+            # name that merely ends or begins with the token, like
+            # `mytfstate` or `tfstateold`. A real entry name is preceded by
+            # the header's length fields, which are not name characters.
+            if after != b"/" and not _is_name_byte(before) and not _is_name_byte(after):
                 found.add(member)
                 break
             start = data.find(needle, start + 1)
