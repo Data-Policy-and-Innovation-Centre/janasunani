@@ -140,7 +140,10 @@ def plan_members_of_blob(data: bytes) -> list[str]:
     return members or damaged_plan_members(data)
 
 
-ALLOWLISTED_MAX_BYTES = 100_000
+# Mirrors MAX_BYTES in scripts/check_provenance_sidecars.py. A per-value
+# cap alone is not a bound: citizen text split across many recognised
+# fields keeps every scalar under the limit while the payload stays large.
+ALLOWLISTED_MAX_BYTES = 16 * 1024
 
 # Mirrors the allowlist in the raw-data step of .github/workflows/data-check.yml.
 # Every name that step lets through must be validated here, or the exemption
@@ -251,6 +254,12 @@ def dvc_pointer_problem(text: str) -> str | None:
     Deliberately hand-rolled: this module is stdlib-only so the hook runs
     before any `uv sync`, and PyYAML is not available to it. Being strict
     about shape is the right trade for a guard that must run everywhere.
+
+    No diagnostic here quotes the file's contents. A rejected line is named
+    by number, and a rejected key by number too whenever the key itself is
+    unrecognised and therefore arbitrary text. Only names already matched
+    against the allowlists are printed. This runs in CI, whose logs are
+    public: reporting the thing you are refusing to publish defeats the gate.
     """
     lines = [line.rstrip() for line in text.splitlines() if line.strip()]
     if not lines:
@@ -260,17 +269,17 @@ def dvc_pointer_problem(text: str) -> str | None:
     current: dict[str, str] | None = None
     list_key: str | None = None
 
-    for line in lines:
+    for number, line in enumerate(lines, start=1):
         stripped = line.strip()
         indented = line[:1].isspace()
 
         if not indented and not stripped.startswith("-"):
             key, sep, value = stripped.partition(":")
             if not sep:
-                return f"not a YAML mapping at {line!r}"
+                return f"line {number}: not a YAML mapping"
             key = key.strip()
             if key not in DVC_TOP_LEVEL_KEYS:
-                return f"unexpected top-level key {key!r}"
+                return f"line {number}: unrecognised top-level key"
             if value.strip() in BLOCK_SCALARS:
                 return f"block scalar not allowed at {key!r}"
             problem = _scalar_problem(key, value.strip())
@@ -281,7 +290,7 @@ def dvc_pointer_problem(text: str) -> str | None:
             continue
 
         if list_key is None:
-            return f"unexpected content at {line!r}"
+            return f"line {number}: unexpected content"
 
         if stripped.startswith("- "):
             current = {}
@@ -289,17 +298,17 @@ def dvc_pointer_problem(text: str) -> str | None:
                 items.append(current)
             stripped = stripped[2:]
         elif stripped.startswith("-"):
-            return f"malformed list item at {line!r}"
+            return f"line {number}: malformed list item"
 
         if current is None:
-            return f"unexpected content at {line!r}"
+            return f"line {number}: unexpected content"
 
         key, sep, value = stripped.partition(":")
         if not sep:
-            return f"not a key at {line!r}"
+            return f"line {number}: not a key"
         key = key.strip()
         if key not in DVC_ENTRY_KEYS:
-            return f"unexpected key {key!r} in an entry"
+            return f"line {number}: unrecognised key in an `outs:` entry"
         if value.strip() in BLOCK_SCALARS:
             return f"block scalar not allowed at {key!r}"
         problem = _scalar_problem(key, value.strip())
