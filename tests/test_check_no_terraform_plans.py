@@ -10,6 +10,7 @@ cannot see.
 from __future__ import annotations
 
 import io
+import json
 import os
 import subprocess
 import sys
@@ -41,6 +42,9 @@ def plan_members(path: Path) -> list[str]:
     return plan_members_of_blob(path.read_bytes())
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "check_no_terraform_plans.py"
+
+# A real-shaped md5: the value rules require one.
+_MD5 = "d41d8cd98f00b204e9800998ecf8427e"
 
 
 def _plan_archive(path: Path, members: tuple[str, ...] = ("tfstate", "tfplan")) -> Path:
@@ -973,3 +977,72 @@ def test_a_sidecar_path_with_a_space_is_still_checked(tmp_path):
     assert "my sidecar.provenance.json" in (result.stdout + result.stderr)
 
 
+
+
+# ---------------------------------------------------------------------------
+# Codex on #321, final pair: `path` was the last field prose could sit in, and
+# calling check_payload directly skipped the owning checker's path-aware
+# normalisation for the legacy root sidecar.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text, expected_ok",
+    [
+        (f"outs:\n- md5: {_MD5}\n  path: data/raw/thing.parquet\n", True),
+        (f"outs:\n- md5: {_MD5}\n  path: thing\n  remote: myremote\n", True),
+        # Prose has spaces; a path does not need them.
+        (f"outs:\n- md5: {_MD5}\n  path: Ram Kumar 9876543210\n", False),
+        (f"outs:\n- md5: {_MD5}\n  path: thing\n  remote: Ram Kumar 987\n", False),
+        (f"outs:\n- md5: {_MD5}\n  wdir: Ram Kumar 987\n  path: thing\n", False),
+    ],
+)
+def test_paths_are_typed_not_merely_capped(text, expected_ok):
+    assert (dvc_pointer_problem(text) is None) is expected_ok
+
+
+def _legacy_root_payload() -> dict:
+    """The valid PII-rederived sidecar, minus its `schema_version`.
+
+    That is the legacy root shape `check_document` deliberately accepts.
+    Loaded from the sidecar checker's own fixture so this cannot drift.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_sidecar_tests", Path(__file__).with_name("test_check_provenance_sidecars.py")
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    payload = dict(module.VALID)
+    payload.pop("schema_version")
+    return payload
+
+
+def test_the_legacy_root_sidecar_is_still_accepted(tmp_path, monkeypatch):
+    # Regression: calling check_payload directly reported "unrecognized
+    # provenance schema_version" for a file the owning checker accepts.
+    repo = _repo(tmp_path)
+    (repo / "data" / "external").mkdir(parents=True)
+    (repo / "data" / "external" / "provenance.json").write_text(
+        json.dumps(_legacy_root_payload())
+    )
+    _git(repo, "add", "-f", "data/external/provenance.json")
+    _git(repo, "commit", "-qm", "legacy")
+
+    monkeypatch.chdir(repo)
+    assert main() == 0
+
+
+def test_a_nested_sidecar_still_needs_its_schema_version(tmp_path, monkeypatch):
+    # The other half of the same path-aware rule: only the root is exempt.
+    repo = _repo(tmp_path)
+    (repo / "data" / "external" / "thing").mkdir(parents=True)
+    (repo / "data" / "external" / "thing" / "provenance.json").write_text(
+        json.dumps(_legacy_root_payload())
+    )
+    _git(repo, "add", "-f", "data/external/thing/provenance.json")
+    _git(repo, "commit", "-qm", "nested")
+
+    monkeypatch.chdir(repo)
+    assert main() == 1

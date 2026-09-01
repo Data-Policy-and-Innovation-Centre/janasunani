@@ -50,7 +50,7 @@ import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from check_provenance_sidecars import check_payload  # noqa: E402
+from check_provenance_sidecars import check_document  # noqa: E402
 
 ZIP_MAGIC = b"PK\x03\x04"
 
@@ -189,6 +189,7 @@ HEXISH = re.compile(r"\A[0-9a-fA-F]{8,64}(\.dir)?\Z")
 TOKEN = re.compile(r"\A[A-Za-z0-9_.-]{1,64}\Z")
 INTEGER = re.compile(r"\A[0-9]{1,20}\Z")
 BOOLEAN = frozenset({"true", "false", "True", "False"})
+PATHISH = re.compile(r"\A[A-Za-z0-9._][A-Za-z0-9._/@+-]*\Z")
 MAX_PATH = 255
 BLOCK_SCALARS = frozenset({"|", ">", "|-", ">-", "|+", ">+"})
 
@@ -261,10 +262,15 @@ def _scalar_problem(key: str, value: str) -> str | None:
         return None if INTEGER.match(value) else f"{key!r} is not an integer"
     if key in {"isexec", "cache", "persist", "push", "frozen"}:
         return None if value in BOOLEAN else f"{key!r} is not a boolean"
-    if key in {"path", "wdir", "remote"}:
+    if key == "remote":
+        return None if TOKEN.match(value) else f"{key!r} is not a remote name"
+    if key in {"path", "wdir"}:
         if len(value) > MAX_PATH:
             return f"{key!r} is {len(value)} characters, over the {MAX_PATH} cap"
-        return None
+        # Typed, not merely capped. A path is the last field in which prose
+        # could sit, and prose has spaces: `path: Ram Kumar 9876543210` is
+        # under any length cap and is not a path.
+        return None if PATHISH.match(value) else f"{key!r} is not a path"
 
     if len(value) > MAX_SCALAR:
         return f"{key!r} is {len(value)} characters, over the {MAX_SCALAR} cap"
@@ -416,7 +422,9 @@ def allowlisted_offenders(
                 # public CI logs, so only the fact is reported.
                 offenders.append((path, ["not valid JSON"]))
                 continue
-            problems = check_payload(payload)
+            # Path-aware: the legacy root sidecar is allowed to carry no
+            # `schema_version`, and only check_document knows that.
+            problems = check_document(path, payload)
             if problems:
                 offenders.append((path, problems))
     return offenders
