@@ -4,7 +4,9 @@ set -eu
 # Block local-only state and secret files before they enter Git history.
 # Keep this in sync with .github/workflows/data-check.yml.
 bad_files="$(
-  git diff --cached --name-only --diff-filter=ACMR |
+  # ACMRT, not ACMR: replacing a tracked file with a symlink stages as a
+  # type change (T), which ACMR does not select.
+  git diff --cached --name-only --diff-filter=ACMRT |
     grep -E '(^|/)(terraform\.tfstate(\..*)?|terraform\.tfvars|.*\.auto\.tfvars|.*\.tfplan|\.env|.*\.pem|id_rsa|id_ed25519)$' |
     grep -Ev '(^|/)\.env\.example$|(^|/)terraform\.tfvars\.example$' || true
 )"
