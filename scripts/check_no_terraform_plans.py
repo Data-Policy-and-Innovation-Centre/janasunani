@@ -14,7 +14,13 @@ one step later: `-out` takes an arbitrary filename and Terraform's own
 documentation uses `terraform plan -out=tfplan`, with no suffix at all. A
 suffix list can only ever cover the names someone thought of.
 
-So this looks at the bytes. Every tracked file that begins with the zip local
+So this looks at the bytes -- and at the bytes *git* holds, not the
+worktree's. Reading the worktree made the tracked path an untrusted mapping
+to content: a symlink, a symlinked ancestor and a hard link each reached
+`data/` through it, and each fix was a new way to police the filesystem. A
+hard link ends that approach, being an ordinary directory entry no open-time
+flag can distinguish. Blobs are also the more correct object to test, since
+what matters is whether an archive is *in git*. Every tracked file that begins with the zip local
 header is opened and its entry names are checked for the members a plan
 archive carries. That is name-independent: `tfplan`, `plan.out`, `foo.bin` and
 a plan with no extension are all caught, and a .pptx or .xlsx (also zips) is
@@ -36,7 +42,6 @@ from __future__ import annotations
 
 import argparse
 import io
-import os
 import subprocess
 import sys
 import zipfile
@@ -52,71 +57,49 @@ ZIP_MAGIC = b"PK\x03\x04"
 PLAN_MEMBERS = frozenset({"tfstate", "tfstate-prev", "tfplan"})
 
 
-def tracked_files() -> list[Path]:
-    """Tracked paths, excluding ``data/``.
+def tracked_entries() -> list[tuple[Path, str]]:
+    """``(path, blob_sha)`` for every tracked regular file outside ``data/``.
 
-    The exclusion is a data-policy requirement, not an optimisation. AGENTS.md
-    forbids listing or reading anything under ``data/`` without explicit
-    per-path permission, and this check opens every file it is handed. Nothing
-    is lost by skipping it: the workflow step immediately before this one
-    already rejects any tracked file under ``data/`` that is not a ``.dvc``
-    pointer, a ``.gitkeep`` or a provenance sidecar, so a plan archive hidden
-    there fails the build one step earlier and never reaches this scan.
+    The scan reads git objects rather than the worktree. Four separate
+    findings on this PR -- a symlink at the final component, a symlink at an
+    ancestor, the stat prefilters in front of the open, and a hard link --
+    were all the same defect: the worktree is an untrusted mapping from
+    tracked path to bytes, and every fix was a new way to police it. A hard
+    link ends that approach, because it is an ordinary directory entry that
+    no open-time flag can distinguish.
+
+    The blob is also the more correct object to test. What matters is whether
+    a plan archive is *in git*, and the worktree copy can differ from it or
+    be absent entirely.
     """
-    out = subprocess.run(
-        ["git", "ls-files", "-z", "--", ".", ":(exclude)data/**"],
+    listing = subprocess.run(
+        ["git", "ls-files", "-s", "-z", "--", ".", ":(exclude)data/**"],
         check=True,
         capture_output=True,
     ).stdout
-    return [Path(name) for name in out.decode("utf-8").split("\0") if name]
+    return _parse_ls_files(listing)
 
 
-def _open_nofollow(path: Path) -> int | None:
-    """Open ``path`` for reading, refusing a symlink at *any* component.
+def _parse_ls_files(listing: bytes) -> list[tuple[Path, str]]:
+    """``(path, sha)`` from ``git ls-files -s -z`` output, regular files only.
 
-    ``Path.is_symlink()`` only describes the final component, so it does not
-    see an ancestor that has been replaced by a link: with the index still
-    listing ``public/payload`` and the worktree holding ``public -> data``,
-    ``public/payload`` is not a symlink and opening it reads ``data/payload``
-    straight through the ``:(exclude)data/**`` pathspec.
-
-    Walking the components with ``O_NOFOLLOW`` closes that, and closes it
-    without a race: each directory is opened relative to the previous one, so
-    there is no window between deciding a path is safe and opening it.
+    Symlink (120000) and gitlink (160000) entries are dropped: git stores a
+    link's text rather than its target's bytes, so a link is never itself the
+    archive, and a submodule has no blob here.
     """
-    parts = path.parts
-    if not parts:
-        return None
-    if path.is_absolute():
-        start, parts = parts[0], parts[1:]
-    else:
-        start = "."
-    if not parts:
-        return None
-
-    try:
-        dir_fd = os.open(start, os.O_RDONLY | os.O_DIRECTORY)
-    except OSError:
-        return None
-
-    try:
-        for component in parts[:-1]:
-            try:
-                nxt = os.open(
-                    component,
-                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-                    dir_fd=dir_fd,
-                )
-            except OSError:
-                return None
-            os.close(dir_fd)
-            dir_fd = nxt
-        try:
-            return os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
-        except OSError:
-            return None
-    finally:
-        os.close(dir_fd)
+    entries: list[tuple[Path, str]] = []
+    for record in listing.decode("utf-8").split("\0"):
+        if not record:
+            continue
+        meta, _, name = record.partition("\t")
+        fields = meta.split()
+        if len(fields) < 2:
+            continue
+        mode, sha = fields[0], fields[1]
+        if mode in {"120000", "160000"}:
+            continue
+        entries.append((Path(name), sha))
+    return entries
 
 
 def _members_of(source: Path | io.BytesIO | io.BufferedReader) -> list[str]:
@@ -125,40 +108,35 @@ def _members_of(source: Path | io.BytesIO | io.BufferedReader) -> list[str]:
         with zipfile.ZipFile(source) as archive:
             names = archive.namelist()
     except (zipfile.BadZipFile, OSError):
-        # Starts like a zip and will not open as one. Not a plan we can
-        # confirm, and not something this check should fail the build over —
-        # the suffix patterns in the workflow still cover the obvious names.
         return []
 
     return sorted({name for name in names if Path(name).name in PLAN_MEMBERS})
 
 
-def plan_members(path: Path) -> list[str]:
-    """Entry names identifying ``path`` as a Terraform plan archive, if any.
+def damaged_plan_members(data: bytes) -> list[str]:
+    """Plan member names visible in a zip that will not parse.
 
-    Opened through :func:`_open_nofollow`, so a symlink anywhere in the path
-    yields no members rather than a read of whatever it points at.
+    A truncated or otherwise damaged plan still carries its secrets: the
+    tfstate entry is in the archive whether or not the central directory
+    survives. Treating an unparseable zip as clean therefore lets exactly the
+    file this check exists to stop through, and truncation is not an exotic
+    accident -- an interrupted `terraform plan -out` produces one.
+
+    Zip stores each member's name uncompressed in its local file header, so
+    the names are still present as literal bytes even when the archive cannot
+    be opened.
     """
-    fd = _open_nofollow(path)
-    if fd is None:
-        return []
-
-    try:
-        with os.fdopen(fd, "rb") as handle:
-            if handle.read(4) != ZIP_MAGIC:
-                return []
-            handle.seek(0)
-            return _members_of(handle)
-    except OSError:
-        # Directories and unreadable entries land here; neither is an archive.
-        return []
+    return sorted(
+        {name for name in PLAN_MEMBERS if name.encode("utf-8") in data}
+    )
 
 
 def plan_members_of_blob(data: bytes) -> list[str]:
-    """Same test as :func:`plan_members`, against bytes read from the index."""
+    """Plan member names in a blob, including one that will not parse."""
     if not data.startswith(ZIP_MAGIC):
         return []
-    return _members_of(io.BytesIO(data))
+    members = _members_of(io.BytesIO(data))
+    return members or damaged_plan_members(data)
 
 
 def staged_entries() -> list[tuple[Path, str]]:
@@ -197,19 +175,7 @@ def staged_entries() -> list[tuple[Path, str]]:
         capture_output=True,
     ).stdout
 
-    entries: list[tuple[Path, str]] = []
-    for record in listing.decode("utf-8").split("\0"):
-        if not record:
-            continue
-        meta, _, name = record.partition("\t")
-        fields = meta.split()
-        if len(fields) < 2:
-            continue
-        mode, sha = fields[0], fields[1]
-        if mode in {"120000", "160000"}:
-            continue
-        entries.append((Path(name), sha))
-    return entries
+    return _parse_ls_files(listing)
 
 
 def blob_bytes(sha: str) -> bytes:
@@ -252,18 +218,12 @@ def main(argv: list[str] | None = None) -> int:
         offenders = scan_staged()
         return report(offenders)
 
+    # Reads blobs, never the worktree: see `tracked_entries`. Nothing here
+    # opens or stats a path, so a symlink, a symlinked ancestor and a hard
+    # link into data/ are all equally irrelevant.
     offenders: list[tuple[Path, list[str]]] = []
-    for path in tracked_files():
-        # No `is_symlink()`/`is_file()` prefilter here, deliberately. Both
-        # stat through a symlinked ancestor -- `lstat("public/payload")` and
-        # `stat("public/payload")` on the `public -> data` case -- and
-        # AGENTS.md forbids inspecting metadata under data/, not merely
-        # reading it. `_open_nofollow` is the only gate, and it never stats:
-        # it opens each component with O_NOFOLLOW and fails closed. The cases
-        # the prefilters used to cover still resolve correctly -- a directory
-        # or submodule entry opens but is not a zip, and a broken or
-        # symlinked path fails to open at all.
-        members = plan_members(path)
+    for path, sha in tracked_entries():
+        members = plan_members_of_blob(blob_bytes(sha))
         if members:
             offenders.append((path, members))
 
