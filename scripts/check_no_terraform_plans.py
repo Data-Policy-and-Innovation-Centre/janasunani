@@ -139,6 +139,87 @@ def plan_members_of_blob(data: bytes) -> list[str]:
     return members or damaged_plan_members(data)
 
 
+DVC_POINTER_MAX_BYTES = 100_000
+POINTER_PATHSPEC = "data/**/*.dvc"
+
+
+def tracked_pointer_entries() -> list[tuple[Path, str]]:
+    """``(path, sha)`` for tracked ``.dvc`` files under ``data/``."""
+    listing = subprocess.run(
+        ["git", "ls-files", "-s", "-z", "--", POINTER_PATHSPEC],
+        check=True,
+        capture_output=True,
+    ).stdout
+    return _parse_ls_files(listing)
+
+
+def staged_pointer_entries() -> list[tuple[Path, str]]:
+    """The same, restricted to what is staged for the next commit."""
+    changed = subprocess.run(
+        [
+            "git", "diff", "--cached", "--name-only", "-z",
+            "--diff-filter=ACMR", "--", POINTER_PATHSPEC,
+        ],
+        check=True,
+        capture_output=True,
+    ).stdout
+    paths = [name for name in changed.decode("utf-8").split("\0") if name]
+    if not paths:
+        return []
+    listing = subprocess.run(
+        ["git", "--literal-pathspecs", "ls-files", "-s", "-z", "--", *paths],
+        check=True,
+        capture_output=True,
+    ).stdout
+    return _parse_ls_files(listing)
+
+
+def blob_size(sha: str) -> int:
+    """Size of a blob, without reading it."""
+    out = subprocess.run(
+        ["git", "cat-file", "-s", sha], check=True, capture_output=True
+    ).stdout
+    return int(out.decode("utf-8").strip())
+
+
+def pointer_offenders(entries: list[tuple[Path, str]]) -> list[tuple[Path, list[str]]]:
+    """``.dvc`` paths under ``data/`` that are not DVC pointers.
+
+    The exclusion that keeps this scan out of ``data/`` left a hole, because
+    the allowlist in ``data-check.yml`` accepts *any* name ending ``.dvc``
+    without checking what it is, and ``.gitignore`` un-ignores
+    ``data/raw/*.dvc``. A saved plan committed as ``data/raw/saved.dvc``
+    therefore passed the raw-data predicate and the content scan alike, and
+    carried the account id and SSH ingress CIDRs into history.
+
+    Reading these blobs is a deliberate, narrow exception to the data rule
+    and stays inside it in the way that matters. A pointer is a few hundred
+    bytes of YAML holding an md5, a size and a path -- not citizen data --
+    and it is read precisely to prove that is all it is. Anything at all
+    large is refused on its size alone, via ``git cat-file -s``, so no bulk
+    file under ``data/`` is ever read.
+    """
+    offenders: list[tuple[Path, list[str]]] = []
+    for path, sha in entries:
+        size = blob_size(sha)
+        if size > DVC_POINTER_MAX_BYTES:
+            offenders.append(
+                (path, [f"{size} bytes, far larger than a DVC pointer"])
+            )
+            continue
+
+        data = blob_bytes(sha)
+        if data.startswith(ZIP_MAGIC):
+            members = plan_members_of_blob(data)
+            offenders.append(
+                (path, [f"zip archive containing: {', '.join(members)}"] if members
+                 else ["a zip archive, not a pointer"])
+            )
+        elif b"outs:" not in data:
+            offenders.append((path, ["no `outs:` key: not a DVC pointer"]))
+    return offenders
+
+
 def staged_entries() -> list[tuple[Path, str]]:
     """``(path, blob_sha)`` for each regular file staged for commit.
 
@@ -215,8 +296,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv or [])
 
     if args.staged:
-        offenders = scan_staged()
-        return report(offenders)
+        return report(
+            scan_staged() + pointer_offenders(staged_pointer_entries())
+        )
 
     # Reads blobs, never the worktree: see `tracked_entries`. Nothing here
     # opens or stats a path, so a symlink, a symlinked ancestor and a hard
@@ -227,14 +309,14 @@ def main(argv: list[str] | None = None) -> int:
         if members:
             offenders.append((path, members))
 
-    return report(offenders)
+    return report(offenders + pointer_offenders(tracked_pointer_entries()))
 
 
 def report(offenders: list[tuple[Path, list[str]]]) -> int:
     if not offenders:
         return 0
 
-    print("The following files are Terraform plan archives:")
+    print("The following tracked files must not be in Git:")
     for path, members in offenders:
         print(f"  {path}  (contains: {', '.join(members)})")
     print()
