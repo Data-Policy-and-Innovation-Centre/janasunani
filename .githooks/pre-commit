@@ -58,9 +58,12 @@ if [ -n "$staged_sidecars" ]; then
   done
   # Run from inside the temp tree and pass relative paths, so a rejection
   # names `data/external/...` as the author sees it rather than a temp path.
-  copies="$(cd "$tmpdir" && find . -type f | sed 's|^\./||')"
-  if [ -n "$copies" ]; then
-    # shellcheck disable=SC2086
-    (cd "$tmpdir" && python3 "$root/scripts/check_provenance_sidecars.py" $copies)
-  fi
+  # NUL-delimited through xargs rather than an unquoted variable: a sidecar
+  # path containing a space or a glob character would otherwise be split into
+  # several arguments and the real file never checked.
+  (
+    cd "$tmpdir" || exit 1
+    find . -type f -print0 |
+      xargs -0 python3 "$root/scripts/check_provenance_sidecars.py"
+  )
 fi
