@@ -23,6 +23,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.check_no_terraform_plans import (  # noqa: E402
     _members_of,
     main,
+    pointer_offenders,
+    tracked_pointer_entries,
     plan_members_of_blob,
     tracked_entries,
 )
@@ -568,3 +570,78 @@ def test_pre_commit_matches_the_workflow_filename_patterns():
     for pattern in ("terraform\\.tfstate", "terraform\\.tfvars", "\\.tfplan", "\\.pem"):
         assert pattern in hook, pattern
         assert pattern in workflow, pattern
+
+
+# ---------------------------------------------------------------------------
+# Codex P1 on #321: excluding data/ from the content scan left a hole, because
+# the raw-data allowlist accepts any name ending `.dvc` without checking what
+# it is, and .gitignore un-ignores data/raw/*.dvc.
+# ---------------------------------------------------------------------------
+
+
+def _pointer(path: Path) -> Path:
+    path.write_text("outs:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: thing\n")
+    return path
+
+
+def test_a_plan_committed_as_a_dvc_pointer_is_caught(tmp_path, monkeypatch):
+    # Reproduced on 5d266b1: this file passed the workflow's raw-data
+    # predicate and the content scan alike, carrying account id and SSH
+    # ingress CIDRs into history.
+    repo = _repo(tmp_path)
+    (repo / "data" / "raw").mkdir(parents=True)
+    _plan_archive(repo / "data" / "raw" / "saved.dvc", ("tfstate",))
+    _git(repo, "add", "-f", "data/raw/saved.dvc")
+    _git(repo, "commit", "-qm", "pointer")
+
+    monkeypatch.chdir(repo)
+    assert main() == 1
+
+
+def test_the_same_file_is_refused_before_the_commit(tmp_path):
+    repo = _repo(tmp_path)
+    (repo / "data" / "raw").mkdir(parents=True)
+    _plan_archive(repo / "data" / "raw" / "saved.dvc", ("tfstate",))
+    _git(repo, "add", "-f", "data/raw/saved.dvc")
+
+    result = _run_staged(repo)
+
+    assert result.returncode == 1
+    assert "saved.dvc" in result.stdout
+
+
+def test_a_genuine_pointer_passes(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    (repo / "data" / "raw").mkdir(parents=True)
+    _pointer(repo / "data" / "raw" / "thing.dvc")
+    _git(repo, "add", "-f", "data/raw/thing.dvc")
+    _git(repo, "commit", "-qm", "pointer")
+
+    monkeypatch.chdir(repo)
+    assert main() == 0
+    assert pointer_offenders(tracked_pointer_entries()) == []
+
+
+def test_a_file_too_large_to_be_a_pointer_is_refused_unread(tmp_path, monkeypatch):
+    # Refused on `git cat-file -s` alone, so no bulk file under data/ is read.
+    repo = _repo(tmp_path)
+    (repo / "data" / "raw").mkdir(parents=True)
+    (repo / "data" / "raw" / "big.dvc").write_bytes(b"outs:\n" + b"x" * 200_000)
+    _git(repo, "add", "-f", "data/raw/big.dvc")
+    _git(repo, "commit", "-qm", "big")
+
+    monkeypatch.chdir(repo)
+    offenders = pointer_offenders(tracked_pointer_entries())
+    assert [str(p) for p, _ in offenders] == ["data/raw/big.dvc"]
+    assert "larger than a DVC pointer" in offenders[0][1][0]
+
+
+def test_a_dvc_name_holding_something_else_entirely_is_refused(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    (repo / "data" / "raw").mkdir(parents=True)
+    (repo / "data" / "raw" / "notes.dvc").write_text("just some text\n")
+    _git(repo, "add", "-f", "data/raw/notes.dvc")
+    _git(repo, "commit", "-qm", "notes")
+
+    monkeypatch.chdir(repo)
+    assert main() == 1
