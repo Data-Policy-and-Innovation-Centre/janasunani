@@ -29,41 +29,13 @@ fi
 # direction for a check whose job is to stop secrets entering history.
 python3 "$(git rev-parse --show-toplevel)/scripts/check_no_terraform_plans.py" --staged
 
-# Provenance sidecars, against the schema rather than against JSON syntax.
-# `scripts/check_provenance_sidecars.py` is the owner of that schema -- an
-# allowlist of keys with a 200-character scalar cap -- and CI already runs it.
-# Without this the hook only knew the file parsed, so citizen text staged as
-# valid JSON at an allowlisted name was committed and rejected only after the
-# push.
+# Provenance sidecars are checked by the same call. `--staged` validates every
+# blob the data allowlist exempts -- markers, DVC pointers and sidecars -- and
+# hands sidecar payloads to `check_provenance_sidecars.check_payload`, the
+# module that owns that schema and that CI already runs.
 #
-# The staged blob is checked, not the worktree file: those differ once a file
-# is staged and then edited, and the blob is what gets committed.
-root="$(git rev-parse --show-toplevel)"
-staged_sidecars="$(
-  git diff --cached --name-only -z --diff-filter=ACMR -- \
-    'data/external/provenance.json' \
-    'data/external/**/provenance.json' \
-    'data/external/*.provenance.json' \
-    'data/external/**/*.provenance.json' |
-    tr '\0' '\n'
-)"
-if [ -n "$staged_sidecars" ]; then
-  tmpdir="$(mktemp -d)"
-  trap 'rm -rf "$tmpdir"' EXIT
-  copies=""
-  printf '%s\n' "$staged_sidecars" | while IFS= read -r path; do
-    [ -n "$path" ] || continue
-    mkdir -p "$tmpdir/$(dirname "$path")"
-    git cat-file blob ":$path" > "$tmpdir/$path"
-  done
-  # Run from inside the temp tree and pass relative paths, so a rejection
-  # names `data/external/...` as the author sees it rather than a temp path.
-  # NUL-delimited through xargs rather than an unquoted variable: a sidecar
-  # path containing a space or a glob character would otherwise be split into
-  # several arguments and the real file never checked.
-  (
-    cd "$tmpdir" || exit 1
-    find . -type f -print0 |
-      xargs -0 python3 "$root/scripts/check_provenance_sidecars.py"
-  )
-fi
+# Deliberately one Python call rather than a shell pipeline assembling paths.
+# The previous version copied staged blobs in `sh` and could not carry a
+# filename containing a newline through `tr`, which failed by checking nothing
+# and passing. Python reads the NUL-delimited list itself, so no filename can
+# be split.

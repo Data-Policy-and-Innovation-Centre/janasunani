@@ -43,10 +43,14 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import re
 import subprocess
 import sys
 import zipfile
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from check_provenance_sidecars import check_payload  # noqa: E402
 
 ZIP_MAGIC = b"PK\x03\x04"
 
@@ -168,14 +172,24 @@ ALLOWLIST_PATHSPECS = (
 # unrecognised content in an allowlisted file is the whole hazard: a pointer
 # is exempt from the data rules because of what it is, so anything that is not
 # that has to be refused rather than ignored.
-DVC_TOP_LEVEL_KEYS = frozenset(
-    {"outs", "deps", "cmd", "wdir", "md5", "frozen", "meta", "desc",
-     "params", "always_changed", "stage"}
-)
+# A pointer needs none of DVC's free-text fields, and a per-value length cap
+# cannot tell short citizen text from a legitimate description. So `desc`,
+# `meta` and `cmd` are not accepted here at all: there is no field in which
+# arbitrary prose is allowed, which is a stronger statement than any cap. A
+# real pointer needing one fails loudly and a person decides.
+DVC_TOP_LEVEL_KEYS = frozenset({"outs", "deps", "wdir", "md5", "frozen"})
 DVC_ENTRY_KEYS = frozenset(
     {"md5", "hash", "etag", "checksum", "path", "size", "nfiles", "isexec",
-     "remote", "cache", "persist", "desc", "files", "push"}
+     "remote", "cache", "persist", "push", "files"}
 )
+
+# Every accepted value has a shape. Checked by pattern, so a field cannot be
+# used as a container for something else.
+HEXISH = re.compile(r"\A[0-9a-fA-F]{8,64}(\.dir)?\Z")
+TOKEN = re.compile(r"\A[A-Za-z0-9_.-]{1,64}\Z")
+INTEGER = re.compile(r"\A[0-9]{1,20}\Z")
+BOOLEAN = frozenset({"true", "false", "True", "False"})
+MAX_PATH = 255
 BLOCK_SCALARS = frozenset({"|", ">", "|-", ">-", "|+", ">+"})
 
 # Mirrors MAX_STRING in scripts/check_provenance_sidecars.py, and for the
@@ -236,10 +250,24 @@ def _scalar_problem(key: str, value: str) -> str | None:
     length only -- never by content, since this runs in CI whose logs are
     public.
     """
-    if len(value) > MAX_SCALAR:
-        return f"{key!r} is {len(value)} characters, over the {MAX_SCALAR} cap"
     if any(ord(ch) < 32 for ch in value):
         return f"{key!r} contains control characters"
+
+    if key in {"md5", "etag", "checksum"}:
+        return None if HEXISH.match(value) else f"{key!r} is not a checksum"
+    if key == "hash":
+        return None if TOKEN.match(value) else f"{key!r} is not a hash name"
+    if key in {"size", "nfiles"}:
+        return None if INTEGER.match(value) else f"{key!r} is not an integer"
+    if key in {"isexec", "cache", "persist", "push", "frozen"}:
+        return None if value in BOOLEAN else f"{key!r} is not a boolean"
+    if key in {"path", "wdir", "remote"}:
+        if len(value) > MAX_PATH:
+            return f"{key!r} is {len(value)} characters, over the {MAX_PATH} cap"
+        return None
+
+    if len(value) > MAX_SCALAR:
+        return f"{key!r} is {len(value)} characters, over the {MAX_SCALAR} cap"
     return None
 
 
@@ -382,9 +410,15 @@ def allowlisted_offenders(
                 offenders.append((path, [f"not a DVC pointer: {problem}"]))
         else:  # provenance sidecar
             try:
-                json.loads(text)
-            except ValueError as exc:
-                offenders.append((path, [f"not valid JSON: {exc}"]))
+                payload = json.loads(text)
+            except ValueError:
+                # The exception text quotes the document; this prints to
+                # public CI logs, so only the fact is reported.
+                offenders.append((path, ["not valid JSON"]))
+                continue
+            problems = check_payload(payload)
+            if problems:
+                offenders.append((path, problems))
     return offenders
 
 
@@ -485,17 +519,33 @@ def report(offenders: list[tuple[Path, list[str]]]) -> int:
         return 0
 
     print("The following tracked files must not be in Git:")
-    for path, members in offenders:
-        print(f"  {path}  (contains: {', '.join(members)})")
+    for path, reasons in offenders:
+        print(f"  {path}  ({', '.join(reasons)})")
     print()
-    print(
-        "A saved plan is a zip containing the state it was planned against, "
-        "so it carries the account id, instance and subnet ids, SSH ingress "
-        "CIDRs and the operator public key. Terraform state stays local "
-        "(docs/DEPLOY.md). Detected by content, not by filename, because "
-        "`-out` takes any name — `terraform plan -out=tfplan` has no suffix "
-        "to match on."
+
+    # Say why, or the next person deletes the file and saves it elsewhere.
+    # The two rationales are different, so print the one that applies.
+    looks_like_plan = any(
+        reason in PLAN_MEMBERS or "zip archive" in reason
+        for _path, reasons in offenders
+        for reason in reasons
     )
+    if looks_like_plan:
+        print(
+            "A saved plan is a zip containing the state it was planned "
+            "against, so it carries the account id, instance and subnet ids, "
+            "SSH ingress CIDRs and the operator public key. Terraform state "
+            "stays local (docs/DEPLOY.md). Detected by content, not by "
+            "filename, because `-out` takes any name — `terraform plan "
+            "-out=tfplan` has no suffix to match on."
+        )
+    if any(str(path).startswith("data/") for path, _reasons in offenders):
+        print(
+            "Files under data/ are exempt from the data rules only for what "
+            "they are: an empty marker, a DVC pointer, or a provenance "
+            "sidecar. Anything else there is refused. Rejected content is "
+            "withheld on purpose: these logs are public."
+        )
     return 1
 
 
