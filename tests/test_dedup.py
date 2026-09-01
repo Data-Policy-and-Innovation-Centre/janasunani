@@ -712,3 +712,143 @@ class TestGroupingScopeId:
     def test_a_blank_grouping_version_is_refused(self):
         with pytest.raises(ValueError, match="non-blank grouping version"):
             self._scope(version="   ")
+
+
+class TestMobileIdentityKeyUnderMasking:
+    """#341. `petitioner_mobile` arrives masked: zero of 1,359,804
+    identity-keyed signatures in the corpus had a phone-shaped value, and
+    `identity_key`'s trim-and-lowercase fallback turned every mask into a
+    valid-looking identity. The value ``'~::~'`` alone covered 201,965
+    signatures across 136,779 distinct petitioner names.
+    """
+
+    SALT = "a-real-salt"
+
+    def test_a_real_number_keys_exactly_as_before(self):
+        """Unmasked records must keep linking across this change, so the
+        canonical path stays byte-identical to `identity_key`."""
+        from janasunani.pipeline.dedup import identity_key, mobile_identity_key
+
+        assert mobile_identity_key(MOBILE_ASCII, "Ranjan Kumar", self.SALT) == identity_key(
+            MOBILE_ASCII, self.SALT
+        )
+
+    def test_a_real_number_ignores_the_name(self):
+        """The full subscriber number is the identity; the name is only ever
+        a fallback fragment."""
+        from janasunani.pipeline.dedup import mobile_identity_key
+
+        assert mobile_identity_key(MOBILE_ASCII, "Ranjan Kumar", self.SALT) == (
+            mobile_identity_key(MOBILE_ASCII, "Someone Else", self.SALT)
+        )
+
+    def test_the_null_sentinel_abstains(self):
+        """`'~::~'` carries no digits. It is not an identity -- its 201,965
+        signatures span 136,779 distinct names, i.e. 'no mobile recorded'."""
+        from janasunani.pipeline.dedup import mobile_identity_key
+
+        assert mobile_identity_key("~::~", "Ranjan Kumar", self.SALT) is None
+
+    def test_too_few_digits_abstains(self):
+        from janasunani.pipeline.dedup import mobile_identity_key
+
+        assert mobile_identity_key("***", "Ranjan Kumar", self.SALT) is None
+        assert mobile_identity_key("******123", "Ranjan Kumar", self.SALT) is None
+
+    def test_a_missing_name_abstains_rather_than_keying_on_four_digits(self):
+        """Four digits alone is ~10^4 values over 1.37M rows -- about 108 rows
+        each, which rebuilds the buckets this exists to remove."""
+        from janasunani.pipeline.dedup import mobile_identity_key
+
+        assert mobile_identity_key("******1234", None, self.SALT) is None
+        assert mobile_identity_key("******1234", "  ", self.SALT) is None
+        assert mobile_identity_key("******1234", "Li", self.SALT) is None
+
+    def test_the_same_masked_citizen_links(self):
+        from janasunani.pipeline.dedup import mobile_identity_key
+
+        first = mobile_identity_key("******1234", "Ranjan Kumar", self.SALT)
+        second = mobile_identity_key("******1234", "Ranjan Kumar", self.SALT)
+        assert first is not None
+        assert first == second
+
+    def test_the_name_is_case_and_punctuation_insensitive(self):
+        """The corpus carries the same name as '******anja' and '******ANJA'."""
+        from janasunani.pipeline.dedup import mobile_identity_key
+
+        assert mobile_identity_key("******1234", "Ranjan KUMAR", self.SALT) == (
+            mobile_identity_key("******1234", "ranjan kumar", self.SALT)
+        )
+
+    def test_a_different_tail_is_a_different_citizen(self):
+        from janasunani.pipeline.dedup import mobile_identity_key
+
+        assert mobile_identity_key("******1234", "Ranjan Kumar", self.SALT) != (
+            mobile_identity_key("******5678", "Ranjan Kumar", self.SALT)
+        )
+
+    def test_a_different_name_is_a_different_citizen(self):
+        """Two people sharing a last-four must not merge -- that is the whole
+        reason the tail is not used alone."""
+        from janasunani.pipeline.dedup import mobile_identity_key
+
+        assert mobile_identity_key("******1234", "Ranjan Kumar", self.SALT) != (
+            mobile_identity_key("******1234", "Sunita Devi", self.SALT)
+        )
+
+    def test_the_composite_is_salted(self):
+        from janasunani.pipeline.dedup import mobile_identity_key
+
+        assert mobile_identity_key("******1234", "Ranjan Kumar", "salt-1") != (
+            mobile_identity_key("******1234", "Ranjan Kumar", "salt-2")
+        )
+
+    def test_a_blank_salt_still_fails_loudly(self):
+        """A blank value is one citizen's record; a blank salt is the whole
+        deployment. Same stance as `identity_key`."""
+        from janasunani.pipeline.dedup import mobile_identity_key
+
+        with pytest.raises(ValueError, match="non-blank salt"):
+            mobile_identity_key("******1234", "Ranjan Kumar", "")
+
+    def test_a_composite_never_collides_with_a_real_number(self):
+        from janasunani.pipeline.dedup import identity_key, mobile_identity_key
+
+        composite = mobile_identity_key("******4567", "Ranjan Kumar", self.SALT)
+        assert composite != identity_key(MOBILE_ASCII, self.SALT)
+
+
+class TestEmailIdentityKey:
+    """#341. The email column is healthy -- 261,161 of 262,159 keyed
+    signatures carry an address -- so the derivation is unchanged. Only the
+    56 non-address values covering 998 signatures are now refused.
+    """
+
+    SALT = "a-real-salt"
+
+    def test_an_address_keys_exactly_as_before(self):
+        from janasunani.pipeline.dedup import email_identity_key, identity_key
+
+        assert email_identity_key("citizen@example.com", self.SALT) == identity_key(
+            "citizen@example.com", self.SALT
+        )
+
+    def test_case_and_whitespace_still_normalize(self):
+        from janasunani.pipeline.dedup import email_identity_key
+
+        assert email_identity_key(" Citizen@Example.com ", self.SALT) == (
+            email_identity_key("citizen@example.com", self.SALT)
+        )
+
+    def test_a_non_address_abstains(self):
+        """These were being keyed as identities by the same fallback that
+        broke the mobile column."""
+        from janasunani.pipeline.dedup import email_identity_key
+
+        for value in ("751001", "~::~", "not-an-email", "@example.com", "a@b", ""):
+            assert email_identity_key(value, self.SALT) is None, value
+
+    def test_none_abstains(self):
+        from janasunani.pipeline.dedup import email_identity_key
+
+        assert email_identity_key(None, self.SALT) is None

@@ -2512,3 +2512,106 @@ class TestLargeBucketShingleRetention:
         warm = di._verify_bucket(members, text, warm_cache, {}, 0.9, 200, 8)
 
         assert cold == warm
+
+
+@pytest.fixture
+def masked_oltp(tmp_path):
+    """The corpus as it actually arrives: `petitioner_mobile` masked to a
+    `******`-plus-last-four form, `petitioner_name` in the clear, and the
+    `'~::~'` sentinel standing in for "no mobile recorded" (#341)."""
+    complaints = [
+        # Same citizen, same complaint, two windows apart. Only the identity
+        # path can join these -- different windows means different blocks.
+        {
+            "ticket_no": "M1", "district": "Sambalpur", "created_year": 2024,
+            "created_on": datetime(2024, 1, 5), "petitioner_mobile": "******1234",
+            "petitioner_email": None, "petitioner_name": "Ranjan Kumar",
+            "grievance": "raw m1",
+        },
+        {
+            "ticket_no": "M2", "district": "Sambalpur", "created_year": 2024,
+            "created_on": datetime(2024, 7, 20), "petitioner_mobile": "******1234",
+            "petitioner_email": None, "petitioner_name": "RANJAN KUMAR",
+            "grievance": "raw m2",
+        },
+        # Same last four, different citizen. Must not link.
+        {
+            "ticket_no": "M3", "district": "Sambalpur", "created_year": 2024,
+            "created_on": datetime(2024, 10, 1), "petitioner_mobile": "******1234",
+            "petitioner_email": None, "petitioner_name": "Sunita Devi",
+            "grievance": "raw m3",
+        },
+        # The sentinel. Carries no digits, so it is not an identity at all.
+        {
+            "ticket_no": "M4", "district": "Sambalpur", "created_year": 2024,
+            "created_on": datetime(2024, 11, 1), "petitioner_mobile": "~::~",
+            "petitioner_email": None, "petitioner_name": "Ranjan Kumar",
+            "grievance": "raw m4",
+        },
+        {
+            "ticket_no": "M5", "district": "Sambalpur", "created_year": 2024,
+            "created_on": datetime(2024, 12, 1), "petitioner_mobile": "~::~",
+            "petitioner_email": None, "petitioner_name": "Ranjan Kumar",
+            "grievance": "raw m5",
+        },
+    ]
+    redactions = [
+        {"ticket_no": t, "grievance_redacted": text}
+        for t, text in (
+            ("M1", CAMPAIGN_A), ("M2", CAMPAIGN_A), ("M3", CAMPAIGN_A),
+            ("M4", CAMPAIGN_A), ("M5", CAMPAIGN_A),
+        )
+    ]
+    return _make_oltp(tmp_path, complaints, redactions)
+
+
+class TestMaskedMobileIdentityEndToEnd:
+    """#341, through the real backfill rather than the pure function."""
+
+    def test_the_sentinel_produces_no_identity_key(self, masked_oltp):
+        async_url, sync_url = masked_oltp
+        build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt=_SALT)
+        sigs = _signature_rows(sync_url)
+
+        assert sigs["M4"].identity_key_mobile is None
+        assert sigs["M5"].identity_key_mobile is None
+
+    def test_the_same_masked_citizen_shares_one_key_across_windows(self, masked_oltp):
+        async_url, sync_url = masked_oltp
+        build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt=_SALT)
+        sigs = _signature_rows(sync_url)
+
+        assert sigs["M1"].identity_key_mobile is not None
+        assert sigs["M1"].identity_key_mobile == sigs["M2"].identity_key_mobile
+        # Different windows, so the text path alone could never join them.
+        assert sigs["M1"].block_key != sigs["M2"].block_key
+
+    def test_a_shared_last_four_is_not_a_shared_citizen(self, masked_oltp):
+        async_url, sync_url = masked_oltp
+        build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt=_SALT)
+        sigs = _signature_rows(sync_url)
+
+        assert sigs["M3"].identity_key_mobile is not None
+        assert sigs["M3"].identity_key_mobile != sigs["M1"].identity_key_mobile
+
+    def test_identity_widens_the_search_and_text_still_decides(self, masked_oltp):
+        """M1 and M2 are the same citizen in different windows with matching
+        text, so they group. That join exists only because the identity key
+        crosses the block boundary."""
+        async_url, sync_url = masked_oltp
+        build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt=_SALT)
+        groups = _group_rows(sync_url)
+
+        assert groups["M1"].duplicate_group_id == groups["M2"].duplicate_group_id
+
+
+class TestIdentityAlgorithmProvenance:
+    def test_the_index_version_names_the_identity_derivation(self):
+        """#341 changes what goes into the identity key, so a row produced
+        under the old derivation must read as stale rather than be silently
+        mixed with new ones."""
+        from janasunani.pipeline.dedup import IDENTITY_ALGORITHM
+        from janasunani.pipeline.dedup_index import _index_version
+
+        version = _index_version(30, 0.5, "a-salt")
+        assert f"identity_algorithm={IDENTITY_ALGORITHM}" in version
