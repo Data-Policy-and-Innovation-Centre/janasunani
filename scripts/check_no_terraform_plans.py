@@ -187,12 +187,16 @@ ALLOWLIST_PATHSPECS = (
 # `meta` and `cmd` are not accepted here at all: there is no field in which
 # arbitrary prose is allowed, which is a stronger statement than any cap. A
 # real pointer needing one fails loudly and a person decides.
-DVC_TOP_LEVEL_KEYS = frozenset({"outs", "deps", "wdir", "md5", "frozen"})
+# Measured from the 23 pointers in this repository, which use `outs` at top
+# level and nothing else. `wdir` and `remote` were the last fields whose
+# value was a free token, and a pointer needs neither, so they are refused
+# rather than pattern-matched. A real pointer needing one fails loudly.
+DVC_TOP_LEVEL_KEYS = frozenset({"outs"})
 # Keys that introduce a list rather than carrying a scalar.
-DVC_LIST_KEYS = frozenset({"outs", "deps"})
+DVC_LIST_KEYS = frozenset({"outs"})
 DVC_ENTRY_KEYS = frozenset(
     {"md5", "sha1", "sha256", "hash", "etag", "checksum", "path", "size",
-     "nfiles", "isexec", "remote", "cache", "persist", "push"}
+     "nfiles"}
 )
 
 # Every accepted value has a shape. Checked by pattern, so a field cannot be
@@ -250,7 +254,7 @@ def staged_allowlisted_entries() -> list[tuple[Path, str, str]]:
     changed = subprocess.run(
         [
             "git", "diff", "--cached", "--name-only", "-z",
-            "--diff-filter=ACMR", "--", *ALLOWLIST_PATHSPECS,
+            "--diff-filter=ACMRT", "--", *ALLOWLIST_PATHSPECS,
         ],
         check=True,
         capture_output=True,
@@ -292,11 +296,7 @@ def _scalar_problem(key: str, value: str) -> str | None:
         return None if value in HASH_NAMES else f"{key!r} is not a DVC hash name"
     if key in {"size", "nfiles"}:
         return None if INTEGER.match(value) else f"{key!r} is not an integer"
-    if key in {"isexec", "cache", "persist", "push", "frozen"}:
-        return None if value in BOOLEAN else f"{key!r} is not a boolean"
-    if key == "remote":
-        return None if TOKEN.match(value) else f"{key!r} is not a remote name"
-    if key in {"path", "wdir"}:
+    if key == "path":
         if len(value) > MAX_PATH:
             return f"{key!r} is {len(value)} characters, over the {MAX_PATH} cap"
         # Typed, not merely capped. A path is the last field in which prose
@@ -335,6 +335,7 @@ def dvc_pointer_problem(text: str, stem: str | None = None) -> str | None:
     items: list[dict[str, str]] = []
     current: dict[str, str] | None = None
     list_key: str | None = None
+    seen_top: set[str] = set()
 
     for number, line in enumerate(lines, start=1):
         stripped = line.strip()
@@ -347,6 +348,9 @@ def dvc_pointer_problem(text: str, stem: str | None = None) -> str | None:
             key = key.strip()
             if key not in DVC_TOP_LEVEL_KEYS:
                 return f"line {number}: unrecognised top-level key"
+            if key in seen_top:
+                return f"line {number}: duplicate top-level key"
+            seen_top.add(key)
             if value.strip() in BLOCK_SCALARS:
                 return f"block scalar not allowed at {key!r}"
 
@@ -386,6 +390,10 @@ def dvc_pointer_problem(text: str, stem: str | None = None) -> str | None:
         key = key.strip()
         if key not in DVC_ENTRY_KEYS:
             return f"line {number}: unrecognised key in an `outs:` entry"
+        if key in current:
+            # Overwriting hid the earlier value from every rule below while
+            # its bytes stayed in the commit.
+            return f"line {number}: duplicate key in an `outs:` entry"
         if value.strip() in BLOCK_SCALARS:
             return f"block scalar not allowed at {key!r}"
         problem = _scalar_problem(key, value.strip())
@@ -527,7 +535,7 @@ def staged_entries() -> list[tuple[Path, str]]:
     changed = subprocess.run(
         [
             "git", "diff", "--cached", "--name-only", "-z",
-            "--diff-filter=ACMR", "--", ".", ":(exclude)data/**",
+            "--diff-filter=ACMRT", "--", ".", ":(exclude)data/**",
         ],
         check=True,
         capture_output=True,

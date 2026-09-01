@@ -704,7 +704,7 @@ def test_prose_containing_outs_is_not_a_pointer(tmp_path, monkeypatch):
     [
         ("outs:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: thing\n", True),
         ("outs:\n- hash: md5\n  md5: d41d8cd98f00b204e9800998ecf8427e\n  path: thing\n", True),
-        ("wdir: .\nouts:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: thing\n", True),
+        ("wdir: .\nouts:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: thing\n", False),
         ("prose with outs: inside\n", False),
         ("outs:\n", False),
         ("outs:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n", False),          # no path
@@ -808,10 +808,12 @@ def test_a_pointer_carrying_a_smuggled_block_is_refused(tmp_path, monkeypatch):
     [
         # Accepted: the shapes DVC actually writes.
         ("outs:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: thing\n", True),
-        ("wdir: .\nouts:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: thing\n  size: 12\n", True),
+        ("wdir: .\nouts:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: thing\n  size: 12\n", False),
+        # `deps`, `wdir` and a top-level `md5` are refused: a pointer
+        # needs none of them.
         ("md5: d41d8cd98f00b204e9800998ecf8427e\nouts:\n"
          "- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: p\n"
-         "deps:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: q\n", True),
+         "deps:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: q\n", False),
         # Refused: unrecognised content, in each place it can hide.
         ("outs:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: thing\nraw: |\n  secret\n", False),
         ("outs:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: thing\n  leaked: citizen\n", False),
@@ -991,7 +993,7 @@ def test_a_sidecar_path_with_a_space_is_still_checked(tmp_path):
     "text, expected_ok",
     [
         (f"outs:\n- md5: {_MD5}\n  path: data/raw/thing.parquet\n", True),
-        (f"outs:\n- md5: {_MD5}\n  path: thing\n  remote: myremote\n", True),
+        (f"outs:\n- md5: {_MD5}\n  path: thing\n  remote: myremote\n", False),
         # Prose has spaces; a path does not need them.
         (f"outs:\n- md5: {_MD5}\n  path: Ram Kumar 9876543210\n", False),
         (f"outs:\n- md5: {_MD5}\n  path: thing\n  remote: Ram Kumar 987\n", False),
@@ -1059,7 +1061,9 @@ def test_a_nested_sidecar_still_needs_its_schema_version(tmp_path, monkeypatch):
     "text, expected_ok",
     [
         (f"outs:\n- md5: {_MD5}\n  path: thing\n", True),
-        (f"wdir: .\nouts:\n- md5: {_MD5}\n  path: thing\n", True),
+        # `wdir` is refused now: a pointer does not need it, and it was one of
+        # the last fields whose value was a free token.
+        (f"wdir: .\nouts:\n- md5: {_MD5}\n  path: thing\n", False),
         # `files` is a list in DVC's directory pointers, not a scalar. It is
         # no longer accepted at all rather than validated as one.
         (f"outs:\n- md5: {_MD5}\n  path: thing\n  files: Ram Kumar 9876543210\n", False),
@@ -1395,3 +1399,86 @@ def test_the_repository_still_passes_the_tightened_checksum_rule():
         text=True,
     )
     assert result.returncode == 0, result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Codex P1 on #321: a type change is not in ACMR, a repeated key overwrote the
+# earlier value, and `wdir`/`remote` were the last free-token fields.
+# ---------------------------------------------------------------------------
+
+
+def test_replacing_a_pointer_with_a_symlink_is_caught_before_the_commit(tmp_path):
+    # Git stages this as `T`, which `--diff-filter=ACMR` does not select, so
+    # the staged scan never saw it.
+    repo = _repo(tmp_path)
+    (repo / "data" / "raw").mkdir(parents=True)
+    (repo / "data" / "raw" / "thing.dvc").write_text(
+        f"outs:\n- md5: {_MD5}\n  path: thing\n"
+    )
+    (repo / "target.txt").write_text("x\n")
+    _git(repo, "add", "-f", "data/raw/thing.dvc", "target.txt")
+    _git(repo, "commit", "-qm", "seed2")
+
+    (repo / "data" / "raw" / "thing.dvc").unlink()
+    (repo / "data" / "raw" / "thing.dvc").symlink_to(Path("..") / ".." / "target.txt")
+    _git(repo, "add", "-A")
+
+    status = _git(repo, "diff", "--cached", "--name-status")
+    assert status.startswith("T"), status  # precondition: it really is a T
+
+    result = _run_staged(repo)
+
+    assert result.returncode == 1
+    assert "symlink" in result.stdout
+
+
+def test_the_hook_filename_check_also_selects_type_changes():
+    hook = (
+        Path(__file__).resolve().parents[1] / ".githooks" / "pre-commit"
+    ).read_text()
+    assert "--diff-filter=ACMR\n" not in hook
+    assert "ACMRT" in hook
+
+
+@pytest.mark.parametrize(
+    "text, expected_ok",
+    [
+        (f"outs:\n- md5: {_MD5}\n  path: thing\n", True),
+        # The second assignment hid the first from every rule below while its
+        # bytes stayed in the commit.
+        (f"outs:\n- md5: {_MD5}\n  md5: 9876543210\n  path: thing\n", False),
+        (f"outs:\n- md5: {_MD5}\n  path: thing\n  path: other\n", False),
+        (f"outs:\n- md5: {_MD5}\n  path: thing\nouts:\n- md5: {_MD5}\n  path: t\n", False),
+    ],
+)
+def test_a_repeated_key_is_refused(text, expected_ok):
+    assert (dvc_pointer_problem(text, stem="thing") is None) is expected_ok
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "wdir: Ram-Kumar\nouts:\n- md5: {m}\n  path: thing\n",
+        "outs:\n- md5: {m}\n  path: thing\n  remote: Ram-Kumar\n",
+    ],
+)
+def test_the_last_free_token_fields_are_gone(text):
+    # A pointer needs neither, so they are refused rather than pattern-matched.
+    problem = dvc_pointer_problem(text.format(m=_MD5), stem="thing")
+
+    assert problem is not None
+    assert "Ram-Kumar" not in problem
+
+
+def test_the_accepted_keys_are_the_ones_the_repository_actually_uses():
+    from scripts.check_no_terraform_plans import (
+        DVC_ENTRY_KEYS,
+        DVC_TOP_LEVEL_KEYS,
+    )
+
+    # Measured from the 23 real pointers. Widening either set is a conscious
+    # edit, and this is what makes it one.
+    assert DVC_TOP_LEVEL_KEYS == {"outs"}
+    assert {"md5", "size", "hash", "path", "nfiles"} <= DVC_ENTRY_KEYS
+    assert "wdir" not in DVC_TOP_LEVEL_KEYS
+    assert "remote" not in DVC_ENTRY_KEYS
