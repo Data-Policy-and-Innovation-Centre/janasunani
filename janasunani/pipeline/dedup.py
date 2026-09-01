@@ -182,6 +182,11 @@ def _canonical_source_record(record: Mapping[str, object]) -> tuple[str, bytes]:
         "created_on",
         "petitioner_mobile",
         "petitioner_email",
+        # Feeds the masked-mobile composite in `mobile_identity_key` (#341),
+        # so a name change changes the identity key and must read as
+        # staleness. Omitting it would let `_source_digest_mismatches` certify
+        # a row whose key was derived from a name the record no longer has.
+        "petitioner_name",
         "grievance_redacted",
     )
     try:

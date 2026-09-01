@@ -852,3 +852,54 @@ class TestEmailIdentityKey:
         from janasunani.pipeline.dedup import email_identity_key
 
         assert email_identity_key(None, self.SALT) is None
+
+
+class TestSourceDigestCoversTheIdentityInputs:
+    """Codex P1 on #346. `petitioner_name` feeds the masked-mobile composite,
+    so a digest that ignores it certifies a row whose identity key was
+    derived from a name the record no longer has -- and
+    `_source_digest_mismatches` never asks for the rebuild, even under
+    --refresh-stale once the index version already matches.
+    """
+
+    @staticmethod
+    def _record(**overrides):
+        from datetime import datetime
+
+        base = {
+            "ticket_no": "T1",
+            "district": "Sambalpur",
+            "created_year": 2024,
+            "created_on": datetime(2024, 1, 1),
+            "petitioner_mobile": "******1234",
+            "petitioner_email": None,
+            "petitioner_name": "Ranjan Kumar",
+            "grievance_redacted": "text",
+        }
+        base.update(overrides)
+        return base
+
+    def test_a_changed_name_changes_the_digest(self):
+        from janasunani.pipeline.dedup import source_record_digest
+
+        assert source_record_digest(self._record()) != source_record_digest(
+            self._record(petitioner_name="Sunita Devi")
+        )
+
+    def test_an_unchanged_record_is_stable(self):
+        from janasunani.pipeline.dedup import source_record_digest
+
+        assert source_record_digest(self._record()) == source_record_digest(
+            self._record()
+        )
+
+    def test_a_record_without_the_name_is_refused(self):
+        """The lake-side builders in analytics/findings share this contract,
+        so a producer that forgets the column fails loudly rather than
+        digesting a partial row."""
+        from janasunani.pipeline.dedup import source_record_digest
+
+        partial = self._record()
+        del partial["petitioner_name"]
+        with pytest.raises(ValueError, match="missing 'petitioner_name'"):
+            source_record_digest(partial)

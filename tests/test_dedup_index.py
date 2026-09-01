@@ -240,6 +240,7 @@ class TestGroupSourceSnapshotProvenance:
                 "created_on": created_on,
                 "petitioner_mobile": mobile,
                 "petitioner_email": None,
+                "petitioner_name": None,
                 "grievance_redacted": redacted,
             }
             for ticket_no, district, year, created_on, mobile, redacted in _SMALL_ROWS
@@ -1438,6 +1439,7 @@ class TestHeldOutRecall:
                 "created_on": created_on,
                 "petitioner_mobile": mobile,
                 "petitioner_email": None,
+                "petitioner_name": None,
                 "grievance_redacted": redacted,
             }
             for ticket_no, district, year, created_on, mobile, redacted in _SMALL_ROWS
@@ -1979,6 +1981,7 @@ class TestGroupingScopeProvenance:
                 "created_on": datetime(2024, 1, 5),
                 "petitioner_mobile": None,
                 "petitioner_email": None,
+                "petitioner_name": None,
                 "grievance_redacted": text_,
             }
             for ticket, text_ in (("A1", UNRELATED_A), ("A2", UNRELATED_B))
@@ -2021,6 +2024,7 @@ class TestGroupingScopeProvenance:
                 "created_on": datetime(2024, 1, 5),
                 "petitioner_mobile": None,
                 "petitioner_email": None,
+                "petitioner_name": None,
                 "grievance_redacted": UNRELATED_A,
             }
         ]
