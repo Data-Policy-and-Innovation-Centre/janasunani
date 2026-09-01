@@ -641,7 +641,7 @@ def test_a_file_too_large_to_be_a_pointer_is_refused_unread(tmp_path, monkeypatc
     monkeypatch.chdir(repo)
     offenders = allowlisted_offenders(tracked_allowlisted_entries())
     assert [str(p) for p, _ in offenders] == ["data/raw/big.dvc"]
-    assert "far larger than" in offenders[0][1][0]
+    assert "over the" in offenders[0][1][0]
 
 
 def test_a_dvc_name_holding_something_else_entirely_is_refused(tmp_path, monkeypatch):
@@ -1124,7 +1124,9 @@ def test_a_protected_filename_is_redacted_in_ci(tmp_path, monkeypatch):
     # Still says where and what kind, and stays identifiable locally.
     assert "data/raw/" in result.stdout
     assert ".dvc" in result.stdout
-    digest = hashlib.sha256(b"Ram-Kumar-9876543210.dvc").hexdigest()[:12]
+    # The stem is hashed and the suffix kept, so the message still says
+    # what kind of file is wrong.
+    digest = hashlib.sha256(b"Ram-Kumar-9876543210").hexdigest()[:12]
     assert digest in result.stdout
 
 
@@ -1154,3 +1156,97 @@ def test_source_paths_outside_data_are_never_redacted(monkeypatch):
     assert safe_path(Path("deploy/terraform/tfplan")) == "deploy/terraform/tfplan"
     assert safe_path(Path("scripts/thing.py")) == "scripts/thing.py"
     assert "<redacted:" in safe_path(Path("data/raw/x.dvc"))
+
+
+# ---------------------------------------------------------------------------
+# Codex P1 on #321, the class rather than the instance. Protected text reached
+# the public log three ways in turn: a quoted source line, an archive member's
+# directory, and a filename. This pins the property instead.
+# ---------------------------------------------------------------------------
+
+
+CITIZEN = "Ram-Kumar-9876543210"
+
+
+def test_no_protected_text_reaches_a_public_log_by_any_route(tmp_path):
+    # Every channel at once: the token is in a directory name, in a leaf
+    # filename, inside file contents, and inside a zip member's path.
+    repo = _repo(tmp_path)
+    nested = repo / "data" / "raw" / CITIZEN
+    nested.mkdir(parents=True)
+    (nested / "file.dvc").write_text(f"{CITIZEN}: prose\n")
+    (repo / "data" / "raw" / f"{CITIZEN}.dvc").write_text(f"note {CITIZEN}\n")
+    (repo / "data" / "raw" / ".gitkeep").write_text(f"{CITIZEN}\n")
+    _plan_archive(repo / "data" / "raw" / "arch.dvc", (f"{CITIZEN}/tfstate",))
+    _git(repo, "add", "-Af")
+    _git(repo, "commit", "-qm", "all channels")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT)],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "GITHUB_ACTIONS": "true"},
+    )
+
+    assert result.returncode == 1
+    combined = result.stdout + result.stderr
+    for token in (CITIZEN, "Ram-Kumar", "9876543210", "Ram Kumar"):
+        assert token not in combined, f"{token!r} leaked:\n{combined}"
+    # Still useful: says where to look and what kind of file.
+    assert "data/raw" in combined
+    assert "<redacted:" in combined
+
+
+def test_a_protected_directory_name_is_redacted(monkeypatch):
+    from scripts.check_no_terraform_plans import safe_path
+
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    shown = safe_path(Path("data/raw") / CITIZEN / "file.dvc")
+
+    assert CITIZEN not in shown
+    assert shown.startswith("data/raw/")
+    assert shown.endswith(".dvc")
+
+
+def test_the_oversized_reason_carries_no_filename(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    (repo / "data" / "raw").mkdir(parents=True)
+    (repo / "data" / "raw" / f"{CITIZEN}.dvc").write_bytes(b"outs:\n" + b"x" * 200_000)
+    _git(repo, "add", "-f", f"data/raw/{CITIZEN}.dvc")
+    _git(repo, "commit", "-qm", "big")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT)], cwd=repo, capture_output=True, text=True,
+        env={**os.environ, "GITHUB_ACTIONS": "true"},
+    )
+
+    assert result.returncode == 1
+    assert CITIZEN not in result.stdout
+    assert "over the" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "stem, path_value, expected_ok",
+    [
+        ("thing.csv", "thing.csv", True),
+        # A syntactically fine path that is not the file beside it. This is
+        # where citizen text without spaces used to sit.
+        ("thing.csv", "Ram-Kumar-9876543210", False),
+        ("thing.csv", "other.csv", False),
+    ],
+)
+def test_a_pointer_must_name_the_file_beside_it(stem, path_value, expected_ok):
+    text = f"outs:\n- md5: {_MD5}\n  path: {path_value}\n"
+    assert (dvc_pointer_problem(text, stem=stem) is None) is expected_ok
+
+
+def test_the_repositorys_own_pointers_satisfy_the_stem_rule():
+    # The rule is DVC's convention, not one invented here: all 23 pass.
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT)],
+        cwd=SCRIPT.parents[1],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout
