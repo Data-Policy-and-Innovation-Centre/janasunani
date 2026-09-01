@@ -1705,25 +1705,24 @@ def test_a_truncated_real_plan_is_still_caught(cut):
     assert plan_members_of_blob(data[: len(data) - cut]) == ["tfstate"]
 
 
-def test_the_byte_fallback_separates_a_member_from_a_directory():
+def test_the_fallback_reads_names_from_local_headers(tmp_path):
     from scripts.check_no_terraform_plans import damaged_plan_members
 
-    # A zip stores a directory as an entry whose name ends in `/`. One
-    # occurrence not followed by a slash is what distinguishes them, and a
-    # real member's name sits between the header's length fields (NUL here)
-    # and the extra field or compressed data.
-    assert damaged_plan_members(b"\x00tfstate/\x00") == []
-    assert damaged_plan_members(b"\x00tfstate{") == ["tfstate"]
-    # Both present: the file member wins.
-    assert damaged_plan_members(b"\x00tfstate/ and \x00tfstate{") == ["tfstate"]
-    # A longer name that merely contains the token is not a member.
-    assert damaged_plan_members(b"\x00mytfstate.json\x00") == []
-
-
-# ---------------------------------------------------------------------------
-# Codex P2 on #321: the byte fallback matched a plan token inside a longer
-# name, so `mytfstate.json` in a damaged archive read as a plan.
-# ---------------------------------------------------------------------------
+    # Names come from each entry's local file header, which declares its own
+    # length and survives truncation -- the central directory goes first.
+    # Substring matching could not separate these: `tfstate/` is a directory,
+    # `mytfstate.json` merely contains the token, and a real `tfstate` is
+    # followed by arbitrary compressed bytes that may resemble either.
+    assert damaged_plan_members(_zip_of(("tfstate", '{"serial": 1}'))) == ["tfstate"]
+    assert damaged_plan_members(_zip_of(("plan/tfstate", "x"))) == ["tfstate"]
+    assert damaged_plan_members(_zip_of(("tfstate/", ""))) == []
+    assert damaged_plan_members(_zip_of(("mytfstate.json", "x"))) == []
+    assert damaged_plan_members(_zip_of(("tfstateold", "x"))) == []
+    # The case a byte-boundary rule got wrong: the payload immediately after
+    # the name is alphanumeric.
+    assert damaged_plan_members(_zip_of(("tfstate", "aaaaaaaaaaaaaaaa"))) == ["tfstate"]
+    # Not a zip at all.
+    assert damaged_plan_members(b"tfstate mentioned in prose") == []
 
 
 @pytest.mark.parametrize(
@@ -1739,7 +1738,7 @@ def test_the_byte_fallback_separates_a_member_from_a_directory():
         (("backup-tfstate-2", '{"a": 1}'), []),
     ],
 )
-def test_the_byte_fallback_respects_name_boundaries(member, expected):
+def test_a_truncated_archive_yields_exact_member_names(member, expected):
     data = _zip_of(member)
 
     assert plan_members_of_blob(data[: len(data) - 40]) == expected

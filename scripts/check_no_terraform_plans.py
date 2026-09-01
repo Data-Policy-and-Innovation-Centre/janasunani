@@ -152,47 +152,49 @@ def _plan_members_in(entries: list[tuple[str, bool]]) -> list[str]:
     )
 
 
-def _is_name_byte(byte: bytes) -> bool:
-    """Whether ``byte`` could be part of a longer file name."""
-    return byte.isalnum() or byte in {b"_", b"-", b"."}
+LOCAL_HEADER = b"PK\x03\x04"
+# Offsets into a zip local file header: the name length is a two-byte
+# little-endian field at 26, and the name itself begins at 30.
+NAME_LENGTH_OFFSET = 26
+NAME_OFFSET = 30
 
 
 def damaged_plan_members(data: bytes) -> list[str]:
-    """Plan member names visible in a zip that will not parse.
+    """Plan member names in an archive whose directory cannot be read.
 
     A truncated or otherwise damaged plan still carries its secrets: the
     tfstate entry is in the archive whether or not the central directory
-    survives. Treating an unparseable zip as clean therefore lets exactly the
-    file this check exists to stop through, and truncation is not an exotic
-    accident -- an interrupted `terraform plan -out` produces one.
+    survives, and an interrupted `terraform plan -out` produces exactly that.
 
-    Zip stores each member's name uncompressed in its local file header, so
-    the names are still present as literal bytes even when the archive cannot
-    be opened.
+    The names are read from the *local file headers* rather than matched as
+    substrings. Each begins `PK\x03\x04` and declares its own name length, so
+    a name is recovered exactly even when everything after it is gone --
+    truncation takes the central directory first, and these are at the front.
+
+    Substring matching cannot be made to work here, which is what three
+    rounds of boundary rules established. `tfstate/` is a directory,
+    `mytfstate.json` merely contains the token, and a real `tfstate` is
+    followed by arbitrary compressed bytes that may look like either. Only
+    the declared length separates them, and the format supplies it.
     """
     found: set[str] = set()
-    for member in PLAN_MEMBERS:
-        needle = member.encode("utf-8")
-        start = data.find(needle)
-        while start != -1:
-            # A zip stores a directory as an entry whose name ends in `/`, so
-            # `tfstate/` is a folder holding no state while `tfstate` is the
-            # member that matters. Requiring one occurrence that is *not*
-            # followed by a slash keeps the directory-only case out without
-            # risking a real plan: its name is followed by the extra field or
-            # the compressed data, and every occurrence would have to be a
-            # slash for this to miss one.
-            before = data[start - 1 : start] if start else b""
-            after = data[start + len(needle) : start + len(needle) + 1]
-            # Both boundaries, for the same reason. `/` after it means a
-            # directory; a name character before or after it means a longer
-            # name that merely ends or begins with the token, like
-            # `mytfstate` or `tfstateold`. A real entry name is preceded by
-            # the header's length fields, which are not name characters.
-            if after != b"/" and not _is_name_byte(before) and not _is_name_byte(after):
-                found.add(member)
-                break
-            start = data.find(needle, start + 1)
+    position = data.find(LOCAL_HEADER)
+    while position != -1:
+        name_end = position + NAME_OFFSET
+        if name_end <= len(data):
+            length = int.from_bytes(
+                data[position + NAME_LENGTH_OFFSET : position + NAME_LENGTH_OFFSET + 2],
+                "little",
+            )
+            raw = data[name_end : name_end + length]
+            # A truncated final header may declare more name than survives.
+            if len(raw) == length:
+                name = raw.decode("utf-8", "replace")
+                if not name.endswith("/"):
+                    base = name.rsplit("/", 1)[-1]
+                    if base in PLAN_MEMBERS:
+                        found.add(base)
+        position = data.find(LOCAL_HEADER, position + 1)
     return sorted(found)
 
 
