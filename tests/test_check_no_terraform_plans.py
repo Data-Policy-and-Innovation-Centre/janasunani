@@ -1681,3 +1681,37 @@ def test_the_damaged_fallback_still_fires_for_a_truncated_plan():
 
     assert not _archive_entries(io.BytesIO(damaged))
     assert plan_members_of_blob(damaged) == ["tfstate"]
+
+
+# ---------------------------------------------------------------------------
+# Codex P2 on #321: a truncated archive holding only `tfstate/` reached the
+# byte fallback, which cannot see entry types.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("cut", [20, 40, 60])
+def test_a_truncated_directory_only_archive_is_not_a_plan(cut):
+    data = _zip_of(("tfstate/", ""))
+
+    assert plan_members_of_blob(data[: len(data) - cut]) == []
+
+
+@pytest.mark.parametrize("cut", [20, 40, 60])
+def test_a_truncated_real_plan_is_still_caught(cut):
+    # The direction that matters: missing a plan is the failure this exists
+    # to prevent, so the refinement must not cost a detection.
+    data = _zip_of(("tfstate", '{"serial": 1, "secret": "acct-123"}'))
+
+    assert plan_members_of_blob(data[: len(data) - cut]) == ["tfstate"]
+
+
+def test_the_byte_fallback_separates_a_member_from_a_directory():
+    from scripts.check_no_terraform_plans import damaged_plan_members
+
+    # A zip stores a directory as an entry whose name ends in `/`. One
+    # occurrence not followed by a slash is what distinguishes them, and a
+    # real member's name is followed by the extra field or compressed data.
+    assert damaged_plan_members(b"...tfstate/...") == []
+    assert damaged_plan_members(b"...tfstate{...") == ["tfstate"]
+    # Both present: the file member wins.
+    assert damaged_plan_members(b"tfstate/ and tfstate{") == ["tfstate"]
