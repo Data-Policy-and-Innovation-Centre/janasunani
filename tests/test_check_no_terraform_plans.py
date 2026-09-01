@@ -1046,3 +1046,51 @@ def test_a_nested_sidecar_still_needs_its_schema_version(tmp_path, monkeypatch):
 
     monkeypatch.chdir(repo)
     assert main() == 1
+
+
+# ---------------------------------------------------------------------------
+# Codex P1 on #321: `files` is a collection, and reaching a generic length
+# check meant the parser failed open for any key without a rule.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text, expected_ok",
+    [
+        (f"outs:\n- md5: {_MD5}\n  path: thing\n", True),
+        (f"wdir: .\nouts:\n- md5: {_MD5}\n  path: thing\n", True),
+        # `files` is a list in DVC's directory pointers, not a scalar. It is
+        # no longer accepted at all rather than validated as one.
+        (f"outs:\n- md5: {_MD5}\n  path: thing\n  files: Ram Kumar 9876543210\n", False),
+        # A list header carries no value of its own.
+        ("outs: Ram Kumar 9876543210\n", False),
+        ("deps: Ram Kumar 9876543210\n", False),
+    ],
+)
+def test_collection_fields_cannot_hold_a_scalar(text, expected_ok):
+    assert (dvc_pointer_problem(text) is None) is expected_ok
+
+
+def test_every_accepted_key_has_an_explicit_value_rule():
+    # The parser fails closed: a key added to the allowlist without a rule is
+    # refused rather than falling through to a length check, which is how
+    # `files` was accepted as prose.
+    from scripts.check_no_terraform_plans import (
+        DVC_ENTRY_KEYS,
+        _scalar_problem,
+    )
+
+    unruled = [
+        key for key in DVC_ENTRY_KEYS if "no value rule" in (_scalar_problem(key, "x") or "")
+    ]
+    assert unruled == [], unruled
+
+
+def test_an_unruled_key_would_be_refused_not_accepted():
+    from scripts.check_no_terraform_plans import _scalar_problem
+
+    problem = _scalar_problem("invented", "Ram Kumar 9876543210")
+
+    assert problem is not None
+    assert "no value rule" in problem
+    assert "Ram Kumar" not in problem
