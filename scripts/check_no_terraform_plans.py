@@ -172,6 +172,11 @@ DVC_ENTRY_KEYS = frozenset(
 )
 BLOCK_SCALARS = frozenset({"|", ">", "|-", ">-", "|+", ">+"})
 
+# Mirrors MAX_STRING in scripts/check_provenance_sidecars.py, and for the
+# same reason given there: prose does not survive a 200-character scalar
+# cap. Recognising a key is not enough when its value is free text.
+MAX_SCALAR = 200
+
 
 def _ls_files_entries(pathspecs: tuple[str, ...]) -> list[tuple[Path, str]]:
     listing = subprocess.run(
@@ -216,6 +221,22 @@ def blob_size(sha: str) -> int:
     return int(out.decode("utf-8").strip())
 
 
+def _scalar_problem(key: str, value: str) -> str | None:
+    """Why a recognised field's *value* is not acceptable, if it is not.
+
+    Validating the key and leaving the value free defeats the point: `cmd`,
+    `desc` and `meta` are recognised DVC fields, and citizen text placed in
+    one of them sits in a file the data rules exempt. Reported by key and
+    length only -- never by content, since this runs in CI whose logs are
+    public.
+    """
+    if len(value) > MAX_SCALAR:
+        return f"{key!r} is {len(value)} characters, over the {MAX_SCALAR} cap"
+    if any(ord(ch) < 32 for ch in value):
+        return f"{key!r} contains control characters"
+    return None
+
+
 def dvc_pointer_problem(text: str) -> str | None:
     """Why ``text`` is not a DVC pointer, or ``None`` if it is one.
 
@@ -252,6 +273,9 @@ def dvc_pointer_problem(text: str) -> str | None:
                 return f"unexpected top-level key {key!r}"
             if value.strip() in BLOCK_SCALARS:
                 return f"block scalar not allowed at {key!r}"
+            problem = _scalar_problem(key, value.strip())
+            if problem:
+                return problem
             list_key = key if key in {"outs", "deps"} and not value.strip() else None
             current = None
             continue
@@ -278,6 +302,9 @@ def dvc_pointer_problem(text: str) -> str | None:
             return f"unexpected key {key!r} in an entry"
         if value.strip() in BLOCK_SCALARS:
             return f"block scalar not allowed at {key!r}"
+        problem = _scalar_problem(key, value.strip())
+        if problem:
+            return problem
         current[key] = value.strip()
 
     if not items:
