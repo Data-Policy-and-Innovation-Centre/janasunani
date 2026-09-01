@@ -54,6 +54,18 @@ jobs:
           # shellcheck disable=SC2086
           python3 scripts/check_provenance_sidecars.py $sidecars
 
+      # `.tfplan` is here because matching on names that look like state was
+      # not enough. A plan archive is a zip *containing* tfstate and
+      # tfstate-prev, so it carries the account id, instance and subnet ids,
+      # SSH ingress CIDRs and the operator public key while being named like a
+      # plan. Two of them were committed on a branch and this step did not
+      # object, because every pattern below described state by its filename.
+      #
+      # The suffix is not the guard, though — see the content check below.
+      # `-out` takes any filename, and Terraform's own documentation uses
+      # `terraform plan -out=tfplan`, which has no suffix to match on. These
+      # patterns catch the obvious names and say what the rule is; the next
+      # step is what actually enforces it.
       - name: Reject local state and secret files
         shell: bash
         run: |
@@ -61,7 +73,7 @@ jobs:
 
           bad_files="$(
             git ls-files |
-              grep -E '(^|/)(terraform\.tfstate(\..*)?|terraform\.tfvars|.*\.auto\.tfvars|\.env|.*\.pem|id_rsa|id_ed25519)$' |
+              grep -E '(^|/)(terraform\.tfstate(\..*)?|terraform\.tfvars|.*\.auto\.tfvars|.*\.tfplan|\.env|.*\.pem|id_rsa|id_ed25519)$' |
               grep -Ev '(^|/)\.env\.example$|(^|/)terraform\.tfvars\.example$' || true
           )"
 
@@ -69,9 +81,18 @@ jobs:
             echo "The following local state/secret files are tracked directly by Git:"
             echo "$bad_files"
             echo ""
-            echo "Keep Terraform state, tfvars, env files, and private keys local."
+            echo "Keep Terraform state, plans, tfvars, env files, and private keys local."
+            echo "A .tfplan is a zip containing tfstate — it is state, despite the name."
             exit 1
           fi
+
+      # Name-independent. Reads the bytes of every tracked file and fails on
+      # anything that is a zip carrying a tfstate/tfplan member, so a plan
+      # saved as `tfplan`, `plan.out` or with no extension at all is caught
+      # where the suffix patterns above would pass it.
+      - name: Reject terraform plan archives by content
+        shell: bash
+        run: python3 scripts/check_no_terraform_plans.py
 
       - name: Check DVC files are present
         shell: bash

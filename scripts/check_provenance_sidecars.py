@@ -1268,14 +1268,15 @@ def check_payload(payload: Any) -> list[str]:
     return ["unrecognized provenance schema_version"]
 
 
-def check_file(path: Path) -> list[str]:
-    size = path.stat().st_size
-    if size > MAX_BYTES:
-        return [f"{size} bytes exceeds the {MAX_BYTES}-byte metadata cap"]
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        return [f"not valid JSON ({exc})"]
+def check_document(path: Path, payload: Any) -> list[str]:
+    """Check an already-parsed sidecar, given the path it is stored at.
+
+    Split out of :func:`check_file` so a caller holding the bytes -- the
+    pre-commit path in `check_no_terraform_plans.py` reads staged blobs, which
+    are not on disk -- gets the same verdict rather than a second, laxer one.
+    The location matters to the verdict, which is why the path is a parameter:
+    the legacy root sidecar is allowed to carry no `schema_version`.
+    """
     parts = path.parts
     for index in range(len(parts) - 1):
         if parts[index : index + 2] != ("data", "external"):
@@ -1295,6 +1296,17 @@ def check_file(path: Path) -> list[str]:
             ]
         break
     return check_payload(payload)
+
+
+def check_file(path: Path) -> list[str]:
+    size = path.stat().st_size
+    if size > MAX_BYTES:
+        return [f"{size} bytes exceeds the {MAX_BYTES}-byte metadata cap"]
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return [f"not valid JSON ({exc})"]
+    return check_document(path, payload)
 
 
 def main() -> int:
