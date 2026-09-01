@@ -165,9 +165,23 @@ def damaged_plan_members(data: bytes) -> list[str]:
     the names are still present as literal bytes even when the archive cannot
     be opened.
     """
-    return sorted(
-        {name for name in PLAN_MEMBERS if name.encode("utf-8") in data}
-    )
+    found: set[str] = set()
+    for member in PLAN_MEMBERS:
+        needle = member.encode("utf-8")
+        start = data.find(needle)
+        while start != -1:
+            # A zip stores a directory as an entry whose name ends in `/`, so
+            # `tfstate/` is a folder holding no state while `tfstate` is the
+            # member that matters. Requiring one occurrence that is *not*
+            # followed by a slash keeps the directory-only case out without
+            # risking a real plan: its name is followed by the extra field or
+            # the compressed data, and every occurrence would have to be a
+            # slash for this to miss one.
+            if data[start + len(needle) : start + len(needle) + 1] != b"/":
+                found.add(member)
+                break
+            start = data.find(needle, start + 1)
+    return sorted(found)
 
 
 def plan_members_of_blob(data: bytes) -> list[str]:
