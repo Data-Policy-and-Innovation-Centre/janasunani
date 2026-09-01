@@ -152,7 +152,25 @@ ALLOWLIST_PATHSPECS = (
     "data/.gitkeep",
     "data/external/**/provenance.json",
     "data/external/**/*.provenance.json",
+    # `**/` requires at least one directory below `external`, but the
+    # workflow's `(.*/)?` also allows the sidecar to sit directly there.
+    "data/external/provenance.json",
+    "data/external/*.provenance.json",
 )
+
+# The keys a .dvc file may carry. Anything else is unrecognised content, and
+# unrecognised content in an allowlisted file is the whole hazard: a pointer
+# is exempt from the data rules because of what it is, so anything that is not
+# that has to be refused rather than ignored.
+DVC_TOP_LEVEL_KEYS = frozenset(
+    {"outs", "deps", "cmd", "wdir", "md5", "frozen", "meta", "desc",
+     "params", "always_changed", "stage"}
+)
+DVC_ENTRY_KEYS = frozenset(
+    {"md5", "hash", "etag", "checksum", "path", "size", "nfiles", "isexec",
+     "remote", "cache", "persist", "desc", "files", "push"}
+)
+BLOCK_SCALARS = frozenset({"|", ">", "|-", ">-", "|+", ">+"})
 
 
 def _ls_files_entries(pathspecs: tuple[str, ...]) -> list[tuple[Path, str]]:
@@ -201,46 +219,69 @@ def blob_size(sha: str) -> int:
 def dvc_pointer_problem(text: str) -> str | None:
     """Why ``text`` is not a DVC pointer, or ``None`` if it is one.
 
-    Parsed structurally rather than searched. A substring test for ``outs:``
-    passes any prose that happens to contain those bytes, which is no test at
-    all. Deliberately hand-rolled: this module is stdlib-only so the hook runs
-    before any `uv sync`, and PyYAML is not available to it.
+    Parsed structurally rather than searched, and closed rather than lenient:
+    every line must be recognised. A substring test for ``outs:`` passes any
+    prose containing those bytes, and merely finding a well-formed ``outs``
+    entry is not enough either -- a pointer that also carries ``raw: |`` and
+    an indented block of citizen text is still a file smuggled into an
+    allowlisted name. So unknown top-level keys, unknown entry keys, block
+    scalars and any indented line outside a list are all refused.
 
-    A pointer is a YAML mapping with a top-level ``outs:`` list whose items
-    carry a ``path`` and a hash. Nothing else at top level is required, but
-    every line must fit that shape.
+    Deliberately hand-rolled: this module is stdlib-only so the hook runs
+    before any `uv sync`, and PyYAML is not available to it. Being strict
+    about shape is the right trade for a guard that must run everywhere.
     """
     lines = [line.rstrip() for line in text.splitlines() if line.strip()]
     if not lines:
         return "empty"
 
-    if not any(line == "outs:" for line in lines):
-        return "no top-level `outs:` list"
-
     items: list[dict[str, str]] = []
     current: dict[str, str] | None = None
-    in_outs = False
+    list_key: str | None = None
+
     for line in lines:
-        if not line.startswith((" ", "-")):  # a top-level key
-            in_outs = line == "outs:"
-            current = None
-            if ":" not in line:
-                return f"not a YAML mapping at {line!r}"
-            continue
-        if not in_outs:
-            continue
         stripped = line.strip()
+        indented = line[:1].isspace()
+
+        if not indented and not stripped.startswith("-"):
+            key, sep, value = stripped.partition(":")
+            if not sep:
+                return f"not a YAML mapping at {line!r}"
+            key = key.strip()
+            if key not in DVC_TOP_LEVEL_KEYS:
+                return f"unexpected top-level key {key!r}"
+            if value.strip() in BLOCK_SCALARS:
+                return f"block scalar not allowed at {key!r}"
+            list_key = key if key in {"outs", "deps"} and not value.strip() else None
+            current = None
+            continue
+
+        if list_key is None:
+            return f"unexpected content at {line!r}"
+
         if stripped.startswith("- "):
             current = {}
-            items.append(current)
+            if list_key == "outs":
+                items.append(current)
             stripped = stripped[2:]
-        if current is None or ":" not in stripped:
-            return f"not a pointer entry at {line!r}"
-        key, _, value = stripped.partition(":")
-        current[key.strip()] = value.strip()
+        elif stripped.startswith("-"):
+            return f"malformed list item at {line!r}"
+
+        if current is None:
+            return f"unexpected content at {line!r}"
+
+        key, sep, value = stripped.partition(":")
+        if not sep:
+            return f"not a key at {line!r}"
+        key = key.strip()
+        if key not in DVC_ENTRY_KEYS:
+            return f"unexpected key {key!r} in an entry"
+        if value.strip() in BLOCK_SCALARS:
+            return f"block scalar not allowed at {key!r}"
+        current[key] = value.strip()
 
     if not items:
-        return "`outs:` list is empty"
+        return "no `outs:` entries"
     for item in items:
         if "path" not in item:
             return "an `outs:` entry has no `path`"
