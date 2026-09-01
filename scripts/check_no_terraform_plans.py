@@ -117,32 +117,39 @@ def _regular_files(entries: list[tuple[Path, str, str]]) -> list[tuple[Path, str
     ]
 
 
-def _archive_names(
+def _archive_entries(
     source: Path | io.BytesIO | io.BufferedReader,
-) -> list[str] | None:
-    """Every entry name in ``source``, or ``None`` if it will not open.
+) -> list[tuple[str, bool]] | None:
+    """``(name, is_dir)`` for every entry, or ``None`` if it will not open.
 
-    The distinction the caller needs is three-way, not two, and truncation is
-    why. A damaged archive does not necessarily raise: zipfile opens one whose
-    central directory is gone and reports an *empty* namelist. So "opened and
-    listed nothing" has to be treated like "would not open", while "opened and
-    listed entries, none of them a plan member" is an ordinary archive and
-    must not be second-guessed by scanning its bytes.
+    Directories are carried rather than dropped here, because the caller needs
+    two different facts and dropping them conflates the two. Whether the
+    archive listed *anything* decides damaged-or-not; whether an entry is a
+    file decides plan-or-not. Filtering directories at this level made a zip
+    holding only `tfstate/` look like an archive that listed nothing, which
+    sent it to the byte fallback and reported it as a plan again.
     """
     try:
         with zipfile.ZipFile(source) as archive:
-            return archive.namelist()
+            return [(info.filename, info.is_dir()) for info in archive.infolist()]
     except (zipfile.BadZipFile, OSError):
         return None
 
 
-def _plan_members_in(names: list[str]) -> list[str]:
-    """Plan member base names among ``names``.
+def _plan_members_in(entries: list[tuple[str, bool]]) -> list[str]:
+    """Plan member base names among ``entries``, ignoring directories.
 
-    Base name only: the directory above it is chosen by whoever built the
-    archive and `report()` prints into public logs.
+    A member named `tfstate/` is a folder and holds no state, but its base
+    name is `tfstate`. Base name only, since the directory above it is chosen
+    by whoever built the archive and `report()` prints into public logs.
     """
-    return sorted({Path(name).name for name in names if Path(name).name in PLAN_MEMBERS})
+    return sorted(
+        {
+            Path(name).name
+            for name, is_dir in entries
+            if not is_dir and Path(name).name in PLAN_MEMBERS
+        }
+    )
 
 
 def damaged_plan_members(data: bytes) -> list[str]:
@@ -167,14 +174,14 @@ def plan_members_of_blob(data: bytes) -> list[str]:
     """Plan member names in a blob, including one that will not parse."""
     if not data.startswith(ZIP_MAGIC):
         return []
-    names = _archive_names(io.BytesIO(data))
-    if not names:
+    entries = _archive_entries(io.BytesIO(data))
+    if not entries:
         # Would not open, or opened and listed nothing -- both mean a damaged
         # archive, whose secrets are still in the bytes. Fall back to them.
         return damaged_plan_members(data)
     # A real listing. An ordinary archive whose *contents* happen to contain
     # the word `tfstate` is not a plan, and scanning its bytes would say so.
-    return _plan_members_in(names)
+    return _plan_members_in(entries)
 
 
 # Mirrors MAX_BYTES in scripts/check_provenance_sidecars.py. A per-value

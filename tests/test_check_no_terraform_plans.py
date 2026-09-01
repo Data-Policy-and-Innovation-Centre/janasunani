@@ -23,7 +23,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.check_no_terraform_plans import (  # noqa: E402
-    _archive_names,
+    _archive_entries,
     main,
     allowlisted_offenders,
     dvc_pointer_problem,
@@ -559,7 +559,7 @@ def test_a_damaged_plan_is_still_caught(tmp_path):
 
     damaged = intact[:-40]
     # A damaged archive does not raise: zipfile opens it and lists nothing.
-    assert not _archive_names(io.BytesIO(damaged))
+    assert not _archive_entries(io.BytesIO(damaged))
     # ...but is still recognised, and still refused.
     assert plan_members_of_blob(damaged) == ["tfstate"]
 
@@ -1628,5 +1628,56 @@ def test_a_damaged_archive_still_reaches_the_byte_fallback():
         archive.writestr("tfstate", '{"serial": 1}')
     damaged = buffer.getvalue()[:-40]
 
-    assert not _archive_names(io.BytesIO(damaged))
+    assert not _archive_entries(io.BytesIO(damaged))
+    assert plan_members_of_blob(damaged) == ["tfstate"]
+
+
+# ---------------------------------------------------------------------------
+# Codex P2 on #321: a member named `tfstate/` is a directory and holds no
+# state, but its base name matched. Fixing it interacts with the damaged-
+# archive fallback, so both facts are kept separate.
+# ---------------------------------------------------------------------------
+
+
+def _zip_of(*items: tuple[str, str]) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, content in items:
+            archive.writestr(name, content)
+    return buffer.getvalue()
+
+
+@pytest.mark.parametrize(
+    "entries, expected",
+    [
+        # Directories named like plan members hold nothing.
+        ((("tfstate/", ""),), []),
+        ((("tfstate/", ""), ("tfstate/readme.txt", "notes")), []),
+        # Real plans, at the root and under a directory.
+        ((("tfstate", '{"serial": 1}'),), ["tfstate"]),
+        ((("plan/tfstate", '{"serial": 1}'),), ["tfstate"]),
+        # An ordinary archive that merely mentions the word.
+        ((("notes.txt", "mentions tfstate in prose"),), []),
+    ],
+)
+def test_directory_entries_are_not_plan_members(entries, expected):
+    assert plan_members_of_blob(_zip_of(*entries)) == expected
+
+
+def test_a_directory_only_archive_is_not_treated_as_damaged():
+    # The interaction: filtering directories out of the listing made a zip
+    # holding only `tfstate/` look like one that listed nothing, which sent it
+    # to the byte fallback and reported it as a plan again. Whether the
+    # archive listed anything and whether an entry is a file are separate
+    # facts, and `_archive_entries` keeps both.
+    data = _zip_of(("tfstate/", ""))
+
+    assert _archive_entries(io.BytesIO(data))  # it did list something
+    assert plan_members_of_blob(data) == []
+
+
+def test_the_damaged_fallback_still_fires_for_a_truncated_plan():
+    damaged = _zip_of(("tfstate", '{"serial": 1}'))[:-40]
+
+    assert not _archive_entries(io.BytesIO(damaged))
     assert plan_members_of_blob(damaged) == ["tfstate"]
