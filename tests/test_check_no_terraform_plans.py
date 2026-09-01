@@ -697,12 +697,12 @@ def test_prose_containing_outs_is_not_a_pointer(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     "text, expected_ok",
     [
-        ("outs:\n- md5: abc\n  path: thing\n", True),
-        ("outs:\n- hash: md5\n  md5: abc\n  path: thing\n", True),
-        ("wdir: .\nouts:\n- md5: abc\n  path: thing\n", True),
+        ("outs:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: thing\n", True),
+        ("outs:\n- hash: md5\n  md5: d41d8cd98f00b204e9800998ecf8427e\n  path: thing\n", True),
+        ("wdir: .\nouts:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: thing\n", True),
         ("prose with outs: inside\n", False),
         ("outs:\n", False),
-        ("outs:\n- md5: abc\n", False),          # no path
+        ("outs:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n", False),          # no path
         ("outs:\n- path: thing\n", False),        # no hash
         ("", False),
     ],
@@ -722,7 +722,10 @@ def test_a_corrupt_provenance_sidecar_is_caught(tmp_path, monkeypatch):
     assert main() == 1
 
 
-def test_a_valid_provenance_sidecar_passes(tmp_path, monkeypatch):
+def test_a_sidecar_is_judged_by_the_owning_schema_not_by_json_syntax(tmp_path, monkeypatch):
+    # `{"source": "x"}` is syntactically fine and schema-invalid. The check
+    # delegates to check_provenance_sidecars.check_payload rather than
+    # keeping a second, laxer notion of validity that would drift from it.
     repo = _repo(tmp_path)
     (repo / "data" / "external" / "thing").mkdir(parents=True)
     (repo / "data" / "external" / "thing" / "provenance.json").write_text('{"source": "x"}')
@@ -730,7 +733,9 @@ def test_a_valid_provenance_sidecar_passes(tmp_path, monkeypatch):
     _git(repo, "commit", "-qm", "sidecar")
 
     monkeypatch.chdir(repo)
-    assert main() == 0
+    assert main() == 1
+    # Real sidecars, which do satisfy the schema, are covered by
+    # test_the_real_repository_pointers_still_validate.
 
 
 def test_the_allowlist_pathspecs_cover_the_workflow_predicate():
@@ -784,7 +789,7 @@ def test_a_pointer_carrying_a_smuggled_block_is_refused(tmp_path, monkeypatch):
     repo = _repo(tmp_path)
     (repo / "data" / "raw").mkdir(parents=True)
     (repo / "data" / "raw" / "leak.dvc").write_text(
-        "outs:\n- md5: abc\n  path: thing\nraw: |\n  Ram Kumar, 9876543210, Sambalpur\n"
+        "outs:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: thing\nraw: |\n  Ram Kumar, 9876543210, Sambalpur\n"
     )
     _git(repo, "add", "-f", "data/raw/leak.dvc")
     _git(repo, "commit", "-qm", "leak")
@@ -797,15 +802,16 @@ def test_a_pointer_carrying_a_smuggled_block_is_refused(tmp_path, monkeypatch):
     "text, expected_ok",
     [
         # Accepted: the shapes DVC actually writes.
-        ("outs:\n- md5: abc\n  path: thing\n", True),
-        ("wdir: .\nouts:\n- md5: abc\n  path: thing\n  size: 12\n", True),
-        ("md5: abc\ncmd: echo hi\nouts:\n- md5: a\n  path: p\n"
-         "deps:\n- md5: b\n  path: q\n", True),
+        ("outs:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: thing\n", True),
+        ("wdir: .\nouts:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: thing\n  size: 12\n", True),
+        ("md5: d41d8cd98f00b204e9800998ecf8427e\nouts:\n"
+         "- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: p\n"
+         "deps:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: q\n", True),
         # Refused: unrecognised content, in each place it can hide.
-        ("outs:\n- md5: abc\n  path: thing\nraw: |\n  secret\n", False),
-        ("outs:\n- md5: abc\n  path: thing\n  leaked: citizen\n", False),
+        ("outs:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: thing\nraw: |\n  secret\n", False),
+        ("outs:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: thing\n  leaked: citizen\n", False),
         ("outs: |\n  secret\n", False),
-        ("outs:\n- md5: abc\n  path: thing\nnotes: hello\n", False),
+        ("outs:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: thing\nnotes: hello\n", False),
     ],
 )
 def test_dvc_pointer_problem_is_closed_not_lenient(text, expected_ok):
@@ -832,22 +838,29 @@ def test_the_real_repository_pointers_still_validate():
 @pytest.mark.parametrize(
     "text, expected_ok",
     [
-        ("outs:\n- md5: abc\n  path: thing\ncmd: dvc repro\n", True),
-        # Prose does not survive the scalar cap, per the sidecar checker.
-        ("outs:\n- md5: abc\n  path: thing\ncmd: " + "x" * 201 + "\n", False),
-        ("outs:\n- md5: abc\n  path: " + "y" * 201 + "\n", False),
-        ("outs:\n- md5: abc\n  path: thing\ndesc: " + "z" * 250 + "\n", False),
+        ("outs:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: thing\n", True),
+        # Free-text fields are not accepted at all. A length cap cannot tell
+        # short citizen text from a legitimate description, so there is no
+        # field here in which prose is allowed.
+        ("outs:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: thing\ncmd: dvc repro\n", False),
+        ("outs:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: thing\ndesc: a note\n", False),
+        ("outs:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: thing\n  desc: a note\n", False),
+        # Values that are accepted have a shape.
+        ("outs:\n- md5: not-a-checksum\n  path: thing\n", False),
+        ("outs:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: thing\n  size: twelve\n", False),
+        ("outs:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: thing\n  isexec: maybe\n", False),
+        ("outs:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: " + "p" * 256 + "\n", False),
     ],
 )
-def test_recognised_fields_still_bound_their_values(text, expected_ok):
+def test_recognised_fields_are_typed_not_merely_named(text, expected_ok):
     assert (dvc_pointer_problem(text) is None) is expected_ok
 
 
-def test_the_scalar_cap_reports_by_length_never_by_content():
+def test_a_rejected_value_is_reported_by_shape_never_by_content():
     # This runs in CI, whose logs are public: refusing to publish something
     # and then printing it defeats the gate.
     secret = "Ram Kumar 9876543210 Sambalpur " * 10
-    problem = dvc_pointer_problem(f"outs:\n- md5: a\n  path: p\ncmd: {secret}\n")
+    problem = dvc_pointer_problem(f"outs:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: {secret}\n")
 
     assert problem is not None
     assert "Ram Kumar" not in problem
@@ -855,27 +868,24 @@ def test_the_scalar_cap_reports_by_length_never_by_content():
     assert "characters" in problem
 
 
-def test_pre_commit_runs_the_provenance_schema_check():
+def test_pre_commit_covers_sidecars_through_the_staged_scan():
     hook = (
         Path(__file__).resolve().parents[1] / ".githooks" / "pre-commit"
     ).read_text()
-    assert "check_provenance_sidecars.py" in hook
-    # The staged blob, not the worktree file: those differ once a file is
-    # staged and then edited.
-    assert "cat-file blob" in hook
-
-
-# ---------------------------------------------------------------------------
-# Codex P1 on #321, follow-up: a per-value cap is not an aggregate bound, and
-# a diagnostic that quotes the offending line publishes it.
-# ---------------------------------------------------------------------------
+    # One Python call, which validates every allowlisted blob including
+    # sidecars. The earlier shell pipeline could not carry a filename
+    # containing a newline and failed by checking nothing.
+    assert "check_no_terraform_plans.py" in hook
+    assert "--staged" in hook
+    assert "cat-file blob" not in hook
+    assert "tr '\\0'" not in hook
 
 
 def test_text_split_across_many_fields_is_still_bounded(tmp_path, monkeypatch):
     # Every scalar stays under the per-value cap while the payload does not.
     repo = _repo(tmp_path)
     (repo / "data" / "raw").mkdir(parents=True)
-    lines = ["outs:", "- md5: abc", "  path: thing"]
+    lines = ["outs:", "- md5: d41d8cd98f00b204e9800998ecf8427e", "  path: thing"]
     lines += [f"  desc: Ram Kumar 9876543210 Sambalpur entry {i}" for i in range(600)]
     (repo / "data" / "raw" / "big.dvc").write_text("\n".join(lines) + "\n")
     _git(repo, "add", "-f", "data/raw/big.dvc")
@@ -908,7 +918,9 @@ def test_no_diagnostic_ever_quotes_the_file(text):
 
 def test_rejections_still_say_where_and_why():
     # Withholding content must not make the message useless to the author.
-    problem = dvc_pointer_problem("outs:\n- md5: a\n  path: p\nnotes: hello\n")
+    problem = dvc_pointer_problem(
+        "outs:\n- md5: d41d8cd98f00b204e9800998ecf8427e\n  path: p\nnotes: hello\n"
+    )
 
     assert problem is not None
     assert "line 4" in problem
@@ -932,17 +944,9 @@ def test_a_zip_member_directory_never_reaches_the_message(tmp_path):
     assert not any("Ram Kumar" in member for member in members)
 
 
-def test_pre_commit_passes_sidecar_paths_without_word_splitting():
-    hook = (
-        Path(__file__).resolve().parents[1] / ".githooks" / "pre-commit"
-    ).read_text()
-    # NUL-delimited: a path with a space must stay one argument.
-    assert "-print0" in hook
-    assert "xargs -0" in hook
-
-
 def test_a_sidecar_path_with_a_space_is_still_checked(tmp_path):
-    # Exercises the hook's argument handling against a real repository.
+    # Argument handling, exercised against a real repository with the hook
+    # installed rather than asserted on the script text.
     repo = _repo(tmp_path)
     hooks = repo / ".githooks"
     hooks.mkdir()
@@ -967,3 +971,5 @@ def test_a_sidecar_path_with_a_space_is_still_checked(tmp_path):
 
     assert result.returncode != 0, result.stdout + result.stderr
     assert "my sidecar.provenance.json" in (result.stdout + result.stderr)
+
+
