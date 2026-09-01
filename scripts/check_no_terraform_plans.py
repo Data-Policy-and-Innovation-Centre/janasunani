@@ -226,11 +226,27 @@ TOKEN = re.compile(r"\A[A-Za-z0-9_.-]{1,64}\Z")
 # The algorithms DVC actually writes. A generic token accepted prose.
 HASH_NAMES = frozenset({"md5", "sha256", "sha1", "etag", "checksum", "crc32"})
 
-# A run of digits this long in a name under data/ is an identifier, not a
-# version or a count: an Indian mobile is 10 digits and an Aadhaar 12. The
-# longest run across all 33 allowlisted files in this repository is 8, so
-# this refuses the identifier shapes with margin and breaks nothing.
-IDENTIFIER_RUN = re.compile(r"\d{9,}")
+# Digits in a name under data/, counted across the separators people write
+# identifiers with: `987-654-3210` and `9876 543210` carry no nine-digit run
+# but are still a mobile number. Nine or more digits in one such group is an
+# identifier rather than a version or a count -- an Indian mobile is 10 and an
+# Aadhaar 12. Measured before choosing the threshold: across all 39 path
+# components in this repository the worst group holds 8 digits, so this
+# refuses the identifier shapes with margin and breaks nothing.
+DIGIT_GROUP = re.compile(r"\d(?:[\d\s._-]*\d)?")
+IDENTIFIER_DIGITS = 9
+
+# Shapes that are an identifier whatever field they sit in.
+MOBILE = re.compile(r"\A[6-9]\d{9}\Z")
+AADHAAR = re.compile(r"\A\d{12}\Z")
+
+
+def has_identifier(text: str) -> bool:
+    """Whether ``text`` carries an identifier-shaped run of digits."""
+    return any(
+        sum(character.isdigit() for character in group) >= IDENTIFIER_DIGITS
+        for group in DIGIT_GROUP.findall(text)
+    )
 INTEGER = re.compile(r"\A[0-9]{1,20}\Z")
 BOOLEAN = frozenset({"true", "false", "True", "False"})
 PATHISH = re.compile(r"\A[A-Za-z0-9._][A-Za-z0-9._/@+-]*\Z")
@@ -295,7 +311,16 @@ def _scalar_problem(key: str, value: str) -> str | None:
     if key == "hash":
         return None if value in HASH_NAMES else f"{key!r} is not a DVC hash name"
     if key in {"size", "nfiles"}:
-        return None if INTEGER.match(value) else f"{key!r} is not an integer"
+        if not INTEGER.match(value):
+            return f"{key!r} is not an integer"
+        if len(value) > 1 and value.startswith("0"):
+            return f"{key!r} has a leading zero"
+        # A count is not a phone number. Real sizes here reach 10 digits, so
+        # length alone cannot separate them -- the identifier *shapes* can,
+        # and no real value in this repository matches either.
+        if MOBILE.match(value) or AADHAAR.match(value):
+            return f"{key!r} is an identifier shape, not a count"
+        return None
     if key == "path":
         if len(value) > MAX_PATH:
             return f"{key!r} is {len(value)} characters, over the {MAX_PATH} cap"
@@ -462,7 +487,7 @@ def allowlisted_offenders(
         # disclosure on its own. Names that get past this are still never
         # printed to a public log: see `safe_path`.
         identifier_in = [
-            component for component in path.parts if IDENTIFIER_RUN.search(component)
+            component for component in path.parts if has_identifier(component)
         ]
         if identifier_in:
             # Every component, not just the leaf: `data/raw/9876543210/x.dvc`

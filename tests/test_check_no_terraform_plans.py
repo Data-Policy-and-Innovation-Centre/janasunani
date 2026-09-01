@@ -1314,22 +1314,6 @@ def test_an_identifier_shaped_filename_is_refused(tmp_path, monkeypatch):
     assert main() == 1
 
 
-@pytest.mark.parametrize(
-    "name, expected_ok",
-    [
-        ("Dump20250730.sql.dvc", True),      # a date, 8 digits
-        ("historical_gold_180.jsonl.dvc", True),
-        ("validation_5_page_audit.sqlite.dvc", True),
-        ("Ram-Kumar-9876543210.dvc", False),  # mobile, 10
-        ("x-123456789012.dvc", False),        # Aadhaar, 12
-    ],
-)
-def test_the_identifier_rule_admits_real_names_and_refuses_identifiers(name, expected_ok):
-    from scripts.check_no_terraform_plans import IDENTIFIER_RUN
-
-    assert (IDENTIFIER_RUN.search(name) is None) is expected_ok
-
-
 # ---------------------------------------------------------------------------
 # Codex P1 on #321: the identifier rule looked only at the leaf, and an
 # 8-to-64 checksum range accepted a mobile number that happens to be hex.
@@ -1482,3 +1466,74 @@ def test_the_accepted_keys_are_the_ones_the_repository_actually_uses():
     assert {"md5", "size", "hash", "path", "nfiles"} <= DVC_ENTRY_KEYS
     assert "wdir" not in DVC_TOP_LEVEL_KEYS
     assert "remote" not in DVC_ENTRY_KEYS
+
+
+# ---------------------------------------------------------------------------
+# Codex P1 on #321: identifiers are written with separators, and `size`/
+# `nfiles` accepted any 1-20 digit string.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "name, is_identifier",
+    [
+        # Written the way people write them.
+        ("Ram-987-654-3210.dvc", True),
+        ("x-9876 543210.dvc", True),
+        ("x_9876_543210.dvc", True),
+        ("x.9876.543210.dvc", True),
+        ("aadhaar-1234 5678 9012.dvc", True),
+        # Real names from this repository, which must keep passing.
+        ("Dump20250730.sql.dvc", False),
+        ("historical_gold_180.jsonl.dvc", False),
+        ("validation_5_page_audit.sqlite.dvc", False),
+        ("interrupted_300_page_audit.sqlite.dvc", False),
+    ],
+)
+def test_identifiers_are_counted_across_separators(name, is_identifier):
+    from scripts.check_no_terraform_plans import has_identifier
+
+    assert has_identifier(name) is is_identifier
+
+
+def test_a_separator_formatted_identifier_in_a_path_is_refused(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    (repo / "data" / "raw").mkdir(parents=True)
+    (repo / "data" / "raw" / "Ram-987-654-3210.dvc").write_text(
+        f"outs:\n- md5: {_MD5}\n  path: Ram-987-654-3210\n"
+    )
+    _git(repo, "add", "-f", "data/raw/Ram-987-654-3210.dvc")
+    _git(repo, "commit", "-qm", "sep id")
+
+    monkeypatch.chdir(repo)
+    assert main() == 1
+
+
+@pytest.mark.parametrize(
+    "line, expected_ok",
+    [
+        ("size: 3221225472", True),      # 3 GiB, ten digits and legitimate
+        ("size: 1234567890123", True),   # thirteen digits, not an identifier shape
+        ("size: 12", True),
+        ("nfiles: 11", True),
+        ("size: 9876543210", False),     # mobile
+        ("nfiles: 123456789012", False),  # Aadhaar
+        ("size: 0123", False),           # leading zero
+        ("size: twelve", False),
+    ],
+)
+def test_counts_are_not_identifiers(line, expected_ok):
+    text = f"outs:\n- md5: {_MD5}\n  path: thing\n  {line}\n"
+    assert (dvc_pointer_problem(text, stem="thing") is None) is expected_ok
+
+
+def test_the_real_size_values_still_pass():
+    # Sizes here reach ten digits, so length alone could not have been the
+    # rule; the identifier shapes are what separate them.
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT)],
+        cwd=SCRIPT.parents[1],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout
