@@ -191,13 +191,33 @@ DVC_TOP_LEVEL_KEYS = frozenset({"outs", "deps", "wdir", "md5", "frozen"})
 # Keys that introduce a list rather than carrying a scalar.
 DVC_LIST_KEYS = frozenset({"outs", "deps"})
 DVC_ENTRY_KEYS = frozenset(
-    {"md5", "hash", "etag", "checksum", "path", "size", "nfiles", "isexec",
-     "remote", "cache", "persist", "push"}
+    {"md5", "sha1", "sha256", "hash", "etag", "checksum", "path", "size",
+     "nfiles", "isexec", "remote", "cache", "persist", "push"}
 )
 
 # Every accepted value has a shape. Checked by pattern, so a field cannot be
 # used as a container for something else.
-HEXISH = re.compile(r"\A[0-9a-fA-F]{8,64}(\.dir)?\Z")
+# Exact widths per algorithm. An 8-to-64 range accepted `md5: 9876543210`,
+# which is a mobile number that happens to be hex, and which then also
+# satisfied the "an entry has a hash" requirement.
+CHECKSUM_WIDTHS = {
+    "md5": (32,),
+    "sha1": (40,),
+    "sha256": (64,),
+    "etag": (32, 64),
+    "checksum": (32, 64),
+}
+
+
+def _checksum_problem(key: str, value: str) -> str | None:
+    body = value[:-4] if value.endswith(".dir") else value
+    widths = CHECKSUM_WIDTHS[key]
+    if len(body) not in widths:
+        expected = " or ".join(str(width) for width in widths)
+        return f"{key!r} is {len(body)} hex characters, expected {expected}"
+    if not all(character in "0123456789abcdefABCDEF" for character in body):
+        return f"{key!r} is not hexadecimal"
+    return None
 TOKEN = re.compile(r"\A[A-Za-z0-9_.-]{1,64}\Z")
 # The algorithms DVC actually writes. A generic token accepted prose.
 HASH_NAMES = frozenset({"md5", "sha256", "sha1", "etag", "checksum", "crc32"})
@@ -266,8 +286,8 @@ def _scalar_problem(key: str, value: str) -> str | None:
     if any(ord(ch) < 32 for ch in value):
         return f"{key!r} contains control characters"
 
-    if key in {"md5", "etag", "checksum"}:
-        return None if HEXISH.match(value) else f"{key!r} is not a checksum"
+    if key in CHECKSUM_WIDTHS:
+        return _checksum_problem(key, value)
     if key == "hash":
         return None if value in HASH_NAMES else f"{key!r} is not a DVC hash name"
     if key in {"size", "nfiles"}:
@@ -378,8 +398,10 @@ def dvc_pointer_problem(text: str, stem: str | None = None) -> str | None:
     for item in items:
         if "path" not in item:
             return "an `outs:` entry has no `path`"
-        if not {"md5", "hash", "etag", "checksum"} & set(item):
-            return "an `outs:` entry has no hash"
+        # The digest-bearing keys are exactly the ones with a width rule;
+        # `hash` names the algorithm rather than carrying a digest.
+        if not set(CHECKSUM_WIDTHS) & set(item):
+            return "an `outs:` entry has no checksum"
         # A pointer names the file beside it: `foo.csv.dvc` tracks `foo.csv`.
         # Tying `path` to the pointer's own stem is what stops the field being
         # a free string -- a path syntactically fine but carrying citizen
@@ -431,9 +453,15 @@ def allowlisted_offenders(
         # shapes are decidable, and they are the ones that make a filename a
         # disclosure on its own. Names that get past this are still never
         # printed to a public log: see `safe_path`.
-        if IDENTIFIER_RUN.search(name):
+        identifier_in = [
+            component for component in path.parts if IDENTIFIER_RUN.search(component)
+        ]
+        if identifier_in:
+            # Every component, not just the leaf: `data/raw/9876543210/x.dvc`
+            # puts the number in a directory. The reason names neither the
+            # component nor the digits.
             offenders.append(
-                (path, ["the filename contains a 9+ digit identifier"])
+                (path, ["a path component contains a 9+ digit identifier"])
             )
             continue
 
