@@ -275,12 +275,29 @@ def test_the_regex_alone_would_have_missed_it(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+def _local_env() -> dict[str, str]:
+    """The environment the pre-commit hook actually runs in.
+
+    `CI` and `GITHUB_ACTIONS` are set on a runner, and `safe_path` redacts
+    protected filenames when they are. Tests of the *hook* have to state that
+    they are local, or they assert one thing on a laptop and another in
+    Actions -- which is exactly how these two got through review and failed
+    in CI.
+    """
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"CI", "GITHUB_ACTIONS"}
+    }
+
+
 def _run_staged(repo: Path) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, str(SCRIPT), "--staged"],
         cwd=repo,
         capture_output=True,
         text=True,
+        env=_local_env(),
     )
 
 
@@ -973,7 +990,11 @@ def test_a_sidecar_path_with_a_space_is_still_checked(tmp_path):
     _git(repo, "add", "-f", "data/external/my sidecar.provenance.json")
 
     result = subprocess.run(
-        ["git", "commit", "-m", "sidecar"], cwd=repo, capture_output=True, text=True
+        ["git", "commit", "-m", "sidecar"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=_local_env(),
     )
 
     assert result.returncode != 0, result.stdout + result.stderr
@@ -1143,9 +1164,12 @@ def test_the_same_run_names_the_file_locally(tmp_path):
     _git(repo, "add", "-f", "data/raw/Ram-Kumar-9876543210.dvc")
     _git(repo, "commit", "-qm", "named")
 
-    env = {k: v for k, v in os.environ.items() if k not in {"CI", "GITHUB_ACTIONS"}}
     result = subprocess.run(
-        [sys.executable, str(SCRIPT)], cwd=repo, capture_output=True, text=True, env=env
+        [sys.executable, str(SCRIPT)],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=_local_env(),
     )
 
     assert result.returncode == 1
