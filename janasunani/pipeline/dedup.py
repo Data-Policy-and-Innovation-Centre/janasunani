@@ -182,6 +182,11 @@ def _canonical_source_record(record: Mapping[str, object]) -> tuple[str, bytes]:
         "created_on",
         "petitioner_mobile",
         "petitioner_email",
+        # Feeds the masked-mobile composite in `mobile_identity_key` (#341),
+        # so a name change changes the identity key and must read as
+        # staleness. Omitting it would let `_source_digest_mismatches` certify
+        # a row whose key was derived from a name the record no longer has.
+        "petitioner_name",
         "grievance_redacted",
     )
     try:
@@ -818,3 +823,112 @@ def identity_key(value: str, salt: str) -> str | None:
         f"{salt}\x00{normalized}".encode("utf-8"), digest_size=32
     )
     return digest.hexdigest()
+
+
+# --- identity under masking (#341) -----------------------------------------
+
+#: Marker for the identity-key derivation, stamped into the index version so
+#: a change here is visible as staleness rather than as silently mixed keys.
+IDENTITY_ALGORITHM = "mobile-tail4-name-v1"
+
+#: Digits kept from a masked mobile. The portal masks `petitioner_mobile` as
+#: a `******`-style prefix plus the last four digits, and those four are
+#: genuine: they spread across all 10,000 values at a mean of ~108 rows each
+#: over the 1.37M-row corpus, which is what real last-four digits look like.
+MASKED_MOBILE_TAIL = 4
+
+#: Characters kept from the petitioner name. `petitioner_name` is effectively
+#: unmasked (6 of 1,371,285 rows carry a mask), so this is real signal.
+NAME_TAIL = 4
+
+
+def _tail_digits(value: str | None, n: int) -> str | None:
+    digits = [ch for ch in (value or "") if ch.isdigit()]
+    return "".join(digits[-n:]) if len(digits) >= n else None
+
+
+def _tail_alpha(value: str | None, n: int) -> str | None:
+    alpha = [ch.lower() for ch in (value or "") if ch.isalpha()]
+    return "".join(alpha[-n:]) if len(alpha) >= n else None
+
+
+def mobile_identity_key(
+    mobile: str | None, name: str | None, salt: str
+) -> str | None:
+    """Same-citizen key for a mobile column that arrives masked (#341).
+
+    :func:`identity_key` assumes it is handed an identifier. On this corpus
+    it is not: **zero** of 1,359,804 identity-keyed signatures had a
+    phone-shaped `petitioner_mobile`. Every value was a mask or a sentinel,
+    and `identity_key`'s trim-and-lowercase fallback -- correct for email --
+    turned each of them into a valid-looking identity. The single value
+    ``'~::~'`` alone accounted for 201,965 signatures spanning 136,779
+    distinct petitioner names, i.e. "no mobile recorded" was being treated
+    as one citizen.
+
+    Two paths, namespaced so they can never collide:
+
+    **A real number, if one is ever present.** Canonicalised exactly as
+    :func:`identity_key` does, and keyed on the full subscriber number. This
+    is unreachable on the current corpus but is the strongest key available
+    and must not be weakened for data that may yet arrive unmasked.
+
+    **Otherwise the surviving fragments.** The last four digits of the mask,
+    plus the last four letters of the petitioner name. Neither is sufficient
+    alone: four digits is ~10^4 values over 1.37M rows, about 108 rows each,
+    which would rebuild the very buckets this exists to remove. Together they
+    yield ~658k keys of which most are singletons.
+
+    Abstains -- ``None``, the module's "nothing meaningful here" contract --
+    when the mobile carries fewer than four digits, which is what removes
+    ``'~::~'``, or when the name carries fewer than four letters. An
+    abstention is the honest answer: a record with no usable fragment has no
+    identity, and inventing one merges strangers.
+
+    **A composite is weaker than a phone number, and deliberately so.** It
+    says "plausibly the same person", not "provably". That is sound here only
+    because identity buckets are *candidates*: every pair still has to clear
+    Jaccard verification on the grievance text before anything is grouped
+    (module docstring point 6). A wrong composite match therefore cannot
+    merge two citizens unless their filings are also near-duplicate in
+    content, which is a duplicate on its own terms.
+
+    ``name`` is read only to derive four lowercase letters. It is never
+    stored, and the return value is a salted hash exactly as elsewhere in
+    this module.
+    """
+    canonical = _canonical_phone_digits(mobile or "")
+    if canonical is not None:
+        # Unnamespaced on purpose: this is the key `identity_key` already
+        # produces for a phone-shaped value, and keeping it byte-identical
+        # means unmasked records keep linking across this change.
+        return identity_key(canonical, salt)
+
+    tail = _tail_digits(mobile, MASKED_MOBILE_TAIL)
+    if tail is None:
+        return None
+    name_tail = _tail_alpha(name, NAME_TAIL)
+    if name_tail is None:
+        return None
+    return identity_key(f"mobile{MASKED_MOBILE_TAIL}:{tail}:{name_tail}", salt)
+
+
+def email_identity_key(email: str | None, salt: str) -> str | None:
+    """Same-citizen key for the email column.
+
+    Unlike the mobile column, this one is healthy: 261,161 of 262,159
+    identity-keyed signatures carry an email-shaped value, across 4,580
+    distinct addresses. So the derivation is unchanged from
+    :func:`identity_key` -- trim and lowercase, which is the right
+    canonicalisation for an address.
+
+    The only addition is a shape requirement. 56 distinct non-address values
+    covering 998 signatures were being keyed as identities by the same
+    fallback that broke the mobile column. An address needs a non-empty local
+    part and a dotted domain; anything else abstains.
+    """
+    value = (email or "").strip()
+    local, _, domain = value.partition("@")
+    if not local or "." not in domain:
+        return None
+    return identity_key(value, salt)

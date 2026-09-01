@@ -124,7 +124,7 @@ def _read_lake_source_records(lake_dir: Optional[Path], district: str, year: int
     try:
         sql = """
             SELECT c.ticket_no, c.district, c.created_year, c.created_on,
-                   c.petitioner_mobile, c.petitioner_email,
+                   c.petitioner_mobile, c.petitioner_email, c.petitioner_name,
                    g.grievance_redacted
             FROM complaints c
             JOIN grievance_redactions g USING (ticket_no)
@@ -142,6 +142,7 @@ def _read_lake_source_records(lake_dir: Optional[Path], district: str, year: int
                     "created_on": row["created_on"],
                     "petitioner_mobile": row["petitioner_mobile"],
                     "petitioner_email": row["petitioner_email"],
+                    "petitioner_name": row["petitioner_name"],
                     "grievance_redacted": row["grievance_redacted"],
                 }
             )

@@ -20,7 +20,8 @@ answer depends on which *other* records are in scope.
 directly would put raw citizen PII into signatures and identity keys instead
 of the typed placeholders the redaction pass exists to produce. The pending
 query below joins `complaints` only for structured columns (district,
-created_on, petitioner_mobile/email); it never selects `complaints.grievance`.
+created_on, petitioner_mobile/email, and petitioner_name for the masked-mobile
+composite of #341); it never selects `complaints.grievance`.
 
 **Two stages, two persistence shapes.**
 
@@ -34,7 +35,10 @@ created_on, petitioner_mobile/email); it never selects `complaints.grievance`.
    key, and separately compute salted identity keys from
    `petitioner_mobile`/`petitioner_email` — a path that never touches the
    redacted text and never feeds `shingles()` (dedup.py module docstring
-   point 3; see `identity_key()`'s contract). Writes `dedup_signatures`.
+   point 3). The mobile column arrives masked on this corpus, so its key is
+   a composite of the surviving fragments plus `petitioner_name`; see
+   `mobile_identity_key()` and `email_identity_key()` for both contracts.
+   Writes `dedup_signatures`.
 2. `_group_duplicates()` — not batched. It loads every signature already
    written for the scope (tens of thousands of rows for a district-year,
    comfortably in memory; 1.37M for `--all`, where that claim has not been
@@ -190,11 +194,13 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from janasunani.config import settings
 from janasunani.db.models import Complaint, DedupGroup, DedupSignature, GrievanceRedaction
 from janasunani.pipeline.dedup import (
+    IDENTITY_ALGORITHM,
+    email_identity_key,
+    mobile_identity_key,
     DEDUP_SOURCE_NAME,
     DEFAULT_NUM_BANDS,
     DEFAULT_NUM_HASHES,
     DEFAULT_SHINGLE_SIZE,
-    identity_key,
     jaccard_similarity,
     lsh_bands,
     minhash_signature,
@@ -372,7 +378,8 @@ def _index_version(
         f"shingle_size={DEFAULT_SHINGLE_SIZE} num_hashes={DEFAULT_NUM_HASHES} "
         f"num_bands={DEFAULT_NUM_BANDS} window_days={window_days} "
         f"epoch={DEDUP_WINDOW_EPOCH.isoformat()} "
-        f"threshold={threshold} salt={_salt_marker(salt)}"
+        f"threshold={threshold} salt={_salt_marker(salt)} "
+        f"identity_algorithm={IDENTITY_ALGORITHM}"
     )
     grouping_values = (grouping_algorithm, representative_cap, anchor_count)
     if all(value is None for value in grouping_values):
@@ -489,8 +496,8 @@ async def _load_pending_signature_batch(
 
     Selects `GrievanceRedaction.grievance_redacted` — never
     `Complaint.grievance` — joined to `complaints` only for the structured
-    columns (district, created_on, petitioner_mobile/email) the signature
-    row and the identity keys need. The pending predicate is the resume
+    columns (district, created_on, petitioner_mobile/email, petitioner_name)
+    the signature row and the identity keys need. The pending predicate is the resume
     mechanism (same reasoning as `redact_grievance._load_pending_batch`): it
     must stay a NOT EXISTS against the output table, not an offset.
     """
@@ -516,6 +523,7 @@ async def _load_pending_signature_batch(
             Complaint.created_on,
             Complaint.petitioner_mobile,
             Complaint.petitioner_email,
+            Complaint.petitioner_name,
         )
         .join(Complaint, Complaint.ticket_no == GrievanceRedaction.ticket_no)
         .where(
@@ -539,6 +547,7 @@ def _source_record(
     created_on: datetime | None,
     mobile: str | None,
     email: str | None,
+    name: str | None,
 ) -> dict[str, object]:
     """The exact source fields captured by a signature provenance digest."""
     return {
@@ -548,6 +557,10 @@ def _source_record(
         "created_on": created_on,
         "petitioner_mobile": mobile,
         "petitioner_email": email,
+        # Read only to derive four lowercase letters for the masked-mobile
+        # composite (#341). In the digest because it feeds the identity key:
+        # if the name changes, the key changes, and the row is stale.
+        "petitioner_name": name,
         "grievance_redacted": redacted_text,
     }
 
@@ -571,6 +584,7 @@ def _signature_rows_for_source_batch(
         created_on,
         mobile,
         email,
+        name,
     ) in batch:
         text = redacted_text or ""
         shingle_set = shingles(text)
@@ -578,7 +592,7 @@ def _signature_rows_for_source_batch(
         script = _script_of(text)
         window_index = _window_index(created_on, epoch, window_days)
         source = _source_record(
-            ticket_no, redacted_text, row_district, row_year, created_on, mobile, email
+            ticket_no, redacted_text, row_district, row_year, created_on, mobile, email, name
         )
         rows.append(
             {
@@ -593,8 +607,8 @@ def _signature_rows_for_source_batch(
                 # A separate path from text above: computed from the complaints
                 # columns directly, never from redacted_text (dedup.py module
                 # docstring point 3).
-                "identity_key_mobile": identity_key(mobile, salt) if mobile else None,
-                "identity_key_email": identity_key(email, salt) if email else None,
+                "identity_key_mobile": mobile_identity_key(mobile, name, salt),
+                "identity_key_email": email_identity_key(email, salt),
                 "source_record_digest": source_record_digest(source),
                 "index_version": version,
                 "indexed_at": now,
@@ -634,6 +648,7 @@ async def _source_digest_mismatches(conn, district: Optional[str], year: Optiona
             Complaint.created_on,
             Complaint.petitioner_mobile,
             Complaint.petitioner_email,
+            Complaint.petitioner_name,
             GrievanceRedaction.grievance_redacted,
         )
         .select_from(DedupSignature)
@@ -653,6 +668,7 @@ async def _source_digest_mismatches(conn, district: Optional[str], year: Optiona
         created_on,
         mobile,
         email,
+        name,
         redacted_text,
     ) in result:
         if row_district is None or row_year is None or redacted_text is None:
@@ -660,7 +676,7 @@ async def _source_digest_mismatches(conn, district: Optional[str], year: Optiona
             continue
         current = source_record_digest(
             _source_record(
-                ticket_no, redacted_text, row_district, row_year, created_on, mobile, email
+                ticket_no, redacted_text, row_district, row_year, created_on, mobile, email, name
             )
         )
         if stored_digest is not None and stored_digest != current:
@@ -685,6 +701,7 @@ async def _load_source_rows_for_tickets(conn, ticket_nos: list[str]):
             Complaint.created_on,
             Complaint.petitioner_mobile,
             Complaint.petitioner_email,
+            Complaint.petitioner_name,
         )
         .select_from(DedupSignature)
         .outerjoin(Complaint, Complaint.ticket_no == DedupSignature.ticket_no)
