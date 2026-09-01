@@ -23,8 +23,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.check_no_terraform_plans import (  # noqa: E402
     _members_of,
     main,
-    pointer_offenders,
-    tracked_pointer_entries,
+    allowlisted_offenders,
+    dvc_pointer_problem,
+    tracked_allowlisted_entries,
     plan_members_of_blob,
     tracked_entries,
 )
@@ -619,7 +620,7 @@ def test_a_genuine_pointer_passes(tmp_path, monkeypatch):
 
     monkeypatch.chdir(repo)
     assert main() == 0
-    assert pointer_offenders(tracked_pointer_entries()) == []
+    assert allowlisted_offenders(tracked_allowlisted_entries()) == []
 
 
 def test_a_file_too_large_to_be_a_pointer_is_refused_unread(tmp_path, monkeypatch):
@@ -631,9 +632,9 @@ def test_a_file_too_large_to_be_a_pointer_is_refused_unread(tmp_path, monkeypatc
     _git(repo, "commit", "-qm", "big")
 
     monkeypatch.chdir(repo)
-    offenders = pointer_offenders(tracked_pointer_entries())
+    offenders = allowlisted_offenders(tracked_allowlisted_entries())
     assert [str(p) for p, _ in offenders] == ["data/raw/big.dvc"]
-    assert "larger than a DVC pointer" in offenders[0][1][0]
+    assert "far larger than" in offenders[0][1][0]
 
 
 def test_a_dvc_name_holding_something_else_entirely_is_refused(tmp_path, monkeypatch):
@@ -645,3 +646,101 @@ def test_a_dvc_name_holding_something_else_entirely_is_refused(tmp_path, monkeyp
 
     monkeypatch.chdir(repo)
     assert main() == 1
+
+
+# ---------------------------------------------------------------------------
+# Codex P1 on #321, follow-up: the allowlist exempts more than `.dvc`, and a
+# substring test for `outs:` is not a validation.
+# ---------------------------------------------------------------------------
+
+
+def test_a_plan_committed_as_a_gitkeep_marker_is_caught(tmp_path, monkeypatch):
+    # `.gitkeep` is allowlisted by the same predicate, and the first version
+    # of this fix added back only `.dvc`.
+    repo = _repo(tmp_path)
+    (repo / "data" / "raw").mkdir(parents=True)
+    _plan_archive(repo / "data" / "raw" / ".gitkeep", ("tfstate",))
+    _git(repo, "add", "-f", "data/raw/.gitkeep")
+    _git(repo, "commit", "-qm", "marker")
+
+    monkeypatch.chdir(repo)
+    assert main() == 1
+
+
+def test_an_empty_gitkeep_still_passes(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    (repo / "data" / "raw").mkdir(parents=True)
+    (repo / "data" / "raw" / ".gitkeep").write_text("")
+    _git(repo, "add", "-f", "data/raw/.gitkeep")
+    _git(repo, "commit", "-qm", "marker")
+
+    monkeypatch.chdir(repo)
+    assert main() == 0
+
+
+def test_prose_containing_outs_is_not_a_pointer(tmp_path, monkeypatch):
+    # The substring test this replaces accepted exactly this file.
+    repo = _repo(tmp_path)
+    (repo / "data" / "raw").mkdir(parents=True)
+    (repo / "data" / "raw" / "leak.dvc").write_text(
+        "some prose mentioning outs: in passing\nand more text\n"
+    )
+    _git(repo, "add", "-f", "data/raw/leak.dvc")
+    _git(repo, "commit", "-qm", "leak")
+
+    monkeypatch.chdir(repo)
+    assert main() == 1
+
+
+@pytest.mark.parametrize(
+    "text, expected_ok",
+    [
+        ("outs:\n- md5: abc\n  path: thing\n", True),
+        ("outs:\n- hash: md5\n  md5: abc\n  path: thing\n", True),
+        ("wdir: .\nouts:\n- md5: abc\n  path: thing\n", True),
+        ("prose with outs: inside\n", False),
+        ("outs:\n", False),
+        ("outs:\n- md5: abc\n", False),          # no path
+        ("outs:\n- path: thing\n", False),        # no hash
+        ("", False),
+    ],
+)
+def test_dvc_pointer_problem_parses_structure(text, expected_ok):
+    assert (dvc_pointer_problem(text) is None) is expected_ok
+
+
+def test_a_corrupt_provenance_sidecar_is_caught(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    (repo / "data" / "external" / "thing").mkdir(parents=True)
+    (repo / "data" / "external" / "thing" / "provenance.json").write_text("not json{")
+    _git(repo, "add", "-f", "data/external/thing/provenance.json")
+    _git(repo, "commit", "-qm", "sidecar")
+
+    monkeypatch.chdir(repo)
+    assert main() == 1
+
+
+def test_a_valid_provenance_sidecar_passes(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    (repo / "data" / "external" / "thing").mkdir(parents=True)
+    (repo / "data" / "external" / "thing" / "provenance.json").write_text('{"source": "x"}')
+    _git(repo, "add", "-f", "data/external/thing/provenance.json")
+    _git(repo, "commit", "-qm", "sidecar")
+
+    monkeypatch.chdir(repo)
+    assert main() == 0
+
+
+def test_the_allowlist_pathspecs_cover_the_workflow_predicate():
+    # If the workflow starts exempting a new name, this check must validate
+    # it too, or the exemption becomes a way in.
+    from scripts.check_no_terraform_plans import ALLOWLIST_PATHSPECS
+
+    workflow = (
+        Path(__file__).resolve().parents[1] / ".github" / "workflows" / "data-check.yml"
+    ).read_text()
+    predicate = [line for line in workflow.splitlines() if "gitkeep" in line]
+    assert predicate, "raw-data predicate not found"
+    for token in (".gitkeep", ".dvc", "provenance"):
+        assert any(token in spec for spec in ALLOWLIST_PATHSPECS), token
+        assert token in predicate[0], token
