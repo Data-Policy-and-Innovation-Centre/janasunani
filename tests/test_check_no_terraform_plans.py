@@ -9,6 +9,7 @@ cannot see.
 
 from __future__ import annotations
 
+import io
 import os
 import subprocess
 import sys
@@ -20,10 +21,21 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.check_no_terraform_plans import (  # noqa: E402
+    _members_of,
     main,
-    plan_members,
-    tracked_files,
+    plan_members_of_blob,
+    tracked_entries,
 )
+
+
+def plan_members(path: Path) -> list[str]:
+    """Archive-detection helper: the scanner reads blobs, tests read files.
+
+    The production scan never touches the filesystem (see `tracked_entries`),
+    so the byte-level detection is exercised here by handing it the file's
+    bytes directly.
+    """
+    return plan_members_of_blob(path.read_bytes())
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "check_no_terraform_plans.py"
 
@@ -34,6 +46,24 @@ def _plan_archive(path: Path, members: tuple[str, ...] = ("tfstate", "tfplan")) 
         for name in members:
             archive.writestr(name, '{"serial": 1, "outputs": {}}')
     return path
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout
+
+
+def _repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@example.com")
+    _git(repo, "config", "user.name", "T")
+    (repo / "README.md").write_text("seed\n")
+    _git(repo, "add", "README.md")
+    _git(repo, "commit", "-qm", "seed")
+    return repo
 
 
 def test_a_plan_with_no_suffix_is_caught(tmp_path):
@@ -84,10 +114,13 @@ def test_a_truncated_zip_does_not_crash_the_check(tmp_path):
 
 
 def test_reports_the_offender_and_its_members(tmp_path, monkeypatch, capsys):
-    plan = _plan_archive(tmp_path / "tfplan")
-    monkeypatch.setattr(
-        "scripts.check_no_terraform_plans.tracked_files", lambda: [plan]
-    )
+    # Against a real repository rather than a patched `tracked_files`: the
+    # scan reads git objects now, so the index is what it must be given.
+    repo = _repo(tmp_path)
+    _plan_archive(repo / "tfplan")
+    _git(repo, "add", "tfplan")
+    _git(repo, "commit", "-qm", "plan")
+    monkeypatch.chdir(repo)
 
     assert main() == 1
     out = capsys.readouterr().out
@@ -99,11 +132,11 @@ def test_reports_the_offender_and_its_members(tmp_path, monkeypatch, capsys):
 
 
 def test_passes_when_nothing_is_tracked_as_a_plan(tmp_path, monkeypatch, capsys):
-    ordinary = tmp_path / "main.tf"
-    ordinary.write_text("# nothing\n")
-    monkeypatch.setattr(
-        "scripts.check_no_terraform_plans.tracked_files", lambda: [ordinary]
-    )
+    repo = _repo(tmp_path)
+    (repo / "main.tf").write_text("# nothing\n")
+    _git(repo, "add", "main.tf")
+    _git(repo, "commit", "-qm", "tf")
+    monkeypatch.chdir(repo)
 
     assert main() == 0
     assert capsys.readouterr().out == ""
@@ -120,7 +153,7 @@ def test_this_repository_currently_passes():
     assert result.returncode == 0, result.stdout
 
 
-def test_tracked_files_never_returns_anything_under_data(tmp_path, monkeypatch):
+def test_tracked_entries_never_returns_anything_under_data(tmp_path, monkeypatch):
     """Codex P1 on #321: the scan opens every path it is handed.
 
     AGENTS.md forbids reading anything under `data/` without explicit
@@ -160,7 +193,7 @@ def test_tracked_files_never_returns_anything_under_data(tmp_path, monkeypatch):
     assert "data/external/thing.json.dvc" in indexed
 
     monkeypatch.chdir(repo)
-    files = tracked_files()
+    files = [path for path, _sha in tracked_entries()]
 
     offenders = [f for f in files if str(f).startswith("data/")]
     assert offenders == [], f"scan would open protected paths: {offenders}"
@@ -186,16 +219,18 @@ def test_a_symlink_into_data_is_not_followed(tmp_path, monkeypatch):
         subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
 
     monkeypatch.chdir(repo)
-    # The link itself is tracked and outside data/, so the pathspec returns it.
-    assert Path("public-link") in tracked_files()
+    # The link is tracked and outside data/, so the pathspec still selects it
+    # -- but it is dropped as mode 120000, and in any case the scan reads the
+    # blob, which holds the link *text* rather than the target's bytes.
+    assert Path("public-link") not in [path for path, _sha in tracked_entries()]
 
-    # It must not be followed: no finding, and nothing under data/ opened.
+    # No finding, and nothing under data/ read.
     assert main() == 0
 
 
-def test_tracked_files_reads_the_git_index(monkeypatch):
+def test_tracked_entries_reads_the_git_index(monkeypatch):
     monkeypatch.chdir(SCRIPT.parents[1])
-    files = tracked_files()
+    files = [path for path, _sha in tracked_entries()]
     assert Path("pyproject.toml") in files
     assert Path(".github/workflows/data-check.yml") in files
 
@@ -228,24 +263,6 @@ def test_the_regex_alone_would_have_missed_it(tmp_path):
 # the disclosure — and only then rejected by CI. These cover the staged scan
 # that closes that window.
 # ---------------------------------------------------------------------------
-
-
-def _git(repo: Path, *args: str) -> str:
-    return subprocess.run(
-        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
-    ).stdout
-
-
-def _repo(tmp_path: Path) -> Path:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _git(repo, "init", "-q")
-    _git(repo, "config", "user.email", "t@example.com")
-    _git(repo, "config", "user.name", "T")
-    (repo / "README.md").write_text("seed\n")
-    _git(repo, "add", "README.md")
-    _git(repo, "commit", "-qm", "seed")
-    return repo
 
 
 def _run_staged(repo: Path) -> subprocess.CompletedProcess:
@@ -401,31 +418,6 @@ def test_a_symlinked_ancestor_is_not_followed_into_data(tmp_path, monkeypatch):
     assert main() == 0
 
 
-def test_open_nofollow_refuses_a_link_at_the_final_component(tmp_path):
-    from scripts.check_no_terraform_plans import _open_nofollow
-
-    target = _plan_archive(tmp_path / "real")
-    link = tmp_path / "link"
-    link.symlink_to(target)
-
-    assert _open_nofollow(link) is None
-    assert plan_members(link) == []
-    # The archive is still found at its own path.
-    assert plan_members(target) == ["tfplan", "tfstate"]
-
-
-def test_open_nofollow_refuses_a_link_at_an_ancestor(tmp_path):
-    from scripts.check_no_terraform_plans import _open_nofollow
-
-    real_dir = tmp_path / "real_dir"
-    real_dir.mkdir()
-    _plan_archive(real_dir / "payload")
-    (tmp_path / "via_link").symlink_to(real_dir)
-
-    assert _open_nofollow(tmp_path / "via_link" / "payload") is None
-    assert plan_members(tmp_path / "via_link" / "payload") == []
-
-
 def test_staged_scan_never_touches_the_filesystem_for_content(tmp_path):
     # The staged mode reads blobs with `git cat-file`, so symlinked ancestors
     # cannot arise there at all: deleting the worktree copy entirely leaves
@@ -480,8 +472,8 @@ def test_no_metadata_is_read_through_a_symlinked_ancestor(tmp_path, monkeypatch)
 
 
 def test_a_directory_entry_is_not_mistaken_for_an_archive(tmp_path, monkeypatch):
-    # The removed `is_file()` prefilter used to skip these; opening a
-    # directory now fails on the read instead, which must not raise.
+    # Directories never appear in the scan at all now: `git ls-files -s`
+    # lists blobs, so there is no entry for `adir` to misread.
     repo = _repo(tmp_path)
     (repo / "adir").mkdir()
     (repo / "adir" / "keep").write_text("x\n")
@@ -490,7 +482,7 @@ def test_a_directory_entry_is_not_mistaken_for_an_archive(tmp_path, monkeypatch)
 
     monkeypatch.chdir(repo)
     assert main() == 0
-    assert plan_members(Path("adir")) == []
+    assert Path("adir") not in [path for path, _sha in tracked_entries()]
 
 
 def test_a_broken_symlink_does_not_crash_the_scan(tmp_path, monkeypatch):
@@ -501,3 +493,78 @@ def test_a_broken_symlink_does_not_crash_the_scan(tmp_path, monkeypatch):
 
     monkeypatch.chdir(repo)
     assert main() == 0
+
+
+# ---------------------------------------------------------------------------
+# Codex P2 on #321, final round: a hard link is an ordinary directory entry,
+# so no open-time flag distinguishes it. Reading git blobs rather than the
+# worktree retires that whole class, and closes the damaged-archive gap.
+# ---------------------------------------------------------------------------
+
+
+def test_a_hard_link_into_data_is_not_read(tmp_path, monkeypatch):
+    # Reproduced on 6fb981e: `public/payload` hard-linked to a plan under
+    # data/ was opened and reported, because O_NOFOLLOW cannot see a hard
+    # link. The blob for public/payload is its own committed content.
+    repo = _repo(tmp_path)
+    (repo / "data").mkdir()
+    (repo / "public").mkdir()
+    _plan_archive(repo / "data" / "secret")
+    (repo / "public" / "payload").write_text("placeholder\n")
+    _git(repo, "add", "-f", "data/secret", "public/payload")
+    _git(repo, "commit", "-qm", "seed2")
+
+    (repo / "public" / "payload").unlink()
+    os.link(repo / "data" / "secret", repo / "public" / "payload")
+
+    monkeypatch.chdir(repo)
+    assert Path("public/payload").is_symlink() is False  # precondition
+    assert main() == 0
+
+
+def test_a_damaged_plan_is_still_caught(tmp_path):
+    # A truncated plan keeps its secrets: the tfstate entry is in the archive
+    # whether or not the central directory survives, and an interrupted
+    # `terraform plan -out` produces exactly this.
+    plan = _plan_archive(tmp_path / "plan", ("tfstate",))
+    intact = plan.read_bytes()
+    assert plan_members_of_blob(intact) == ["tfstate"]
+
+    damaged = intact[:-40]
+    # The archive no longer parses as a zip...
+    assert _members_of(io.BytesIO(damaged)) == []
+    # ...but is still recognised, and still refused.
+    assert plan_members_of_blob(damaged) == ["tfstate"]
+
+
+def test_a_damaged_plan_is_refused_by_the_staged_scan(tmp_path):
+    repo = _repo(tmp_path)
+    plan = _plan_archive(repo / "artifact", ("tfstate",))
+    plan.write_bytes(plan.read_bytes()[:-40])
+    _git(repo, "add", "artifact")
+
+    result = _run_staged(repo)
+
+    assert result.returncode == 1
+    assert "artifact" in result.stdout
+
+
+def test_an_ordinary_damaged_zip_is_not_called_a_plan(tmp_path):
+    deck = tmp_path / "deck.pptx"
+    with zipfile.ZipFile(deck, "w") as archive:
+        archive.writestr("ppt/presentation.xml", "<p/>")
+    damaged = deck.read_bytes()[:-20]
+
+    assert plan_members_of_blob(damaged) == []
+
+
+def test_pre_commit_matches_the_workflow_filename_patterns():
+    # Defence in depth alongside the content scan, and the gap Codex noted:
+    # CI's filename regex included `.tfplan` and the hook's did not.
+    root = Path(__file__).resolve().parents[1]
+    hook = (root / ".githooks" / "pre-commit").read_text()
+    workflow = (root / ".github" / "workflows" / "data-check.yml").read_text()
+
+    for pattern in ("terraform\\.tfstate", "terraform\\.tfvars", "\\.tfplan", "\\.pem"):
+        assert pattern in hook, pattern
+        assert pattern in workflow, pattern

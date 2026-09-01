@@ -5,7 +5,7 @@ set -eu
 # Keep this in sync with .github/workflows/data-check.yml.
 bad_files="$(
   git diff --cached --name-only --diff-filter=ACMR |
-    grep -E '(^|/)(terraform\.tfstate(\..*)?|terraform\.tfvars|.*\.auto\.tfvars|\.env|.*\.pem|id_rsa|id_ed25519)$' |
+    grep -E '(^|/)(terraform\.tfstate(\..*)?|terraform\.tfvars|.*\.auto\.tfvars|.*\.tfplan|\.env|.*\.pem|id_rsa|id_ed25519)$' |
     grep -Ev '(^|/)\.env\.example$|(^|/)terraform\.tfvars\.example$' || true
 )"
 
