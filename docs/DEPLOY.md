@@ -54,7 +54,7 @@ Current live CPU box: `i-0ef24e15a80ba7128`, EIP `52.66.116.80`.
 
 - Terraform, AWS CLI v2, an SSH keypair (default `~/.ssh/id_ed25519[.pub]`).
 - AWS credentials with rights to create EC2/EIP/IAM/security groups, and to
-  administer S3 buckets. The apply creates `janasunani-documents-dsi-reference`
+  administer S3 buckets. The apply adopts `janasunani-documents-dsi-reference`
   and sets its tags, lifecycle, versioning, encryption and public-access block,
   so credentials scoped to EC2/EIP/IAM alone will get through `plan` and fail
   partway into `apply`, after some resources already exist.
@@ -66,8 +66,8 @@ Current live CPU box: `i-0ef24e15a80ba7128`, EIP `52.66.116.80`.
   config carries an `import` block that adopts it on the first apply rather
   than creating it — without that, the apply stops with
   `BucketAlreadyOwnedByYou` partway through. Remove the block once it is in
-  state. It holds the DSI
-  clinic benchmark corpus, and its invariant is **no transition or expiration
+  state. It holds the DSI clinic benchmark corpus, and its invariant is
+  **no transition or expiration
   actions** — never that it has no lifecycle rule at all. It does have one, and
   that is the mechanism: Terraform owns the lifecycle configuration precisely so
   an archival rule added through the console shows up as drift. The single rule
