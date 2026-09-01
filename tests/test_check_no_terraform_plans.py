@@ -1324,3 +1324,74 @@ def test_the_identifier_rule_admits_real_names_and_refuses_identifiers(name, exp
     from scripts.check_no_terraform_plans import IDENTIFIER_RUN
 
     assert (IDENTIFIER_RUN.search(name) is None) is expected_ok
+
+
+# ---------------------------------------------------------------------------
+# Codex P1 on #321: the identifier rule looked only at the leaf, and an
+# 8-to-64 checksum range accepted a mobile number that happens to be hex.
+# ---------------------------------------------------------------------------
+
+
+def test_an_identifier_in_a_directory_is_refused(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    nested = repo / "data" / "raw" / "9876543210"
+    nested.mkdir(parents=True)
+    (nested / "thing.dvc").write_text(f"outs:\n- md5: {_MD5}\n  path: thing\n")
+    _git(repo, "add", "-f", "data/raw/9876543210/thing.dvc")
+    _git(repo, "commit", "-qm", "nested id")
+
+    monkeypatch.chdir(repo)
+    assert main() == 1
+
+
+def test_the_identifier_reason_names_neither_component_nor_digits(tmp_path):
+    repo = _repo(tmp_path)
+    nested = repo / "data" / "raw" / "9876543210"
+    nested.mkdir(parents=True)
+    (nested / "thing.dvc").write_text(f"outs:\n- md5: {_MD5}\n  path: thing\n")
+    _git(repo, "add", "-f", "data/raw/9876543210/thing.dvc")
+    _git(repo, "commit", "-qm", "nested id")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT)], cwd=repo, capture_output=True, text=True,
+        env={**os.environ, "GITHUB_ACTIONS": "true"},
+    )
+
+    assert result.returncode == 1
+    assert "9876543210" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    "line, expected_ok",
+    [
+        (f"md5: {_MD5}", True),
+        (f"md5: {_MD5}.dir", True),
+        # A mobile number that happens to be hex. This satisfied an 8-to-64
+        # range, and then satisfied "the entry has a hash" as well.
+        ("md5: 9876543210", False),
+        ("md5: " + "a" * 31, False),
+        ("md5: " + "a" * 33, False),
+        ("md5: " + "z" * 32, False),
+        ("sha256: " + "a" * 64, True),
+        ("sha256: " + "a" * 32, False),
+    ],
+)
+def test_checksums_have_the_width_their_algorithm_implies(line, expected_ok):
+    key = line.split(":")[0]
+    text = f"outs:\n- {line}\n  path: thing\n"
+    problem = dvc_pointer_problem(text, stem="thing")
+    if expected_ok:
+        assert problem is None, problem
+    else:
+        assert problem is not None
+        assert key in problem
+
+
+def test_the_repository_still_passes_the_tightened_checksum_rule():
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT)],
+        cwd=SCRIPT.parents[1],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout
