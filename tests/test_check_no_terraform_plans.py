@@ -1212,8 +1212,8 @@ def test_a_protected_directory_name_is_redacted(monkeypatch):
 def test_the_oversized_reason_carries_no_filename(tmp_path, monkeypatch):
     repo = _repo(tmp_path)
     (repo / "data" / "raw").mkdir(parents=True)
-    (repo / "data" / "raw" / f"{CITIZEN}.dvc").write_bytes(b"outs:\n" + b"x" * 200_000)
-    _git(repo, "add", "-f", f"data/raw/{CITIZEN}.dvc")
+    (repo / "data" / "raw" / "Ram-Kumar.dvc").write_bytes(b"outs:\n" + b"x" * 200_000)
+    _git(repo, "add", "-f", "data/raw/Ram-Kumar.dvc")
     _git(repo, "commit", "-qm", "big")
 
     result = subprocess.run(
@@ -1222,7 +1222,7 @@ def test_the_oversized_reason_carries_no_filename(tmp_path, monkeypatch):
     )
 
     assert result.returncode == 1
-    assert CITIZEN not in result.stdout
+    assert "Ram-Kumar" not in result.stdout
     assert "over the" in result.stdout
 
 
@@ -1250,3 +1250,77 @@ def test_the_repositorys_own_pointers_satisfy_the_stem_rule():
         text=True,
     )
     assert result.returncode == 0, result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Codex P1 on #321: an allowlisted name occupied by a symlink escaped
+# verification, `hash` took any token, and the stem rule assumed a naming
+# policy that nothing enforced.
+# ---------------------------------------------------------------------------
+
+
+def test_a_symlink_at_an_allowlisted_name_is_refused(tmp_path, monkeypatch):
+    # The exemption says that path holds a pointer. A link holds no pointer
+    # while still occupying the exempt name, and was previously dropped.
+    repo = _repo(tmp_path)
+    (repo / "data" / "raw").mkdir(parents=True)
+    (repo / "target.txt").write_text("elsewhere\n")
+    (repo / "data" / "raw" / "leak.dvc").symlink_to(Path("..") / ".." / "target.txt")
+    _git(repo, "add", "-Af")
+    _git(repo, "commit", "-qm", "link")
+
+    monkeypatch.chdir(repo)
+    assert main() == 1
+
+
+def test_the_plan_scan_still_ignores_symlinks(tmp_path, monkeypatch):
+    # Opposite requirement, same parser: outside the allowlist a link is not
+    # the archive, and must not be reported.
+    repo = _repo(tmp_path)
+    (repo / "real_plan").write_bytes(_plan_archive(tmp_path / "p").read_bytes())
+    (repo / "link_to_plan").symlink_to("real_plan")
+    _git(repo, "add", "link_to_plan")
+    _git(repo, "commit", "-qm", "link only")
+
+    monkeypatch.chdir(repo)
+    assert main() == 0
+
+
+@pytest.mark.parametrize(
+    "value, expected_ok",
+    [("md5", True), ("sha256", True), ("Ram-Kumar-9876543210", False), ("prose", False)],
+)
+def test_hash_names_an_algorithm(value, expected_ok):
+    text = f"outs:\n- hash: {value}\n  md5: {_MD5}\n  path: thing\n"
+    assert (dvc_pointer_problem(text, stem="thing") is None) is expected_ok
+
+
+def test_an_identifier_shaped_filename_is_refused(tmp_path, monkeypatch):
+    # The stem rule made `path` safe only if the filename was. Nothing
+    # enforced that, so a 10-digit mobile in the name passed everything.
+    repo = _repo(tmp_path)
+    (repo / "data" / "raw").mkdir(parents=True)
+    (repo / "data" / "raw" / f"{CITIZEN}.dvc").write_text(
+        f"outs:\n- md5: {_MD5}\n  path: {CITIZEN}\n"
+    )
+    _git(repo, "add", "-f", f"data/raw/{CITIZEN}.dvc")
+    _git(repo, "commit", "-qm", "named")
+
+    monkeypatch.chdir(repo)
+    assert main() == 1
+
+
+@pytest.mark.parametrize(
+    "name, expected_ok",
+    [
+        ("Dump20250730.sql.dvc", True),      # a date, 8 digits
+        ("historical_gold_180.jsonl.dvc", True),
+        ("validation_5_page_audit.sqlite.dvc", True),
+        ("Ram-Kumar-9876543210.dvc", False),  # mobile, 10
+        ("x-123456789012.dvc", False),        # Aadhaar, 12
+    ],
+)
+def test_the_identifier_rule_admits_real_names_and_refuses_identifiers(name, expected_ok):
+    from scripts.check_no_terraform_plans import IDENTIFIER_RUN
+
+    assert (IDENTIFIER_RUN.search(name) is None) is expected_ok

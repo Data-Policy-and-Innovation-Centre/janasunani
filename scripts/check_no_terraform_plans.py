@@ -84,17 +84,20 @@ def tracked_entries() -> list[tuple[Path, str]]:
         check=True,
         capture_output=True,
     ).stdout
-    return _parse_ls_files(listing)
+    return _regular_files(_parse_ls_files(listing))
 
 
-def _parse_ls_files(listing: bytes) -> list[tuple[Path, str]]:
-    """``(path, sha)`` from ``git ls-files -s -z`` output, regular files only.
+def _parse_ls_files(listing: bytes) -> list[tuple[Path, str, str]]:
+    """``(path, sha, mode)`` from ``git ls-files -s -z`` output.
 
-    Symlink (120000) and gitlink (160000) entries are dropped: git stores a
-    link's text rather than its target's bytes, so a link is never itself the
-    archive, and a submodule has no blob here.
+    The mode is carried rather than filtered here, because the two callers
+    want opposite things. The plan scan drops links -- git stores a link's
+    text, not its target's bytes, so a link is never itself the archive. The
+    allowlist must *reject* them: an exemption granted to `data/raw/x.dvc`
+    says that path holds a pointer, and a symlink there holds no pointer at
+    all while still occupying the exempt name.
     """
-    entries: list[tuple[Path, str]] = []
+    entries: list[tuple[Path, str, str]] = []
     for record in listing.decode("utf-8").split("\0"):
         if not record:
             continue
@@ -103,10 +106,15 @@ def _parse_ls_files(listing: bytes) -> list[tuple[Path, str]]:
         if len(fields) < 2:
             continue
         mode, sha = fields[0], fields[1]
-        if mode in {"120000", "160000"}:
-            continue
-        entries.append((Path(name), sha))
+        entries.append((Path(name), sha, mode))
     return entries
+
+
+def _regular_files(entries: list[tuple[Path, str, str]]) -> list[tuple[Path, str]]:
+    """Blob entries only, for the scan that has no use for links."""
+    return [
+        (path, sha) for path, sha, mode in entries if mode not in {"120000", "160000"}
+    ]
 
 
 def _members_of(source: Path | io.BytesIO | io.BufferedReader) -> list[str]:
@@ -191,6 +199,14 @@ DVC_ENTRY_KEYS = frozenset(
 # used as a container for something else.
 HEXISH = re.compile(r"\A[0-9a-fA-F]{8,64}(\.dir)?\Z")
 TOKEN = re.compile(r"\A[A-Za-z0-9_.-]{1,64}\Z")
+# The algorithms DVC actually writes. A generic token accepted prose.
+HASH_NAMES = frozenset({"md5", "sha256", "sha1", "etag", "checksum", "crc32"})
+
+# A run of digits this long in a name under data/ is an identifier, not a
+# version or a count: an Indian mobile is 10 digits and an Aadhaar 12. The
+# longest run across all 33 allowlisted files in this repository is 8, so
+# this refuses the identifier shapes with margin and breaks nothing.
+IDENTIFIER_RUN = re.compile(r"\d{9,}")
 INTEGER = re.compile(r"\A[0-9]{1,20}\Z")
 BOOLEAN = frozenset({"true", "false", "True", "False"})
 PATHISH = re.compile(r"\A[A-Za-z0-9._][A-Za-z0-9._/@+-]*\Z")
@@ -199,21 +215,17 @@ BLOCK_SCALARS = frozenset({"|", ">", "|-", ">-", "|+", ">+"})
 
 
 
-def _ls_files_entries(pathspecs: tuple[str, ...]) -> list[tuple[Path, str]]:
+def tracked_allowlisted_entries() -> list[tuple[Path, str, str]]:
+    """``(path, sha, mode)`` for every tracked entry the allowlist exempts."""
     listing = subprocess.run(
-        ["git", "ls-files", "-s", "-z", "--", *pathspecs],
+        ["git", "ls-files", "-s", "-z", "--", *ALLOWLIST_PATHSPECS],
         check=True,
         capture_output=True,
     ).stdout
     return _parse_ls_files(listing)
 
 
-def tracked_allowlisted_entries() -> list[tuple[Path, str]]:
-    """``(path, sha)`` for every tracked blob the data allowlist exempts."""
-    return _ls_files_entries(ALLOWLIST_PATHSPECS)
-
-
-def staged_allowlisted_entries() -> list[tuple[Path, str]]:
+def staged_allowlisted_entries() -> list[tuple[Path, str, str]]:
     """The same, restricted to what is staged for the next commit."""
     changed = subprocess.run(
         [
@@ -257,7 +269,7 @@ def _scalar_problem(key: str, value: str) -> str | None:
     if key in {"md5", "etag", "checksum"}:
         return None if HEXISH.match(value) else f"{key!r} is not a checksum"
     if key == "hash":
-        return None if TOKEN.match(value) else f"{key!r} is not a hash name"
+        return None if value in HASH_NAMES else f"{key!r} is not a DVC hash name"
     if key in {"size", "nfiles"}:
         return None if INTEGER.match(value) else f"{key!r} is not an integer"
     if key in {"isexec", "cache", "persist", "push", "frozen"}:
@@ -382,7 +394,7 @@ def dvc_pointer_problem(text: str, stem: str | None = None) -> str | None:
 
 
 def allowlisted_offenders(
-    entries: list[tuple[Path, str]],
+    entries: list[tuple[Path, str, str]],
 ) -> list[tuple[Path, list[str]]]:
     """Allowlisted ``data/`` blobs that are not what their name claims.
 
@@ -400,9 +412,30 @@ def allowlisted_offenders(
     unread, so no bulk file under ``data/`` is ever opened.
     """
     offenders: list[tuple[Path, list[str]]] = []
-    for path, sha in entries:
+    for path, sha, mode in entries:
+        if mode == "120000":
+            # The exemption is for a marker, a pointer or a sidecar. A link
+            # occupying the name is none of them, and dropping it silently
+            # would leave the exempt path unverified.
+            offenders.append((path, ["a symlink, not the file this name may hold"]))
+            continue
+        if mode == "160000":
+            offenders.append((path, ["a submodule, not the file this name may hold"]))
+            continue
+
         size = blob_size(sha)
         name = path.name
+
+        # The name is part of what is committed. This cannot decide whether a
+        # name is a person's -- no static check can -- but the identifier
+        # shapes are decidable, and they are the ones that make a filename a
+        # disclosure on its own. Names that get past this are still never
+        # printed to a public log: see `safe_path`.
+        if IDENTIFIER_RUN.search(name):
+            offenders.append(
+                (path, ["the filename contains a 9+ digit identifier"])
+            )
+            continue
 
         if name == ".gitkeep":
             if size:
@@ -488,7 +521,7 @@ def staged_entries() -> list[tuple[Path, str]]:
         capture_output=True,
     ).stdout
 
-    return _parse_ls_files(listing)
+    return _regular_files(_parse_ls_files(listing))
 
 
 def blob_bytes(sha: str) -> bytes:
