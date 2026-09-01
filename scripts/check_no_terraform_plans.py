@@ -178,9 +178,11 @@ ALLOWLIST_PATHSPECS = (
 # arbitrary prose is allowed, which is a stronger statement than any cap. A
 # real pointer needing one fails loudly and a person decides.
 DVC_TOP_LEVEL_KEYS = frozenset({"outs", "deps", "wdir", "md5", "frozen"})
+# Keys that introduce a list rather than carrying a scalar.
+DVC_LIST_KEYS = frozenset({"outs", "deps"})
 DVC_ENTRY_KEYS = frozenset(
     {"md5", "hash", "etag", "checksum", "path", "size", "nfiles", "isexec",
-     "remote", "cache", "persist", "push", "files"}
+     "remote", "cache", "persist", "push"}
 )
 
 # Every accepted value has a shape. Checked by pattern, so a field cannot be
@@ -193,10 +195,6 @@ PATHISH = re.compile(r"\A[A-Za-z0-9._][A-Za-z0-9._/@+-]*\Z")
 MAX_PATH = 255
 BLOCK_SCALARS = frozenset({"|", ">", "|-", ">-", "|+", ">+"})
 
-# Mirrors MAX_STRING in scripts/check_provenance_sidecars.py, and for the
-# same reason given there: prose does not survive a 200-character scalar
-# cap. Recognising a key is not enough when its value is free text.
-MAX_SCALAR = 200
 
 
 def _ls_files_entries(pathspecs: tuple[str, ...]) -> list[tuple[Path, str]]:
@@ -272,9 +270,7 @@ def _scalar_problem(key: str, value: str) -> str | None:
         # under any length cap and is not a path.
         return None if PATHISH.match(value) else f"{key!r} is not a path"
 
-    if len(value) > MAX_SCALAR:
-        return f"{key!r} is {len(value)} characters, over the {MAX_SCALAR} cap"
-    return None
+    return f"{key!r} has no value rule in this checker"
 
 
 def dvc_pointer_problem(text: str) -> str | None:
@@ -319,10 +315,20 @@ def dvc_pointer_problem(text: str) -> str | None:
                 return f"line {number}: unrecognised top-level key"
             if value.strip() in BLOCK_SCALARS:
                 return f"block scalar not allowed at {key!r}"
+
+            if key in DVC_LIST_KEYS:
+                # A list header carries no value of its own. `outs: <text>`
+                # is prose wearing a recognised key.
+                if value.strip():
+                    return f"line {number}: {key!r} must introduce a list"
+                list_key = key
+                current = None
+                continue
+
             problem = _scalar_problem(key, value.strip())
             if problem:
                 return problem
-            list_key = key if key in {"outs", "deps"} and not value.strip() else None
+            list_key = None
             current = None
             continue
 
