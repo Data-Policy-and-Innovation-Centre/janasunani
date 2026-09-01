@@ -3,6 +3,8 @@
 #   - janasunani-documents-main      ingested documents (s3service)
 #   - dpic-dvc-cache                 DVC remote (raw dump, Parquet lake, models)
 #   - grievance-database-backups-main  nightly pg_dump target (write-mostly)
+# plus one that IS managed here, read-only:
+#   - janasunani-documents-dsi-reference  benchmark corpus (reference_bucket.tf)
 
 resource "aws_iam_role" "cpu_box" {
   name = "janasunani-cpu-box"
@@ -31,6 +33,7 @@ resource "aws_iam_role_policy" "s3_access" {
         Resource = [
           "arn:aws:s3:::${var.documents_bucket}",
           "arn:aws:s3:::${var.backups_bucket}",
+          "arn:aws:s3:::${var.dsi_reference_bucket}",
         ]
       },
       {
@@ -57,6 +60,16 @@ resource "aws_iam_role_policy" "s3_access" {
         Resource = [
           "arn:aws:s3:::${var.documents_bucket}/*",
         ]
+      },
+      {
+        # Read-only, and deliberately so. The reference corpus is the fixed
+        # input every benchmark number is measured against (#319), so the box
+        # that runs the benchmarks must not be able to alter what it is
+        # measuring. Population happens once, from an operator workstation.
+        Sid      = "ReadDsiReferenceCorpusOnly"
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
+        Resource = ["arn:aws:s3:::${var.dsi_reference_bucket}/*"]
       },
       {
         Sid      = "ReadWriteDvcCacheRepoPrefixOnly"

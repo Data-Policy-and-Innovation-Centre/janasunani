@@ -21,9 +21,14 @@
 Two instances, one always on:
 
 - the **always-on CPU box** for the demo stack (Week 1 of the roadmap): Ubuntu 24.04
-  EC2 instance + Elastic IP + security group + an IAM instance role scoped to the three
-  existing S3 buckets (documents, DVC cache, DB backups). The buckets themselves are
-  **not** managed here.
+  EC2 instance + Elastic IP + security group + an IAM instance role scoped to four
+  S3 buckets (documents, DVC cache, DB backups, DSI reference corpus). The first
+  three are **not** managed here. The fourth,
+  `janasunani-documents-dsi-reference`, **is** (`reference_bucket.tf`). It
+  already exists and holds the corpus, so the config adopts it with an
+  `import` block rather than creating it — `apply` still administers an S3
+  bucket and needs credentials with S3 rights, not only EC2/EIP/IAM. The box gets `s3:GetObject` on it and nothing
+  else: it must not be able to alter the corpus it is measured against.
 - the **on-demand GPU box** (`gpu.tf`) for DeepSeek OCR batch runs and demo windows —
   count-toggled, off by default, nothing stateful on it. See "GPU box" below.
 

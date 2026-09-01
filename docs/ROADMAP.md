@@ -1956,8 +1956,10 @@ Self-host on Docker. S3 is the only stateful AWS dependency. Terraform
   stateful survives. Sarvam-30B at 4-bit is at the limit of a 24 GB L4 and 105B is
   beyond it, so the exit ramp may need a larger instance type.
 - DVC remote `s3://dpic-dvc-cache/janasunani` (dump, lake, models); documents in
-  `s3://janasunani-documents-main`; backups in `grievance-database-backups-main`.
-  Do not DVC-track the OLTP DB.
+  `s3://janasunani-documents-main`; backups in `grievance-database-backups-main`;
+  the DSI benchmark corpus in `s3://janasunani-documents-dsi-reference`, the one
+  bucket Terraform manages, carrying no rule that transitions or expires an
+  object so it never needs a Glacier restore. Do not DVC-track the OLTP DB.
 
 ### Testing policy (every phase)
 

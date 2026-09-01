@@ -75,6 +75,12 @@ variable "documents_bucket" {
   default     = "janasunani-documents-main"
 }
 
+variable "dsi_reference_bucket" {
+  description = "S3 bucket for the DSI clinic reference corpus. Managed in reference_bucket.tf (the other buckets are not) because its defining property is that no lifecycle rule transitions or expires its objects. It does carry one rule, aborting abandoned multipart uploads: owning the lifecycle configuration is what makes an archival rule added elsewhere show up as drift."
+  type        = string
+  default     = "janasunani-documents-dsi-reference"
+}
+
 variable "dvc_cache_bucket" {
   description = "Existing S3 bucket backing the DVC remote (.dvc/config)."
   type        = string
