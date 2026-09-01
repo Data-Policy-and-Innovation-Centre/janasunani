@@ -1751,3 +1751,52 @@ def test_the_boundary_rule_never_costs_a_real_detection():
 
     for cut in (10, 20, 30, 40, 50, 60):
         assert plan_members_of_blob(data[: len(data) - cut]) == ["tfstate"], cut
+
+
+# ---------------------------------------------------------------------------
+# Codex P1 on #321: gating on offset zero let a plan with any leading bytes
+# through. A self-extracting archive carries a stub, and zipfile opens it.
+# ---------------------------------------------------------------------------
+
+
+STUB = b"MZ" + b"\x00" * 200
+
+
+def test_a_plan_behind_a_leading_stub_is_still_found():
+    # The direction that matters: this was a miss, not a false positive.
+    data = STUB + _zip_of(("tfstate", '{"serial": 1}'))
+
+    assert plan_members_of_blob(data) == ["tfstate"]
+
+
+def test_a_stubbed_plan_is_found_when_truncated_too():
+    data = STUB + _zip_of(("tfstate", '{"serial": 1}'))
+
+    assert plan_members_of_blob(data[: len(data) - 40]) == ["tfstate"]
+
+
+def test_a_stub_does_not_make_an_ordinary_archive_a_plan():
+    data = STUB + _zip_of(("ppt/presentation.xml", "<p/>"))
+
+    assert plan_members_of_blob(data) == []
+
+
+def test_a_stubbed_plan_is_refused_by_both_scans(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    (repo / "artifact.bin").write_bytes(STUB + _zip_of(("tfstate", '{"serial": 1}')))
+    _git(repo, "add", "artifact.bin")
+
+    staged = _run_staged(repo)
+    assert staged.returncode == 1
+
+    _git(repo, "commit", "-qm", "stubbed")
+    monkeypatch.chdir(repo)
+    assert main() == 1
+
+
+def test_the_signature_constant_is_not_duplicated():
+    # ZIP_MAGIC and the local file header signature are the same four bytes,
+    # and were defined twice under two names.
+    source = SCRIPT.read_text()
+
+    assert source.count('= b"PK\\x03\\x04"') == 1
