@@ -30,6 +30,24 @@
 # readable" the default rather than something maintained. At 56 GB that is
 # about $1.40/month.
 
+# The bucket already exists in the account: `aws s3api head-bucket` answers for
+# it in ap-south-1, and samples.py records the 70,029-document corpus as
+# mirrored there. A plain apply would therefore call CreateBucket and stop with
+# BucketAlreadyOwnedByYou -- partway through, after other resources had been
+# created, which is the failure mode the prerequisites in docs/DEPLOY.md warn
+# about for S3 permissions and the same clean-up cost.
+#
+# So the first apply adopts it rather than creating it. Only the bucket needs
+# this: the versioning, encryption, public-access-block and lifecycle resources
+# below are PUT calls that converge whether or not the settings are already
+# there.
+#
+# Remove this block once the bucket is in state; it has done its job then.
+import {
+  to = aws_s3_bucket.dsi_reference
+  id = var.dsi_reference_bucket
+}
+
 resource "aws_s3_bucket" "dsi_reference" {
   bucket = var.dsi_reference_bucket
 

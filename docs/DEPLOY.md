@@ -62,7 +62,11 @@ Current live CPU box: `i-0ef24e15a80ba7128`, EIP `52.66.116.80`.
   `janasunani-documents-main`, `dpic-dvc-cache` (prefix `janasunani`),
   `grievance-database-backups-main`.
 - A fourth, `janasunani-documents-dsi-reference`, **is** managed by Terraform
-  (`reference_bucket.tf`) and is created by the apply below. It holds the DSI
+  (`reference_bucket.tf`). It already exists and holds the corpus, so the
+  config carries an `import` block that adopts it on the first apply rather
+  than creating it — without that, the apply stops with
+  `BucketAlreadyOwnedByYou` partway through. Remove the block once it is in
+  state. It holds the DSI
   clinic benchmark corpus, and its invariant is **no transition or expiration
   actions** — never that it has no lifecycle rule at all. It does have one, and
   that is the mechanism: Terraform owns the lifecycle configuration precisely so
