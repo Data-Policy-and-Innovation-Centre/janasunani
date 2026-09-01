@@ -43,16 +43,38 @@ separately governed store, never the general experiment event table.
 
 ## Pilot contract
 
-Use a locked stepped-wedge rollout assigned to immutable intake-office
-transfer-network clusters, stratified by district, volume and baseline transfer
-rate. Analyze intention-to-treat; distinguish assigned from actually exposed;
-generate hidden shadow predictions for controls. Lock the unit map, extract
-hash, estimands, minimum detectable effect and pause rules before arm outcomes
-are read.
+Amended 2026-09-01 for the SSEPD / Labour & ESI pilot. The stepped-wedge
+contract that stood here assumed the tool sat inside the workflow and that
+outcomes could be read from the corpus. Neither holds: OCAC has not approved
+integration, and each department has one grievance officer. The wedge contract
+is retained in [AB_PLAN.md](AB_PLAN.md) §3-§5 as the design that integration
+would unlock, and [AB_PLAN.md](AB_PLAN.md) §14 is authoritative for what
+replaces it.
 
-Co-primary operational outcomes are seven-day first-meaningful-action attainment
-and transfer-free first assignment. The primary citizen endpoint is 90-day
-restricted mean time/resolution. Guardrails include harmful actionable review,
-PII leakage, availability, p90 latency and 30/90-day resolution,
-transfer/reopen/recontact harm. Offline model scores alone cannot support a
-causal value-add claim.
+What the contract requires, in either design:
+
+- **Randomize, and lock before looking.** Lock the assignment procedure,
+  estimands, endpoint constructions, minimum detectable effect and pause rules,
+  with the extract hash and seed recorded, before any outcome is read by arm.
+- **Analyze intention-to-treat**, and keep *assigned* and *actually exposed* as
+  separate recorded fields.
+- **Generate hidden shadow predictions for controls**, so the counterfactual
+  prediction exists on both arms.
+- **Match the estimator to the assignment mechanism.** Staggered cluster
+  adoption needs a staggered-adoption-robust estimator; an individually
+  randomized blocked design needs within-block contrasts and randomization
+  inference. Carrying one design's estimator into the other is an error.
+- **Report every endpoint with its denominator, support, interval and
+  censoring**, and name which endpoints the design cannot power rather than
+  reporting them as if it could.
+
+For the current pilot the primary endpoint is officer handling time per
+grievance; the workflow and citizen rows of the ladder above are exploratory,
+because outcome capture depends on manual re-keying and on export or API access
+that is not yet granted. **Re-key fidelity is itself a measured outcome**: the
+intervention reaches a citizen only through a human retyping it, and unmeasured
+attenuation there would be mistaken for a null.
+
+Guardrails are unchanged: harmful actionable review, PII leakage, availability,
+p90 latency, 30/90-day resolution, and transfer/reopen/recontact harm. Offline
+model scores alone cannot support a causal value-add claim.
