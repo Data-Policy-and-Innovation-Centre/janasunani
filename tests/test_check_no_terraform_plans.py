@@ -23,7 +23,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.check_no_terraform_plans import (  # noqa: E402
-    _members_of,
+    _archive_names,
     main,
     allowlisted_offenders,
     dvc_pointer_problem,
@@ -541,8 +541,8 @@ def test_a_damaged_plan_is_still_caught(tmp_path):
     assert plan_members_of_blob(intact) == ["tfstate"]
 
     damaged = intact[:-40]
-    # The archive no longer parses as a zip...
-    assert _members_of(io.BytesIO(damaged)) == []
+    # A damaged archive does not raise: zipfile opens it and lists nothing.
+    assert not _archive_names(io.BytesIO(damaged))
     # ...but is still recognised, and still refused.
     assert plan_members_of_blob(damaged) == ["tfstate"]
 
@@ -1543,3 +1543,66 @@ def test_the_real_size_values_still_pass():
         text=True,
     )
     assert result.returncode == 0, result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Codex on #321: the workflow's raw-data predicate covers `outputs/**` too,
+# and the damaged-archive fallback fired on archives that parsed fine.
+# ---------------------------------------------------------------------------
+
+
+def test_an_allowlisted_name_under_outputs_is_verified(tmp_path, monkeypatch):
+    # The raw-data step scans `outputs/**` under the same predicate, so the
+    # same exemptions apply there and need the same checking.
+    repo = _repo(tmp_path)
+    (repo / "outputs" / "run").mkdir(parents=True)
+    _plan_archive(repo / "outputs" / "run" / "saved.dvc", ("tfstate",))
+    _git(repo, "add", "-f", "outputs/run/saved.dvc")
+    _git(repo, "commit", "-qm", "outputs plan")
+
+    monkeypatch.chdir(repo)
+    assert main() == 1
+
+
+def test_an_outputs_gitkeep_must_still_be_empty(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    (repo / "outputs").mkdir()
+    _plan_archive(repo / "outputs" / ".gitkeep", ("tfstate",))
+    _git(repo, "add", "-f", "outputs/.gitkeep")
+    _git(repo, "commit", "-qm", "outputs marker")
+
+    monkeypatch.chdir(repo)
+    assert main() == 1
+
+
+def test_an_outputs_path_is_redacted_in_ci(monkeypatch):
+    from scripts.check_no_terraform_plans import safe_path
+
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    shown = safe_path(Path("outputs") / CITIZEN / "x.dvc")
+
+    assert CITIZEN not in shown
+    assert shown.startswith("outputs/")
+
+
+def test_an_ordinary_archive_mentioning_tfstate_is_not_a_plan():
+    # False positive: the fallback used to fire whenever no plan member was
+    # found, including for archives that listed their entries perfectly well.
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("notes.txt", "this document mentions tfstate in prose")
+
+    assert plan_members_of_blob(buffer.getvalue()) == []
+
+
+def test_a_damaged_archive_still_reaches_the_byte_fallback():
+    # And the fallback must still fire for a truncated plan, which is the
+    # case that makes the three-way distinction necessary: zipfile opens it
+    # without raising and lists nothing.
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("tfstate", '{"serial": 1}')
+    damaged = buffer.getvalue()[:-40]
+
+    assert not _archive_names(io.BytesIO(damaged))
+    assert plan_members_of_blob(damaged) == ["tfstate"]

@@ -117,17 +117,31 @@ def _regular_files(entries: list[tuple[Path, str, str]]) -> list[tuple[Path, str
     ]
 
 
-def _members_of(source: Path | io.BytesIO | io.BufferedReader) -> list[str]:
-    """Plan-archive entry names in ``source``, which may be a path or bytes."""
+def _archive_names(
+    source: Path | io.BytesIO | io.BufferedReader,
+) -> list[str] | None:
+    """Every entry name in ``source``, or ``None`` if it will not open.
+
+    The distinction the caller needs is three-way, not two, and truncation is
+    why. A damaged archive does not necessarily raise: zipfile opens one whose
+    central directory is gone and reports an *empty* namelist. So "opened and
+    listed nothing" has to be treated like "would not open", while "opened and
+    listed entries, none of them a plan member" is an ordinary archive and
+    must not be second-guessed by scanning its bytes.
+    """
     try:
         with zipfile.ZipFile(source) as archive:
-            names = archive.namelist()
+            return archive.namelist()
     except (zipfile.BadZipFile, OSError):
-        return []
+        return None
 
-    # Only the base name is returned, never the archive path it sat under.
-    # The directory part is attacker-chosen text and `report()` prints into
-    # public CI logs; the base name is one of PLAN_MEMBERS and so is safe.
+
+def _plan_members_in(names: list[str]) -> list[str]:
+    """Plan member base names among ``names``.
+
+    Base name only: the directory above it is chosen by whoever built the
+    archive and `report()` prints into public logs.
+    """
     return sorted({Path(name).name for name in names if Path(name).name in PLAN_MEMBERS})
 
 
@@ -153,8 +167,14 @@ def plan_members_of_blob(data: bytes) -> list[str]:
     """Plan member names in a blob, including one that will not parse."""
     if not data.startswith(ZIP_MAGIC):
         return []
-    members = _members_of(io.BytesIO(data))
-    return members or damaged_plan_members(data)
+    names = _archive_names(io.BytesIO(data))
+    if not names:
+        # Would not open, or opened and listed nothing -- both mean a damaged
+        # archive, whose secrets are still in the bytes. Fall back to them.
+        return damaged_plan_members(data)
+    # A real listing. An ordinary archive whose *contents* happen to contain
+    # the word `tfstate` is not a plan, and scanning its bytes would say so.
+    return _plan_members_in(names)
 
 
 # Mirrors MAX_BYTES in scripts/check_provenance_sidecars.py. A per-value
@@ -176,6 +196,12 @@ ALLOWLIST_PATHSPECS = (
     # workflow's `(.*/)?` also allows the sidecar to sit directly there.
     "data/external/provenance.json",
     "data/external/*.provenance.json",
+    # The raw-data step scans `outputs/**` under the same predicate, so the
+    # same names are exempt there and need the same verification.
+    "outputs/**/*.dvc",
+    "outputs/*.dvc",
+    "outputs/**/.gitkeep",
+    "outputs/.gitkeep",
 )
 
 # The keys a .dvc file may carry. Anything else is unrecognised content, and
@@ -653,7 +679,9 @@ def in_public_log() -> bool:
 
 # Directory names DVC and this repository create, which carry no citizen
 # information and are worth keeping in a message so it says where to look.
-SAFE_DATA_DIRS = frozenset({"data", "raw", "external", "clean", "interim", "processed"})
+SAFE_DATA_DIRS = frozenset(
+    {"data", "outputs", "raw", "external", "clean", "interim", "processed"}
+)
 
 
 def _redact(component: str) -> str:
@@ -675,7 +703,7 @@ def safe_path(path: Path) -> str:
     Paths outside ``data/`` print whole: they are source paths, they are not
     protected, and a reviewer has to be able to read them.
     """
-    if path.parts[:1] != ("data",) or not in_public_log():
+    if path.parts[:1] not in {("data",), ("outputs",)} or not in_public_log():
         return str(path)
 
     parts = []
