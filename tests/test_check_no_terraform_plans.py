@@ -744,3 +744,78 @@ def test_the_allowlist_pathspecs_cover_the_workflow_predicate():
     for token in (".gitkeep", ".dvc", "provenance"):
         assert any(token in spec for spec in ALLOWLIST_PATHSPECS), token
         assert token in predicate[0], token
+
+
+# ---------------------------------------------------------------------------
+# Codex P1 on #321, follow-up: `**/` needs a directory below `external`, and
+# a pointer that parses is not the same as a pointer that carries nothing else.
+# ---------------------------------------------------------------------------
+
+
+def test_a_sidecar_directly_under_external_is_scanned(tmp_path, monkeypatch):
+    # `data/external/**/provenance.json` requires a subdirectory; the
+    # workflow's `(.*/)?` does not.
+    repo = _repo(tmp_path)
+    (repo / "data" / "external").mkdir(parents=True)
+    _plan_archive(repo / "data" / "external" / "provenance.json", ("tfstate",))
+    _git(repo, "add", "-f", "data/external/provenance.json")
+    _git(repo, "commit", "-qm", "sidecar")
+
+    monkeypatch.chdir(repo)
+    assert main() == 1
+
+
+def test_a_prefixed_sidecar_directly_under_external_is_scanned(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    (repo / "data" / "external").mkdir(parents=True)
+    _plan_archive(repo / "data" / "external" / "thing.provenance.json", ("tfstate",))
+    _git(repo, "add", "-f", "data/external/thing.provenance.json")
+    _git(repo, "commit", "-qm", "sidecar")
+
+    monkeypatch.chdir(repo)
+    assert main() == 1
+
+
+def test_a_pointer_carrying_a_smuggled_block_is_refused(tmp_path, monkeypatch):
+    # The entry is well formed; the file is still a container for something
+    # the allowlist was never meant to exempt.
+    repo = _repo(tmp_path)
+    (repo / "data" / "raw").mkdir(parents=True)
+    (repo / "data" / "raw" / "leak.dvc").write_text(
+        "outs:\n- md5: abc\n  path: thing\nraw: |\n  Ram Kumar, 9876543210, Sambalpur\n"
+    )
+    _git(repo, "add", "-f", "data/raw/leak.dvc")
+    _git(repo, "commit", "-qm", "leak")
+
+    monkeypatch.chdir(repo)
+    assert main() == 1
+
+
+@pytest.mark.parametrize(
+    "text, expected_ok",
+    [
+        # Accepted: the shapes DVC actually writes.
+        ("outs:\n- md5: abc\n  path: thing\n", True),
+        ("wdir: .\nouts:\n- md5: abc\n  path: thing\n  size: 12\n", True),
+        ("md5: abc\ncmd: echo hi\nouts:\n- md5: a\n  path: p\n"
+         "deps:\n- md5: b\n  path: q\n", True),
+        # Refused: unrecognised content, in each place it can hide.
+        ("outs:\n- md5: abc\n  path: thing\nraw: |\n  secret\n", False),
+        ("outs:\n- md5: abc\n  path: thing\n  leaked: citizen\n", False),
+        ("outs: |\n  secret\n", False),
+        ("outs:\n- md5: abc\n  path: thing\nnotes: hello\n", False),
+    ],
+)
+def test_dvc_pointer_problem_is_closed_not_lenient(text, expected_ok):
+    assert (dvc_pointer_problem(text) is None) is expected_ok
+
+
+def test_the_real_repository_pointers_still_validate():
+    # The strictness above must not reject DVC's own output.
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT)],
+        cwd=SCRIPT.parents[1],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout
