@@ -732,8 +732,8 @@ feasibility and descriptive evidence: the pre-pilot corpus analysis, the
 officer-side process map, and a shadow phase in which the panel is shown on
 every case with no arms. That work starts before the console exists, does not
 depend on officer adoption, and is the artifact for the integration ask. The
-randomized comparison in §14.3 is a bounded component of the pilot rather than
-the pilot itself, and it runs only if the two gates in §14.9 pass.
+randomized comparison in §14.3 is a bounded component of the pilot, and it runs
+only if the two gates in §14.9 pass.
 
 §5.4 of ROADMAP asserts that "the corpus already carries the outcome variables"
 and that "the primary outcomes need no new instrumentation". That is true of a
@@ -839,8 +839,8 @@ estimator should be the simplest one that respects the blocking.
   (PILOT_SSEPD_LABOUR §B4). **Due end September 2026, before anything is
   locked. This is gate 1 of §14.9: if the MDE for officer handling time is not
   credible at the measured volumes, the randomized comparison does not run at
-  all.** Running it underpowered is not the fallback; the shadow phase and the
-  descriptive endpoints are. Two further things it must settle:
+  all.** The fallback is the shadow phase and the descriptive endpoints. Two
+  further things it must settle:
   - Whether Labour & ESI has enough volume to randomize at all. Indicative
     evidence says probably not on its own: in the committed crosswalk
     (`janasunani/routing/reference/routing_crosswalk.json`) SSEPD's largest
@@ -930,8 +930,8 @@ technical annex to the integration ask, unchanged.
 
 ### 14.9 Sequencing: descriptive first, randomization gated
 
-The randomized comparison runs only if both gates pass. Neither is a judgement
-call at the time; both are read against a criterion fixed beforehand.
+The randomized comparison runs only if both gates pass. Both are read against a
+criterion fixed beforehand.
 
 - **Gate 1, end September 2026, principal.** The §14.4 power calculation. Fails
   if the MDE for officer handling time is not credible at the measured pilot
@@ -945,12 +945,11 @@ call at the time; both are read against a criterion fixed beforehand.
 
 **On a fail of either gate**, the shadow phase, the process map, the department
 reports and the descriptive citizen endpoints run unchanged. What is lost is the
-within-officer causal estimate, not the pilot. The readout states which gate
-failed and reports no arm comparison.
+within-officer causal estimate. The readout states which gate failed and reports
+no arm comparison.
 
-Nothing about this sequencing weakens §9. The lock still happens before any arm
-outcome is viewed, and gate 2 is read from shadow-phase data in which no
-randomization has occurred.
+§9 is unchanged. The lock still happens before any arm outcome is viewed, and
+gate 2 is read from shadow-phase data in which no randomization has occurred.
 
 ---
 
