@@ -10,134 +10,127 @@ status: Internal
 
 # Pilot design: SSEPD and Labour & ESI
 
-*A decision memo. Four asks at the end. The full design is in the internal plan;
-this is the argument, not the implementation.*
+Decision memo. Four asks in section 7. The full design is in the internal plan.
 
 ---
 
-## 1. What we gained and what we lost
+## TLDR
 
-Two departments have approved a pilot: Social Security & Empowerment of Persons
-with Disabilities, and Labour & Employees' State Insurance. That is the first
-named partner we have had, and it is the thing we asked for on 17 August.
-
-Two conditions came with it, and both cost us something real.
-
-**OCAC has not approved integration.** Our system cannot sit inside the legacy
-Janasunani workflow. Officers will look at our outputs on a separate screen and
-re-key what they choose into the portal by hand. Nothing about a pilot grievance
-is written to, or readable from, the production system.
-
-**Each department has one grievance officer.** Not one office, one person. Two
-officers in total across the pilot.
-
-The consequence, stated before anything else: **the stepped-wedge design we
-built is unrunnable, and this pilot cannot produce a causal estimate of the
-effect on citizens.** The wedge needed roughly 320 offices adopting in a
-staggered order, with outcomes read automatically from the government's own
-records. We have two officers and no automatic outcome capture. No estimator
-recovers a department-level or state-level effect from that, and none should be
-promised.
-
-What we can still do is worth doing, and the rest of this memo is about what
-survives, what it identifies, and what it costs.
+- The pilot runs in three tracks: desk analysis on our existing corpus, process
+  mapping and field visits, then a console phase with the two officers. The
+  first two start now and need nothing from the departments.
+- It cannot produce a department-level or state-level causal estimate. Two
+  officers and no integration rule that out. The citizen endpoints will most
+  likely be descriptive.
+- The desk analysis is not preparation. Each piece decides a specific feature or
+  design choice. One of them is the deliverable that buys officer cooperation.
+- One field question decides the feature set: do these officers receive
+  grievances already routed to the department, or do they also register intake.
+  We answer it in September by screen share.
+- Two interventions are high feasibility and use no model: an ageing and
+  deadline view, and a repeat-filer panel. The document summary is low
+  feasibility and may not ship at all. An authority suggestion depends on the
+  field answer.
+- Low-signal triage is excluded from SSEPD. That is a safety judgement, and it
+  is the one item here that needs your sign-off rather than a note.
+- The randomised comparison is one gated component, not the pilot. Gate 1 is the
+  power calculation, end September 2026. Gate 2 is measured re-key fidelity in
+  the shadow phase, January 2027. If either fails, the rest still runs and still
+  produces the integration case.
+- The four asks: department sign-off, permission to log officer decisions,
+  read-only credentials to the two departments' own records, and re-confirmation
+  of the 27 July research determination now that a citizen survey is involved.
 
 ---
 
-## 2. What is still identified
+## 1. What the pilot is
 
-We put **every** grievance reaching these two officers through our console, and
-randomise, case by case, whether the AI panel is displayed or blank. Both arms
-work the case in the same interface and record the same decision before
-re-keying. The model still runs on control cases with its output withheld, so we
-hold the counterfactual prediction.
+Both constraints are settled. There is no integration, so officers read our
+outputs on a separate screen and re-key what they choose. There are two
+grievance officers in total. What follows is what those constraints leave.
 
-That gives a clean, design-based **within-officer, per-case effect of showing
-decision support**, with the officer's handling time as the primary outcome.
-Randomisation is blocked within officer-week, so arms stay balanced against
-learning and caseload drift over a short window. Inference is a Fisher
-randomisation test against the sharp null, with conventional intervals reported
-alongside. With two officers and a few hundred cases, an exact design-based test
-is the honest choice; nothing here leans on asymptotics.
+**Track 1, desk analysis.** Runs on the 1.37M-row corpus with existing code.
+Needs no app, no travel and no permission. RA-owned, starts now.
 
-Two threats, and neither is assumed away.
+**Track 2, process mapping and field work.** Remote walkthroughs with both
+officers in September. One Odisha trip in November for district visits and a
+stopwatch baseline of the officers' current work.
 
-**Contamination.** One officer sees both arms and learns from the treated ones.
-The bias is signed: learning transfer makes control cases better, which pushes
-the estimate toward zero. A positive result survives it. A null does not
-distinguish no effect from full contamination, and we will say so in that
-sentence rather than in a footnote. We track it by testing whether the control
-arm improves as cumulative treated exposure accumulates.
+**Track 3, the console.** A four-week shadow phase with the panel shown on every
+case and no arms. Then a randomised comparison, if two gates pass.
 
-**Attenuation through re-keying.** The intervention reaches a citizen only
-because a human retypes it. If most of what the console produces is discarded at
-that step, the treatment is diluted before it can do anything. We audit a random
-tenth of treated cases each week against the portal record. If fidelity is below
-the threshold we set at lock, the attenuation *is* the finding, and we make no
-citizen-effect claim.
+Tracks 1 and 2 produce evidence on their own. They are the feasibility case for
+integration, and they do not depend on the console being built or on the
+officers adopting it. Track 3 is where the pilot can fail, and the randomised
+half of it is conditional.
 
-How each outcome is captured, given no integration:
+---
 
-| Outcome | Source | Confidence |
+## 2. What the desk analysis decides
+
+Each analysis is tied to a decision. Nothing here is background work.
+
+| Analysis | What it settles | What it gates |
 |---|---|---|
-| Officer handling time, screens, revisits | Console telemetry, both arms, calibrated against a stopwatch baseline collected before launch | High |
-| Officer decision: authority chosen, days allowed, remark | Recorded in the console before re-keying | High, self-reported |
-| Re-key fidelity | Weekly 10% audit against the portal | Medium, and a headline feasibility finding in its own right |
-| Time to first downstream action; 30 and 60-day resolution | Read-only API if granted; else a record-level portal export if one exists; else officer log | Low to medium |
-| Citizen-reported resolution and satisfaction | Phone survey in Odia, at a fixed horizon after filing, every eligible case, whether or not the portal has closed it | Medium; a census, not a sample, which the small scale makes affordable |
+| A1 volume and case mix | Whether Labour & ESI has usable volume | Whether Labour & ESI is randomised at all |
+| A2 power | The detectable effect on officer time and on citizen endpoints | Gate 1 on the randomised comparison |
+| A3 turnaround baseline | Current elapsed days and the gaps between recorded steps | The ageing view, and the follow-up window |
+| A4 repeat filers | The repeat-filing rate, which the departments do not have | The repeat-filer panel, and the first department meeting |
+| A5 downstream authority | Whether subcategory and district predict the authority the officer picks | The only routing feature worth building at this node |
+| A6 ageing fields | Whether the 30-day deadline is computable from the record | The deadline half of the ageing view |
+| A7 field semantics | The action taxonomy, censoring, and what `dept` actually records | Whether any outcome we report is interpretable |
+| A8 department briefs | Nothing analytical | Officer cooperation, which every other track needs |
 
-The survey is deliberately not conditioned on closure. Closure is an outcome the
-intervention may itself move, so surveying only closed cases would condition on
-the thing we are studying.
-
-Expect the citizen endpoints to be descriptive. The power calculation lands at
-the end of September and will most likely show their intervals are too wide to
-carry a claim. We would rather say that at lock than discover it at readout.
-
----
-
-## 3. Why we are reversing our own design rule
-
-The A/B plan rejected case-level randomisation on interference grounds: an
-officer seeing both arms learns across them, and moving one case changes another
-office's inbox. That reasoning was correct and we are overriding it knowingly.
-
-At two officers, every coarser unit has not less power but **none**: there is no
-panel of clusters to estimate on. The choice is a contaminated case-level design
-or no randomised evidence at all. We take the contaminated design, sign the
-bias, and bound it.
-
-The second half of the old objection is weaker here. These officers sit
-downstream of the department routing decision, so treating one case does not
-move another into or out of their queue. That claim depends on a fact we have
-not yet verified, which is the first thing we check in the field. If it turns
-out these officers also register intake, the objection returns in full and the
-design needs revisiting before launch.
-
-The superseded wedge is not wasted. It is costed, reviewed, and it is the
-clearest statement we have of what integration would buy. It becomes the
-technical annex to the integration ask.
+A8 is the packaged version of A1, A3, A4, A5 and A6, one short brief per
+department, hand-delivered in November. The live portal reports counts and
+disposal percentages and carries no time metric on any screen. An ageing profile
+and a repeat-filing rate are things these officers have not seen about their own
+caseload. It costs no engineering.
 
 ---
 
-## 4. What we will test, and the one thing we will not build
+## 3. What the field work decides
 
-The features worth testing are the ones the portal conspicuously lacks and our
-corpus work already supports.
+**B1 settles the feature set.** Do these officers receive grievances already
+routed to the department, or do they also register intake. Everything we know
+about the workflow comes from one login, the CM Grievance Cell, which is roughly
+one intake in six. If the officers are downstream only, then the category and
+department suggestions are worthless to them and intra-department authority is
+the only routing feature left. A 45-minute screen share per department settles
+it. This is task 1 of the pilot.
 
-**An ageing and deadline view.** The officer's pending cases, oldest first, days
-elapsed, days to the 30-day mark. There is no time metric on any screen of the
-live portal: it reports counts and disposal percentages and nothing else. This
-needs no model and carries no model risk.
+**B2 gives us an officer-time denominator.** A swimlane per department from
+arrival at the department node to closure. The only officer-time figure anywhere
+in this project is an intake number from a different office. We will not reuse
+it as a baseline.
 
-**A repeat-filer panel.** "This petitioner has filed three times before; here is
-what happened." Officers told us in August that they do not know their own
-repeat rate. We can compute it across the full history.
+**B3 tells us whether a better department-node output can reach a citizen.** The
+department officer forwards; someone else acts. Two districts, one high-volume
+and one low-volume, and at each the Collector's grievance cell, a BDO office and
+the department's district officer. If reverts are driven by report quality at
+block level, then improving what the department node produces cannot move a
+citizen outcome. We want that established before we claim one.
 
-**A document summary**, only if it clears a factuality and privacy gate first.
-On its current development set it leaves residual personal information in four
-of twenty-six drafts. That is not showable to an officer, and it either clears
-or it waits for a later wave.
+**B4 makes handling time measurable.** Two to three days per department with a
+stopwatch and a structured form, before the console exists. It also supplies the
+variance input A2 needs, and is the fallback if console telemetry underperforms.
+
+---
+
+## 4. Interventions, graded by feasibility
+
+| Intervention | Needs | Feasibility | Binding constraint |
+|---|---|---|---|
+| Ageing and deadline view | A3, A6 | High | None. No model and no model risk |
+| Repeat-filer panel | A4 | High | Dedup tables are held out of the lake. For two officers we read the operational database directly |
+| Intra-department authority suggestion | A5, B1 | Medium | Runs only if B1 says the officer makes this call and A5 says it is learnable |
+| Document summary | OCR reference sample, unowned | Low | Four of twenty-six drafts leave residual personal information. Not showable to an officer as it stands |
+| Low-signal triage | Excluded | Not built | Safety decision, below |
+
+The first two are built and tested in wave 1 as a single bundle. The summary is
+a wave 2 item and ships only if it clears a factuality and privacy gate. If it
+does not clear, it does not ship, and that is a reportable finding rather than a
+delay.
 
 **One exclusion needs your sign-off, because it is a safety judgement rather
 than a product choice. We are not building low-signal triage for SSEPD.** The
@@ -145,23 +138,61 @@ markers officers described for a low-signal grievance are requests for
 government jobs and requests for financial assistance carrying no detail.
 Financial assistance is, in effect, SSEPD's entire caseload. A triage flag built
 on those markers would systematically route disability-benefit claims into a
-review queue. That is a foreseeable and patterned harm to precisely the
-population the department exists to serve, and no accuracy figure would license
-it. It is out of scope for this pilot, and any later reconsideration for Labour
-would need an officer-confirmed gold set that does not exist.
+review queue. That is a foreseeable and patterned harm to the population the
+department exists to serve, and no accuracy figure would license it. It is out
+of scope for this pilot. Any later reconsideration for Labour & ESI would need
+an officer-confirmed reference set, which does not exist.
 
 ---
 
-## 5. Volume, and one open question about the second department
+## 5. How we test, and what each test can carry
 
-Labour & ESI may be too small to randomise on its own. In our historical data
-its largest single case type carries about a seventh the volume of SSEPD's, and
-it does not appear at all in the coarser groupings we can route on. The
-September power calculation settles it.
+**Shadow phase, four weeks, no arms.** Every case goes through the console with
+the panel shown. This measures usability, training cost, telemetry quality and,
+most importantly, how much of what the console produces survives re-keying into
+the portal. It is qualitative and descriptive by design. It is also the interim
+readout and the artifact for the integration ask, and it does not need
+randomisation to be worth anything.
 
-If it cannot be powered, we run Labour & ESI as a feasibility and qualitative
-arm and randomise SSEPD only. That is a stated go/no-go with a date, decided
-before launch and not after seeing any outcome.
+**The randomised comparison, behind two gates.** If it runs, every grievance
+reaching the two officers passes through the console and we randomise, case by
+case, whether the panel is shown or blank. Both arms use the same interface and
+record the same decision before re-keying. The model runs on control cases with
+its output withheld, so we hold the counterfactual prediction. The outcome is
+the officer's handling time, blocked within officer-week, tested by
+randomisation inference.
+
+- **Gate 1, end September 2026.** The power calculation. If the detectable
+  effect is not credible at the measured volumes, the comparison does not run.
+  We do not run it underpowered.
+- **Gate 2, January 2027.** Measured re-key fidelity from the shadow phase. The
+  intervention reaches a citizen only because a person retypes it. Below the
+  threshold set at lock, the attenuation is the finding and no citizen-effect
+  claim is made.
+
+One officer sees both arms and learns from the treated ones. The bias is signed:
+learning transfer makes control cases better, which pushes the estimate toward
+zero. A positive result survives it. A null does not separate no effect from
+full contamination, and we will say that in the readout rather than in a
+footnote.
+
+**Citizen endpoints, descriptive.** A phone survey in Odia at a fixed horizon
+after filing, for every eligible case, whether or not the portal has closed it.
+Closure is an outcome the intervention may itself move, so surveying only closed
+cases would condition on the thing being studied. At this scale a census is
+affordable. Expect the intervals to be too wide to carry a claim, and expect to
+say so at lock rather than at readout.
+
+Outcome capture, given no integration:
+
+| Route | What it gives us | Feasibility |
+|---|---|---|
+| Console telemetry | Handling time, screens, revisits, both arms | High. Calibrated against the B4 stopwatch baseline |
+| Officer decision form | Authority chosen, days allowed, remark, before re-keying | High, self-reported |
+| Weekly 10% re-key audit | Fidelity, and gate 2 | High, and a headline finding in its own right |
+| Read-only API, scoped to the two departments | Time to first downstream action, 30 and 60-day resolution | Medium. Depends on ask 3 |
+| Record-level portal export | The same, less reliably | Low. May not exist at the department login |
+| Citizen phone survey | Reported resolution and satisfaction | Medium. Depends on ask 4 |
 
 ---
 
@@ -169,20 +200,20 @@ before launch and not after seeing any outcome.
 
 | Quarter | What happens |
 |---|---|
-| **Q4 2026** | Baseline analysis on the existing history. Remote walkthroughs with both officers. Permissions tabled. Project manager onboards in November. One Odisha trip: district visits to Collector, BDO and department offices, plus a stopwatch baseline of the officers' current work. We hand each department a report on its own caseload that nobody has ever given them. |
-| **Q1 2027** | Console built and deployed. Four-week shadow phase with the panel always on, no randomisation: usability, training, and the re-keying measurement. Then the analysis plan is locked and tagged before any arm is compared. |
-| **Q2 2027** | The randomised pilot runs, fourteen to sixteen weeks. An interim feasibility readout in March. |
+| **Q4 2026** | Desk analysis on the existing history. Remote walkthroughs with both officers. Permissions tabled. Project manager onboards in November. One Odisha trip: district visits to Collector, BDO and department offices, plus the stopwatch baseline. Each department receives a report on its own caseload. |
+| **Q1 2027** | Console built and deployed. Four-week shadow phase, panel always on, no arms. This is a deliverable, not a warm-up: it produces the feasibility evidence and the re-key measurement. Gate 2 is read at the end of it, then the analysis plan is locked and tagged. |
+| **Q2 2027** | If both gates pass, the randomised comparison runs for fourteen to sixteen weeks. Interim feasibility readout in March either way. |
 | **Q3 2027** | Citizen follow-up calls, a closing field visit, analysis against the locked plan, and the report. |
 
 Two trips to Odisha for me. One field-based project manager from November, one
 reallocated research associate from now, and a part-time Odia-speaking surveyor
-for three months in the spring. **The project manager's November start is the
-binding constraint on all field work**, which is why the desk analysis is
+for three months in the spring. The project manager's November start is the
+binding constraint on all field work, which is why the desk analysis is
 sequenced first.
 
-**If the integration case is needed sooner:** the department reports plus the
-shadow phase alone make a credible feasibility argument by **February 2027**. It
-is the randomised half that runs to July.
+If the integration case is needed sooner, the department reports plus the shadow
+phase make a credible feasibility argument by **February 2027**. Only the
+randomised half runs to July.
 
 ---
 
@@ -211,8 +242,8 @@ brief, not new requests.
 
 ## 8. What we will not claim
 
-Unchanged from every prior readout, and worth restating because a pilot is
-exactly when these drift:
+Unchanged from every prior readout, and restated because a pilot is when these
+drift:
 
 - No routing time saving. That analysis failed to replicate and stays withdrawn.
 - Not the in-sample routing figures. The held-out numbers are much lower and are
@@ -220,6 +251,5 @@ exactly when these drift:
 - Thirteen seconds is machine time, not officer time.
 - Eleven to twenty-three days is a measured gap between recorded steps, not a
   saving we can deliver.
-- And, for this pilot specifically: no department-level effect, no state-level
-  effect, and no citizen-outcome claim unless the interval turns out to support
-  one.
+- For this pilot specifically: no department-level effect, no state-level effect,
+  and no citizen-outcome claim unless an interval turns out to support one.

@@ -24,9 +24,12 @@ status: Internal
 > officer, so there is no cluster panel to randomise over. The stepped-wedge
 > design committed as "Framework only" on 14 August is therefore superseded for
 > this pilot, and is retained as the design that integration would unlock. What
-> replaces it: grievance-level randomisation blocked within officer-week, both
-> arms passing through our own console, with officer handling time as the
-> primary endpoint and citizen endpoints exploratory. **No department-level or
+> replaces it: a descriptive and feasibility track as the primary deliverable
+> (corpus analysis, officer process map, and a shadow phase with no arms), plus
+> a gated grievance-level randomisation blocked within officer-week, both arms
+> passing through our own console, with officer handling time as its endpoint
+> and citizen endpoints exploratory. The randomised component runs only if the
+> two gates in AB_PLAN §14.9 pass. **No department-level or
 > state-level effect is estimable from this pilot, and no citizen-outcome claim
 > is made unless its interval supports one.** See
 > [AB_PLAN.md](AB_PLAN.md) §14 and [PILOT_SSEPD_LABOUR.md](PILOT_SSEPD_LABOUR.md).
