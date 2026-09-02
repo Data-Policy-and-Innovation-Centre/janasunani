@@ -23,13 +23,17 @@ status: Internal
 > will re-key our outputs by hand; and each department has **one** grievance
 > officer, so there is no cluster panel to randomise over. The stepped-wedge
 > design committed as "Framework only" on 14 August is therefore superseded for
-> this pilot, and is retained as the design that integration would unlock. What
-> replaces it: a descriptive and feasibility track as the primary deliverable
-> (corpus analysis, officer process map, and a shadow phase with no arms), plus
-> a gated grievance-level randomisation blocked within officer-week, both arms
-> passing through our own console, with officer handling time as its endpoint
-> and citizen endpoints exploratory. The randomised component runs only if the
-> two gates in AB_PLAN §14.9 pass. **No department-level or
+> this pilot, and is retained as the design that integration would unlock.
+>
+> **Rescoped to December 2026, 2 September.** The randomised component is
+> deferred out of 2026: there is no engineer for the console it needs, the
+> grievance API is not running, and outside the workflow we can take in only the
+> cases that both originate at the department and arrive on paper, 1.8% of SSEPD
+> and 2.9% of Labour & ESI. What runs instead is a desk study, process maps, one
+> October field trip, a concierge test, and a measured evaluation of our own
+> pipeline. December ships two department briefs, an integration memo, and
+> honest accuracy numbers. See [PILOT_SSEPD_LABOUR.md](PILOT_SSEPD_LABOUR.md).
+> **No department-level or
 > state-level effect is estimable from this pilot, and no citizen-outcome claim
 > is made unless its interval supports one.** See
 > [AB_PLAN.md](AB_PLAN.md) §14 and [PILOT_SSEPD_LABOUR.md](PILOT_SSEPD_LABOUR.md).
