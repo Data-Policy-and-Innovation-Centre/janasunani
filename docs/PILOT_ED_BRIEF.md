@@ -79,30 +79,30 @@ half of it is conditional.
 
 ## 2. What the desk analysis decides
 
-A1 to A8 here and B1 to B4 in the next section are the internal plan's own
-numbering, kept so you can trace any line in this memo back to it. Each analysis
-is tied to a decision.
+Eight analyses, labelled A1 to A8 so the rest of this memo can refer to them.
+All of them run on records we already hold, using code we have already written.
 
-| Analysis | What it settles | What it decides |
+| Analysis | What we do | What it decides |
 |---|---|---|
-| A1 volume and case mix | Whether Labour & ESI has enough grievances to work with | Whether Labour & ESI is randomised at all |
-| A2 smallest detectable effect | How large an improvement this pilot could actually detect | Gate 1 on the randomised comparison |
-| A3 turnaround baseline | How long cases currently take, and the gaps between recorded steps | The ageing view, and how long we follow a case |
-| A4 repeat filers | How often the same petitioner files again, which the departments do not know | The repeat-filer panel, and the first department meeting |
-| A5 forwarding patterns | Whether case type and district predict which office the officer forwards to | Whether a forwarding suggestion is worth building |
-| A6 ageing fields | Whether the 30-day deadline can be computed from the record | The deadline half of the ageing view |
-| A7 what the fields mean | The list of action types, how many cases are still open when a window ends, and what the department field actually records | Whether any number we report can be interpreted |
-| A8 department briefs | Nothing analytical | Officer cooperation, which every other track needs |
+| A1 volume and case mix | Count monthly filings for both departments, 2021 to 2025, broken down by district, case type, and how the grievance arrived | Whether Labour & ESI has enough grievances to randomise at all |
+| A2 smallest detectable effect | Work out, from those volumes and from the spread in handling times B4 measures, how large an improvement this pilot could detect | Gate 1 on the randomised comparison |
+| A3 turnaround baseline | Measure how long cases take end to end today, and how long they sit between recorded steps | The ageing view, and how long we follow a case after filing |
+| A4 repeat filers | Match petitioners across the full history to find how often the same person files again, and what happened the previous time | The repeat-filer panel, and the first department meeting |
+| A5 forwarding patterns | Tabulate which office received the case after the department officer forwarded it, by district and case type. The field holding this is free text, so it needs cleaning first | Whether a forwarding suggestion is worth building |
+| A6 ageing fields | Check whether the overdue date already in the record is reliable enough to count days against the 30-day deadline | The deadline half of the ageing view |
+| A7 what the fields mean | Audit the list of action types, count how many cases are still open when a reporting window closes, and establish whether the department field records the original assignment or the final position | Whether any number we report can be interpreted |
+| A8 department briefs | Package A1, A3, A4, A5 and A6 into one short report per department, and hand it over on the November trip | Officer cooperation, which every other track needs |
 
-A8 packages A1, A3, A4, A5 and A6 as one short brief per department,
-hand-delivered in November. The live portal reports counts and disposal
-percentages, and no screen on it shows how long anything takes. A profile of
-case age and a repeat-filing rate are things these officers have not seen about
-their own caseload. It costs no engineering.
+A8 is the door-opener. The live portal reports counts and disposal percentages,
+and no screen on it shows how long anything takes. A profile of case age and a
+repeat-filing rate are things these officers have never seen about their own
+caseload. It costs no engineering.
 
 ---
 
 ## 3. What the field work decides
+
+Four field tasks, labelled B1 to B4.
 
 **B1, where the officer sits in the chain. This settles the feature set.** Do
 these officers receive grievances already routed to the department, or do they
