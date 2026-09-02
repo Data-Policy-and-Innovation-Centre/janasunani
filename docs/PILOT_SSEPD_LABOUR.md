@@ -76,15 +76,31 @@ departments, no app and no travel. Start now.
 depends on her travelling or on officer availability. **Milinda joins in
 October** on A3 and A7, once she is off the process maps.
 
-Ordered by what the November briefs need. A1, A4 and A6 are the brief's content
-and come first. A3 waits for the process maps by design, because gaps between
-recorded steps cannot be read before we know what the steps are. A5 feeds the
-December memo rather than the briefs, so it can slip. **A2 is deferred to 2027**
-along with the design it would have powered.
+Each item serves a named December deliverable. Anything that served the
+randomised design and nothing else is deferred.
+
+| | Serves | Priority |
+|---|---|---|
+| A1 volume, case mix, mode | Briefs, and A9 | Done in part |
+| A2 power | Nothing in 2026 | **Deferred** |
+| A3 turnaround | Briefs, memo | After the maps |
+| A4 repeat filers **and lookup** | Briefs, **concierge test** | High, wanted in October |
+| A5 forwarding patterns | Memo only | May slip to December |
+| A6 promised time against actual | Briefs | Medium |
+| A7 field semantics | Quality control on A1, A3, A4 | Scoped to that |
+| A8 department briefs | **The November deliverable** | November |
+| A9 reach without a feed | **The memo's headline** | High |
+| A10 officer throughput | Memo, and the 2027 decision | High |
+| A11 OCR sample selection | Workstream C2 | September |
+| A12 what staleness costs | Concierge caveat, and ask 1 | Low, quick |
+
+A3 waits for the process maps by design: gaps between recorded steps cannot be
+read before we know what the steps are.
 
 **A1. Department volume and case mix.** Filter the lake to `dept` in {SSEPD,
 Labour & Employees' State Insurance}. Monthly filings, by district, by
-category/subcategory, by `mode`, 2021 to 2025. Sizes the pilot and feeds A2.
+category/subcategory, by `mode`, 2021 to 2025. Brief content, and the input to
+A9.
 
 **Measured 2026-09-02 on `data/interim/complaints.parquet`. Mode splits the
 caseload into two regimes. Crossed with origin, it gives the share we can reach
@@ -177,10 +193,17 @@ and citizen response. And the action-history dedup index
 (`janasunani/db/models.py:199-214`) excludes `action_taken_date`, so any
 inter-step duration inherits an unsigned bias.
 
-**A4. Repeat filers and duplicates.** Run `janasunani-dedup-index` scoped to the
-two departments. Officers told us in the 12 August field record that they do not
-know their repeat-filer rate. This is both a pilot input and the best available
-door-opener for the first department meeting.
+**A4. Repeat filers, and the lookup behind the concierge test.** Two outputs, not
+one.
+
+The rate, for the briefs: run `janasunani-dedup-index` scoped to the two
+departments. Officers said in the 12 August field record that they do not know
+their repeat-filing rate.
+
+**The lookup, for the concierge test**: given a petitioner name, mobile or ticket
+number, return that person's filing history and what happened to each case.
+Ghazal runs this by hand on request from October, so it needs to be queryable
+rather than a finished statistic. Wanted in October, ahead of the briefs.
 
 **A5. Who the officer sends the case to next.** The portal splits this into two
 choices, and only one of them is a research question.
@@ -222,15 +245,15 @@ days (SSEPD, 19 August). Our per-case ageing numbers have to agree with the
 counts the officer already sees, or the feature loses trust on first contact.
 Reconcile against that panel, not only against the raw fields.
 
-**A7. Field-semantics audit.** The AB_PLAN §6 blocker, scoped to the pilot
-slice. Validate the action taxonomy, whether `dept` is the assignment or the
+**A7. Field-semantics audit. Scoped to whatever makes the brief's numbers
+defensible**, rather than the full audit AB_PLAN §6 wanted for the experiment. Validate the action taxonomy, whether `dept` is the assignment or the
 final snapshot, whether `all_esc_user` is overwritten (action history holds no
 chain snapshots, so overwrites are unrecoverable), and censoring. Censoring ran
-at 34.4% in 2025 (`janasunani/experiments/routing_outcome/dataset.py:28-36`);
-the pilot's follow-up window must be chosen with that in view.
+at 34.4% in 2025 (`janasunani/experiments/routing_outcome/dataset.py:28-36`), so
+any completion rate quoted in a brief has to say what it excludes.
 
-**A8. Retrospective department report.** Package A1, A3, A4, A5 and A6 as a
-short brief per department. The officer's dashboard shows totals, pendings by
+**A8. Retrospective department report.** Package A1, A3, A4 and A6 as a short
+brief per department. The officer's dashboard shows totals, pendings by
 holder and overdue counts in 7/15/30-day buckets, but carries no history: no
 movement over time, no comparison against the department's own past, no
 repeat-filing rate. That is what these briefs add.
@@ -238,6 +261,34 @@ Aggregates only, no citizen text, no portal screenshots
 (`docs/presentations/README.md`). Drafted by Ghazal and Milinda in late October,
 hand-delivered by Utkarsh in mid-November. **This is the buy-in deliverable, it
 costs no engineering, and it is one of the three things December ships.**
+
+**A9. Reach without a data feed.** The origin-by-mode crossing in A1, kept
+current and owned. It is the memo's headline number and it currently exists only
+as an ad-hoc calculation. Extend it two ways: by district, since a department
+whose paper arrives centrally differs from one where it arrives at the block;
+and forward, to say where the trend lands in 2027 if document-borne share keeps
+falling at the 2022-2025 rate.
+
+**A10. Officer throughput.** How many cases actually reach the department
+grievance officer per week. B1 asks them; the action history can estimate it.
+Count cases where the department node appears as an action step, by week, and
+compare against the 27-pending snapshot from the SSEPD dashboard.
+
+This is the number that decides whether a randomised comparison is ever
+possible, and it is also what tells us whether the concierge test will see five
+requests or fifty. Do it early.
+
+**A11. OCR sample selection, for C2.** Choose the scanned grievances that
+Milinda and Aparupa transcribe. Stratify by department, mode and script, and
+include the illegible ones rather than the clean ones, since a reference sample
+of easy documents produces an accuracy figure that flatters us. Target size set
+by what two people can transcribe alongside their other work. September, so C2
+can start.
+
+**A12. What staleness costs.** Estimate how many repeat filers the concierge
+lookup will miss, given the extract ends 2025-07-30 and volume roughly doubled
+year on year. Turns the concierge caveat from a hedge into a number, and gives
+ask 1 a price tag.
 
 ---
 
@@ -498,8 +549,8 @@ alongside and is assessed rather than delivered.
 
 | Month | A: analysis (Ghazal) | B: process and field | C: the app (Yashaswi) |
 |---|---|---|---|
-| **Sep** | A1, A4, A6 | B1 screen shares weeks 1-2, B2 maps weeks 2-4 (Milinda, Yashaswi). Three data asks tabled | C1 end-to-end run. C2 reference sample begins (Milinda, Aparupa) |
-| **Oct** | Finishes A6, starts A5. Briefs drafted late | **One trip** (Yashaswi): maps verified, B4 stopwatch, concierge channel agreed. Milinda on A3 and A7 | C2 continues, C3 summariser measured |
+| **Sep** | A1, **A11** (so C2 can start), A4 lookup, A10 | B1 screen shares weeks 1-2, B2 maps weeks 2-4 (Milinda, Yashaswi). Three data asks tabled | C1 Sarvam run at scale. C2 reference sample begins (Milinda, Aparupa) |
+| **Oct** | A6, A9, A12. A5 if time. Briefs drafted late | **One trip** (Yashaswi): maps verified, B4 stopwatch, concierge channel agreed. Milinda on A3 and A7 | C2 continues, C3 summariser measured |
 | **Nov** | A5. Briefs finalised | Utkarsh onboards. **Briefs hand-delivered.** Concierge handed over | C4 PII gate. C6 as capacity allows |
 | **Dec** | none | **The integration memo**, with the concierge log as evidence (Yashaswi) | C5 what is showable, as the memo's technical annex |
 
@@ -516,7 +567,7 @@ Everything else in A and B runs independently of C.
 
 | Who | Lane | Where |
 |---|---|---|
-| **Ghazal** (data analyst) | Workstream A end to end: A1, A4, A6, then A5. The analytics we need in hand before anything can be argued. Concierge lookups. Drafts the briefs with Milinda. | Patna, desk-only |
+| **Ghazal** (data analyst) | Workstream A: A1, A11, A4, A10 in September, then A6, A9, A12. A5 last. Runs the concierge lookups from October. Drafts the briefs with Milinda. | Patna, desk-only |
 | **Milinda** (RA) | B1 calls and B2 process maps in September. A3 and A7 from October. C2 Odia reference sample with Aparupa. Drafts the briefs with Ghazal. | Remote |
 | **Aparupa** (operations manager, Odia) | C2 reference transcription, and Odia support across C3. The reason an Odia accuracy figure is possible at all. | Odia-speaking |
 | **Utkarsh** (PM, joins Nov) | Owns the field and the officer relationship from November. Delivers the briefs. Holds the concierge channel. | Odisha |
