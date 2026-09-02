@@ -10,7 +10,7 @@ status: Internal
 
 # Pilot design: SSEPD and Labour & ESI
 
-Decision memo. Five asks and one sign-off in section 6.
+Decision memo. Six asks and one sign-off in section 6.
 
 ---
 
@@ -18,7 +18,7 @@ Decision memo. Five asks and one sign-off in section 6.
 
 - **Outside the workflow we can reach 2% of the caseload.** Only cases that both
   start at the department and arrive on paper can be taken into our system
-  without a data feed. 817 of SSEPD's 45,339 and 301 of Labour & ESI's 10,459.
+  without API access. 817 of SSEPD's 45,339 and 301 of Labour & ESI's 10,459.
   About five a week across both departments, and falling as paper intake
   digitises.
 - That number is the whole argument. Everything else follows from it.
@@ -33,6 +33,10 @@ Decision memo. Five asks and one sign-off in section 6.
   any of this scales beyond a demonstration.
 - The analysis and the process mapping happen while the app is built. Neither
   waits on the other.
+- **The department workflow we already understand. The field we do not.** Our map
+  stops when the officer forwards the case, which is where most of the elapsed
+  time then goes. Two district visits fix that, and they need a permission
+  separate from the department sign-off.
 - We have not run the Sarvam pipeline at scale, and not on Odia at all. No
   accuracy figure for reading scanned documents exists. December fixes that,
   because a third of SSEPD's caseload is scanned paper.
@@ -49,25 +53,27 @@ There is no integration, so officers read our outputs on a separate screen and
 retype what they choose into the portal. There is one grievance officer per
 department, and their account both registers grievances and forwards them on.
 
-Two things have changed since August. The grievance API that would feed our
-system is no longer running. And our extract of the grievance history ends in
-July 2025, which makes it thirteen months out of date over a period when filings
-roughly doubled.
+Two things have changed since August. **We have no API access.** The read-only
+grievance endpoint we would read cases from is no longer running, and we hold no
+credentials for it, so getting it is two things rather than one. And our extract
+of the grievance history ends in July 2025, thirteen months out of date over a
+period when filings roughly doubled.
 
-**What that costs, in one number.** With no feed, the only cases we can take
-into our own system are the ones an officer registers from paper in hand: the
-case has to both start at the department and arrive on paper. Everything else is
-already inside the portal by the time they see it, where we cannot reach it.
+**What that costs, in one number.** Without API access, the only cases we can
+take into our own system are the ones an officer registers from paper in hand.
+The case has to both start at the department and arrive on paper. Everything
+else is already inside the portal by the time they see it, where we cannot reach
+it.
 
 That intersection is 817 of SSEPD's 45,339 cases and 301 of Labour & ESI's
 10,459. **About 2% of the caseload, five cases a week across both departments.**
 It is also shrinking, because paper intake is digitising: Labour & ESI's share
 fell from 12.3% in 2022/23 to 1.1% in 2024/25.
 
-So there is a version of this project that runs without a data feed, and it
-reaches one case in fifty. That is a demonstration, not a service. Getting the
-feed is what section 6 asks for, and the rest of this memo is what we do in the
-meantime and why it is worth doing.
+So there is a version of this project that runs with no API access, and it
+reaches one case in fifty. That is a demonstration rather than a service.
+Getting that access is what section 6 asks for, and the rest of this memo is
+what we do in the meantime and why it is worth doing.
 
 ---
 
@@ -79,10 +85,13 @@ Four tracks, running in parallel. None waits on another.
 already hold. No permission, no travel, no software. Ghazal runs it from Patna,
 starting now.
 
-**Process mapping.** Screen shares with both officers in September, then a map
-of every step from arrival to closure, sent back to them for correction. Milinda
-and me. Verified in person on one October trip, which also collects a stopwatch
-baseline of how long a case actually takes an officer.
+**Process mapping, department and field.** We already have the department level
+in good shape from the August walkthroughs, so September is a write-up and a
+correction round with both officers. The gap is the field: what happens to a
+case once the officer forwards it, at the Collector's grievance cell, the block
+office and the department's own district officer. Two districts, one per
+department. I take the first on the October trip, Utkarsh the second from
+November. Milinda on the write-up.
 
 **Answering questions by hand.** From October, officers send us a question about
 a case and we answer within a day. Every request logged.
@@ -115,42 +124,63 @@ than department volume suggests. That number decides whether measuring an effect
 on officer time is ever possible, and whether the question service sees five
 requests a week or fifty.
 
-**From the field.** The August walkthroughs settled most of the question about
-where these officers sit. They do both: they receive cases already routed to
-them, and they register and assign new ones. What remains is how often each path
-is used.
+**At the department.** The August walkthroughs settled most of it, including
+where these officers sit: they both receive cases already routed to them and
+register and assign new ones. What remains is how often each path is used. So
+the department map is a write-up and a correction round, and the correction
+round matters as much as the map. It is a small specific ask that gets a reply,
+and a corrected map is the first thing we hand a department that their own
+portal cannot produce.
 
-The process map is the deliverable here, and the correction round matters as
-much as the map. It is a small specific ask that gets a reply, and a corrected
-map is the first thing we hand a department that their own portal cannot
-produce.
+**In the field, where we have nothing.** Our map stops the moment the officer
+forwards the case. Everything after that, which is most of the elapsed time and
+all of the actual redress, we have never observed. That gap is why our
+turnaround numbers are currently uninterpretable: we can measure an eleven-day
+gap between two recorded steps without being able to say whether it was a field
+enquiry, a statutory wait, or nobody looking at it.
+
+Two districts, chosen on filing volume. Per site: how a forwarded case arrives,
+who reads it, what enquiry it triggers, how long each step takes, and what gets
+typed back into the portal against what stays on paper. This is also the first
+independent read anyone has on what the portal's completion dates mean.
 
 The stopwatch baseline in October gives us the officer-time figure this project
 has never had, stratified by how the grievance arrived, since a typed website
 complaint and a scanned Odia letter are different tasks.
-
-**Cut for this year:** visits to the district offices that act on what the
-department forwards. They exist to interpret what happens at the far end of the
-chain, which matters for a measurement we are not making in 2026.
 
 ---
 
 ## 4. What we would build, and why little of it works from outside
 
 Nothing here ships to an officer this year. This is what the app is built
-toward, and it is the concrete form of the argument for a data feed.
+toward, and it is the concrete form of the argument for API access.
 
-| Feature | Works without a feed? | Why |
+**Every one of them is capped at the same 2%.** A case has to be inside our
+system before we can do anything to it, and without API access only the
+register-from-paper cases get there. What differs between features is how each
+one behaves once capped, and whether our thirteen-month-old data gives the right
+answer.
+
+| Feature | Usable at 2% reach | Usable on data ending July 2025 |
 |---|---|---|
-| Has this petitioner filed before, and what happened | **Yes** | It matches on who filed, so the history we hold is enough. Blind to thirteen months until the extract is refreshed |
-| Which office inside the department should get the case | **Yes** | The routes are already configured in the portal and can be read off. Only the choice of named office has to be learned |
-| The key facts of a scanned grievance, in text | **Marginal** | The officer would download the scan and upload it, about a minute a case, against a saving we have not yet measured |
-| Pending cases oldest first, with days left | **No** | It lists what is pending now. We hold a snapshot and no way to refresh it |
+| Which office inside the department should get the case | **Yes.** Fires about five times a week, and each answer stands on its own | **Yes.** It learns which office covers a district, and that barely changes year to year |
+| Has this petitioner filed before, and what happened | **Yes**, on the same terms | **No.** It needs that person's complete history, and ours stops in July 2025 |
+| The key facts of a scanned grievance, in text | **Yes**, on the same terms | **Yes.** How old our data is has no bearing on reading a document |
+| Pending cases oldest first, with days left | **No.** It describes the officer's whole queue, so at 2% we would show them one pending case in fifty | **No** |
 
-The last row is the one no amount of effort rescues. Every other feature needs
-data about the case in front of the officer, which they are handling anyway.
-That one needs data about the cases they are not handling, and there is no
-moment at which anyone would type those in by hand.
+The first three act on one case at a time, so the cap makes them fire rarely
+while each answer remains correct. The last describes a population, so a 2%
+sample of it is a wrong picture rather than a small one, and there is no moment
+at which anyone would type the other 98% in by hand. That is the feature the
+API decides.
+
+The second row is what has changed since August, and it is why ask 1 matters
+more than its price suggests. Our thirteen-month blind window plausibly holds
+more SSEPD filings than the entire history we hold, since volume was still
+doubling when the extract stopped. Recency is where re-filing concentrates, so
+we would tell an officer that a petitioner is filing for the first time when
+they filed twice last year. One wrong answer an officer catches ends the
+feature.
 
 **How grievances arrive bounds all of it.** Just over a third of SSEPD's cases
 and a fifth of Labour & ESI's come in on paper. For those, the portal's text
@@ -176,8 +206,8 @@ figure would license it.
 | Month | What happens |
 |---|---|
 | **September** | Screen shares with both officers, settling how often they register cases themselves and how many reach them each week. Process maps drafted and sent back for correction. The data asks tabled. Desk study starts. |
-| **October** | One trip to Bhubaneswar: maps verified by watching the work, the stopwatch baseline, and the question channel agreed face to face. Desk study completes, briefs drafted. |
-| **November** | Utkarsh joins and inherits a live relationship. **The two department briefs are hand-delivered.** He takes over the question channel. |
+| **October** | One trip: department maps verified by watching the work, the stopwatch baseline, the question channel agreed face to face, and **the first district visited**. Desk study completes, briefs drafted. |
+| **November** | Utkarsh joins and inherits a live relationship. **The two department briefs are hand-delivered.** He takes the second district and the question channel. |
 | **December** | **The integration memo**, with the question log as evidence and the pipeline numbers as its technical annex. |
 
 Running throughout and gating none of it: the Sarvam pipeline at scale, the Odia
@@ -185,10 +215,11 @@ reference sample transcribed, the app progressing.
 
 Five people. Ghazal on the analysis from Patna, Milinda on the maps and the Odia
 reference sample, Aparupa on the Odia work with her, Utkarsh in Odisha from
-November, me in Bangalore with one trip in October.
+November and doing the second district, me in Bangalore with one trip in
+October.
 
 **In December we decide what 2027 looks like**, against four questions this work
-answers. Did a data feed land. Does the question log show officers want what we
+answers. Did API access land. Does the question log show officers want what we
 would build. Are the pipeline numbers good enough to put in front of an officer.
 Is there anyone to finish the app. A measured effect on officer time needs all
 four plus a throughput we have not established, so it is a 2028 question.
@@ -212,14 +243,19 @@ the first is the one you can probably get this month.
 3. **The read-only grievance API restarted, and scoped to these two
    departments.** The endpoint no longer runs, so this is two things: revive it,
    then give us read access. **This is the ask that decides whether any of this
-   scales.** Outside the workflow we reach 2% of the caseload; with a feed we
-   reach all of it. It remains far short of the integration OCAC refused. We
+   scales.** Outside the workflow we reach 2% of the caseload; with read access
+   we reach all of it. It remains far short of the integration OCAC refused. We
    would only read, we would change no workflow, and it covers two departments.
 
-**Two smaller permissions:**
+**Three smaller permissions:**
 
 4. **Written sign-off naming both departments** for a bounded engagement.
-5. **Permission to log what officers ask us and what we send back.** A
+5. **District access in two districts**, to a Collector's grievance cell and a
+   block office. This runs through a different chain from the department
+   sign-off, so it needs asking in September rather than assuming in October. It
+   is what makes the field mapping in section 3 possible, and without it our
+   turnaround numbers stay uninterpretable.
+6. **Permission to log what officers ask us and what we send back.** A
    department suggestion labelled as AI-generated is already on the live
    assignment screen, and nothing anywhere records whether officers accept it.
 

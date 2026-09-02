@@ -975,8 +975,9 @@ things removed it, none of them statistical:
 
 - **No engineer.** The console, assignment service and event tables the design
   needs sit on one part-time person.
-- **No feed.** The grievance API is not running and the extract ends
-  2025-07-30. Outside the workflow the only cases we can take in natively are
+- **No API access.** The read-only grievance API is not running and we hold no
+  credentials for it. The extract ends 2025-07-30. Outside the workflow the only
+  cases we can take in natively are
   those both originating at the department and arriving on paper: 1.8% of SSEPD
   and 2.9% of Labour & ESI, roughly five a week across both departments.
 - **Throughput unknown, and probably small.** SSEPD showed 27 cases pending with
@@ -989,7 +990,7 @@ hand-answered officer questions, and a measured evaluation of our own pipeline
 which is what would make this design runnable in the first place.**
 
 Four questions decide whether the design returns, and they are taken in December
-2026 (PILOT_SSEPD_LABOUR §10): did a data feed land, do officers want what we
+2026 (PILOT_SSEPD_LABOUR §10): did API access land, do officers want what we
 would build, are the pipeline numbers defensible, and is there anyone to finish
 the app. All four, plus a measured throughput, before §14.3 is scoped again.
 
