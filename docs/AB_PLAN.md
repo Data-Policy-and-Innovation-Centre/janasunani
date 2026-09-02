@@ -782,9 +782,8 @@ sit downstream of the department routing decision.
 
 **That assumption is now in doubt, and the trigger this paragraph set has
 fired.** The 18 August Labour & ESI walkthrough and the 19 August SSEPD
-dashboard reading show the account the department's grievance officer works in
-(titled Secretary, because that is the department node in the routing chain)
-carries the registration screen (`/Admin/Eabhijog/Register/regNext/...`) with
+dashboard reading show the grievance officer's account carries the registration
+screen (`/Admin/Eabhijog/Register/regNext/...`) with
 department, escalation chain, category, subcategory and remarks, alongside the
 forwarding screen and the per-case action history. These officers can register
 and assign, not only receive.

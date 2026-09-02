@@ -152,13 +152,9 @@ Screenshots stay in Box and are not copied into this repo.
 
 **Established.**
 
-- **Who is actually at the keyboard.** The login is titled Secretary because
-  every department-level node in the routing chain is officially the Secretary.
-  The IAS officer does not open this portal. The department's grievance officer
-  works the account, and inherits its rights: workflow config, the escalation
-  settings screens under `/Admin/Setting/Escalation`, and Janasunani Reports.
-  Read "Secretary" in any screenshot or action-history row as the department
-  node, not as the person.
+- The grievance officer's account carries admin rights: workflow config, the
+  escalation settings screens under `/Admin/Setting/Escalation`, and Janasunani
+  Reports.
 - It carries the **registration path** (`/Admin/Eabhijog/Register/regNext/...`):
   citizen details, then Assign ATA with department, `Define Workflow`, the named
   office at each level, category, subcategory and remarks. So the officer both

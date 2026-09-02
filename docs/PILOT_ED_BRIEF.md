@@ -29,11 +29,10 @@ cases stay comparable.
   citizen outcomes will be observations, with no claim about cause.
 - Each piece of the desk analysis decides a specific feature or design choice.
   One of them is the deliverable that buys officer cooperation.
-- The August walkthroughs at Labour & ESI and SSEPD changed three of our
-  assumptions. The account the grievance officer works in carries admin rights,
-  and it can register a grievance as well as forward one. The portal
-  already shows overdue cases in 7, 15 and 30-day buckets. The forwarding chains
-  are a configured list we can read rather than a pattern we have to learn.
+- The officers register grievances as well as forward them, so the category and
+  department suggestions are in scope. The portal already shows overdue cases in
+  7, 15 and 30-day buckets. The forwarding chains are a configured list we can
+  read rather than a pattern we have to learn.
 - Two features are high feasibility and use no AI model: a per-case list of
   pending grievances by age against the 30-day deadline, and a panel showing
   whether the petitioner has filed before. Both narrow what the portal already
@@ -58,9 +57,7 @@ cases stay comparable.
 
 There is no integration, so officers read our outputs on a separate screen and
 retype what they choose into the portal. There is one grievance officer per
-department. They work in the login titled Secretary, because the department
-node in the routing chain is officially the Secretary. The IAS officer does not
-use the portal. The account carries admin rights over workflow configuration and
+department. Their account carries admin rights over workflow configuration, and
 can register a grievance, assign the action-taking authority, and forward to a
 Commissioner, a Collector, an MD or Director, or a named subordinate.
 
@@ -113,26 +110,18 @@ briefs carry, and they cost no engineering.
 
 Four field tasks.
 
-**B1, where the officer sits in the chain. Largely answered in August, and it
-changes the feature set.** We saw the Labour & ESI login on 18 August and the
-SSEPD dashboard on 19 August. Both are the account the department's grievance
-officer works in, titled Secretary because that is the department node in the
-routing chain. It carries the registration screen, which takes the citizen's
-details and then the department, the escalation chain, the category and
-subcategory, and the remarks. It also carries the forwarding screen and the
-action history for each case.
+**B1, where the officer sits in the chain.** The August walkthroughs settled
+most of it. These officers do both: they receive cases routed to them, and they
+can register and assign. Their screen carries registration, forwarding and the
+per-case action history. Category and department suggestions are therefore in
+scope.
 
-So these officers do both. They receive cases routed to them, and they can
-register and assign. Category and department suggestions are therefore live
-again rather than worthless, which our earlier reading had ruled out. What
-remains for B1 is how often each path is actually used, which decides how much
-weight the registration-side features carry.
+What remains is how often each path is used, which decides how much weight the
+registration-side features carry.
 
 **B2, the officer-time baseline, so we know how long a case takes an officer
 today.** A step-by-step map per department, from the case arriving at the
-department to closure. The only officer-time figure anywhere in this project is
-a registration number from a different office. We will not reuse it as a
-baseline.
+department to closure, with our own timings against each step.
 
 **B3, district visits to the offices that act on what the department forwards.
 This tells us whether a better output at the department stage can reach a
@@ -159,20 +148,14 @@ is the fallback if the console's own recording underperforms.
 | Document summary: the key facts of a scanned grievance, in text | A hand-checked sample of scanned documents, which nobody owns yet | Low | Four of twenty-six drafts left personal information in the summary. It cannot be shown to an officer in that state |
 | Low-signal flag: marking a grievance as unlikely to need action | Excluded | Not built | Safety decision, below |
 
-The first two are built and tested together in wave 1. The forwarding suggestion
-moved up after August: we had expected to learn the chain from history, and the
-portal turns out to hold it as configuration. The summary is a wave 2 item and
-ships only if it first passes a check for accuracy and for leaked personal
-information. If it fails that check, it does not ship, and that outcome is
-itself worth reporting.
+The first two are built and tested together in wave 1. The summary is a wave 2
+item and ships only if it first passes a check for accuracy and for leaked
+personal information. If it fails that check, it does not ship, and that outcome
+is itself worth reporting.
 
-Both departments have already been shown a Janasunani 2.0 feature list covering
-auto-categorisation, similar-case detection, severity and sentiment, document
-AI, and department prediction. Labour & ESI keeps its own ten-point list on the
-wall, which asks for reminders at 7 days, escalation at 15, and handling of
-duplicate and bulk petitions. Our first two features answer items on that list.
-That is the frame to use with the departments, in preference to introducing
-them as something new.
+We will put these to the departments as answers to their own ten-point list,
+which already asks for reminders at 7 days, escalation at 15, and handling of
+duplicate and bulk petitions.
 
 **One exclusion needs your sign-off, because it is a safety judgement rather
 than a product choice. We are not building the low-signal flag for SSEPD.** The
@@ -210,12 +193,10 @@ numbers than we have.
 
 - **Gate 1, end September 2026.** The calculation of the smallest effect this
   pilot could detect. If that effect is implausibly large at the volumes we
-  measure, the comparison does not run. One reading from the SSEPD dashboard on
-  19 August sharpens the risk: against 51,460 tickets in total and 1,471
-  pending, only 27 sat with the department node itself, which is the officer we
-  would randomise on, and 20 were overdue. The department's historical volume is large. The number of cases
-  actually passing through the officer we would randomise on may be small, and
-  that is the number gate 1 has to work from.
+  measure, the comparison does not run. SSEPD's own dashboard shows why this is
+  the likeliest gate to fail: 51,460 tickets in total, 1,471 pending, and 27 of
+  those with the officer we would randomise on. Department volume is large.
+  Officer throughput is what gate 1 has to work from, and it is small.
 - **Gate 2, January 2027.** The shadow-phase measurement of how much of the
   console's output actually reaches the portal. The tool reaches a citizen only
   because a person retypes it. Below the threshold we fix in advance, the
