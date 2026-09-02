@@ -138,10 +138,11 @@ engineering.**
 
 ## 3. Workstream B: process mapping and field visits
 
-Everything we know about the workflow comes from one login, the CM Grievance
-Cell, roughly one intake in six. Annex B of the 12 August field record is a
-lower bound on any dropdown's contents, never the schema. **Both target
-departments need their own Annex B.** Work from
+Everything we know about the workflow comes from two logins, the CM Grievance
+Cell and Labour & ESI. They are different kinds of office and neither
+generalises to the other. Annex B of the 12 August field record is a lower bound
+on any dropdown's contents, never the schema. **SSEPD still needs its own Annex
+B, and Labour & ESI's needs completing.** Work from
 `outputs/Janasunani_Canonical_Questions_14Aug_Demo.docx`, the PII-free twin.
 The 9.3 MB copy in `docs/` carries real citizen data in its Annex B.1 figures
 and must not be quoted from or circulated. Both are gitignored (`docs/*.docx`),
