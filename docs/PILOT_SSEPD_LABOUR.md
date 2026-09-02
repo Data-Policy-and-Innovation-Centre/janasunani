@@ -54,9 +54,8 @@ the document at a moment they are already doing data entry. That intersection is
 departments, and it is shrinking: Labour & ESI's share fell from 12.3% in
 2022/23 to 1.1% in 2024/25 as physical intake digitised.
 
-So there is no version of this that reaches the bulk of the caseload without a
-data feed. That is the argument the December memo makes, and it is now
-arithmetic rather than assertion.
+Nothing reaches the bulk of the caseload without a data feed. That is the
+December memo's argument.
 
 **December ships three things**, none of which waits on the app. Two department
 briefs, hand-delivered in November. One integration memo, written in December.
@@ -87,14 +86,57 @@ along with the design it would have powered.
 Labour & Employees' State Insurance}. Monthly filings, by district, by
 category/subcategory, by `mode`, 2021 to 2025. Sizes the pilot and feeds A2.
 
-**Measured, 2026-09-02, on `data/interim/complaints.parquet` (55,798 cases:
-SSEPD 45,339, Labour & ESI 10,459). Mode splits the caseload into two regimes
-that need different things from us.**
+**Measured 2026-09-02 on `data/interim/complaints.parquet`. Mode splits the
+caseload into two regimes. Crossed with origin, it gives the share we can reach
+without a data feed.**
 
-| | SSEPD | Labour & ESI |
-|---|---|---|
-| Citizen-typed (Website, Twitter, WhatsApp, Mobile, Email) | 63.6% | 77.9% |
-| Document-borne (Physical, Letter, Joint Hearing, CM visits) | 36.4% | 22.1% |
+*Document-borne* = Physical, Letter, Joint Hearing, CM Weekly, CMO district
+visits. *Dept origin* = `office == 'Departments'`. *Both* = the cases the
+officer registers from paper in hand, and therefore the only ones we can take in
+natively.
+
+**SSEPD**
+
+| Jul-Jun year | all tickets | dept origin | document-borne | both | both % |
+|---|---|---|---|---|---|
+| Apr-Jun 2021 (stub) | 389 | 2.6% | 0.0% | 0 | 0.0% |
+| 2021/22 | 2,079 | 10.7% | 23.8% | 3 | 0.1% |
+| 2022/23 | 5,832 | 13.9% | 38.6% | 137 | 2.3% |
+| 2023/24 | 6,932 | 16.4% | 41.1% | 168 | 2.4% |
+| 2024/25 | 25,283 | 13.7% | 35.7% | 457 | 1.8% |
+| Jul 2025 (stub) | 4,824 | 7.6% | 39.1% | 52 | 1.1% |
+| **4 full years** | **40,126** | **14.0%** | **36.4%** | **765** | **1.9%** |
+| whole sample | 45,339 | 13.3% | 36.4% | 817 | 1.8% |
+
+**Labour & ESI**
+
+| Jul-Jun year | all tickets | dept origin | document-borne | both | both % |
+|---|---|---|---|---|---|
+| Apr-Jun 2021 (stub) | 34 | 61.8% | 0.0% | 0 | 0.0% |
+| 2021/22 | 459 | 45.8% | 27.9% | 36 | 7.8% |
+| 2022/23 | 1,341 | 44.4% | 36.3% | 165 | 12.3% |
+| 2023/24 | 2,534 | 46.9% | 19.1% | 35 | 1.4% |
+| 2024/25 | 5,651 | 42.8% | 19.9% | 62 | 1.1% |
+| Jul 2025 (stub) | 440 | 40.7% | 18.4% | 3 | 0.7% |
+| **4 full years** | **9,985** | **44.2%** | **22.3%** | **298** | **3.0%** |
+| whole sample | 10,459 | 44.1% | 22.1% | 301 | 2.9% |
+
+Three things to read off these.
+
+**Reach without a feed is 1.9% and 3.0% over four full years**, about five cases
+a week across both departments.
+
+**It is falling.** Labour & ESI went from 12.3% in 2022/23 to 1.1% in 2024/25,
+driven by document-borne share halving from 36.3% to 19.9%. SSEPD's is flatter
+but also declining. Any strategy built on the paper-at-our-door population is
+betting against the trend.
+
+**Origin and mode are negatively correlated.** SSEPD at 13.3% dept origin and
+36.4% document-borne would give 4.8% if independent; actual is 1.8%. Labour &
+ESI would give 9.7%; actual is 2.9%. Paper mostly arrives from elsewhere in the
+chain rather than at the department's own door, which matches the 14 August
+meeting note on physical grievances travelling a long manual route before
+reaching the grievance officer.
 
 The regimes differ in what the record actually contains. In the citizen-typed
 modes the text field holds the grievance: median length 217 characters on
@@ -272,14 +314,13 @@ recorded steps, and those gaps mean nothing until we know what the steps are
 operationally. The people who map the process are also the ones who write the
 briefs and the memo.
 
-Draft from the B1 screen shares, then send the maps back to the officers for
-correction. That round is worth having on its own: it is a small specific ask
-that gets a reply, it establishes the working relationship before we ask for
-anything expensive, and a corrected process map is the first thing we hand a
-department that their own portal cannot produce.
+Draft from the B1 screen shares, then send the maps back for correction. A small
+specific ask that gets a reply, before we ask for anything expensive. The
+corrected map is also the first thing we hand a department that their portal
+cannot produce.
 
-Verified in person on the October trip. Expect the drafts to be wrong in places.
-Watching the work is how you find the steps nobody mentions on a call.
+Verified in person on the October trip. Expect the drafts to be wrong. Watching
+the work is how you find the steps nobody mentions on a call.
 
 The only officer-time denominator anywhere in this project is "10 to 15 minutes
 to turn a raw document into a registered complaint, irrespective of language"
@@ -336,36 +377,28 @@ Alongside these:
 
 ## 4. Workstream C: the app becomes ready, in parallel
 
-**This track runs alongside A and B and gates neither of them.** Ghazal's
-analysis and Milinda's process maps need nothing from it, and it needs nothing
-from them. Its only December deliverable is a set of measured numbers.
+Runs alongside A and B. Gates neither. Its only December deliverable is a set of
+measured numbers.
 
-We have never run the pipeline end to end, and no OCR accuracy figure exists
-anywhere in this project. Everything we would show an officer in 2027 rests on a
-stack we have not measured. **The bar for December is honest numbers**, not a
-shippable product: we may not like what we find, but we will know it and be able
-to say what is showable.
+**We have not run the Sarvam pipeline at scale, and not on Odia at all.** No OCR
+accuracy figure exists anywhere in this project. The December bar is honest
+numbers, not a shippable product.
 
-This matters most for exactly the cases the mode split identified. The
-document-borne third of SSEPD's caseload is where OCR and summarisation are the
-only things that help, and it is the part of the stack we have measured least.
+The document-borne third of SSEPD's caseload is where OCR and summarisation are
+the only things that help, and it is the least measured part of the stack.
 
-**C1. One clean end-to-end run** on a pilot-department slice. The pipeline's
-stages are individually exercised and have never been run start to finish
-(ROADMAP §"the pipeline has never run end to end"). Produce the run and the list
-of what breaks. Owner: Yashaswi with agents.
+**C1. Run the Sarvam pipeline at scale** on a pilot-department slice, Odia
+included. Produce the run and the list of what breaks. Owner: Yashaswi with
+agents.
 
 **C2. The OCR reference sample.** Hand-transcribe a bounded sample of scanned
-grievances so an accuracy figure can exist. This is issue #53, unowned since
-7 August 2026, and it is the reason no OCR number appears anywhere.
-**Owners: Milinda and Aparupa.** Odia and English both, because an
-English-only figure would not describe the caseload.
+grievances so an accuracy figure can exist. Issue #53, unowned since 7 August
+2026. **Owners: Milinda and Aparupa.** Odia and English both.
 
-**C3. Measure the summariser against C2**, on Odia as well as English. Current
-development evidence is 55/84 critical facts retained, 8/26 usable without edit,
-4/26 with residual personal information, and it skipped all four coherent Odia
-cases. That last point makes an Odia measurement the priority rather than a
-refinement.
+**C3. Measure the summariser against C2**, Odia and English. Development
+evidence: 55/84 critical facts retained, 8/26 usable without edit, 4/26 with
+residual personal information, and it skipped all four coherent Odia cases. Odia
+first.
 
 **C4. Separate the PII gate from the DSI reference constant.**
 `janasunani-evaluate-pii` exits non-zero because 78.3% coverage sits below the
@@ -374,24 +407,18 @@ document says is not a target. Set a real threshold. **Do not relax it to make a
 number pass**, and do not ship model output to an officer until it holds.
 
 **C5. Write down what is showable.** One page: per stage, the measured number,
-the sample it came from, and whether it clears a bar we would defend in front of
-an officer. This is the annex to the December memo that says what a 2027 pilot
-could actually put on a screen.
+the sample, and whether it clears a bar we would defend in front of an officer.
+Annex to the December memo.
 
-Sarvam spend resumed on 25 August 2026, so the paid path is available for C1 and
-C3. Budget it explicitly rather than discovering the cost.
+Sarvam spend resumed 25 August 2026. Budget C1 and C3 before running them.
 
-**C6. The app itself, at whatever pace part-time allows.** Cloud stack (#30,
-open since July, with the two rollout gaps in #32), auth and RBAC in place of
-site-wide Caddy `basic_auth`, then the officer-facing views. Sequenced behind
-C1 to C4, because there is no point deploying a stack that serves output we have
-not measured. **No December deadline and no December deliverable.** It is ready
-when it is ready, and the 2027 decision in §10 is where its readiness is
-assessed against everything else.
+**C6. The app.** Cloud stack (#30, open since July, two rollout gaps in #32),
+auth and RBAC in place of site-wide Caddy `basic_auth`, then the officer-facing
+views. Behind C1 to C4. **No December deadline.** Readiness is assessed at the
+§10 decision.
 
-What this track deliberately does not build in 2026: the assignment service and
-event tables, which exist only to support randomisation. They come back with the
-design in AB_PLAN §14, not before.
+Not built in 2026: the assignment service and event tables. They support
+randomisation only, and return with the design in AB_PLAN §14.
 
 ---
 
@@ -410,13 +437,11 @@ answer is analytics.
 
 Why this instead of a console:
 
-- No build and no deployment, so it survives the capacity constraint.
-- Two named officers saying they used something and want it inside their
-  workflow is a better artifact for the integration ask than any memo we write.
-- If they never ask, we have learned that for the price of a WhatsApp thread
-  rather than three months of engineering.
-- The request log is both the demand evidence and the specification, if we
-  later build.
+- No build, no deployment.
+- Two named officers saying they used something and want it in their workflow
+  beats any memo we write.
+- If they never ask, we know before building.
+- The log is the demand evidence and the specification.
 
 Starts on the October trip, where the channel is agreed face to face. Utkarsh
 takes it over in November. Runs to December.
@@ -446,11 +471,10 @@ a data feed exists. Every row below should be read against it.
 | Document summary | The scanned file itself | **Marginal.** Officer downloads then uploads, roughly a minute per case, against a saving that depends on document length |
 | Ageing and deadline view | The officer's **entire pending queue**, refreshed | **No.** It lists what is pending now. Human effort scales with queue size rather than case flow, so there is no workaround. Needs ask 1 or 2 |
 
-**The ageing view is the one human effort cannot rescue**, and it was previously
-ranked first in this document. Every other feature needs data about the case in
-front of the officer, which they are already handling. This one needs data about
-the cases they are not handling, and asking an officer to maintain a parallel
-register by hand to receive help with bookkeeping is self-defeating.
+**The ageing view is the one human effort cannot rescue.** Every other feature
+needs data about the case in front of the officer, which they are handling
+anyway. This one needs data about the cases they are not handling, and there is
+no moment at which anyone would enter those by hand.
 
 **Low-signal triage stays excluded from SSEPD entirely.** A safety decision, and
 the argument is in AB_PLAN §14.6. Nothing in the rescope touches it.
@@ -554,7 +578,6 @@ throughput we have not yet measured. Treat it as a 2027-28 question rather than
 a 2027 one.
 
 **The memo does not depend on any of this going well.** Two department briefs, a
-verified process map neither department has ever had, a measured account of what
-our own stack can and cannot do, and an arithmetic argument that working outside
-the workflow reaches 2% of the caseload. That is a complete case for integration
-whether or not anything ships.
+verified process map neither department has, measured numbers for our own stack,
+and the 2% reach figure. A complete case for integration whether or not anything
+ships.

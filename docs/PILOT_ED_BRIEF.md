@@ -21,89 +21,66 @@ cases stay comparable.
 
 ## TLDR
 
-- **December ships three things.** Two department briefs on their own caseloads,
-  hand-delivered in November. One memo in December on what integration would
-  buy. And measured numbers for our own pipeline, so that whatever we pilot next
-  year is something we have tested.
-- **The number that makes the case: working outside the workflow, we can reach
-  about 2% of the caseload.** Only cases that both originate at the department
-  and arrive on paper can be taken in without a data feed. That is 817 of
-  SSEPD's 45,339 cases and 301 of Labour & ESI's 10,459, about five a week
-  across both departments, and the share is falling as paper intake digitises.
-- The analysis and the process mapping happen while the app is built, on tracks
-  that do not wait on each other. December's deliverables come from the first
-  two. The app matures toward a 2027 pilot at the pace part-time building
-  allows.
-- Our extract of the grievance history ends July 2025. It is thirteen months
-  stale, over a period when volume roughly doubled. Refreshing it is the
-  cheapest and most useful thing you can get us.
-- Three data asks, cheapest first: a fresh extract, then an export the officer
-  can download, then the API revived. The first is a one-time data request and
-  is worth pressing on its own.
-- The officers register grievances as well as forward them, so the category and
-  department suggestions are in scope. The portal already shows overdue cases in
-  7, 15 and 30-day buckets. The forwarding chains are a configured list we can
-  read rather than a pattern we have to learn.
-- Rather than build a tool and hope it is used, we answer officer questions by
-  hand for two months and log every one. If they ask repeatedly, that is the
-  evidence for building it. If they never ask, we have saved three months.
-- We have never run our own pipeline end to end and have no accuracy figure for
-  reading scanned documents. Fixing that is a December deliverable, because a
-  pilot built on an unmeasured stack is how we get embarrassed in front of a
-  department.
+- **December ships three things.** Two department briefs, hand-delivered in
+  November. An integration memo in December. Measured accuracy numbers for our
+  own pipeline.
+- **Outside the workflow we reach 2% of the caseload.** Only cases that both
+  start at the department and arrive on paper can be taken in without a data
+  feed. 817 of SSEPD's 45,339 and 301 of Labour & ESI's 10,459. About five a
+  week across both departments, and falling as paper intake digitises.
+- Our extract ends July 2025, thirteen months stale, over a period when volume
+  roughly doubled. Refreshing it is the cheapest thing you can get us.
+- Three data asks in rising cost: a fresh extract, a report the department can
+  export, the API restarted. The third decides whether any of this scales.
+- Analysis and process mapping run while the app is built. Neither waits on the
+  other.
+- We have not run the Sarvam pipeline at scale, and not on Odia at all. No
+  accuracy figure for reading scanned documents exists. December fixes that.
 - Just over a third of SSEPD's cases arrive on paper, where the text field is a
   one-line stub and the grievance is only in the scan. Anything reading what the
   citizen wrote is blind there.
-- We are excluding the low-signal flag for SSEPD, which would mark a grievance
-  as unlikely to need action. That is a safety judgement, and it is the one item
-  here that needs your sign-off rather than a note.
+- Rather than build a tool and hope it gets used, we answer officer questions by
+  hand for two months and log every one.
+- We are excluding the low-signal flag for SSEPD. Safety judgement, and the one
+  item here needing your sign-off.
 
 ---
 
 ## 1. What the pilot is
 
 There is no integration, so officers read our outputs on a separate screen and
-retype what they choose into the portal. There is one grievance officer per
-department. Their account carries admin rights over workflow configuration, and
-can register a grievance, assign the action-taking authority, and forward to a
-Commissioner, a Collector, an MD or Director, or a named subordinate.
+retype what they choose into the portal. One grievance officer per department.
+Their account carries admin rights over workflow configuration, and can register
+a grievance, assign the action-taking authority, and forward to a Commissioner,
+a Collector, an MD or Director, or a named subordinate.
 
-Two further constraints decide what four months can hold. **We have no
-engineer**: the build sits on me, part-time, alongside the design and the
-government asks. **We have no live data**: the grievance API is not running, and
-our extract of the grievance history ends in July 2025.
+The grievance API is not running and our extract ends July 2025. That takes the
+app off the critical path without stopping it being built.
 
-Together those take the app off the critical path. They do not stop it being
-built. The analysis and the process mapping run while it is built, and neither
-waits on the other.
+Four tracks, in parallel.
 
-**Track 1, the desk study.** Runs on the extract we hold. Needs no permission,
-no travel and no build. Owned by Ghazal from Patna, starting now.
+**1. Desk study.** On the extract we hold. No permission, no travel, no build.
+Ghazal, from Patna, starting now.
 
-**Track 2, process mapping.** Screen shares with both officers in September,
-then a map of every step from arrival to closure, sent back to them for
-correction. Milinda and me. Verified in person on one October trip, which also
-collects a stopwatch baseline of the officers' current work.
+**2. Process mapping.** Screen shares with both officers in September, then a
+map of every step from arrival to closure, sent back to them for correction.
+Milinda and me. Verified in person on one October trip, which also collects a
+stopwatch baseline of the officers' current work.
 
-**Track 3, the concierge test.** From October, officers send us a question about
-a case and we answer it by hand within a day. We log every request. This tells
-us whether they want a tool before we spend three months building one.
+**3. Concierge test.** From October, officers send us a question about a case
+and we answer by hand within a day. Every request logged. Tells us whether they
+want a tool before we build one.
 
-**Track 4, the app and its evidence.** Running in parallel, at part-time pace.
-Its December deliverable is not a product but a set of honest numbers: what our
-document reading, summarisation and personal-information screening actually
-achieve, measured on Odia as well as English. We have never run the pipeline end
-to end, and no accuracy figure for reading scanned documents exists anywhere in
-this project. Aparupa and Milinda own the Odia reference sample that makes such
-a figure possible, which has been unowned since August.
+**4. The app and its evidence.** December deliverable is numbers, not a product:
+what our document reading, summarisation and personal-information screening
+actually achieve, on Odia as well as English. We have not run the Sarvam
+pipeline at scale, and not on Odia at all. Aparupa and Milinda own the Odia
+reference sample that makes an accuracy figure possible.
 
-**Why this is a deliverable rather than housekeeping.** Just over a third of
-SSEPD's caseload arrives as scanned paper, and that is precisely where document
-reading is the only thing that helps. Piloting it unmeasured in front of a
-department is the failure mode worth spending four months to avoid.
+That last one matters because a third of SSEPD's caseload is scanned paper,
+which is exactly where document reading is the only thing that helps.
 
-The two departments get their briefs in November. You get the integration memo
-in December.
+Briefs to the departments in November. Memo to you in December.
 
 ---
 
@@ -123,53 +100,43 @@ already written.
 | A7 what the fields mean | Audit the list of action types, count how many cases are still open when a reporting window closes, and establish whether the department field records the original assignment or the final position | Whether any number we report can be interpreted |
 | A8 department briefs | Package A1, A3, A4, A5 and A6 into one short report per department, and hand it over on the November trip | Officer cooperation, which every other track needs |
 
-A8 is the door-opener. The officer's dashboard shows totals, pendings by who
-holds them, and overdue counts in 7, 15 and 30-day buckets. What it does not
-show is any history: how those numbers have moved, how this department compares
-to its own past, or how often the same petitioner comes back. That is what the
-briefs carry, and they cost no engineering.
+A8 is the door-opener. The officer's dashboard shows totals, pendings by holder,
+and overdue counts in 7, 15 and 30-day buckets. It shows no history: how those
+numbers have moved, how the department compares to its own past, how often the
+same petitioner comes back. That is what the briefs carry.
 
 ---
 
 ## 3. What the field work decides
 
-Four field tasks.
-
-**B1, where the officer sits in the chain.** The August walkthroughs settled
-most of it. These officers do both: they receive cases routed to them, and they
-can register and assign. Their screen carries registration, forwarding and the
+**B1, where the officer sits in the chain.** The August walkthroughs settled most
+of it. These officers do both: they receive cases routed to them, and they can
+register and assign. Their screen carries registration, forwarding and the
 per-case action history. Category and department suggestions are therefore in
-scope.
+scope. What remains is how often each path is used, and how many cases reach
+them per week.
 
-What remains is how often each path is used, which decides how much weight the
-registration-side features carry.
+**B2, the process map.** Every step from arrival at the department to closure,
+in order, with the person holding the case named at each one. Drafted in
+September from the screen shares, sent back to the officers for correction,
+verified in October by watching the work.
 
-**B2, the officer-time baseline, so we know how long a case takes an officer
-today.** A step-by-step map per department, from the case arriving at the
-department to closure, with our own timings against each step.
+**B4, the stopwatch baseline.** Two to three days per department in October,
+before anything is built. Stratified by mode, since a typed website complaint
+and a scanned Odia letter are different tasks. It gives us the officer-time
+figure this project has never had, and the number any future tool has to beat.
 
-**B3, district visits to the offices that act on what the department forwards.
-This tells us whether a better output at the department stage can reach a
-citizen.** The department officer forwards; someone else acts. Two districts,
-one high-volume and one low-volume, and at each the Collector's grievance cell,
-a BDO office and the department's district officer. If cases come back because
-the block-level report was poor, then improving what the department produces
-cannot move a citizen outcome. We want that established before we claim one.
-
-**B4, the stopwatch measurement, which makes handling time comparable later.**
-Two to three days per department with a stopwatch and a structured form, before
-the console exists. It also gives A2 the spread in handling times it needs, and
-is the fallback if the console's own recording underperforms.
+**B3, district visits, is cut from 2026.** It exists to interpret what happens
+after the department forwards, which matters for a measurement we are not making
+this year.
 
 ---
 
 ## 4. Features, graded by feasibility
 
-Nothing here ships to an officer in 2026. This is what the app is being built
-toward, and what the December memo argues we could do from inside the workflow.
-
-**Read every row against the 2% ceiling.** Without a data feed, the only cases
-we can take in are those that both start at the department and arrive on paper.
+Nothing here ships to an officer in 2026. This is what the app is built toward,
+and what the December memo argues we could do from inside the workflow. Read
+every row against the 2% ceiling.
 
 | Feature | Feasibility outside the workflow | What decides it |
 |---|---|---|
@@ -181,9 +148,8 @@ we can take in are those that both start at the department and arrive on paper.
 
 **The ageing view is the one no amount of effort rescues.** Every other feature
 needs data about the case in front of the officer, which they are handling
-anyway. This one needs data about the cases they are not handling. Asking an
-officer to keep a parallel list by hand so that we can help them with
-list-keeping is self-defeating.
+anyway. This one needs data about the cases they are not handling, and there is
+no moment at which anyone would enter those by hand.
 
 We will put the workable ones to the departments as answers to their own
 ten-point list, which already asks for reminders at 7 days, escalation at 15,
@@ -212,37 +178,28 @@ that officers have labelled by hand, which does not exist.
 
 ---
 
-## 5. How we find out whether any of it is wanted
+## 5. The concierge test
 
-**The concierge test, October to December.** Rather than build a tool and hope
-it gets used, we answer questions by hand and see whether they keep coming.
+October to December. An officer sends a ticket number or a petitioner's details.
+Within a day we send back what we can find: how many times that person has filed
+before, what happened to those cases, whether this one looks like a duplicate.
+Utkarsh holds the channel, Ghazal runs the lookup from Patna.
 
-An officer sends a ticket number or a petitioner's details. Within a day we send
-back what we can find: how many times that person has filed before, what
-happened to those cases, whether this one looks like a duplicate. Utkarsh holds
-the channel with the officer, Ghazal runs the lookup from Patna.
+Every request logged: what was asked, what we sent, whether it changed what the
+officer did.
 
-We log every request: what was asked, what we sent, and whether it changed what
-the officer did.
+Two officers saying they used something and want it in their workflow is a
+stronger argument for integration than anything we would write. If they never
+ask, we know that before building anything. The log is also the specification.
 
-- It costs no engineering, which is why it is the one thing we can be sure of
-  delivering.
-- Two named officers saying they used something and want it inside their
-  workflow is a stronger argument for integration than anything we could write.
-- If they never ask, we have learned that for the price of a WhatsApp thread
-  rather than three months of build.
-- The log is also the specification. If we do build, it says which feature
-  first.
+We will tell them at the outset that until the first data ask lands, our answers
+are blind to thirteen months of filings, so someone who filed in March 2026 will
+look like a first-time filer.
 
-One thing we will tell them at the outset rather than let them discover: until
-the first data ask lands, our answers are blind to thirteen months of filings,
-so someone who filed in March 2026 will look like a first-time filer.
-
-**What we can measure this year, and what we cannot.** The stopwatch baseline in
-October gives the officer-time denominator this project has never had. The desk
-study gives the caseload. Neither gives an effect. With no console there is no
-comparison, and with two officers and unknown throughput there may never be a
-well-powered one. That question is settled in 2027, not now.
+**What we can measure this year.** The stopwatch baseline gives the officer-time
+figure this project has never had. The desk study gives the caseload. Neither
+gives an effect: with no console there is no comparison, and with two officers
+and unmeasured throughput there may never be a well-powered one.
 
 ---
 
@@ -250,27 +207,23 @@ well-powered one. That question is settled in 2027, not now.
 
 | Month | What happens |
 |---|---|
-| **September** | Screen shares with both officers, which settle how often they register cases themselves and how many reach them each week. Process maps drafted and sent back for correction. The three data asks tabled. Desk study starts. |
-| **October** | One trip to Bhubaneswar: the maps verified by watching the work, a stopwatch baseline of how long a case actually takes, and the concierge channel agreed face to face. Desk study completes and the briefs are drafted. |
-| **November** | Utkarsh joins and inherits a live relationship rather than starting cold. **The two department briefs are hand-delivered.** He takes over the concierge channel. |
-| **December** | **The integration memo**, with the concierge log as its evidence and the pipeline numbers as its technical annex. The 2027 decision taken. |
+| **September** | Screen shares with both officers, settling how often they register cases themselves and how many reach them each week. Process maps drafted and sent back for correction. Three data asks tabled. Desk study starts. |
+| **October** | One trip to Bhubaneswar: maps verified by watching the work, stopwatch baseline, concierge channel agreed. Desk study completes, briefs drafted. |
+| **November** | Utkarsh joins. **Briefs hand-delivered.** He takes over the concierge channel. |
+| **December** | **The integration memo**, with the concierge log as evidence and the pipeline numbers as technical annex. 2027 decision taken. |
 
-Throughout, in parallel and gating none of the above: the pipeline runs end to
-end, the Odia reference sample gets transcribed, and the app progresses at
-whatever pace part-time building allows.
+In parallel throughout, gating none of it: the Sarvam pipeline run at scale, the
+Odia reference sample transcribed, the app progressing.
 
 Five people. Ghazal on the analysis from Patna, Milinda on the maps and the Odia
-reference, Aparupa on the Odia work with her, Utkarsh in Odisha from November,
-me in Bangalore with one trip in October. No dedicated engineer, which is why
-the app has no December deadline and why the other tracks were designed not to
-depend on it.
+reference, Aparupa on the Odia work, Utkarsh in Odisha from November, me in
+Bangalore with one trip in October.
 
-**The 2027 decision, in December.** Four questions. Did a data feed land, without
-which we reach 2% of the caseload. Does the concierge log show officers want
-what we would build. Are the pipeline numbers good enough to show someone. Is
-there anyone to finish the app. The randomised measurement of officer time needs
-all four and a caseload throughput we have not yet measured, so treat it as a
-2028 question.
+**The 2027 decision, in December.** Four questions. Did a data feed land. Does
+the concierge log show officers want what we would build. Are the pipeline
+numbers good enough to show someone. Is there anyone to finish the app. The
+randomised measurement of officer time needs all four plus a throughput we have
+not measured, so treat it as a 2028 question.
 
 ---
 
