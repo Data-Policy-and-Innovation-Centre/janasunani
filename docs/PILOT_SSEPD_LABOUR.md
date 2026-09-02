@@ -84,7 +84,7 @@ randomised design and nothing else is deferred.
 | A1 volume, case mix, mode | Briefs, and A9 | Done in part |
 | A2 power | Nothing in 2026 | **Deferred** |
 | A3 turnaround | Briefs, memo | After the maps |
-| A4 repeat filers **and lookup** | Briefs, **concierge test** | High, wanted in October |
+| A4 repeat filers **and lookup** | Briefs, **the question service** | High, wanted in October |
 | A5 forwarding patterns | Memo only | May slip to December |
 | A6 promised time against actual | Briefs | Medium |
 | A7 field semantics | Quality control on A1, A3, A4 | Scoped to that |
@@ -92,7 +92,7 @@ randomised design and nothing else is deferred.
 | A9 reach without a feed | **The memo's headline** | High |
 | A10 officer throughput | Memo, and the 2027 decision | High |
 | A11 OCR sample selection | Workstream C2 | September |
-| A12 what staleness costs | Concierge caveat, and ask 1 | Low, quick |
+| A12 what staleness costs | The staleness caveat, and ask 1 | Low, quick |
 
 A3 waits for the process maps by design: gaps between recorded steps cannot be
 read before we know what the steps are.
@@ -193,14 +193,14 @@ and citizen response. And the action-history dedup index
 (`janasunani/db/models.py:199-214`) excludes `action_taken_date`, so any
 inter-step duration inherits an unsigned bias.
 
-**A4. Repeat filers, and the lookup behind the concierge test.** Two outputs, not
-one.
+**A4. Repeat filers, and the lookup behind the question service.** Two outputs,
+not one.
 
 The rate, for the briefs: run `janasunani-dedup-index` scoped to the two
 departments. Officers said in the 12 August field record that they do not know
 their repeat-filing rate.
 
-**The lookup, for the concierge test**: given a petitioner name, mobile or ticket
+**The lookup, for answering officer questions**: given a petitioner name, mobile or ticket
 number, return that person's filing history and what happened to each case.
 Ghazal runs this by hand on request from October, so it needs to be queryable
 rather than a finished statistic. Wanted in October, ahead of the briefs.
@@ -275,7 +275,7 @@ Count cases where the department node appears as an action step, by week, and
 compare against the 27-pending snapshot from the SSEPD dashboard.
 
 This is the number that decides whether a randomised comparison is ever
-possible, and it is also what tells us whether the concierge test will see five
+possible, and it is also what tells us whether the question service will see five
 requests or fifty. Do it early.
 
 **A11. OCR sample selection, for C2.** Choose the scanned grievances that
@@ -285,10 +285,10 @@ of easy documents produces an accuracy figure that flatters us. Target size set
 by what two people can transcribe alongside their other work. September, so C2
 can start.
 
-**A12. What staleness costs.** Estimate how many repeat filers the concierge
-lookup will miss, given the extract ends 2025-07-30 and volume roughly doubled
-year on year. Turns the concierge caveat from a hedge into a number, and gives
-ask 1 a price tag.
+**A12. What staleness costs.** Estimate how many repeat filers the lookup will
+miss, given the extract ends 2025-07-30 and volume roughly doubled
+year on year. Turns the staleness caveat from a hedge into a number, and gives ask 1 a price
+tag.
 
 ---
 
@@ -419,7 +419,7 @@ Alongside these:
 
 - Written department sign-off naming both departments for a bounded engagement.
 - Permission to log what officers ask us and what we return, which is what the
-  concierge test records.
+  hand-answered officer questions records.
 - **Re-confirmation of the 2026-07-27 research-exemption determination** is no
   longer urgent, because the citizen survey that prompted it is cut from 2026.
   Ask again before any citizen contact resumes. AB_PLAN §14.7.
@@ -473,7 +473,7 @@ randomisation only, and return with the design in AB_PLAN §14.
 
 ---
 
-## 5. The concierge test
+## 5. Answering officer questions by hand
 
 Before building a repeat-filer panel, find out whether officers want the answer.
 
@@ -507,7 +507,7 @@ March 2026 shows as a first-time filer. Say so when the channel is agreed.
 
 Workstream C6 builds toward these at part-time pace; none of them ships to an
 officer in 2026. This is the feature analysis the December memo argues from, and
-the specification the concierge log will refine.
+the specification the question log will refine.
 
 **The ceiling first.** Working outside the workflow, the cases we can take in
 natively are those that both originate at the department and arrive on paper:
@@ -550,9 +550,9 @@ alongside and is assessed rather than delivered.
 | Month | A: analysis (Ghazal) | B: process and field | C: the app (Yashaswi) |
 |---|---|---|---|
 | **Sep** | A1, **A11** (so C2 can start), A4 lookup, A10 | B1 screen shares weeks 1-2, B2 maps weeks 2-4 (Milinda, Yashaswi). Three data asks tabled | C1 Sarvam run at scale. C2 reference sample begins (Milinda, Aparupa) |
-| **Oct** | A6, A9, A12. A5 if time. Briefs drafted late | **One trip** (Yashaswi): maps verified, B4 stopwatch, concierge channel agreed. Milinda on A3 and A7 | C2 continues, C3 summariser measured |
-| **Nov** | A5. Briefs finalised | Utkarsh onboards. **Briefs hand-delivered.** Concierge handed over | C4 PII gate. C6 as capacity allows |
-| **Dec** | none | **The integration memo**, with the concierge log as evidence (Yashaswi) | C5 what is showable, as the memo's technical annex |
+| **Oct** | A6, A9, A12. A5 if time. Briefs drafted late | **One trip** (Yashaswi): maps verified, B4 stopwatch, question channel agreed. Milinda on A3 and A7 | C2 continues, C3 summariser measured |
+| **Nov** | A5. Briefs finalised | Utkarsh onboards. **Briefs hand-delivered.** Question service handed over | C4 PII gate. C6 as capacity allows |
+| **Dec** | none | **The integration memo**, with the question log as evidence (Yashaswi) | C5 what is showable, as the memo's technical annex |
 
 **Who travels.** Yashaswi in October, Utkarsh from November. Nobody else.
 Ghazal is desk-only for the duration and Milinda's mapping is remote.
@@ -567,10 +567,10 @@ Everything else in A and B runs independently of C.
 
 | Who | Lane | Where |
 |---|---|---|
-| **Ghazal** (data analyst) | Workstream A: A1, A11, A4, A10 in September, then A6, A9, A12. A5 last. Runs the concierge lookups from October. Drafts the briefs with Milinda. | Patna, desk-only |
+| **Ghazal** (data analyst) | Workstream A: A1, A11, A4, A10 in September, then A6, A9, A12. A5 last. Runs the the lookups from October. Drafts the briefs with Milinda. | Patna, desk-only |
 | **Milinda** (RA) | B1 calls and B2 process maps in September. A3 and A7 from October. C2 Odia reference sample with Aparupa. Drafts the briefs with Ghazal. | Remote |
 | **Aparupa** (operations manager, Odia) | C2 reference transcription, and Odia support across C3. The reason an Odia accuracy figure is possible at all. | Odia-speaking |
-| **Utkarsh** (PM, joins Nov) | Owns the field and the officer relationship from November. Delivers the briefs. Holds the concierge channel. | Odisha |
+| **Utkarsh** (PM, joins Nov) | Owns the field and the officer relationship from November. Delivers the briefs. Holds the question channel. | Odisha |
 | **Yashaswi** (principal) | Design, the three asks, government relations. B1 and B2 with Milinda. The October trip. Workstream C. The December memo. | Bangalore, one trip |
 
 No dedicated engineer, so Workstream C moves at the pace one part-time person
@@ -589,11 +589,11 @@ and the document summary cannot be assessed at all.
 - **Ghazal is split across projects.** September is where this plan breaks,
   since she carries Workstream A alone while Milinda is on the maps. The fix is
   to cut A7 further rather than to slip the November delivery.
-- **No data ask lands.** The concierge test runs thirteen months blind for its
+- **No data ask lands.** The question service runs thirteen months blind for its
   whole life, the briefs describe a caseload that ends in July 2025, and the
   memo argues from stale evidence. Survivable if stated, corrosive if an officer
   discovers it first.
-- **Officers never use the concierge channel.** That is a finding rather than a
+- **Officers never use the question channel.** That is a finding rather than a
   failure, and it is the cheapest possible way to learn it. It does mean the
   December memo rests on the briefs and the maps alone.
 - **The October trip slips.** Everything field-side then lands on a new joiner's
@@ -620,7 +620,7 @@ Four questions, each answered by the work above.
 | Question | Answered by | If no |
 |---|---|---|
 | Did a data feed land? | B5 | We reach 2% of the caseload, so a pilot is a demonstration rather than a service |
-| Do officers want what we would build? | The concierge log | Build nothing; the memo stands on the briefs and the maps |
+| Do officers want what we would build? | The question log | Build nothing; the memo stands on the briefs and the maps |
 | Is the pipeline good enough to show someone? | C5 | Fix it before piloting, not during |
 | Is the app ready, and is there anyone to finish it? | C6, and hiring | The pilot waits |
 

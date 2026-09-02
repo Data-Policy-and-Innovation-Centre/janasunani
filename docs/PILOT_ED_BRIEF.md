@@ -57,6 +57,14 @@ a Collector, an MD or Director, or a named subordinate.
 The grievance API is not running and our extract ends July 2025. That takes the
 app off the critical path without stopping it being built.
 
+**What that costs, in one number.** With no feed, the only cases we can take
+into our own system are those the officer registers from paper in hand: the case
+has to both start at the department and arrive on paper. Everything else reaches
+them already in the portal, where we cannot see it. That intersection is 817 of
+SSEPD's 45,339 cases and 301 of Labour & ESI's 10,459, about **2% of the
+caseload**, or five cases a week across both departments. It is falling as paper
+intake digitises. This is the number the December memo is built on.
+
 Four tracks, in parallel.
 
 **1. Desk study.** On the extract we hold. No permission, no travel, no build.
@@ -67,9 +75,9 @@ map of every step from arrival to closure, sent back to them for correction.
 Milinda and me. Verified in person on one October trip, which also collects a
 stopwatch baseline of the officers' current work.
 
-**3. Concierge test.** From October, officers send us a question about a case
-and we answer by hand within a day. Every request logged. Tells us whether they
-want a tool before we build one.
+**3. Answering questions by hand.** From October, officers send us a question
+about a case and we answer within a day. Every request logged. Tells us whether
+they want a tool before we build one.
 
 **4. The app and its evidence.** December deliverable is numbers, not a product:
 what our document reading, summarisation and personal-information screening
@@ -104,11 +112,11 @@ deliverables.
 
 | | What we do |
 |---|---|
-| A9 reach without a feed | The 2% figure, extended by district and projected forward |
+| A9 reach without a feed | The 2% figure from section 1, extended by district and projected forward |
 | A10 officer throughput | How many cases actually reach the grievance officer each week, estimated from the case history rather than asked |
 | A5 who the case goes to next | The portal lists the routes; which office actually gets it we count from past cases |
 
-**For the concierge test and the pipeline**
+**For the hand-answered questions and the pipeline**
 
 | | What we do |
 |---|---|
@@ -117,7 +125,7 @@ deliverables.
 | A12 what staleness costs | How many repeat filers we will miss while the extract is thirteen months old |
 
 **A10 is the one to watch.** It decides whether a randomised measurement of
-officer time is ever possible, and whether the concierge test sees five requests
+officer time is ever possible, and whether we get five questions
 a week or fifty. SSEPD's dashboard showed 27 cases sitting with the officer
 against 1,471 pending in the department, so the officer's own throughput may be
 far smaller than department volume suggests.
@@ -203,7 +211,7 @@ that officers have labelled by hand, which does not exist.
 
 ---
 
-## 5. The concierge test
+## 5. Answering officer questions by hand
 
 October to December. An officer sends a ticket number or a petitioner's details.
 Within a day we send back what we can find: how many times that person has filed
@@ -233,9 +241,9 @@ and unmeasured throughput there may never be a well-powered one.
 | Month | What happens |
 |---|---|
 | **September** | Screen shares with both officers, settling how often they register cases themselves and how many reach them each week. Process maps drafted and sent back for correction. Three data asks tabled. Desk study starts. |
-| **October** | One trip to Bhubaneswar: maps verified by watching the work, stopwatch baseline, concierge channel agreed. Desk study completes, briefs drafted. |
-| **November** | Utkarsh joins. **Briefs hand-delivered.** He takes over the concierge channel. |
-| **December** | **The integration memo**, with the concierge log as evidence and the pipeline numbers as technical annex. 2027 decision taken. |
+| **October** | One trip to Bhubaneswar: maps verified by watching the work, stopwatch baseline, the question channel agreed. Desk study completes, briefs drafted. |
+| **November** | Utkarsh joins. **Briefs hand-delivered.** He takes over the question channel. |
+| **December** | **The integration memo**, with the question log as evidence and the pipeline numbers as technical annex. 2027 decision taken. |
 
 In parallel throughout, gating none of it: the Sarvam pipeline run at scale, the
 Odia reference sample transcribed, the app progressing.
@@ -244,8 +252,8 @@ Five people. Ghazal on the analysis from Patna, Milinda on the maps and the Odia
 reference, Aparupa on the Odia work, Utkarsh in Odisha from November, me in
 Bangalore with one trip in October.
 
-**The 2027 decision, in December.** Four questions. Did a data feed land. Does
-the concierge log show officers want what we would build. Are the pipeline
+**The 2027 decision, in December.** Four questions. Did a data feed land. Does the
+question log show officers want what we would build. Are the pipeline
 numbers good enough to show someone. Is there anyone to finish the app. The
 randomised measurement of officer time needs all four plus a throughput we have
 not measured, so treat it as a 2028 question.
@@ -277,7 +285,7 @@ and the first is the one you can probably get this month.
 
 4. **Written sign-off naming both departments** for a bounded engagement.
 5. **Permission to log what officers ask us and what we send back**, which is
-   what the concierge test records. A department suggestion labelled as
+   what the question log records. A department suggestion labelled as
    AI-generated is already on the live assignment screen, and nothing anywhere
    records whether officers accept it.
 
