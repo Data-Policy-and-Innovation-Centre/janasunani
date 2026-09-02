@@ -73,7 +73,7 @@ officers in September. One Odisha trip in November for district visits and a
 stopwatch measurement of the officers' current work.
 
 **Track 3, the console.** A four-week shadow phase, meaning every case goes
-through the console with the panel shown and nothing decided by chance. Then a
+through the console with the panel shown and no randomisation. Then a
 randomised comparison, if both gates pass.
 
 Tracks 1 and 2 produce evidence on their own. They are the feasibility case for
@@ -182,50 +182,45 @@ that officers have labelled by hand, which does not exist.
 
 ## 5. How we test, and what each test can carry
 
-**Shadow phase, four weeks, nothing decided by chance.** Every case goes through
-the console with the panel shown. This measures usability, training cost, the
-quality of what the console records automatically, and most importantly how much
-of what the console produces survives the officer retyping it into the portal.
-It produces description, usability evidence and officer testimony. It is also the interim report and the evidence for
-the integration ask.
+**Shadow phase, four weeks, no randomisation.** Every case goes through the
+console with the panel shown. This measures usability, training cost, the
+quality of the console's telemetry, and most importantly how much of what the
+console produces survives the officer retyping it into the portal. It is
+descriptive by design, and it is the interim report and the evidence for the
+integration ask.
 
 **The randomised comparison, behind two gates.** If it runs, every grievance
-reaching the two officers passes through the console, and chance decides case by
-case whether the panel is shown or left blank. Both sets of cases use the same
-screen and record the same decision before the officer retypes. On the blank
-cases the model still runs with its output hidden, so we know what it would have
-said. The measure is the officer's handling time. Assignment is balanced within
-each officer's week, so the two sets stay comparable as the officer learns and
-as the caseload shifts. We judge the result by re-shuffling the assignments many
-times and asking how often chance alone would produce a gap this large. At this
-sample size that is more honest than the standard formula, which assumes larger
-numbers than we have.
+reaching the two officers passes through the console, and assignment decides
+case by case whether the panel is shown. Both arms use the same screen and
+record the same decision before the officer retypes. Control cases still run the
+model with its output withheld, so we hold the counterfactual prediction. The
+primary outcome is the officer's handling time, blocked within officer-week so
+the arms stay balanced against learning and caseload drift. Inference is by
+randomisation, permuting assignments within blocks, which is exact under the
+design where the asymptotic alternative is not.
 
 - **Gate 1, end September 2026.** The power calculation. If the minimum
   detectable effect is implausibly large at the volumes we measure, the
   comparison does not run. SSEPD's own dashboard shows why this is the likeliest
   gate to fail: 51,460 tickets in total, 1,471 pending, and 27 of those with the
-  officer we would randomise on. Department volume is large.
-  Officer throughput is what gate 1 has to work from, and it is small.
+  officer we would randomise on. Department volume is large. Officer throughput
+  is what gate 1 has to work from, and it is small.
 - **Gate 2, January 2027.** The shadow-phase measurement of how much of the
-  console's output actually reaches the portal. The tool reaches a citizen only
-  because a person retypes it. Below the threshold we fix in advance, the
-  dilution itself is the finding, and we make no claim about citizen outcomes.
+  console's output actually reaches the portal. The intervention reaches a
+  citizen only because a person retypes it. Below the threshold set at lock, the
+  attenuation itself is the finding, and we make no citizen-outcome claim.
 
-One officer sees both sets of cases and learns from the ones with the panel. We
-know which way that pushes the result: what the officer learns carries over to
-the blank cases and makes them better, which shrinks the measured gap. So a
-positive result survives the problem. A flat result cannot tell apart "the tool
-does nothing" from "the learning carried over completely", and we will say so
-in the report.
+One officer sees both arms and learns from the treated cases. The bias is
+signed: that learning carries over to the control cases and attenuates the
+estimate toward the null. A positive result survives it. A null cannot separate
+no effect from full contamination, and we will say so in the report.
 
-**Citizen outcomes, reported as observations.** A phone survey in Odia at a
-fixed interval after filing, for every eligible case, whether or not the portal
-has closed it. Closure is itself something the tool may change, so surveying
-only closed cases would bias the answer towards what we are trying to measure.
-At this scale we can afford to call every case rather than a sample. Expect the
-margin of error to be too wide to carry a claim, and expect to say so when we
-fix the analysis plan rather than when we report.
+**Citizen outcomes, descriptive.** A phone survey in Odia at a fixed horizon
+after filing, for every eligible case, whether or not the portal has closed it.
+Closure is itself an outcome the intervention may move, so surveying only closed
+cases would condition on what we are trying to measure. At this scale a census
+is affordable. Expect the confidence intervals to be too wide to carry a claim,
+and expect to say so at lock rather than at readout.
 
 Where each measurement comes from, given no integration:
 
@@ -246,7 +241,7 @@ Where each measurement comes from, given no integration:
 | Quarter | What happens |
 |---|---|
 | **Q4 2026** | Desk analysis on the existing history. Remote walkthroughs with both officers. Permissions tabled. Project manager onboards in November. One Odisha trip: district visits to Collector, BDO and department offices, plus the stopwatch measurement. Each department receives a report on its own caseload. |
-| **Q1 2027** | Console built and deployed. Four-week shadow phase, panel always on, nothing decided by chance. It produces the feasibility evidence and the retyping measurement. Gate 2 is read at the end of it. Then we lock the analysis plan, meaning we fix and timestamp it before anyone looks at a result. |
+| **Q1 2027** | Console built and deployed. Four-week shadow phase, panel always on, no randomisation. It produces the feasibility evidence and the re-key fidelity measurement. Gate 2 is read at the end of it, then the analysis plan is locked and tagged before any arm outcome is viewed. |
 | **Q2 2027** | If both gates pass, the randomised comparison runs for fourteen to sixteen weeks. Interim feasibility report in March either way. |
 | **Q3 2027** | Citizen follow-up calls, a closing field visit, analysis against the locked plan, and the report. |
 
@@ -293,5 +288,4 @@ randomised half runs to July.
 - Eleven to twenty-three days is a measured gap between recorded steps, not a
   saving we can deliver.
 - For this pilot specifically: no department-level effect, no state-level effect,
-  and no claim about citizen outcomes unless the margin of error turns out to
-  support one.
+  and no citizen-outcome claim unless an interval supports one.
