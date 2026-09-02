@@ -21,36 +21,42 @@ cases stay comparable.
 
 ## TLDR
 
-- The pilot runs in three tracks: desk analysis on the records we already hold,
-  process mapping and field visits, then the console with the two officers. The
-  first two start now and need nothing from the departments.
-- The pilot cannot show that the tool caused a change at department or state
-  level. Two officers and no integration rule that out. What we report about
-  citizen outcomes will be observations, with no claim about cause.
-- Each piece of the desk analysis decides a specific feature or design choice.
-  One of them is the deliverable that buys officer cooperation.
+- **December ships three things.** Two department briefs on their own caseloads,
+  hand-delivered in November. One memo in December on what integration would
+  buy. And measured numbers for our own pipeline, so that whatever we pilot next
+  year is something we have tested.
+- **The number that makes the case: working outside the workflow, we can reach
+  about 2% of the caseload.** Only cases that both originate at the department
+  and arrive on paper can be taken in without a data feed. That is 817 of
+  SSEPD's 45,339 cases and 301 of Labour & ESI's 10,459, about five a week
+  across both departments, and the share is falling as paper intake digitises.
+- The analysis and the process mapping happen while the app is built, on tracks
+  that do not wait on each other. December's deliverables come from the first
+  two. The app matures toward a 2027 pilot at the pace part-time building
+  allows.
+- Our extract of the grievance history ends July 2025. It is thirteen months
+  stale, over a period when volume roughly doubled. Refreshing it is the
+  cheapest and most useful thing you can get us.
+- Three data asks, cheapest first: a fresh extract, then an export the officer
+  can download, then the API revived. The first is a one-time data request and
+  is worth pressing on its own.
 - The officers register grievances as well as forward them, so the category and
   department suggestions are in scope. The portal already shows overdue cases in
   7, 15 and 30-day buckets. The forwarding chains are a configured list we can
   read rather than a pattern we have to learn.
-- Two features use no AI model: a per-case list of pending grievances by age
-  against the time the officer allowed at assignment, and a panel showing
-  whether the petitioner has filed before. The second is buildable today. The
-  first needs the grievance API back up, which is ask 3, because it shows what
-  is pending now and we hold only a one-time extract. The document summary is
-  low feasibility and may not ship at all.
+- Rather than build a tool and hope it is used, we answer officer questions by
+  hand for two months and log every one. If they ask repeatedly, that is the
+  evidence for building it. If they never ask, we have saved three months.
+- We have never run our own pipeline end to end and have no accuracy figure for
+  reading scanned documents. Fixing that is a December deliverable, because a
+  pilot built on an unmeasured stack is how we get embarrassed in front of a
+  department.
+- Just over a third of SSEPD's cases arrive on paper, where the text field is a
+  one-line stub and the grievance is only in the scan. Anything reading what the
+  citizen wrote is blind there.
 - We are excluding the low-signal flag for SSEPD, which would mark a grievance
   as unlikely to need action. That is a safety judgement, and it is the one item
   here that needs your sign-off rather than a note.
-- The randomised comparison is one component of the pilot, and two conditions
-  have to be met before it runs. We call them gates. Gate 1 is the September
-  power calculation. Gate 2 is a measurement, taken in January, of how much of
-  what the console produces actually reaches the portal when the officer
-  retypes it. If either fails, the rest still runs and still produces the
-  integration case.
-- The four asks: department sign-off, permission to log officer decisions,
-  read-only access to the two departments' own records, and re-confirmation of
-  the 27 July research determination now that a citizen survey is involved.
 
 ---
 
@@ -62,24 +68,42 @@ department. Their account carries admin rights over workflow configuration, and
 can register a grievance, assign the action-taking authority, and forward to a
 Commissioner, a Collector, an MD or Director, or a named subordinate.
 
-The pilot runs in three tracks.
+Two further constraints decide what four months can hold. **We have no
+engineer**: the build sits on me, part-time, alongside the design and the
+government asks. **We have no live data**: the grievance API is not running, and
+our extract of the grievance history ends in July 2025.
 
-**Track 1, desk analysis.** Runs on the 1.37 million grievances we already hold,
-using code we have already written. Needs no app, no travel and no permission.
-Owned by the research associate, starts now.
+Together those take the app off the critical path. They do not stop it being
+built. The analysis and the process mapping run while it is built, and neither
+waits on the other.
 
-**Track 2, process mapping and field work.** Remote walkthroughs with both
-officers in September. One Odisha trip in November for district visits and a
-stopwatch measurement of the officers' current work.
+**Track 1, the desk study.** Runs on the extract we hold. Needs no permission,
+no travel and no build. Owned by Ghazal from Patna, starting now.
 
-**Track 3, the console.** A four-week shadow phase, meaning every case goes
-through the console with the panel shown and no randomisation. Then a
-randomised comparison, if both gates pass.
+**Track 2, process mapping.** Screen shares with both officers in September,
+then a map of every step from arrival to closure, sent back to them for
+correction. Milinda and me. Verified in person on one October trip, which also
+collects a stopwatch baseline of the officers' current work.
 
-Tracks 1 and 2 produce evidence on their own. They are the feasibility case for
-integration, and they do not depend on the console being built or on the
-officers adopting it. Track 3 is where the pilot can fail, and the randomised
-half of it is conditional.
+**Track 3, the concierge test.** From October, officers send us a question about
+a case and we answer it by hand within a day. We log every request. This tells
+us whether they want a tool before we spend three months building one.
+
+**Track 4, the app and its evidence.** Running in parallel, at part-time pace.
+Its December deliverable is not a product but a set of honest numbers: what our
+document reading, summarisation and personal-information screening actually
+achieve, measured on Odia as well as English. We have never run the pipeline end
+to end, and no accuracy figure for reading scanned documents exists anywhere in
+this project. Aparupa and Milinda own the Odia reference sample that makes such
+a figure possible, which has been unowned since August.
+
+**Why this is a deliverable rather than housekeeping.** Just over a third of
+SSEPD's caseload arrives as scanned paper, and that is precisely where document
+reading is the only thing that helps. Piloting it unmeasured in front of a
+department is the failure mode worth spending four months to avoid.
+
+The two departments get their briefs in November. You get the integration memo
+in December.
 
 ---
 
@@ -141,22 +165,29 @@ is the fallback if the console's own recording underperforms.
 
 ## 4. Features, graded by feasibility
 
-| Feature | Needs | Feasibility | What would stop it |
-|---|---|---|---|
-| Ageing view: pending cases oldest first, days elapsed, days left against the time the officer allowed at assignment | A3, A6 | High | Nothing. No AI model involved, so no model risk. The portal has the aggregate overdue counts; what it lacks is the per-case list behind them |
-| Repeat-filer panel: has this petitioner filed before, and what happened | A4 | High | The duplicate-detection tables sit outside the analysis store. For two officers we read the live database directly |
-| Forwarding suggestion: which office inside the department should get the case | A5 | High | The escalation chains are already configured in the portal and can be read off. Only the choice of named office has to be learned |
-| Document summary: the key facts of a scanned grievance, in text | A hand-checked sample of scanned documents, which nobody owns yet | Low | Four of twenty-six drafts left personal information in the summary. It cannot be shown to an officer in that state |
-| Low-signal flag: marking a grievance as unlikely to need action | Excluded | Not built | Safety decision, below |
+Nothing here ships to an officer in 2026. This is what the app is being built
+toward, and what the December memo argues we could do from inside the workflow.
 
-The first two are built and tested together in wave 1. The summary is a wave 2
-item and ships only if it first passes a check for accuracy and for leaked
-personal information. If it fails that check, it does not ship, and that outcome
-is itself worth reporting.
+**Read every row against the 2% ceiling.** Without a data feed, the only cases
+we can take in are those that both start at the department and arrive on paper.
 
-We will put these to the departments as answers to their own ten-point list,
-which already asks for reminders at 7 days, escalation at 15, and handling of
-duplicate and bulk petitions.
+| Feature | Feasibility outside the workflow | What decides it |
+|---|---|---|
+| Repeat-filer panel: has this petitioner filed before, and what happened | **Workable.** It matches on who filed, so the history we already hold is enough | Blind to thirteen months until the extract is refreshed |
+| Forwarding suggestion: which office inside the department should get the case | **Workable.** The chains are configured in the portal and can be read off; only the choice of named office is learned | Two fields the officer types anyway |
+| Document summary: the key facts of a scanned grievance | **Marginal.** The officer would download the scan and upload it, about a minute per case | Whether the reading time saved beats the minute spent. And it is unmeasured until the Odia reference sample exists |
+| Ageing view: pending cases oldest first, days left against the time the officer allowed | **Not possible.** It lists what is pending now, and we hold a snapshot with no way to refresh it | A data feed. Nothing else |
+| Low-signal flag: marking a grievance as unlikely to need action | Excluded | Safety decision, below |
+
+**The ageing view is the one no amount of effort rescues.** Every other feature
+needs data about the case in front of the officer, which they are handling
+anyway. This one needs data about the cases they are not handling. Asking an
+officer to keep a parallel list by hand so that we can help them with
+list-keeping is self-defeating.
+
+We will put the workable ones to the departments as answers to their own
+ten-point list, which already asks for reminders at 7 days, escalation at 15,
+and handling of duplicate and bulk petitions.
 
 **How grievances arrive bounds what any of this reaches.** Just over a third of
 SSEPD's cases, and a fifth of Labour & ESI's, come in on paper: physical
@@ -164,8 +195,9 @@ submissions, letters, joint hearings and CM visits. For those the portal's text
 field holds a one-line stub an officer typed, twenty to thirty characters, and
 the grievance itself exists only in the scanned document. So everything that
 reads what the citizen wrote is blind on that third unless the document summary
-ships. The repeat-filer panel is unaffected, because it matches on who filed
-rather than on what they wrote, and so is the ageing view, which reads dates.
+works, which is exactly why measuring it is a December deliverable. The
+repeat-filer panel is unaffected, because it matches on who filed rather than on
+what they wrote.
 
 **One exclusion needs your sign-off, because it is a safety judgement rather
 than a product choice. We are not building the low-signal flag for SSEPD.** The
@@ -180,101 +212,101 @@ that officers have labelled by hand, which does not exist.
 
 ---
 
-## 5. How we test, and what each test can carry
+## 5. How we find out whether any of it is wanted
 
-**Shadow phase, four weeks, no randomisation.** Every case goes through the
-console with the panel shown. This measures usability, training cost, the
-quality of the console's telemetry, and most importantly how much of what the
-console produces survives the officer retyping it into the portal. It is
-descriptive by design, and it is the interim report and the evidence for the
-integration ask.
+**The concierge test, October to December.** Rather than build a tool and hope
+it gets used, we answer questions by hand and see whether they keep coming.
 
-**The randomised comparison, behind two gates.** If it runs, every grievance
-reaching the two officers passes through the console, and assignment decides
-case by case whether the panel is shown. Both arms use the same screen and
-record the same decision before the officer retypes. Control cases still run the
-model with its output withheld, so we hold the counterfactual prediction. The
-primary outcome is the officer's handling time, blocked within officer-week so
-the arms stay balanced against learning and caseload drift. Inference is by
-randomisation, permuting assignments within blocks, which is exact under the
-design where the asymptotic alternative is not.
+An officer sends a ticket number or a petitioner's details. Within a day we send
+back what we can find: how many times that person has filed before, what
+happened to those cases, whether this one looks like a duplicate. Utkarsh holds
+the channel with the officer, Ghazal runs the lookup from Patna.
 
-- **Gate 1, end September 2026.** The power calculation. If the minimum
-  detectable effect is implausibly large at the volumes we measure, the
-  comparison does not run. SSEPD's own dashboard shows why this is the likeliest
-  gate to fail: 51,460 tickets in total, 1,471 pending, and 27 of those with the
-  officer we would randomise on. Department volume is large. Officer throughput
-  is what gate 1 has to work from, and it is small.
-- **Gate 2, January 2027.** The shadow-phase measurement of how much of the
-  console's output actually reaches the portal. The intervention reaches a
-  citizen only because a person retypes it. Below the threshold set at lock, the
-  attenuation itself is the finding, and we make no citizen-outcome claim.
+We log every request: what was asked, what we sent, and whether it changed what
+the officer did.
 
-One officer sees both arms and learns from the treated cases. The bias is
-signed: that learning carries over to the control cases and attenuates the
-estimate toward the null. A positive result survives it. A null cannot separate
-no effect from full contamination, and we will say so in the report.
+- It costs no engineering, which is why it is the one thing we can be sure of
+  delivering.
+- Two named officers saying they used something and want it inside their
+  workflow is a stronger argument for integration than anything we could write.
+- If they never ask, we have learned that for the price of a WhatsApp thread
+  rather than three months of build.
+- The log is also the specification. If we do build, it says which feature
+  first.
 
-**Citizen outcomes, descriptive.** A phone survey in Odia at a fixed horizon
-after filing, for every eligible case, whether or not the portal has closed it.
-Closure is itself an outcome the intervention may move, so surveying only closed
-cases would condition on what we are trying to measure. At this scale a census
-is affordable. Expect the confidence intervals to be too wide to carry a claim,
-and expect to say so at lock rather than at readout.
+One thing we will tell them at the outset rather than let them discover: until
+the first data ask lands, our answers are blind to thirteen months of filings,
+so someone who filed in March 2026 will look like a first-time filer.
 
-Where each measurement comes from, given no integration:
-
-| Source | What it gives us | Feasibility |
-|---|---|---|
-| What the console records automatically | Handling time, screens opened, returns to a case, on all cases | High. Checked against the B4 stopwatch measurement |
-| The officer's decision form in the console | Office chosen, days allowed, remark, before retyping | High, though it is the officer's own account |
-| Weekly audit of 10% of cases against the portal | How much of the console output was retyped accurately, and gate 2 | High, and a headline finding in its own right |
-| The portal's own action history, one row per step | Date, what was done, who sent it, who holds the case now | High for reading case by case. It is on screen in the department login. Whether it can be exported in bulk is the open question |
-| Read-only access to the two departments' records | The same, without an officer opening each case | Low today. The endpoint is not running; ask 3 is to revive it |
-| An export from the portal with one row per grievance | Whole-caseload figures without our reading each case | Medium. Record-level reports do exist at the department login, so this is likelier than we assumed |
-| Citizen phone survey | Whether the citizen says it was resolved, and satisfaction | Medium. Depends on ask 4 |
+**What we can measure this year, and what we cannot.** The stopwatch baseline in
+October gives the officer-time denominator this project has never had. The desk
+study gives the caseload. Neither gives an effect. With no console there is no
+comparison, and with two officers and unknown throughput there may never be a
+well-powered one. That question is settled in 2027, not now.
 
 ---
 
-## 6. Timeline and cost
+## 6. The four months
 
-| Quarter | What happens |
+| Month | What happens |
 |---|---|
-| **Q4 2026** | Desk analysis on the existing history. Remote walkthroughs with both officers. Permissions tabled. Project manager onboards in November. One Odisha trip: district visits to Collector, BDO and department offices, plus the stopwatch measurement. Each department receives a report on its own caseload. |
-| **Q1 2027** | Console built and deployed. Four-week shadow phase, panel always on, no randomisation. It produces the feasibility evidence and the re-key fidelity measurement. Gate 2 is read at the end of it, then the analysis plan is locked and tagged before any arm outcome is viewed. |
-| **Q2 2027** | If both gates pass, the randomised comparison runs for fourteen to sixteen weeks. Interim feasibility report in March either way. |
-| **Q3 2027** | Citizen follow-up calls, a closing field visit, analysis against the locked plan, and the report. |
+| **September** | Screen shares with both officers, which settle how often they register cases themselves and how many reach them each week. Process maps drafted and sent back for correction. The three data asks tabled. Desk study starts. |
+| **October** | One trip to Bhubaneswar: the maps verified by watching the work, a stopwatch baseline of how long a case actually takes, and the concierge channel agreed face to face. Desk study completes and the briefs are drafted. |
+| **November** | Utkarsh joins and inherits a live relationship rather than starting cold. **The two department briefs are hand-delivered.** He takes over the concierge channel. |
+| **December** | **The integration memo**, with the concierge log as its evidence and the pipeline numbers as its technical annex. The 2027 decision taken. |
 
-Two trips to Odisha for me. One field-based project manager from November, one
-reallocated research associate from now, and a part-time Odia-speaking surveyor
-for three months in the spring. The project manager's November start is what
-limits all field work, which is why the desk analysis is sequenced first.
+Throughout, in parallel and gating none of the above: the pipeline runs end to
+end, the Odia reference sample gets transcribed, and the app progresses at
+whatever pace part-time building allows.
 
-If the integration case is needed sooner, the department reports plus the shadow
-phase make a credible feasibility argument by **February 2027**. Only the
-randomised half runs to July.
+Five people. Ghazal on the analysis from Patna, Milinda on the maps and the Odia
+reference, Aparupa on the Odia work with her, Utkarsh in Odisha from November,
+me in Bangalore with one trip in October. No dedicated engineer, which is why
+the app has no December deadline and why the other tracks were designed not to
+depend on it.
+
+**The 2027 decision, in December.** Four questions. Did a data feed land, without
+which we reach 2% of the caseload. Does the concierge log show officers want
+what we would build. Are the pipeline numbers good enough to show someone. Is
+there anyone to finish the app. The randomised measurement of officer time needs
+all four and a caseload throughput we have not yet measured, so treat it as a
+2028 question.
 
 ---
 
 ## 7. What we need from you
 
-1. **Written sign-off naming both departments** for a bounded trial.
-2. **Permission to log what is suggested and what the officer does.** A
-   department suggestion labelled as AI-generated is already on the live
-   assignment screen, and nothing anywhere records whether officers accept it.
-3. **Read-only credentials to the two departments' own grievance records.** This
-   is the ask that OCAC's refusal did not cover, and it is much smaller than
-   integration: we would only read, we would change no workflow, and it covers
-   two departments. It is the difference between measuring what actually happened
-   to a citizen's case and relying on the survey alone. It is worth pressing
-   separately and explicitly.
-4. **Re-confirmation of your 27 July determination** that this is programme
-   evaluation rather than human-subjects research. That determination was made
-   about analysing records the government already holds. This pilot adds a phone
-   survey of named citizens, which means collecting new information directly from
-   people, and is a materially different activity. It should be re-asked before
-   the first call is made, not after. Data-protection obligations apply either
-   way.
+**Three data asks, in rising order of cost.** The third is the one that matters,
+and the first is the one you can probably get this month.
+
+1. **A fresh extract of the grievance history, to current date.** A one-time
+   data request, not a system change. Ours ends in July 2025, over a period when
+   volume roughly doubled, so we are describing a caseload that is thirteen
+   months out of date and telling officers someone is a first-time filer when
+   they are not. Smallest thing on this list and it improves everything.
+2. **A record-level report the department can export.** Whatever the department
+   login can already download, one row per grievance. If one exists, an officer
+   downloading it weekly gets us most of the way to current state at no cost to
+   anyone. We are confirming this month whether it exists.
+3. **The read-only grievance API restarted, and scoped to these two
+   departments.** The endpoint no longer runs, so this is two things: revive it,
+   then give us read access. **This is the ask that decides whether any of this
+   scales.** Outside the workflow we reach 2% of the caseload. With a feed we
+   reach all of it. Still far short of the integration OCAC refused: we would
+   only read, change no workflow, and cover two departments.
+
+**Two smaller things:**
+
+4. **Written sign-off naming both departments** for a bounded engagement.
+5. **Permission to log what officers ask us and what we send back**, which is
+   what the concierge test records. A department suggestion labelled as
+   AI-generated is already on the live assignment screen, and nothing anywhere
+   records whether officers accept it.
+
+**One thing that is no longer urgent.** Re-confirming your 27 July determination
+can wait, because the citizen phone survey that made it necessary is out of
+scope this year. It should be re-asked before any citizen contact resumes.
+Data-protection obligations apply either way.
 
 ---
 

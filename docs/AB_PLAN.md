@@ -727,13 +727,11 @@ Consequently, **this pilot cannot produce a department-level or state-level
 causal estimate, and cannot produce a well-powered citizen-outcome estimate.**
 Any readout that implies otherwise is wrong.
 
-**What the pilot delivers instead, in order.** The primary deliverable is
-feasibility and descriptive evidence: the pre-pilot corpus analysis, the
-officer-side process map, and a shadow phase in which the panel is shown on
-every case with no arms. That work starts before the console exists, does not
-depend on officer adoption, and is the artifact for the integration ask. The
-randomized comparison in §14.3 is a bounded component of the pilot, and it runs
-only if the two gates in §14.9 pass.
+**What the pilot delivers instead.** Descriptive and feasibility evidence: the
+corpus analysis, the officer-side process map, a concierge test, and a measured
+evaluation of our own pipeline. That work needs no console, does not depend on
+officer adoption, and is the artifact for the integration ask. **The randomized
+comparison in §14.3 is deferred out of 2026 entirely; see §14.9.**
 
 §5.4 of ROADMAP asserts that "the corpus already carries the outcome variables"
 and that "the primary outcomes need no new instrumentation". That is true of a
@@ -814,10 +812,9 @@ input, not a field detail** (PILOT_SSEPD_LABOUR §B1).
   re-keying into the portal. This is the mechanism that replaces integration.
   The model still runs on control cases with output withheld (§7.3 shadow mode,
   unchanged).
-- **Primary estimand, conditional on the §14.9 gates.** ITT effect of the panel
-  being *shown* on officer handling time for that grievance, log active seconds,
-  within officer-week blocks. If either gate fails, this estimand is not
-  reported and the pilot's outputs are the descriptive ones.
+- **Primary estimand, deferred (§14.9).** ITT effect of the panel being *shown*
+  on officer handling time for that grievance, log active seconds, within
+  officer-week blocks. Nothing is currently working toward this.
 - **Secondary operational estimands.** Screens touched, revisits, decision
   changed after panel view (treated only, descriptive), and the officer's
   recorded downstream authority and typed resolution days.
@@ -970,10 +967,39 @@ the tool sat inside the workflow, they are costed and reviewed, and they are the
 most concrete statement available of what integration would buy. Use them as the
 technical annex to the integration ask, unchanged.
 
-### 14.9 Sequencing: descriptive first, randomization gated
+### 14.9 Deferred, 2026-09-02
 
-The randomized comparison runs only if both gates pass. Both are read against a
-criterion fixed beforehand.
+**The randomized comparison is deferred out of 2026 entirely**, and §14.3
+through §14.6 describe a design nothing is currently working toward. Three
+things removed it, none of them statistical:
+
+- **No engineer.** The console, assignment service and event tables the design
+  needs sit on one part-time person.
+- **No feed.** The grievance API is not running and the extract ends
+  2025-07-30. Outside the workflow the only cases we can take in natively are
+  those both originating at the department and arriving on paper: 1.8% of SSEPD
+  and 2.9% of Labour & ESI, roughly five a week across both departments.
+- **Throughput unknown, and probably small.** SSEPD showed 27 cases pending with
+  the department node. Officer throughput rather than department volume is the
+  denominator, and it may never support a randomized comparison.
+
+The 2026 work is descriptive: the desk study, process maps, one field trip, a
+concierge test, and a measured evaluation of our own pipeline
+(PILOT_SSEPD_LABOUR §2 to §5). **Its deliverable is the case for integration,
+which is what would make this design runnable in the first place.**
+
+Four questions decide whether the design returns, and they are taken in December
+2026 (PILOT_SSEPD_LABOUR §10): did a data feed land, do officers want what we
+would build, are the pipeline numbers defensible, and is there anyone to finish
+the app. All four, plus a measured throughput, before §14.3 is scoped again.
+
+§14.1 through §14.8 stand as the design integration would buy. They are the
+technical annex to the ask, unchanged.
+
+### 14.9.1 The former gates, retained
+
+Had the comparison run in 2027, it would have run behind these. Both are read
+against a criterion fixed beforehand.
 
 - **Gate 1, end September 2026, principal.** The §14.4 power calculation. Fails
   if the MDE for officer handling time is not credible at the measured pilot
@@ -985,8 +1011,8 @@ criterion fixed beforehand.
   threshold the treatment is diluted before it can act, and the attenuation is
   the finding.
 
-**On a fail of either gate**, the shadow phase, the process map, the department
-reports and the descriptive citizen endpoints run unchanged. What is lost is the
+**On a fail of either gate**, the process map, the department reports and the
+descriptive work run unchanged. What is lost is the
 within-officer causal estimate. The readout states which gate failed and reports
 no arm comparison.
 
