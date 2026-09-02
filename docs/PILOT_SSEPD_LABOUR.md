@@ -19,7 +19,7 @@ can do in the next four months.
 
 ---
 
-## 1. What this pilot is
+## 1. Pilot scope
 
 Two departments have approved a limited pilot: Social Security & Empowerment of
 Persons with Disabilities (SSEPD) and Labour & Employees' State Insurance
@@ -64,7 +64,7 @@ We will not estimate effects on citizen outcomes or officer workload. AB_PLAN
 
 ---
 
-## 2. What the extract already tells us
+## 2. What the current data shows
 
 These are findings, not tasks. The rest of the plan uses them, and the limit in
 section 1 is calculated here.
@@ -303,7 +303,7 @@ a clear justification.
 
 ---
 
-## 4. Workstream B: process mapping and field work
+## 4. Workstream B: process and field work
 
 Our workflow knowledge comes from two logins: the CM Grievance Cell and Labour &
 ESI. They are different types of office, so neither login can stand for the
@@ -458,7 +458,7 @@ Alongside these:
 
 ---
 
-## 5. Workstream C: prepare the app in parallel
+## 5. Workstream C: prepare the app
 
 This work runs alongside A and B. It blocks neither. Its only December
 deliverable is a set of measured results.
@@ -509,7 +509,7 @@ the randomised design and should return with that design in AB_PLAN §14.
 
 ---
 
-## 6. Answering officer questions by hand
+## 6. Answering officer questions
 
 Before building a repeat-filer panel, first find out whether officers want this
 information.
@@ -540,7 +540,7 @@ could appear to be a first-time filer. Explain this when the channel is agreed.
 
 ---
 
-## 7. What we would build, and what each needs
+## 7. Possible features and their requirements
 
 Workstream C6 will build toward these features as part-time capacity allows.
 None will be delivered to an officer in 2026. This analysis supports the
@@ -592,7 +592,7 @@ document summary. Identity and date features do not have this limitation.
 
 ---
 
-## 8. Month by month
+## 8. Timeline
 
 Three tracks run in parallel. A and B produce the December deliverables. C runs
 alongside and is measured, not delivered as a finished product.
@@ -617,7 +617,7 @@ C.
 
 ---
 
-## 9. People
+## 9. Team
 
 | Who | Lane | Where |
 |---|---|---|
@@ -673,7 +673,7 @@ assessed.
 
 ---
 
-## 11. The 2027 decision, taken in December
+## 11. Decision for 2027
 
 Four questions, each answered by the work above.
 

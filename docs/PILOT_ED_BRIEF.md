@@ -14,7 +14,7 @@ This memo asks for six permissions and one safety decision in section 6.
 
 ---
 
-## TLDR
+## Summary
 
 - **Without API access, we can reach about 2% of the caseload.** A case must
   start at the department and arrive on paper. Only then can we take it into
@@ -45,7 +45,7 @@ This memo asks for six permissions and one safety decision in section 6.
 
 ---
 
-## 1. Where this stands
+## 1. Current situation
 
 There is no integration. Officers would read our output on a separate screen
 and type anything useful back into the portal. Each department has one
@@ -74,7 +74,7 @@ describe what we can do while that access is being considered.
 
 ---
 
-## 2. What we do in four months
+## 2. Plan for the next four months
 
 Four tracks will run in parallel.
 
@@ -103,7 +103,7 @@ integration memo; and the pipeline results as a technical annex to that memo.
 
 ---
 
-## 3. What we are finding out
+## 3. What we need to learn
 
 **From the history we have:** volume and case mix by district and by arrival
 mode; how long cases take and where they wait; how often petitioners file
@@ -144,7 +144,7 @@ will keep them separate.
 
 ---
 
-## 4. What access allows us to build
+## 4. What we can build without API access
 
 No feature will be delivered to an officer this year. The list below describes
 what the app is intended to support and why API access matters.
@@ -190,7 +190,7 @@ accuracy number would not make it safe.
 
 ---
 
-## 5. The four months and the decision at the end
+## 5. Timeline and December decision
 
 | Month | What happens |
 |---|---|
@@ -215,7 +215,7 @@ throughput estimate, so that question belongs in 2028.
 
 ---
 
-## 6. What we need from you
+## 6. Decisions and permissions needed
 
 **Three data requests, from least to most costly:**
 
@@ -254,7 +254,7 @@ either way.
 
 ---
 
-## 7. What we will not claim
+## 7. Claims we will not make
 
 - No routing-time saving. That analysis did not reproduce and remains withdrawn.
 - No routing-accuracy claim based on the same data used to train the model.
