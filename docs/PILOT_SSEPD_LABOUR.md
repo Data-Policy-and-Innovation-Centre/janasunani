@@ -193,11 +193,11 @@ Screenshots stay in Box and are not copied into this repo.
   decides which rung of AB_PLAN §14.5 the pilot lands on.
 - Closure templates, discard reasons and the revert modal at this login.
 
-**B2. Officer-side process map, per department.** Swimlane from arrival at the
-department node to closure: read, decide downstream authority, free-type the
-resolution time, write the remark, forward, wait, review the ATR, revert or
-close. Annotate each step with who does it, how long they say it takes, and what
-the record captures.
+**B2. Officer-side process map, per department.** Every step from arrival at the
+department node to closure, in order, with the person holding the case named at
+each one: read, decide downstream authority, free-type the resolution time,
+write the remark, forward, wait, review the ATR, revert or close. Annotate each
+step with how long they say it takes and what the record captures.
 
 The only officer-time denominator anywhere in this project is "10 to 15 minutes
 to turn a raw document into a registered complaint, irrespective of language"
