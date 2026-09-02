@@ -728,7 +728,7 @@ causal estimate, and cannot produce a well-powered citizen-outcome estimate.**
 Any readout that implies otherwise is wrong.
 
 **What the pilot delivers instead.** Descriptive and feasibility evidence: the
-corpus analysis, the officer-side process map, a concierge test, and a measured
+corpus analysis, the officer-side process map, hand-answered officer questions, and a measured
 evaluation of our own pipeline. That work needs no console, does not depend on
 officer adoption, and is the artifact for the integration ask. **The randomized
 comparison in §14.3 is deferred out of 2026 entirely; see §14.9.**
@@ -984,7 +984,7 @@ things removed it, none of them statistical:
   denominator, and it may never support a randomized comparison.
 
 The 2026 work is descriptive: the desk study, process maps, one field trip, a
-concierge test, and a measured evaluation of our own pipeline
+hand-answered officer questions, and a measured evaluation of our own pipeline
 (PILOT_SSEPD_LABOUR §2 to §5). **Its deliverable is the case for integration,
 which is what would make this design runnable in the first place.**
 
