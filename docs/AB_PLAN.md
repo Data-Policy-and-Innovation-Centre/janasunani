@@ -803,7 +803,11 @@ input, not a field detail** (PILOT_SSEPD_LABOUR §B1).
 - **Randomization unit.** The grievance.
 - **Blocking.** Permuted blocks within (officer × week), so arms stay balanced
   against secular drift, officer learning and caseload composition over a short
-  pilot. Block membership is pre-treatment and fixed at arrival.
+  pilot. Block membership is pre-treatment and fixed at arrival. **Whether to
+  block on mode regime as well** (citizen-typed against document-borne) is a
+  power question for §14.4: it is the covariate most likely to unbalance a small
+  sample, and blocking on it costs nothing if the arrival rate supports the
+  finer blocks.
 - **Treatment.** The AI panel renders in the pilot console. **Both arms pass
   through the same console**: control cases get the identical case view with the
   panel suppressed, and the officer records their decision in both arms before
@@ -839,9 +843,15 @@ estimator should be the simplest one that respects the blocking.
   it is exact under the design and makes no asymptotic appeal.
 - **Inference, reported alongside.** Neyman variance with HC2, so a
   conventional interval exists for readers who want one.
-- **Covariate adjustment.** Pre-specified and pre-treatment only: subcategory,
-  district, page count of attached documents, whether the case is flagged a
-  duplicate by the shadow prediction. Lin (2013) interaction form, to guarantee
+- **Covariate adjustment.** Pre-specified and pre-treatment only: **mode**,
+  subcategory, district, page count of attached documents, whether the case is
+  flagged a duplicate by the shadow prediction. Mode leads the list because it
+  is the strongest structural predictor of the work a case represents: in the
+  pilot departments the citizen-typed modes carry the grievance in the text
+  field (median 217-283 characters) while the document-borne modes carry a
+  20-to-30-character officer stub and a scan, and median days to resolution runs
+  from 16 to 60 across modes (PILOT_SSEPD_LABOUR §A1). Omitting it would leave
+  the largest source of outcome variance in the residual. Lin (2013) interaction form, to guarantee
   the adjustment cannot hurt precision asymptotically.
 - **Multiplicity.** One primary outcome. The secondary operational family and
   the exploratory citizen family are each FDR-controlled at 10% within family,
@@ -853,6 +863,9 @@ estimator should be the simplest one that respects the blocking.
   credible at the measured volumes, the randomized comparison does not run at
   all.** The fallback is the shadow phase and the descriptive endpoints. Two
   further things it must settle:
+  - **Whether the blocks can carry mode.** If (officer × week × mode regime)
+    leaves blocks too thin, mode stays a covariate rather than a blocking
+    factor. Decide this at gate 1, not by habit.
   - Whether either department has enough volume **passing through the officer**
     to randomize at all. The 19 August SSEPD dashboard read 51,460 tickets in
     total and 1,471 pending, of which 27 sat with the department node itself

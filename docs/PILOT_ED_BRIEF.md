@@ -90,7 +90,7 @@ already written.
 
 | Analysis | What we do | What it decides |
 |---|---|---|
-| A1 volume and case mix | Count monthly filings for both departments, 2021 to 2025, broken down by district, case type, and how the grievance arrived | Whether Labour & ESI has enough grievances to randomise at all |
+| A1 volume and case mix | Count monthly filings for both departments, 2021 to 2025, broken down by district, case type, and how the grievance arrived | Whether Labour & ESI has enough grievances to randomise at all, and which cases our features can reach |
 | A2 smallest detectable effect | Work out, from those volumes and from the spread in handling times B4 measures, how large an improvement this pilot could detect | Gate 1 on the randomised comparison |
 | A3 turnaround baseline | Measure how long cases take end to end today, and how long they sit between recorded steps | The ageing view, and how long we follow a case after filing |
 | A4 repeat filers | Match petitioners across the full history to find how often the same person files again, and what happened the previous time | The repeat-filer panel, and the first department meeting |
@@ -157,6 +157,15 @@ is itself worth reporting.
 We will put these to the departments as answers to their own ten-point list,
 which already asks for reminders at 7 days, escalation at 15, and handling of
 duplicate and bulk petitions.
+
+**How grievances arrive bounds what any of this reaches.** Just over a third of
+SSEPD's cases, and a fifth of Labour & ESI's, come in on paper: physical
+submissions, letters, joint hearings and CM visits. For those the portal's text
+field holds a one-line stub an officer typed, twenty to thirty characters, and
+the grievance itself exists only in the scanned document. So everything that
+reads what the citizen wrote is blind on that third unless the document summary
+ships. The repeat-filer panel is unaffected, because it matches on who filed
+rather than on what they wrote, and so is the ageing view, which reads dates.
 
 **One exclusion needs your sign-off, because it is a safety judgement rather
 than a product choice. We are not building the low-signal flag for SSEPD.** The
