@@ -22,8 +22,8 @@ Decision memo. Four asks in section 7. The full design is in the internal plan.
 - It cannot produce a department-level or state-level causal estimate. Two
   officers and no integration rule that out. The citizen endpoints will most
   likely be descriptive.
-- The desk analysis is not preparation. Each piece decides a specific feature or
-  design choice. One of them is the deliverable that buys officer cooperation.
+- Each piece of the desk analysis decides a specific feature or design choice.
+  One of them is the deliverable that buys officer cooperation.
 - One field question decides the feature set: do these officers receive
   grievances already routed to the department, or do they also register intake.
   We answer it in September by screen share.
@@ -33,7 +33,7 @@ Decision memo. Four asks in section 7. The full design is in the internal plan.
   field answer.
 - Low-signal triage is excluded from SSEPD. That is a safety judgement, and it
   is the one item here that needs your sign-off rather than a note.
-- The randomised comparison is one gated component, not the pilot. Gate 1 is the
+- The randomised comparison is one gated component of the pilot. Gate 1 is the
   power calculation, end September 2026. Gate 2 is measured re-key fidelity in
   the shadow phase, January 2027. If either fails, the rest still runs and still
   produces the integration case.
@@ -68,7 +68,7 @@ half of it is conditional.
 
 ## 2. What the desk analysis decides
 
-Each analysis is tied to a decision. Nothing here is background work.
+Each analysis is tied to a decision.
 
 | Analysis | What it settles | What it gates |
 |---|---|---|
@@ -129,8 +129,7 @@ variance input A2 needs, and is the fallback if console telemetry underperforms.
 
 The first two are built and tested in wave 1 as a single bundle. The summary is
 a wave 2 item and ships only if it clears a factuality and privacy gate. If it
-does not clear, it does not ship, and that is a reportable finding rather than a
-delay.
+does not clear, it does not ship, and that outcome is itself reportable.
 
 **One exclusion needs your sign-off, because it is a safety judgement rather
 than a product choice. We are not building low-signal triage for SSEPD.** The
@@ -164,7 +163,6 @@ randomisation inference.
 
 - **Gate 1, end September 2026.** The power calculation. If the detectable
   effect is not credible at the measured volumes, the comparison does not run.
-  We do not run it underpowered.
 - **Gate 2, January 2027.** Measured re-key fidelity from the shadow phase. The
   intervention reaches a citizen only because a person retypes it. Below the
   threshold set at lock, the attenuation is the finding and no citizen-effect
@@ -201,7 +199,7 @@ Outcome capture, given no integration:
 | Quarter | What happens |
 |---|---|
 | **Q4 2026** | Desk analysis on the existing history. Remote walkthroughs with both officers. Permissions tabled. Project manager onboards in November. One Odisha trip: district visits to Collector, BDO and department offices, plus the stopwatch baseline. Each department receives a report on its own caseload. |
-| **Q1 2027** | Console built and deployed. Four-week shadow phase, panel always on, no arms. This is a deliverable, not a warm-up: it produces the feasibility evidence and the re-key measurement. Gate 2 is read at the end of it, then the analysis plan is locked and tagged. |
+| **Q1 2027** | Console built and deployed. Four-week shadow phase, panel always on, no arms. It produces the feasibility evidence and the re-key measurement. Gate 2 is read at the end of it, then the analysis plan is locked and tagged. |
 | **Q2 2027** | If both gates pass, the randomised comparison runs for fourteen to sixteen weeks. Interim feasibility readout in March either way. |
 | **Q3 2027** | Citizen follow-up calls, a closing field visit, analysis against the locked plan, and the report. |
 
