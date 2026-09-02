@@ -86,19 +86,44 @@ Briefs to the departments in November. Memo to you in December.
 
 ## 2. What the desk analysis decides
 
-Eight analyses, all of them on records we already hold, using code we have
-already written.
+Twelve analyses on the extract we hold. Each serves one of the three December
+deliverables.
 
-| Analysis | What we do | What it decides |
-|---|---|---|
-| A1 volume and case mix | Count monthly filings for both departments, 2021 to 2025, broken down by district, case type, and how the grievance arrived | Whether Labour & ESI has enough grievances to randomise at all, and which cases our features can reach |
-| A2 power calculation | Compute the minimum detectable effect from those volumes and the dispersion in handling times B4 measures | Gate 1 on the randomised comparison |
-| A3 turnaround baseline | Measure how long cases take end to end today, and how long they sit between recorded steps | The ageing view, and how long we follow a case after filing |
-| A4 repeat filers | Match petitioners across the full history to find how often the same person files again, and what happened the previous time | The repeat-filer panel, and the first department meeting |
-| A5 who the case goes to next | The portal already lists the routes a case can take, so we read those off. Which actual office gets it we count from past cases, by district and case type | Whether the choice is fixed enough to suggest, or varies enough that we should not |
-| A6 ageing fields | Check the overdue date in the record against the resolution time officers typed at assignment, and against the portal's own overdue counts | What the ageing list counts down to, and whether it agrees with the portal the officer already trusts |
-| A7 what the fields mean | Audit the list of action types, count how many cases are still open when a reporting window closes, and establish whether the department field records the original assignment or the final position | Whether any number we report can be interpreted |
-| A8 department briefs | Package A1, A3, A4, A5 and A6 into one short report per department, and hand it over on the November trip | Officer cooperation, which every other track needs |
+**For the department briefs**
+
+| | What we do |
+|---|---|
+| A1 volume, case mix and mode | Monthly filings by district, case type and how the grievance arrived, 2021 to 2025 |
+| A3 turnaround | How long cases take today, and how long they sit between recorded steps |
+| A4 repeat filing | How often the same petitioner comes back, and what happened the previous time |
+| A6 promised against actual | Officers type a resolution time per case at assignment. What do they promise, and do they hit it |
+| A7 what the fields mean | Whether the numbers above mean what we say they mean |
+| A8 | The briefs themselves, hand-delivered in November |
+
+**For the integration memo**
+
+| | What we do |
+|---|---|
+| A9 reach without a feed | The 2% figure, extended by district and projected forward |
+| A10 officer throughput | How many cases actually reach the grievance officer each week, estimated from the case history rather than asked |
+| A5 who the case goes to next | The portal lists the routes; which office actually gets it we count from past cases |
+
+**For the concierge test and the pipeline**
+
+| | What we do |
+|---|---|
+| A4 lookup | Given a petitioner, return their filing history. This is what we answer officer questions with |
+| A11 sample selection | Choose which scanned grievances get hand-transcribed, weighted toward the hard ones |
+| A12 what staleness costs | How many repeat filers we will miss while the extract is thirteen months old |
+
+**A10 is the one to watch.** It decides whether a randomised measurement of
+officer time is ever possible, and whether the concierge test sees five requests
+a week or fifty. SSEPD's dashboard showed 27 cases sitting with the officer
+against 1,471 pending in the department, so the officer's own throughput may be
+far smaller than department volume suggests.
+
+**A2, the power calculation, is deferred.** It sized a comparison we are not
+running this year.
 
 A8 is the door-opener. The officer's dashboard shows totals, pendings by holder,
 and overdue counts in 7, 15 and 30-day buckets. It shows no history: how those
