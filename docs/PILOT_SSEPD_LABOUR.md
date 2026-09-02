@@ -45,14 +45,12 @@ block nor wait on each other. December's deliverables come from the desk study
 and the field work. The app matures alongside them toward a 2027 pilot, at
 whatever pace part-time building allows.
 
-**One measured number sets the ceiling on all of it.** Working outside the
-workflow, the only cases we can take in natively are those that both originate
-at the department and arrive on paper, because only then is the officer holding
-the document at a moment they are already doing data entry. That intersection is
-**1.8% of SSEPD's caseload (817 of 45,339) and 2.9% of Labour & ESI's (301 of
-10,459)**. Over four full years it averages about five cases a week across both
-departments, and it is shrinking: Labour & ESI's share fell from 12.3% in
-2022/23 to 1.1% in 2024/25 as physical intake digitised.
+**One measured number sets the ceiling.** Working outside the workflow, the only
+cases we can take in natively are those that both originate at the department
+and arrive on paper, because only then is the officer holding the document at a
+moment they are already doing data entry. That is **1.8% of SSEPD and 2.9% of
+Labour & ESI**, about five cases a week across both departments, and falling.
+§2 has the year-by-year working.
 
 Nothing reaches the bulk of the caseload without a data feed. That is the
 December memo's argument.
@@ -63,44 +61,14 @@ And honest measured numbers for our own pipeline, so that whatever we pilot in
 2027 is something we have tested rather than something we hope works.
 
 No causal citizen-outcome estimate. No officer-burden estimate. AB_PLAN §14.1
-says why, and §9 below says what would bring them back.
+says why, and §11 says what would bring them back.
 
 ---
 
-## 2. Workstream A: pre-pilot data analysis
+## 2. What the extract already tells us
 
-Runs on the existing extract with existing code. Needs nothing from the
-departments, no app and no travel. Start now.
-
-**Ghazal owns this workstream** and works from Patna throughout; nothing here
-depends on her travelling or on officer availability. **Milinda joins in
-October** on A3 and A7, once she is off the process maps.
-
-Each item serves a named December deliverable. Anything that served the
-randomised design and nothing else is deferred.
-
-| | Serves | Priority |
-|---|---|---|
-| A1 volume, case mix, mode | Briefs, and A9 | Done in part |
-| A2 power | Nothing in 2026 | **Deferred** |
-| A3 turnaround | Briefs, memo | After the maps |
-| A4 repeat filers **and lookup** | Briefs, **the question service** | High, wanted in October |
-| A5 forwarding patterns | Memo only | May slip to December |
-| A6 promised time against actual | Briefs | Medium |
-| A7 field semantics | Quality control on A1, A3, A4 | Scoped to that |
-| A8 department briefs | **The November deliverable** | November |
-| A9 reach without a feed | **The memo's headline** | High |
-| A10 officer throughput | Memo, and the 2027 decision | High |
-| A11 OCR sample selection | Workstream C2 | September |
-| A12 what staleness costs | The staleness caveat, and ask 1 | Low, quick |
-
-A3 waits for the process maps by design: gaps between recorded steps cannot be
-read before we know what the steps are.
-
-**A1. Department volume and case mix.** Filter the lake to `dept` in {SSEPD,
-Labour & Employees' State Insurance}. Monthly filings, by district, by
-category/subcategory, by `mode`, 2021 to 2025. Brief content, and the input to
-A9.
+Findings, not tasks. Everything below builds on them, and §1's ceiling is
+derived here.
 
 **Measured 2026-09-02 on `data/interim/complaints.parquet`. Mode splits the
 caseload into two regimes. Crossed with origin, it gives the share we can reach
@@ -150,8 +118,8 @@ betting against the trend.
 **Origin and mode are negatively correlated.** SSEPD at 13.3% dept origin and
 36.4% document-borne would give 4.8% if independent; actual is 1.8%. Labour &
 ESI would give 9.7%; actual is 2.9%. Paper mostly arrives from elsewhere in the
-chain rather than at the department's own door, which matches the 14 August
-meeting note on physical grievances travelling a long manual route before
+chain rather than at the department's own door, which matches the 14 August meeting
+note on physical grievances travelling a long manual route before
 reaching the grievance officer.
 
 The regimes differ in what the record actually contains. In the citizen-typed
@@ -169,6 +137,43 @@ grievance.
 Median days to resolution also varies four-fold by mode, from 16 (Joint Hearing)
 to 60 (Twitter), with Website at 30 and Physical at 43. **Mode is therefore a
 pre-treatment covariate the design has to carry** (AB_PLAN §14.4).
+
+---
+
+## 3. Workstream A: the desk study
+
+Runs on the existing extract with existing code. Needs nothing from the
+departments, no app and no travel. Start now.
+
+**Ghazal owns this workstream** and works from Patna throughout; nothing here
+depends on her travelling or on officer availability. **Milinda joins in
+October** on A3 and A7, once she is off the process maps.
+
+Each item serves a named December deliverable. Anything that served the
+randomised design and nothing else is deferred.
+
+| | Serves | Priority |
+|---|---|---|
+| A1 volume, case mix, mode | Briefs, and A9 | Done in part |
+| A2 power | Nothing in 2026 | **Deferred** |
+| A3 turnaround | Briefs, memo | After the maps |
+| A4 repeat filers **and lookup** | Briefs, **the question service** | High, wanted in October |
+| A5 forwarding patterns | Memo only | May slip to December |
+| A6 promised time against actual | Briefs | Medium |
+| A7 field semantics | Quality control on A1, A3, A4 | Scoped to that |
+| A8 department briefs | **The November deliverable** | November |
+| A9 reach without a feed | **The memo's headline** | High |
+| A10 officer throughput | Memo, and the 2027 decision | High |
+| A11 OCR sample selection | Workstream C2 | September |
+| A12 what staleness costs | The staleness caveat, and ask 1 | Low, quick |
+
+A3 waits for the process maps by design: gaps between recorded steps cannot be
+read before we know what the steps are.
+
+**A1. Department volume and case mix.** Filter the lake to `dept` in {SSEPD,
+Labour & Employees' State Insurance}. Monthly filings, by district, by
+category/subcategory, by `mode`, 2021 to 2025. Brief content, and the input to
+A9. **Partly done: §2 has the measured mode and origin split.**
 
 Indicative prior from the committed crosswalk
 (`janasunani/routing/reference/routing_crosswalk.json`): SSEPD's largest entry
@@ -200,8 +205,9 @@ The rate, for the briefs: run `janasunani-dedup-index` scoped to the two
 departments. Officers said in the 12 August field record that they do not know
 their repeat-filing rate.
 
-**The lookup, for answering officer questions**: given a petitioner name, mobile or ticket
-number, return that person's filing history and what happened to each case.
+**The lookup, for answering officer questions** (§6): given a petitioner name,
+mobile or ticket number, return that person's filing history and what happened
+to each case.
 Ghazal runs this by hand on request from October, so it needs to be queryable
 rather than a finished statistic. Wanted in October, ahead of the briefs.
 
@@ -245,9 +251,10 @@ days (SSEPD, 19 August). Our per-case ageing numbers have to agree with the
 counts the officer already sees, or the feature loses trust on first contact.
 Reconcile against that panel, not only against the raw fields.
 
-**A7. Field-semantics audit. Scoped to whatever makes the brief's numbers
-defensible**, rather than the full audit AB_PLAN §6 wanted for the experiment. Validate the action taxonomy, whether `dept` is the assignment or the
-final snapshot, whether `all_esc_user` is overwritten (action history holds no
+**A7. Field-semantics audit.** Scoped to whatever makes the brief's numbers
+defensible, rather than the full audit AB_PLAN §6 wanted for the experiment.
+Validate the action taxonomy, whether `dept` is the assignment or the final
+snapshot, whether `all_esc_user` is overwritten (action history holds no
 chain snapshots, so overwrites are unrecoverable), and censoring. Censoring ran
 at 34.4% in 2025 (`janasunani/experiments/routing_outcome/dataset.py:28-36`), so
 any completion rate quoted in a brief has to say what it excludes.
@@ -286,13 +293,12 @@ by what two people can transcribe alongside their other work. September, so C2
 can start.
 
 **A12. What staleness costs.** Estimate how many repeat filers the lookup will
-miss, given the extract ends 2025-07-30 and volume roughly doubled
-year on year. Turns the staleness caveat from a hedge into a number, and gives ask 1 a price
-tag.
+miss, given the extract ends 2025-07-30 and volume roughly doubled year on year.
+Turns the staleness caveat into a number, and gives ask 1 a price tag.
 
 ---
 
-## 3. Workstream B: process mapping and field visits
+## 4. Workstream B: process mapping and field work
 
 Everything we know about the workflow comes from two logins, the CM Grievance
 Cell and Labour & ESI. They are different kinds of office and neither
@@ -419,14 +425,14 @@ Alongside these:
 
 - Written department sign-off naming both departments for a bounded engagement.
 - Permission to log what officers ask us and what we return, which is what the
-  hand-answered officer questions records.
+  question log records (§6).
 - **Re-confirmation of the 2026-07-27 research-exemption determination** is no
   longer urgent, because the citizen survey that prompted it is cut from 2026.
   Ask again before any citizen contact resumes. AB_PLAN §14.7.
 
 ---
 
-## 4. Workstream C: the app becomes ready, in parallel
+## 5. Workstream C: the app becomes ready, in parallel
 
 Runs alongside A and B. Gates neither. Its only December deliverable is a set of
 measured numbers.
@@ -466,14 +472,14 @@ Sarvam spend resumed 25 August 2026. Budget C1 and C3 before running them.
 **C6. The app.** Cloud stack (#30, open since July, two rollout gaps in #32),
 auth and RBAC in place of site-wide Caddy `basic_auth`, then the officer-facing
 views. Behind C1 to C4. **No December deadline.** Readiness is assessed at the
-§10 decision.
+§11 decision.
 
 Not built in 2026: the assignment service and event tables. They support
 randomisation only, and return with the design in AB_PLAN §14.
 
 ---
 
-## 5. Answering officer questions by hand
+## 6. Answering officer questions by hand
 
 Before building a repeat-filer panel, find out whether officers want the answer.
 
@@ -503,17 +509,14 @@ March 2026 shows as a first-time filer. Say so when the channel is agreed.
 
 ---
 
-## 6. What we would build, and what each needs
+## 7. What we would build, and what each needs
 
 Workstream C6 builds toward these at part-time pace; none of them ships to an
 officer in 2026. This is the feature analysis the December memo argues from, and
 the specification the question log will refine.
 
-**The ceiling first.** Working outside the workflow, the cases we can take in
-natively are those that both originate at the department and arrive on paper:
-1.8% of SSEPD (817 cases) and 2.9% of Labour & ESI (301). About five a week
-across both departments, and falling. Whatever we build, that is its reach until
-a data feed exists. Every row below should be read against it.
+**Read every row against the §1 ceiling.** Whatever we build reaches 1.8% of
+SSEPD and 2.9% of Labour & ESI until a data feed exists.
 
 | Feature | What must cross into our system | Feasible without integration |
 |---|---|---|
@@ -542,7 +545,7 @@ date features are not.
 
 ---
 
-## 7. Month by month
+## 8. Month by month
 
 Three tracks in parallel. A and B carry the December deliverables; C runs
 alongside and is assessed rather than delivered.
@@ -563,11 +566,11 @@ Everything else in A and B runs independently of C.
 
 ---
 
-## 8. People
+## 9. People
 
 | Who | Lane | Where |
 |---|---|---|
-| **Ghazal** (data analyst) | Workstream A: A1, A11, A4, A10 in September, then A6, A9, A12. A5 last. Runs the the lookups from October. Drafts the briefs with Milinda. | Patna, desk-only |
+| **Ghazal** (data analyst) | Workstream A: A1, A11, A4, A10 in September, then A6, A9, A12. A5 last. Runs the lookups from October. Drafts the briefs with Milinda. | Patna, desk-only |
 | **Milinda** (RA) | B1 calls and B2 process maps in September. A3 and A7 from October. C2 Odia reference sample with Aparupa. Drafts the briefs with Ghazal. | Remote |
 | **Aparupa** (operations manager, Odia) | C2 reference transcription, and Odia support across C3. The reason an Odia accuracy figure is possible at all. | Odia-speaking |
 | **Utkarsh** (PM, joins Nov) | Owns the field and the officer relationship from November. Delivers the briefs. Holds the question channel. | Odisha |
@@ -584,7 +587,7 @@ and the document summary cannot be assessed at all.
 
 ---
 
-## 9. Risks
+## 10. Risks
 
 - **Ghazal is split across projects.** September is where this plan breaks,
   since she carries Workstream A alone while Milinda is on the maps. The fix is
@@ -613,7 +616,7 @@ and the document summary cannot be assessed at all.
 
 ---
 
-## 10. The 2027 decision, taken in December
+## 11. The 2027 decision, taken in December
 
 Four questions, each answered by the work above.
 
