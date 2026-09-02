@@ -13,8 +13,11 @@ complaint documents, and the schemas that gatekeep both paths.
   value must not drop a historical record. Also the home of the NUL-stripping
   `mode="before"` validator (Postgres rejects `0x00` in text).
 - `client.py` — Janasunani API client (`httpx`, `with_retry` backoff).
-  **Status:** API credentials currently unavailable; the live-pull path is
-  parked and untested against the real API.
+  **Status: the upstream API is not running**, and credentials were never
+  issued. The live-pull path is untested against a real API and cannot be
+  brought up from our side. Everything downstream runs on a one-time historical
+  extract with no refresh path, so any feature needing current state is blocked
+  until the service is revived (see `docs/PILOT_SSEPD_LABOUR.md` §B5).
 - `s3service.py` — `S3Service` over boto3's **default credential chain**: env
   vars or `~/.aws` locally, the **instance role** on EC2. Leave the `AWS_*`
   settings unset unless a static key is genuinely needed. Reused for documents
