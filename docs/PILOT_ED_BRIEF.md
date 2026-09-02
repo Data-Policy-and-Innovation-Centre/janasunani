@@ -34,7 +34,8 @@ cases stay comparable.
   7, 15 and 30-day buckets. The forwarding chains are a configured list we can
   read rather than a pattern we have to learn.
 - Two features are high feasibility and use no AI model: a per-case list of
-  pending grievances by age against the 30-day deadline, and a panel showing
+  pending grievances by age against the time the officer allowed at assignment,
+  and a panel showing
   whether the petitioner has filed before. Both narrow what the portal already
   does rather than adding something absent. The document summary is low
   feasibility and may not ship at all.
@@ -94,7 +95,7 @@ already written.
 | A3 turnaround baseline | Measure how long cases take end to end today, and how long they sit between recorded steps | The ageing view, and how long we follow a case after filing |
 | A4 repeat filers | Match petitioners across the full history to find how often the same person files again, and what happened the previous time | The repeat-filer panel, and the first department meeting |
 | A5 forwarding patterns | Read the escalation chains the portal already has configured for each department, then tabulate which named office actually received the case, by district and case type. The field holding the second half is free text, so it needs cleaning | How much of a forwarding suggestion is a lookup and how much has to be learned |
-| A6 ageing fields | Check the overdue date in the record against the portal's own overdue counts, which bucket cases at 7, 15 and 30 days | Whether our per-case ageing list agrees with the portal the officer already trusts |
+| A6 ageing fields | Check the overdue date in the record against the resolution time officers typed at assignment, and against the portal's own overdue counts | What the ageing list counts down to, and whether it agrees with the portal the officer already trusts |
 | A7 what the fields mean | Audit the list of action types, count how many cases are still open when a reporting window closes, and establish whether the department field records the original assignment or the final position | Whether any number we report can be interpreted |
 | A8 department briefs | Package A1, A3, A4, A5 and A6 into one short report per department, and hand it over on the November trip | Officer cooperation, which every other track needs |
 
@@ -142,7 +143,7 @@ is the fallback if the console's own recording underperforms.
 
 | Feature | Needs | Feasibility | What would stop it |
 |---|---|---|---|
-| Ageing view: pending cases oldest first, days elapsed, days to the 30-day deadline | A3, A6 | High | Nothing. No AI model involved, so no model risk. The portal has the aggregate overdue counts; what it lacks is the per-case list behind them |
+| Ageing view: pending cases oldest first, days elapsed, days left against the time the officer allowed at assignment | A3, A6 | High | Nothing. No AI model involved, so no model risk. The portal has the aggregate overdue counts; what it lacks is the per-case list behind them |
 | Repeat-filer panel: has this petitioner filed before, and what happened | A4 | High | The duplicate-detection tables sit outside the analysis store. For two officers we read the live database directly |
 | Forwarding suggestion: which office inside the department should get the case | A5 | High | The escalation chains are already configured in the portal and can be read off. Only the choice of named office has to be learned |
 | Document summary: the key facts of a scanned grievance, in text | A hand-checked sample of scanned documents, which nobody owns yet | Low | Four of twenty-six drafts left personal information in the summary. It cannot be shown to an officer in that state |

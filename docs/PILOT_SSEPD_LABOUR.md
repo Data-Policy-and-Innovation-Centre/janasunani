@@ -101,11 +101,15 @@ joined to a role table (`janasunani/analytics/sql/handoff.sql:31`), so expect a
 normalisation job. Output: how concentrated the named-office choice is once the
 chain is fixed.
 
-**A6. Ageing and the 30-day deadline.** `escalation_date` is ingested,
-documented as an overdue date (`janasunani/db/models.py:161`), and read by
-nothing downstream. Audit its semantics against `created_on` and `resolved_on`
-for these two departments. Annex C of the field record gives 30 days as the
-ORTPSA-service deadline.
+**A6. Ageing, and what it counts down to.** There is no statutory deadline
+here. The officer types a resolution time freely at assignment, per case, so the
+allowed time is a field in the record rather than a constant. Establish its
+distribution for these two departments first: any ageing feature counts down to
+that number, not to a fixed 30 days.
+
+`escalation_date` is ingested, documented as an overdue date
+(`janasunani/db/models.py:161`), and read by nothing downstream. Audit its
+semantics against `created_on`, `resolved_on` and the typed resolution time.
 
 **Now also a reconciliation job.** The department dashboard carries its own
 overdue panel bucketed at within 7, more than 7, more than 15 and more than 30
@@ -268,7 +272,7 @@ Numbering follows the tiers below, which carry the argument.
 **Tier 1, build and test.**
 
 1. **Ageing and deadline view.** Pending cases oldest first, days elapsed, the
-   resolution time typed at assignment, days to the 30-day mark. No model and no
+   resolution time typed at assignment, days left against it. No model and no
    model risk. The dashboard already gives the aggregate overdue counts; what it
    lacks is the per-case list behind them, which is what an officer needs to act
    on a specific case. Reconcile against the portal's own buckets (A6). Highest
