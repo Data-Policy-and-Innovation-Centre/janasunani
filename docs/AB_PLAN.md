@@ -984,9 +984,9 @@ things removed it, none of them statistical:
   the department node. Officer throughput rather than department volume is the
   denominator, and it may never support a randomized comparison.
 
-The 2026 work is descriptive: the desk study, process maps, one field trip, a
-hand-answered officer questions, and a measured evaluation of our own pipeline
-(PILOT_SSEPD_LABOUR §2 to §5). **Its deliverable is the case for integration,
+The 2026 work is descriptive: the data analysis, process maps at department and
+district level, hand-answered officer questions, and a measured evaluation of
+our own pipeline (PILOT_SSEPD_LABOUR §2 to §5). **Its deliverable is the case for integration,
 which is what would make this design runnable in the first place.**
 
 Four questions decide whether the design returns, and they are taken in December

@@ -41,7 +41,7 @@ Four constraints set that scope.
 Constraints 3 and 4 take the console off the critical path. They do not stop it
 being built. **The point of this plan is that the analysis and the process
 mapping happen while the app becomes ready**, on separate tracks that neither
-block nor wait on each other. December's deliverables come from the desk study
+block nor wait on each other. December's deliverables come from the data analysis
 and the field work. The app matures alongside them toward a 2027 pilot, at
 whatever pace part-time building allows.
 
@@ -140,7 +140,7 @@ pre-treatment covariate the design has to carry** (AB_PLAN §14.4).
 
 ---
 
-## 3. Workstream A: the desk study
+## 3. Workstream A: the data analysis
 
 Runs on the existing extract with existing code. Needs nothing from the
 departments, no app and no travel. Start now.

@@ -81,7 +81,7 @@ what we do in the meantime and why it is worth doing.
 
 Four tracks, running in parallel. None waits on another.
 
-**The desk study.** Everything we can learn from the grievance history we
+**The data analysis.** Everything we can learn from the grievance history we
 already hold. No permission, no travel, no software. Ghazal runs it from Patna,
 starting now.
 
@@ -205,8 +205,8 @@ figure would license it.
 
 | Month | What happens |
 |---|---|
-| **September** | Screen shares with both officers, settling how often they register cases themselves and how many reach them each week. Process maps drafted and sent back for correction. The data asks tabled. Desk study starts. |
-| **October** | One trip: department maps verified by watching the work, the stopwatch baseline, the question channel agreed face to face, and **the first district visited**. Desk study completes, briefs drafted. |
+| **September** | Screen shares with both officers, settling how often they register cases themselves and how many reach them each week. Process maps drafted and sent back for correction. The data asks tabled. Data analysis starts. |
+| **October** | One trip: department maps verified by watching the work, the stopwatch baseline, the question channel agreed face to face, and **the first district visited**. Data analysis completes, briefs drafted. |
 | **November** | Utkarsh joins and inherits a live relationship. **The two department briefs are hand-delivered.** He takes the second district and the question channel. |
 | **December** | **The integration memo**, with the question log as evidence and the pipeline numbers as its technical annex. |
 

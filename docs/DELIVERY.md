@@ -29,9 +29,9 @@ status: Internal
 > deferred out of 2026: there is no engineer for the console it needs, the
 > grievance API is not running, and outside the workflow we can take in only the
 > cases that both originate at the department and arrive on paper, 1.8% of SSEPD
-> and 2.9% of Labour & ESI. What runs instead is a desk study, process maps, one
-> October field trip, a hand-answered officer questions, and a measured evaluation of our own
-> pipeline. December ships two department briefs, an integration memo, and
+> and 2.9% of Labour & ESI. What runs instead is data analysis, process maps,
+> field visits, hand-answered officer questions, and a measured evaluation of our
+> own pipeline. December ships two department briefs, an integration memo, and
 > honest accuracy numbers. See [PILOT_SSEPD_LABOUR.md](PILOT_SSEPD_LABOUR.md).
 > **No department-level or
 > state-level effect is estimable from this pilot, and no citizen-outcome claim
