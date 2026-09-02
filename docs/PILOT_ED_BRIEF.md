@@ -33,12 +33,12 @@ cases stay comparable.
   department suggestions are in scope. The portal already shows overdue cases in
   7, 15 and 30-day buckets. The forwarding chains are a configured list we can
   read rather than a pattern we have to learn.
-- Two features are high feasibility and use no AI model: a per-case list of
-  pending grievances by age against the time the officer allowed at assignment,
-  and a panel showing
-  whether the petitioner has filed before. Both narrow what the portal already
-  does rather than adding something absent. The document summary is low
-  feasibility and may not ship at all.
+- Two features use no AI model: a per-case list of pending grievances by age
+  against the time the officer allowed at assignment, and a panel showing
+  whether the petitioner has filed before. The second is buildable today. The
+  first needs the grievance API back up, which is ask 3, because it shows what
+  is pending now and we hold only a one-time extract. The document summary is
+  low feasibility and may not ship at all.
 - We are excluding the low-signal flag for SSEPD, which would mark a grievance
   as unlikely to need action. That is a safety judgement, and it is the one item
   here that needs your sign-off rather than a note.
@@ -226,7 +226,7 @@ Where each measurement comes from, given no integration:
 | The officer's decision form in the console | Office chosen, days allowed, remark, before retyping | High, though it is the officer's own account |
 | Weekly audit of 10% of cases against the portal | How much of the console output was retyped accurately, and gate 2 | High, and a headline finding in its own right |
 | The portal's own action history, one row per step | Date, what was done, who sent it, who holds the case now | High for reading case by case. It is on screen in the department login. Whether it can be exported in bulk is the open question |
-| Read-only access to the two departments' records | The same, without an officer opening each case | Medium. Depends on ask 3 |
+| Read-only access to the two departments' records | The same, without an officer opening each case | Low today. The endpoint is not running; ask 3 is to revive it |
 | An export from the portal with one row per grievance | Whole-caseload figures without our reading each case | Medium. Record-level reports do exist at the department login, so this is likelier than we assumed |
 | Citizen phone survey | Whether the citizen says it was resolved, and satisfaction | Medium. Depends on ask 4 |
 

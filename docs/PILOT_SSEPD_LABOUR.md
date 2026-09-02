@@ -243,10 +243,11 @@ follow-through rather than as new requests.
 - Written department sign-off naming both departments for a bounded trial.
 - Permission for officers to use a DPIC-hosted tool alongside the portal, and
   for us to log what is suggested and what they do.
-- **Read-only API credentials for `getGrievanceDetails` and
-  `getGrievanceHistory`, scoped to these two departments.** Far smaller than the
-  integration OCAC refused, and the difference between a real citizen endpoint
-  and a survey-only pilot.
+- **The read-only API revived, then scoped to these two departments**
+  (`getGrievanceDetails`, `getGrievanceHistory`). The endpoint is not running, so
+  this is revival plus credentials, not credentials alone. Still far smaller than
+  the integration OCAC refused. It is the difference between a real citizen
+  endpoint and a survey-only pilot, **and it is what feature 1 is blocked on**.
 - Permission for the citizen follow-up call, with a data-sharing note.
 - **Re-confirmation of the 2026-07-27 research-exemption determination**, which
   was made about administrative-record analysis and does not obviously extend to
@@ -270,8 +271,8 @@ that list.** Present them that way rather than as something new.
 
 | Intervention | Needs | Feasibility | Binding constraint |
 |---|---|---|---|
-| 1. Ageing and deadline view | A3, A6 | High | None. No model and no model risk |
-| 2. Repeat-filer and duplicate panel | A4 | High | `dedup_signatures` / `dedup_groups` held out of the lake pending Phase 18 RBAC; read OLTP directly for two officers |
+| 1. Ageing and deadline view | A3, A6, **live feed** | High to build, blocked to run | No model risk, but it lists what is pending *now*. The API is dead and our extract is a snapshot. Blocked on B5's revival ask |
+| 2. Repeat-filer and duplicate panel | A4 | High | Nothing outside our control: it matches an arriving case against history, so the historical extract suffices. `dedup_signatures` / `dedup_groups` held out of the lake pending Phase 18 RBAC; read OLTP directly for two officers |
 | 4. Intra-department authority suggestion | A5 | High | The escalation chains are configured in the portal and readable. Only the named-office choice has to be learned |
 | 3. Document summary and key-fact extraction | OCR reference sample (#53), unowned | Low | 4/26 residual PII on the development set. Not showable to an officer as it stands |
 | 5. Low-signal triage | Excluded from SSEPD | Not built | Safety decision, AB_PLAN §14.6 |
@@ -285,10 +286,18 @@ Numbering follows the tiers below, which carry the argument.
    resolution time typed at assignment, days left against it. No model and no
    model risk. The dashboard already gives the aggregate overdue counts; what it
    lacks is the per-case list behind them, which is what an officer needs to act
-   on a specific case. Reconcile against the portal's own buckets (A6). Highest
-   ratio of officer value to build cost in the project.
+   on a specific case. Reconcile against the portal's own buckets (A6).
+
+   **Blocked on a live feed, and this is the binding constraint on the whole
+   feature.** The view shows what is pending today. We hold a one-time
+   historical extract, the API that would refresh it is not running, and no
+   other refresh path exists. Cheapest feature to write, hardest to supply.
+   B5's revival ask is the dependency. If it does not land, feature 2 carries
+   wave 1 by itself.
 2. **Repeat-filer and duplicate panel.** "This petitioner has filed three times
-   before; here is what happened." Already built and corpus-wide capable since
+   before; here is what happened." **The only Tier 1 feature that runs on what we
+   already hold**: it matches an arriving case against history, so a snapshot is
+   enough and no live feed is needed. Already built and corpus-wide capable since
    26 August. Officers do not have this and said they do not know their repeat
    rate. Needs `dedup_signatures` and `dedup_groups`, which are held out of the
    lake pending Phase 18 RBAC (`janasunani/olap/materialize.py:29-41`); for two
@@ -382,7 +391,7 @@ Indicative. Assumes the PM starts in November 2026.
 | Window | Work | Owner |
 |---|---|---|
 | **Sep 2026** | A1, A2, A7. B1 remote walkthroughs. B5 permissions tabled. AB_PLAN §14 written. **Gate 1 read at end of month.** | RA, principal |
-| **Oct 2026** | A3 to A6. Build items 1 and 2. Console design. | RA, engineer |
+| **Oct 2026** | A3 to A6. Build items 1 and 2. Console design. **API revival decided**, so the console is scoped to the feed we will actually have. | RA, engineer, principal |
 | **Nov 2026** | PM onboards. **Field trip 1**, principal travels: B3 district visits, B4 time-and-motion, A8 briefs delivered. Build items 3 to 5. | All |
 | **Dec 2026** | Console complete, event tables built and tested. Dry-run rehearsal, remote. Pre-analysis plan drafted from measured A2 inputs. | Engineer, PM |
 | **Jan 2027** | **Shadow phase, 4 weeks.** Officers use the console on every case, panel shown on all of them, no randomisation. Purpose: usability, transfer-loss measurement, telemetry validation, training. | PM |
@@ -418,6 +427,10 @@ owner has to be named.
 
 ## 8. Risks and pause conditions
 
+- **The API stays down.** Feature 1 does not run, wave 1 is the repeat-filer
+  panel alone, and citizen outcomes fall back to the survey plus whatever the
+  officer can read off the portal case by case. Decide by end October, so the
+  console is built for what we will actually have.
 - **Volume too small to randomise.** Most likely for Labour & ESI. Decision
   point is A2. If it cannot be powered, run it as a feasibility and qualitative
   arm and randomise SSEPD only. Decide before launch, not after.

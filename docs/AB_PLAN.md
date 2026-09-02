@@ -877,10 +877,14 @@ and must not be quoted for this pilot.
 every source is now worse. In descending order of preference, and to be settled
 by the field work:
 
-1. **Read-only API credentials for `getGrievanceDetails` / `getGrievanceHistory`
-   scoped to these two departments** (`janasunani/ingestion/client.py`, currently
-   parked for want of credentials). This is a far smaller ask than the
-   integration OCAC refused and should be made separately and explicitly.
+1. **The read-only API brought back up, then scoped to these two departments**
+   (`getGrievanceDetails` / `getGrievanceHistory`,
+   `janasunani/ingestion/client.py`). **The endpoint is not running.** The client
+   has never been exercised against a live API, and what we hold is a one-time
+   historical extract with no refresh path. So this rung is two asks, not one:
+   revive the service, then grant scoped read access. Still far short of the
+   integration OCAC refused, and it should be made separately and explicitly.
+   Until it lands, nothing in the pilot reads current state.
 2. **The portal's own per-case action history**, which the 18 August walkthrough
    confirms is present in the department login: one row per step with action
    date, description, sender, and who currently holds the case. Reading it case
