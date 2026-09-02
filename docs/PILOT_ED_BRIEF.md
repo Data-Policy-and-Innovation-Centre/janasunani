@@ -44,10 +44,10 @@ cases stay comparable.
   here that needs your sign-off rather than a note.
 - The randomised comparison is one component of the pilot, and two conditions
   have to be met before it runs. We call them gates. Gate 1 is the September
-  calculation of the smallest effect this pilot could detect. Gate 2 is a
-  measurement, taken in January, of how much of what the console produces
-  actually reaches the portal when the officer retypes it. If either fails, the
-  rest still runs and still produces the integration case.
+  power calculation. Gate 2 is a measurement, taken in January, of how much of
+  what the console produces actually reaches the portal when the officer
+  retypes it. If either fails, the rest still runs and still produces the
+  integration case.
 - The four asks: department sign-off, permission to log officer decisions,
   read-only access to the two departments' own records, and re-confirmation of
   the 27 July research determination now that a citizen survey is involved.
@@ -91,7 +91,7 @@ already written.
 | Analysis | What we do | What it decides |
 |---|---|---|
 | A1 volume and case mix | Count monthly filings for both departments, 2021 to 2025, broken down by district, case type, and how the grievance arrived | Whether Labour & ESI has enough grievances to randomise at all, and which cases our features can reach |
-| A2 smallest detectable effect | Work out, from those volumes and from the spread in handling times B4 measures, how large an improvement this pilot could detect | Gate 1 on the randomised comparison |
+| A2 power calculation | Compute the minimum detectable effect from those volumes and the dispersion in handling times B4 measures | Gate 1 on the randomised comparison |
 | A3 turnaround baseline | Measure how long cases take end to end today, and how long they sit between recorded steps | The ageing view, and how long we follow a case after filing |
 | A4 repeat filers | Match petitioners across the full history to find how often the same person files again, and what happened the previous time | The repeat-filer panel, and the first department meeting |
 | A5 who the case goes to next | The portal already lists the routes a case can take, so we read those off. Which actual office gets it we count from past cases, by district and case type | Whether the choice is fixed enough to suggest, or varies enough that we should not |
@@ -201,11 +201,11 @@ times and asking how often chance alone would produce a gap this large. At this
 sample size that is more honest than the standard formula, which assumes larger
 numbers than we have.
 
-- **Gate 1, end September 2026.** The calculation of the smallest effect this
-  pilot could detect. If that effect is implausibly large at the volumes we
-  measure, the comparison does not run. SSEPD's own dashboard shows why this is
-  the likeliest gate to fail: 51,460 tickets in total, 1,471 pending, and 27 of
-  those with the officer we would randomise on. Department volume is large.
+- **Gate 1, end September 2026.** The power calculation. If the minimum
+  detectable effect is implausibly large at the volumes we measure, the
+  comparison does not run. SSEPD's own dashboard shows why this is the likeliest
+  gate to fail: 51,460 tickets in total, 1,471 pending, and 27 of those with the
+  officer we would randomise on. Department volume is large.
   Officer throughput is what gate 1 has to work from, and it is small.
 - **Gate 2, January 2027.** The shadow-phase measurement of how much of the
   console's output actually reaches the portal. The tool reaches a citizen only
