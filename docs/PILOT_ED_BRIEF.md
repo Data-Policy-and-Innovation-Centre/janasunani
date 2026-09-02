@@ -12,10 +12,10 @@ status: Internal
 
 Decision memo. Four asks in section 7. The full design is in the internal plan.
 
-Three terms recur, so they are defined once here. The **console** is the screen
-we build for the two officers. The **panel** is the part of that screen carrying
-our suggestions. To **randomise** is to decide by chance, case by case, whether
-the panel is shown, so that the two sets of cases are comparable.
+The **console** is the screen we build for the two officers. The **panel** is
+the part of that screen carrying our suggestions. To **randomise** is to decide
+by chance, case by case, whether the panel is shown, so that the two sets of
+cases stay comparable.
 
 ---
 
@@ -53,10 +53,9 @@ the panel is shown, so that the two sets of cases are comparable.
 
 ## 1. What the pilot is
 
-Both constraints are settled. There is no integration, so officers read our
-outputs on a separate screen and retype what they choose into the portal. There
-are two grievance officers in total. What follows is what those constraints
-leave.
+There is no integration, so officers read our outputs on a separate screen and
+retype what they choose into the portal. There are two grievance officers in
+total. The pilot runs in three tracks.
 
 **Track 1, desk analysis.** Runs on the 1.37 million grievances we already hold,
 using code we have already written. Needs no app, no travel and no permission.
@@ -79,8 +78,8 @@ half of it is conditional.
 
 ## 2. What the desk analysis decides
 
-Eight analyses, labelled A1 to A8 so the rest of this memo can refer to them.
-All of them run on records we already hold, using code we have already written.
+Eight analyses, all of them on records we already hold, using code we have
+already written.
 
 | Analysis | What we do | What it decides |
 |---|---|---|
@@ -102,7 +101,7 @@ caseload. It costs no engineering.
 
 ## 3. What the field work decides
 
-Four field tasks, labelled B1 to B4.
+Four field tasks.
 
 **B1, where the officer sits in the chain. This settles the feature set.** Do
 these officers receive grievances already routed to the department, or do they
@@ -168,9 +167,8 @@ that officers have labelled by hand, which does not exist.
 the console with the panel shown. This measures usability, training cost, the
 quality of what the console records automatically, and most importantly how much
 of what the console produces survives the officer retyping it into the portal.
-It produces description, usability evidence and officer testimony. It is also
-the interim report and the evidence for the integration ask, and it stands on
-its own without any randomisation.
+It produces description, usability evidence and officer testimony. It is also the interim report and the evidence for
+the integration ask.
 
 **The randomised comparison, behind two gates.** If it runs, every grievance
 reaching the two officers passes through the console, and chance decides case by
@@ -196,8 +194,8 @@ One officer sees both sets of cases and learns from the ones with the panel. We
 know which way that pushes the result: what the officer learns carries over to
 the blank cases and makes them better, which shrinks the measured gap. So a
 positive result survives the problem. A flat result cannot tell apart "the tool
-does nothing" from "the learning carried over completely", and we will say that
-in the report rather than in a footnote.
+does nothing" from "the learning carried over completely", and we will say so
+in the report.
 
 **Citizen outcomes, reported as observations.** A phone survey in Odia at a
 fixed interval after filing, for every eligible case, whether or not the portal
@@ -242,8 +240,7 @@ randomised half runs to July.
 
 ## 7. What we need from you
 
-These are the follow-through on asks two, three and four from the 17 August
-brief, not new requests.
+Asks two, three and four from the 17 August brief, carried forward.
 
 1. **Written sign-off naming both departments** for a bounded trial.
 2. **Permission to log what is suggested and what the officer does.** A
@@ -266,9 +263,6 @@ brief, not new requests.
 ---
 
 ## 8. What we will not claim
-
-Unchanged from every prior report, and restated because a pilot is when these
-drift:
 
 - No routing time saving. That analysis failed to reproduce and stays withdrawn.
 - Not the routing accuracy figures measured on the same data the model learned
