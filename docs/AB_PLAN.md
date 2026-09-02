@@ -727,6 +727,14 @@ Consequently, **this pilot cannot produce a department-level or state-level
 causal estimate, and cannot produce a well-powered citizen-outcome estimate.**
 Any readout that implies otherwise is wrong.
 
+**What the pilot delivers instead, in order.** The primary deliverable is
+feasibility and descriptive evidence: the pre-pilot corpus analysis, the
+officer-side process map, and a shadow phase in which the panel is shown on
+every case with no arms. That work starts before the console exists, does not
+depend on officer adoption, and is the artifact for the integration ask. The
+randomized comparison in §14.3 is a bounded component of the pilot rather than
+the pilot itself, and it runs only if the two gates in §14.9 pass.
+
 §5.4 of ROADMAP asserts that "the corpus already carries the outcome variables"
 and that "the primary outcomes need no new instrumentation". That is true of a
 retrospective analysis and false of this pilot: without integration, nothing
@@ -790,9 +798,10 @@ with full force and the design needs revisiting.
   re-keying into the portal. This is the mechanism that replaces integration.
   The model still runs on control cases with output withheld (§7.3 shadow mode,
   unchanged).
-- **Primary estimand.** ITT effect of the panel being *shown* on officer
-  handling time for that grievance, log active seconds, within officer-week
-  blocks.
+- **Primary estimand, conditional on the §14.9 gates.** ITT effect of the panel
+  being *shown* on officer handling time for that grievance, log active seconds,
+  within officer-week blocks. If either gate fails, this estimand is not
+  reported and the pilot's outputs are the descriptive ones.
 - **Secondary operational estimands.** Screens touched, revisits, decision
   changed after panel view (treated only, descriptive), and the officer's
   recorded downstream authority and typed resolution days.
@@ -828,7 +837,10 @@ estimator should be the simplest one that respects the blocking.
 - **Power.** Computed at grievance level from measured pilot-department volumes
   and the observed dispersion of handling time from the time-and-motion baseline
   (PILOT_SSEPD_LABOUR §B4). **Due end September 2026, before anything is
-  locked.** Two things it must settle:
+  locked. This is gate 1 of §14.9: if the MDE for officer handling time is not
+  credible at the measured volumes, the randomized comparison does not run at
+  all.** Running it underpowered is not the fallback; the shadow phase and the
+  descriptive endpoints are. Two further things it must settle:
   - Whether Labour & ESI has enough volume to randomize at all. Indicative
     evidence says probably not on its own: in the committed crosswalk
     (`janasunani/routing/reference/routing_crosswalk.json`) SSEPD's largest
@@ -867,7 +879,7 @@ the finding is the attenuation itself, and no citizen-effect claim is made.
 
 ### 14.6 Feature scope, and one exclusion that is a safety decision
 
-The tested bundle is decided in PILOT_SSEPD_LABOUR §5. One exclusion belongs in
+The tested bundle is decided in PILOT_SSEPD_LABOUR §4. One exclusion belongs in
 this document because it is a harm judgement rather than a product choice.
 
 **Actionability / low-signal triage is excluded from SSEPD entirely.** The
@@ -915,6 +927,30 @@ Sections 3 through 5 are not dead weight. They are the design we would run if
 the tool sat inside the workflow, they are costed and reviewed, and they are the
 most concrete statement available of what integration would buy. Use them as the
 technical annex to the integration ask, unchanged.
+
+### 14.9 Sequencing: descriptive first, randomization gated
+
+The randomized comparison runs only if both gates pass. Neither is a judgement
+call at the time; both are read against a criterion fixed beforehand.
+
+- **Gate 1, end September 2026, principal.** The §14.4 power calculation. Fails
+  if the MDE for officer handling time is not credible at the measured pilot
+  volumes. Gate 1 is also where Labour & ESI is included or dropped from
+  randomization independently of SSEPD.
+- **Gate 2, end January 2027, principal.** Re-key fidelity measured over the
+  four-week shadow phase (§14.5), against a threshold written into the lock. The
+  intervention reaches a citizen only through a human retyping it; below the
+  threshold the treatment is diluted before it can act, and the attenuation is
+  the finding.
+
+**On a fail of either gate**, the shadow phase, the process map, the department
+reports and the descriptive citizen endpoints run unchanged. What is lost is the
+within-officer causal estimate, not the pilot. The readout states which gate
+failed and reports no arm comparison.
+
+Nothing about this sequencing weakens §9. The lock still happens before any arm
+outcome is viewed, and gate 2 is read from shadow-phase data in which no
+randomization has occurred.
 
 ---
 

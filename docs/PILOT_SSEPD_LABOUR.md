@@ -35,10 +35,18 @@ Three constraints define it:
 3. **Thin staffing.** A project manager joins around November 2026, one existing
    RA is reallocated, and the principal is in Bangalore with travel minimised.
 
-It delivers **feasibility and officer buy-in first**, which is the evidence that
-unlocks the integration ask, and a defensible measurement of **officer burden**
-second. It does not deliver a causal citizen-outcome estimate. AB_PLAN §14.1
-says why.
+**The primary track is feasibility and descriptive evidence**: Workstream A,
+Workstream B, and a four-week shadow phase with the panel shown on every case
+and no arms. That track starts now, does not depend on officer adoption, and is
+the evidence that unlocks the integration ask.
+
+**The randomised measurement of officer burden is a second, gated track.** It
+runs only if both gates in AB_PLAN §14.9 pass: the A2 power calculation at end
+September 2026, and measured re-key fidelity at end January 2027. On a fail, the
+primary track runs unchanged and no arm comparison is reported.
+
+Neither track delivers a causal citizen-outcome estimate. AB_PLAN §14.1 says
+why.
 
 ---
 
@@ -197,6 +205,17 @@ follow-through rather than as new requests.
 Ranked for this audience: a department-node officer, downstream of the routing
 decision, working scanned Odia documents, with no time metric on any screen.
 
+| Intervention | Needs | Feasibility | Binding constraint |
+|---|---|---|---|
+| 1. Ageing and deadline view | A3, A6 | High | None. No model and no model risk |
+| 2. Repeat-filer and duplicate panel | A4 | High | `dedup_signatures` / `dedup_groups` held out of the lake pending Phase 18 RBAC; read OLTP directly for two officers |
+| 4. Intra-department authority suggestion | A5, B1 | Medium | Runs only if B1 says the officer makes this call and A5 says it is learnable |
+| 3. Document summary and key-fact extraction | OCR reference sample (#53), unowned | Low | 4/26 residual PII on the development set. Not showable to an officer as it stands |
+| 5. Low-signal triage | Excluded from SSEPD | Not built | Safety decision, AB_PLAN §14.6 |
+| 6. Category suggestion | | Not built | Officers said category does not change routing |
+
+Numbering follows the tiers below, which carry the argument.
+
 **Tier 1, build and test.**
 
 1. **Ageing and deadline view.** Pending cases oldest first, days elapsed, the
@@ -235,8 +254,12 @@ decision, working scanned Odia documents, with no time metric on any screen.
 
 **Rollout.** Do not stage features across officers; there are two of them.
 
-- **Wave 1, pilot weeks 1 to 16:** features 1 and 2 as a single bundle,
-  grievance-level randomised. This is the primary comparison.
+- **Shadow phase, 4 weeks, no arms:** features 1 and 2 shown on every case.
+  Usability, training, telemetry validation and the re-key fidelity measurement
+  that is gate 2. This phase produces the feasibility evidence on its own.
+- **Wave 1, pilot weeks 1 to 16, only if both AB_PLAN §14.9 gates pass:**
+  features 1 and 2 as a single bundle, grievance-level randomised. This is the
+  primary comparison of the gated track.
 - **Wave 2:** feature 3 added mid-pilot *only if* it clears a PII and factuality
   gate, as a second randomisation nested among treated cases, so the
   bundle-versus-control contrast is preserved. If it does not clear, it does not
@@ -287,13 +310,13 @@ Indicative. Assumes the PM starts in November 2026.
 
 | Window | Work | Owner |
 |---|---|---|
-| **Sep 2026** | A1, A2, A7. B1 remote walkthroughs. B5 permissions tabled. AB_PLAN §14 written. | RA, principal |
+| **Sep 2026** | A1, A2, A7. B1 remote walkthroughs. B5 permissions tabled. AB_PLAN §14 written. **Gate 1 read at end of month.** | RA, principal |
 | **Oct 2026** | A3 to A6. Build items 1 and 2. Console design. | RA, engineer |
 | **Nov 2026** | PM onboards. **Field trip 1**, principal travels: B3 district visits, B4 time-and-motion, A8 briefs delivered. Build items 3 to 5. | All |
 | **Dec 2026** | Console complete, event tables built and tested. Dry-run rehearsal, remote. Pre-analysis plan drafted from measured A2 inputs. | Engineer, PM |
 | **Jan 2027** | **Shadow phase, 4 weeks.** Officers use the console on every case, panel shown on all of them, no randomisation. Purpose: usability, transfer-loss measurement, telemetry validation, training. | PM |
-| **late Jan 2027** | **Lock.** Tag `ab-plan-locked-v1`; record extract hash, seed, MDEs, pause margins. No arm outcome viewed before this. | Principal |
-| **Feb to May 2027** | **Live randomised pilot, 14 to 16 weeks.** Weekly officer call, monthly harm review, 10% re-key audit. | PM |
+| **late Jan 2027** | **Gate 2 read** from shadow-phase re-key fidelity. If it passes, **lock**: tag `ab-plan-locked-v1`; record extract hash, seed, MDEs, pause margins. No arm outcome viewed before this. | Principal |
+| **Feb to May 2027** | **Live randomised pilot, 14 to 16 weeks, if both gates passed.** Weekly officer call, monthly harm review, 10% re-key audit. | PM |
 | **Mar 2027** | **Interim feasibility readout.** Adoption, transfer loss, telemetry quality, officer testimony. The artifact for the integration ask. No outcome comparison by arm. | Principal |
 | **May to Jun 2027** | Citizen phone follow-up at fixed horizon. **Field trip 2**, close-out interviews. | PM, RA |
 | **Jul 2027** | Analysis against the locked plan, then the report. | RA, principal |
@@ -350,8 +373,9 @@ owner has to be named.
 
 Each is a go/no-go with a named artifact, not a status update.
 
-1. **End Sep 2026.** A1 volumes and the A2 power table exist. Go/no-go on
-   whether Labour & ESI is randomisable.
+1. **End Sep 2026. Gate 1** (AB_PLAN §14.9). A1 volumes and the A2 power table
+   exist. Go/no-go on whether the randomised comparison runs at all, and
+   separately on whether Labour & ESI is randomisable.
 2. **End Oct 2026.** Stack live on AWS with real auth and a tested restore.
    Nothing touches an officer before this.
 3. **Mid Nov 2026.** Department Annex B written for both departments; B4
@@ -360,8 +384,10 @@ Each is a go/no-go with a named artifact, not a status update.
 4. **End Dec 2026.** Console passes an end-to-end rehearsal. Assignment service
    passes AB_PLAN Appendix C: determinism over 1,000 re-runs, rank uniformity,
    no dependence on outcome data.
-5. **End Jan 2027.** Shadow phase complete, transfer loss measured, plan tagged
-   `ab-plan-locked-v1` with extract hash, seed and MDEs recorded.
+5. **End Jan 2027. Gate 2** (AB_PLAN §14.9). Shadow phase complete, re-key
+   fidelity measured against the threshold. On a pass, plan tagged
+   `ab-plan-locked-v1` with extract hash, seed and MDEs recorded. On a fail, the
+   attenuation is the finding and no arm comparison is run.
 6. **Mar 2027.** Interim feasibility readout delivered. It either wins the
    integration approval or tells us it will not come.
 7. **Jul 2027.** Final report, analysed strictly against the locked plan.
