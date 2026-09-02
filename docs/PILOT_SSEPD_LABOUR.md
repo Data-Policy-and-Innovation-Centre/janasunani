@@ -86,20 +86,29 @@ two departments. Officers told us in the 12 August field record that they do not
 know their repeat-filer rate. This is both a pilot input and the best available
 door-opener for the first department meeting.
 
-**A5. Downstream authority variation.** Two halves, and the 18 August
-walkthrough split them. The portal already holds the escalation chains as
-configuration: `Define Workflow` offers a fixed list (Self Assign, BDO to
-Collector to Secretary, DSSO to Collector to Secretary, DLO to Commissioner to
-Secretary, and so on), and the admin escalation table lists them per office and
-is pageable. **Read that list first; it is a lookup, not a learning problem.**
+**A5. Who the officer sends the case to next.** The portal splits this into two
+choices, and only one of them is a research question.
 
-What has to be learned is the second half: which *named* office within the
-chosen chain receives the case. Tabulate the distinct
-`action_history.action_taken_by` values receiving the first downstream
-assignment, by district and subcategory. `action_taken_by` is free text never
-joined to a role table (`janasunani/analytics/sql/handoff.sql:31`), so expect a
-normalisation job. Output: how concentrated the named-office choice is once the
-chain is fixed.
+**The route.** A dropdown of fixed chains: DLO to Commissioner to Secretary, BDO
+to Collector to Secretary, DSSO to Collector to Secretary, Self Assign, and so
+on. These name ranks, not people. The list is stored in the portal as settings
+and shown on the escalation admin screens. **Read it off. There is nothing to
+predict here.**
+
+**The actual office.** If the chain says DLO, which DLO? The dropdown holds
+about thirty district Labour Officers. That choice appears nowhere in the
+settings. It exists only in the history of past cases, in
+`action_history.action_taken_by`.
+
+So: for the first forward on each past case, count which office received it,
+split by district and case type. The question is whether that choice is already
+determined. If a Ganjam case nearly always goes to the same office, a suggestion
+is a lookup and cheap to build. If it varies, find out what drives it before
+suggesting anything.
+
+Catch: `action_taken_by` is free text and is never joined to a list of valid
+offices (`janasunani/analytics/sql/handoff.sql:31`). The same office will appear
+spelled several ways, so it needs cleaning before any count means anything.
 
 **A6. Ageing, and what it counts down to.** There is no statutory deadline
 here. The officer types a resolution time freely at assignment, per case, so the
