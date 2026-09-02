@@ -782,7 +782,8 @@ sit downstream of the department routing decision.
 
 **That assumption is now in doubt, and the trigger this paragraph set has
 fired.** The 18 August Labour & ESI walkthrough and the 19 August SSEPD
-dashboard reading show the account is the department Secretary's, and that it
+dashboard reading show the account the department's grievance officer works in
+(titled Secretary, because that is the department node in the routing chain)
 carries the registration screen (`/Admin/Eabhijog/Register/regNext/...`) with
 department, escalation chain, category, subcategory and remarks, alongside the
 forwarding screen and the per-case action history. These officers can register
@@ -855,8 +856,8 @@ estimator should be the simplest one that respects the blocking.
   further things it must settle:
   - Whether either department has enough volume **passing through the officer**
     to randomize at all. The 19 August SSEPD dashboard read 51,460 tickets in
-    total and 1,471 pending, of which 27 were pending with the Secretary
-    personally and 20 overdue. Historical department volume is not the
+    total and 1,471 pending, of which 27 sat with the department node itself
+    and 20 were overdue. Historical department volume is not the
     denominator; the officer's own throughput is, and it may be an order of
     magnitude smaller. Establish the arrival rate at the officer directly.
   - Whether Labour & ESI has enough volume to randomize at all. Indicative

@@ -121,7 +121,7 @@ at 34.4% in 2025 (`janasunani/experiments/routing_outcome/dataset.py:28-36`);
 the pilot's follow-up window must be chosen with that in view.
 
 **A8. Retrospective department report.** Package A1, A3, A4, A5 and A6 as a
-short brief per department. The Secretary's dashboard shows totals, pendings by
+short brief per department. The officer's dashboard shows totals, pendings by
 holder and overdue counts in 7/15/30-day buckets, but carries no history: no
 movement over time, no comparison against the department's own past, no
 repeat-filing rate. That is what these briefs add.
@@ -152,9 +152,13 @@ Screenshots stay in Box and are not copied into this repo.
 
 **Established.**
 
-- The account is the **department Secretary's**, with admin rights: workflow
-  config, the escalation settings screens under `/Admin/Setting/Escalation`, and
-  Janasunani Reports.
+- **Who is actually at the keyboard.** The login is titled Secretary because
+  every department-level node in the routing chain is officially the Secretary.
+  The IAS officer does not open this portal. The department's grievance officer
+  works the account, and inherits its rights: workflow config, the escalation
+  settings screens under `/Admin/Setting/Escalation`, and Janasunani Reports.
+  Read "Secretary" in any screenshot or action-history row as the department
+  node, not as the person.
 - It carries the **registration path** (`/Admin/Eabhijog/Register/regNext/...`):
   citizen details, then Assign ATA with department, `Define Workflow`, the named
   office at each level, category, subcategory and remarks. So the officer both
@@ -180,8 +184,8 @@ Screenshots stay in Box and are not copied into this repo.
 - **How often the registration path is actually used**, as against receiving
   already-routed cases. AB_PLAN §14.2 turns on this.
 - **The arrival rate at the officer.** SSEPD showed 27 cases pending with the
-  Secretary against 1,471 pending in the department. Throughput at the officer,
-  not department volume, is the power denominator.
+  department node against 1,471 pending in the department. Throughput at the
+  officer, not department volume, is the power denominator.
 - Whether "Department * (Suggested by AI)" appears on their screen, and whether
   they ever act on it.
 - **Whether any record-level report exports in bulk**, and in what format. This
@@ -242,8 +246,8 @@ follow-through rather than as new requests.
 
 ## 4. Interventions, ranked by prior bang for buck
 
-Ranked for this audience: a department Secretary who both receives and registers
-grievances, works scanned Odia documents, and already has aggregate overdue
+Ranked for this audience: a department grievance officer who both receives and
+registers grievances, works scanned Odia documents, and already has aggregate overdue
 counts on the dashboard but no per-case list behind them.
 
 Both departments have already been shown a Janasunani 2.0 feature list

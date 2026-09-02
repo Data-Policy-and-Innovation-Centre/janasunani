@@ -30,8 +30,8 @@ cases stay comparable.
 - Each piece of the desk analysis decides a specific feature or design choice.
   One of them is the deliverable that buys officer cooperation.
 - The August walkthroughs at Labour & ESI and SSEPD changed three of our
-  assumptions. The account is the department Secretary's, it carries admin
-  rights, and it can register a grievance as well as forward one. The portal
+  assumptions. The account the grievance officer works in carries admin rights,
+  and it can register a grievance as well as forward one. The portal
   already shows overdue cases in 7, 15 and 30-day buckets. The forwarding chains
   are a configured list we can read rather than a pattern we have to learn.
 - Two features are high feasibility and use no AI model: a per-case list of
@@ -58,10 +58,11 @@ cases stay comparable.
 
 There is no integration, so officers read our outputs on a separate screen and
 retype what they choose into the portal. There is one grievance officer per
-department. In both cases that is the department Secretary's login, which
-carries admin rights over workflow configuration and can register a grievance,
-assign the action-taking authority, and forward to a Commissioner, a Collector,
-an MD or Director, or a named subordinate.
+department. They work in the login titled Secretary, because the department
+node in the routing chain is officially the Secretary. The IAS officer does not
+use the portal. The account carries admin rights over workflow configuration and
+can register a grievance, assign the action-taking authority, and forward to a
+Commissioner, a Collector, an MD or Director, or a named subordinate.
 
 The pilot runs in three tracks.
 
@@ -100,7 +101,7 @@ already written.
 | A7 what the fields mean | Audit the list of action types, count how many cases are still open when a reporting window closes, and establish whether the department field records the original assignment or the final position | Whether any number we report can be interpreted |
 | A8 department briefs | Package A1, A3, A4, A5 and A6 into one short report per department, and hand it over on the November trip | Officer cooperation, which every other track needs |
 
-A8 is the door-opener. The Secretary's dashboard shows totals, pendings by who
+A8 is the door-opener. The officer's dashboard shows totals, pendings by who
 holds them, and overdue counts in 7, 15 and 30-day buckets. What it does not
 show is any history: how those numbers have moved, how this department compares
 to its own past, or how often the same petitioner comes back. That is what the
@@ -114,11 +115,12 @@ Four field tasks.
 
 **B1, where the officer sits in the chain. Largely answered in August, and it
 changes the feature set.** We saw the Labour & ESI login on 18 August and the
-SSEPD dashboard on 19 August. Both are the department Secretary's account. It
-carries the registration screen, which takes the citizen's details and then the
-department, the escalation chain, the category and subcategory, and the
-remarks. It also carries the forwarding screen and the action history for each
-case.
+SSEPD dashboard on 19 August. Both are the account the department's grievance
+officer works in, titled Secretary because that is the department node in the
+routing chain. It carries the registration screen, which takes the citizen's
+details and then the department, the escalation chain, the category and
+subcategory, and the remarks. It also carries the forwarding screen and the
+action history for each case.
 
 So these officers do both. They receive cases routed to them, and they can
 register and assign. Category and department suggestions are therefore live
@@ -210,8 +212,8 @@ numbers than we have.
   pilot could detect. If that effect is implausibly large at the volumes we
   measure, the comparison does not run. One reading from the SSEPD dashboard on
   19 August sharpens the risk: against 51,460 tickets in total and 1,471
-  pending, only 27 were pending with the Secretary personally, and 20 were
-  overdue. The department's historical volume is large. The number of cases
+  pending, only 27 sat with the department node itself, which is the officer we
+  would randomise on, and 20 were overdue. The department's historical volume is large. The number of cases
   actually passing through the officer we would randomise on may be small, and
   that is the number gate 1 has to work from.
 - **Gate 2, January 2027.** The shadow-phase measurement of how much of the
