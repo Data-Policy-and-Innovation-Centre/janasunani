@@ -86,20 +86,32 @@ two departments. Officers told us in the 12 August field record that they do not
 know their repeat-filer rate. This is both a pilot input and the best available
 door-opener for the first department meeting.
 
-**A5. Downstream authority variation.** For these two departments, tabulate the
-distinct `action_history.action_taken_by` values receiving the first downstream
-assignment, by district and subcategory. This is the routing decision our
-officers actually make: DSSO, DLO, BDO, Collector. `action_taken_by` is free
-text never joined to a role table
-(`janasunani/analytics/sql/handoff.sql:31`), so expect a normalisation job. Output: is a (subcategory, district) to authority mapping
-learnable, and how concentrated is it.
+**A5. Downstream authority variation.** Two halves, and the 18 August
+walkthrough split them. The portal already holds the escalation chains as
+configuration: `Define Workflow` offers a fixed list (Self Assign, BDO to
+Collector to Secretary, DSSO to Collector to Secretary, DLO to Commissioner to
+Secretary, and so on), and the admin escalation table lists them per office and
+is pageable. **Read that list first; it is a lookup, not a learning problem.**
+
+What has to be learned is the second half: which *named* office within the
+chosen chain receives the case. Tabulate the distinct
+`action_history.action_taken_by` values receiving the first downstream
+assignment, by district and subcategory. `action_taken_by` is free text never
+joined to a role table (`janasunani/analytics/sql/handoff.sql:31`), so expect a
+normalisation job. Output: how concentrated the named-office choice is once the
+chain is fixed.
 
 **A6. Ageing and the 30-day deadline.** `escalation_date` is ingested,
 documented as an overdue date (`janasunani/db/models.py:161`), and read by
 nothing downstream. Audit its semantics against `created_on` and `resolved_on`
-for these two departments. If it holds up it is the cheapest deadline feature in
-the project. Annex C of the field record gives 30 days as the ORTPSA-service
-deadline.
+for these two departments. Annex C of the field record gives 30 days as the
+ORTPSA-service deadline.
+
+**Now also a reconciliation job.** The department dashboard carries its own
+overdue panel bucketed at within 7, more than 7, more than 15 and more than 30
+days (SSEPD, 19 August). Our per-case ageing numbers have to agree with the
+counts the officer already sees, or the feature loses trust on first contact.
+Reconcile against that panel, not only against the raw fields.
 
 **A7. Field-semantics audit.** The AB_PLAN §6 blocker, scoped to the pilot
 slice. Validate the action taxonomy, whether `dept` is the assignment or the
@@ -109,9 +121,10 @@ at 34.4% in 2025 (`janasunani/experiments/routing_outcome/dataset.py:28-36`);
 the pilot's follow-up window must be chosen with that in view.
 
 **A8. Retrospective department report.** Package A1, A3, A4, A5 and A6 as a
-short brief per department. The portal shows counts and disposal percentages and
-carries no time metric on any screen, so an ageing profile and a repeat-filer
-rate are things these officers have never seen about their own caseload.
+short brief per department. The Secretary's dashboard shows totals, pendings by
+holder and overdue counts in 7/15/30-day buckets, but carries no history: no
+movement over time, no comparison against the department's own past, no
+repeat-filing rate. That is what these briefs add.
 Aggregates only, no citizen text, no portal screenshots
 (`docs/presentations/README.md`). Target mid-November 2026, hand-delivered on
 the first field trip. **This is the buy-in deliverable and it costs no
@@ -130,23 +143,50 @@ The 9.3 MB copy in `docs/` carries real citizen data in its Annex B.1 figures
 and must not be quoted from or circulated. Both are gitignored (`docs/*.docx`),
 so they exist in a working checkout and not in a fresh clone.
 
-**B1. Remote screen-share walkthrough, 45 minutes per department (September).**
-The repo's own note is that half an hour of screen sharing would settle the
-department-login question. Establish:
+**B1. Department login walkthrough. Partly done; finish it (September).**
 
-- **Where in the chain this officer sits.** Do they receive grievances already
-  routed to the department, or do they also register intake? **This single
-  answer decides the feature set and is Task 1 of the whole pilot.** If they are
-  downstream-only, the category and department suggestions are worthless to them
-  and intra-department authority is the only routing feature worth building. It
-  also decides whether AB_PLAN §14.2's inbox-composition argument holds.
-- Their queue screens, workflow dropdown (is it the same ~50 chains), closure
-  templates, discard reasons, revert modal.
+Source: Labour & ESI session 18 August 2026 and SSEPD dashboard 19 August 2026,
+in Box under `2. Projects/21. Governance/Grievance Redressal/Department
+Summaries and Photos`, plus the Labour & ESI meeting summary of 14 August.
+Screenshots stay in Box and are not copied into this repo.
+
+**Established.**
+
+- The account is the **department Secretary's**, with admin rights: workflow
+  config, the escalation settings screens under `/Admin/Setting/Escalation`, and
+  Janasunani Reports.
+- It carries the **registration path** (`/Admin/Eabhijog/Register/regNext/...`):
+  citizen details, then Assign ATA with department, `Define Workflow`, the named
+  office at each level, category, subcategory and remarks. So the officer both
+  receives and registers. **This fires the trigger AB_PLAN §14.2 set for itself**
+  and is now a gate-1 input.
+- `Define Workflow` is a fixed list of escalation chains, and the admin
+  escalation table lists them per office. A5's chain half is a lookup.
+- **Forward To**: designation, named assignee, a seven-item canned remark
+  dropdown plus Other, free remark (500 characters on the subordinate path, 2000
+  at assignment), and a jpg/png/pdf upload capped at 5 MB.
+- **Action History** is on screen per case: action date, description (Assigned,
+  Forwarded To Subordinate, Replied, Forward), sender, and who currently holds
+  the case. Accept, Revert and Forward-to-subordinate are the reply actions.
+- The dashboard carries mode counts, pendings split by holder, and an **overdue
+  panel bucketed at 7, 15 and 30 days**. The "no time metric on any screen"
+  finding came from the CM Grievance Cell login and does not hold here.
+- Record-level reports exist, the Joint Hearing data report among them.
+- Physical grievances arrive through a manual chain and OSWAS or e-Dispatch.
+  There is no OSWAS integration for grievance handling.
+
+**Still open, and these are what the September calls are for.**
+
+- **How often the registration path is actually used**, as against receiving
+  already-routed cases. AB_PLAN §14.2 turns on this.
+- **The arrival rate at the officer.** SSEPD showed 27 cases pending with the
+  Secretary against 1,471 pending in the department. Throughput at the officer,
+  not department volume, is the power denominator.
 - Whether "Department * (Suggested by AI)" appears on their screen, and whether
   they ever act on it.
-- **What the report screens can export**: record-level or aggregate, CSV or
-  print-only, date-ranged or not. This decides which rung of AB_PLAN §14.5 the
-  pilot lands on.
+- **Whether any record-level report exports in bulk**, and in what format. This
+  decides which rung of AB_PLAN §14.5 the pilot lands on.
+- Closure templates, discard reasons and the revert modal at this login.
 
 **B2. Officer-side process map, per department.** Swimlane from arrival at the
 department node to closure: read, decide downstream authority, free-type the
@@ -202,14 +242,23 @@ follow-through rather than as new requests.
 
 ## 4. Interventions, ranked by prior bang for buck
 
-Ranked for this audience: a department-node officer, downstream of the routing
-decision, working scanned Odia documents, with no time metric on any screen.
+Ranked for this audience: a department Secretary who both receives and registers
+grievances, works scanned Odia documents, and already has aggregate overdue
+counts on the dashboard but no per-case list behind them.
+
+Both departments have already been shown a Janasunani 2.0 feature list
+(auto-categorisation, similar-case detection, severity and sentiment, document
+AI, department prediction, reopening). Labour & ESI keeps a ten-point wishlist
+on the wall: reminders at 7 days, escalation at 15, a separate tab for reverted
+grievances, section mapping, ATRs in chronological order, ATR notification to
+citizens, and duplicate or bulk petitions. **Features 1 and 2 answer items on
+that list.** Present them that way rather than as something new.
 
 | Intervention | Needs | Feasibility | Binding constraint |
 |---|---|---|---|
 | 1. Ageing and deadline view | A3, A6 | High | None. No model and no model risk |
 | 2. Repeat-filer and duplicate panel | A4 | High | `dedup_signatures` / `dedup_groups` held out of the lake pending Phase 18 RBAC; read OLTP directly for two officers |
-| 4. Intra-department authority suggestion | A5, B1 | Medium | Runs only if B1 says the officer makes this call and A5 says it is learnable |
+| 4. Intra-department authority suggestion | A5 | High | The escalation chains are configured in the portal and readable. Only the named-office choice has to be learned |
 | 3. Document summary and key-fact extraction | OCR reference sample (#53), unowned | Low | 4/26 residual PII on the development set. Not showable to an officer as it stands |
 | 5. Low-signal triage | Excluded from SSEPD | Not built | Safety decision, AB_PLAN §14.6 |
 | 6. Category suggestion | | Not built | Officers said category does not change routing |
@@ -219,9 +268,11 @@ Numbering follows the tiers below, which carry the argument.
 **Tier 1, build and test.**
 
 1. **Ageing and deadline view.** Pending cases oldest first, days elapsed, the
-   resolution time typed at assignment, days to the 30-day mark. No model, no
-   model risk, and the portal has no time metric anywhere. Highest ratio of
-   officer value to build cost in the project.
+   resolution time typed at assignment, days to the 30-day mark. No model and no
+   model risk. The dashboard already gives the aggregate overdue counts; what it
+   lacks is the per-case list behind them, which is what an officer needs to act
+   on a specific case. Reconcile against the portal's own buckets (A6). Highest
+   ratio of officer value to build cost in the project.
 2. **Repeat-filer and duplicate panel.** "This petitioner has filed three times
    before; here is what happened." Already built and corpus-wide capable since
    26 August. Officers do not have this and said they do not know their repeat
@@ -237,12 +288,18 @@ Numbering follows the tiers below, which carry the argument.
 **Tier 2, only if Tier 1 lands early.**
 
 4. **Intra-department authority suggestion**, built from A5, keyed on
-   (subcategory, district), restricted to these two departments. Not the
-   existing crosswalk: that predicts the *department*, a decision already made
-   before these officers see the case, and it cannot reach Labour & ESI from the
-   live path at all, because Labour & ESI exists only at subcategory keys and
-   the live classifier predicts no subcategory
+   (subcategory, district), restricted to these two departments. Two halves: the
+   escalation chain, which the portal holds as configuration and we read; and the
+   named office within it, which we learn. Distinct from the existing crosswalk,
+   which predicts the *department* and cannot reach Labour & ESI from the live
+   path at all, because Labour & ESI exists only at subcategory keys and the live
+   classifier predicts no subcategory
    (`janasunani/routing/crosswalk.py:15-22`).
+
+   The category and department suggestions are **no longer ruled out**. That
+   exclusion rested on the officer being downstream-only, which B1 has
+   disproved. How much weight they carry depends on how often the registration
+   path is used.
 
 **Tier 3, excluded.**
 

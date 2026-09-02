@@ -776,12 +776,24 @@ We take the contaminated design and bound it rather than assume it away:
   effect of an officer having the tool at all, which is the policy quantity and
   which only §3's design could deliver.
 
-Interference through inbox composition, the second objection in Appendix A, is
-weaker here than at intake: these officers sit downstream of the department
-routing decision, so a treated case does not move a control case into or out of
-their queue. Confirm this in field work (PILOT_SSEPD_LABOUR §B1) before relying
-on it; if these officers turn out to also register intake, the objection returns
-with full force and the design needs revisiting.
+Interference through inbox composition, the second objection in Appendix A, was
+argued to be weaker here than at intake, on the assumption that these officers
+sit downstream of the department routing decision.
+
+**That assumption is now in doubt, and the trigger this paragraph set has
+fired.** The 18 August Labour & ESI walkthrough and the 19 August SSEPD
+dashboard reading show the account is the department Secretary's, and that it
+carries the registration screen (`/Admin/Eabhijog/Register/regNext/...`) with
+department, escalation chain, category, subcategory and remarks, alongside the
+forwarding screen and the per-case action history. These officers can register
+and assign, not only receive.
+
+What remains unknown is how often they do. If registration is a routine part of
+the caseload, the Appendix A objection returns in force and the design needs
+revisiting before launch. If it is an exception path used for walk-ins and
+physical letters, the downstream argument mostly holds and the exposure needs
+bounding rather than the design replacing. **Settling this is now a gate-1
+input, not a field detail** (PILOT_SSEPD_LABOUR §B1).
 
 ### 14.3 Revised design and estimand
 
@@ -841,6 +853,12 @@ estimator should be the simplest one that respects the blocking.
   credible at the measured volumes, the randomized comparison does not run at
   all.** The fallback is the shadow phase and the descriptive endpoints. Two
   further things it must settle:
+  - Whether either department has enough volume **passing through the officer**
+    to randomize at all. The 19 August SSEPD dashboard read 51,460 tickets in
+    total and 1,471 pending, of which 27 were pending with the Secretary
+    personally and 20 overdue. Historical department volume is not the
+    denominator; the officer's own throughput is, and it may be an order of
+    magnitude smaller. Establish the arrival rate at the officer directly.
   - Whether Labour & ESI has enough volume to randomize at all. Indicative
     evidence says probably not on its own: in the committed crosswalk
     (`janasunani/routing/reference/routing_crosswalk.json`) SSEPD's largest
@@ -863,13 +881,20 @@ by the field work:
    scoped to these two departments** (`janasunani/ingestion/client.py`, currently
    parked for want of credentials). This is a far smaller ask than the
    integration OCAC refused and should be made separately and explicitly.
-2. **A record-level portal report export**, if the department login has one. The
-   reporting surface documented for the CM Grievance Cell is counts only, with
-   no median age and no time-to-resolve on any screen, so this may not exist.
-3. **Public ticket-status lookup** for the pilot cohort, whose ticket numbers we
+2. **The portal's own per-case action history**, which the 18 August walkthrough
+   confirms is present in the department login: one row per step with action
+   date, description, sender, and who currently holds the case. Reading it case
+   by case is available today; whether it can be exported in bulk is the open
+   question.
+3. **A record-level portal report export.** The department login carries
+   record-level reports, the Joint Hearing data report among them, so this rung
+   is likelier than the CM Grievance Cell surface suggested. That surface was
+   counts only, and it is no longer the best evidence about what a department
+   login can do.
+4. **Public ticket-status lookup** for the pilot cohort, whose ticket numbers we
    hold because they passed through our console. Requires department permission
    and a stated position on rate and terms of use before anyone writes it.
-4. **Officer weekly log.** Self-reported, lowest confidence, always available.
+5. **Officer weekly log.** Self-reported, lowest confidence, always available.
 
 **Re-key fidelity is a first-class measurement, not an implementation detail.**
 The intervention reaches the citizen only through a human retyping it. Audit a

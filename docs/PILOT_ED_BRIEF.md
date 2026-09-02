@@ -29,13 +29,16 @@ cases stay comparable.
   citizen outcomes will be observations, with no claim about cause.
 - Each piece of the desk analysis decides a specific feature or design choice.
   One of them is the deliverable that buys officer cooperation.
-- One field question decides the feature set: do these officers receive
-  grievances already routed to the department, or do they also register new
-  ones. We answer it in September by screen share.
-- Two features are high feasibility and use no AI model: a view of pending cases
-  by age against the 30-day deadline, and a panel showing whether the petitioner
-  has filed before. The document summary is low feasibility and may not ship at
-  all. Suggesting which office to forward to depends on the field answer.
+- The August walkthroughs at Labour & ESI and SSEPD changed three of our
+  assumptions. The account is the department Secretary's, it carries admin
+  rights, and it can register a grievance as well as forward one. The portal
+  already shows overdue cases in 7, 15 and 30-day buckets. The forwarding chains
+  are a configured list we can read rather than a pattern we have to learn.
+- Two features are high feasibility and use no AI model: a per-case list of
+  pending grievances by age against the 30-day deadline, and a panel showing
+  whether the petitioner has filed before. Both narrow what the portal already
+  does rather than adding something absent. The document summary is low
+  feasibility and may not ship at all.
 - We are excluding the low-signal flag for SSEPD, which would mark a grievance
   as unlikely to need action. That is a safety judgement, and it is the one item
   here that needs your sign-off rather than a note.
@@ -54,8 +57,13 @@ cases stay comparable.
 ## 1. What the pilot is
 
 There is no integration, so officers read our outputs on a separate screen and
-retype what they choose into the portal. There are two grievance officers in
-total. The pilot runs in three tracks.
+retype what they choose into the portal. There is one grievance officer per
+department. In both cases that is the department Secretary's login, which
+carries admin rights over workflow configuration and can register a grievance,
+assign the action-taking authority, and forward to a Commissioner, a Collector,
+an MD or Director, or a named subordinate.
+
+The pilot runs in three tracks.
 
 **Track 1, desk analysis.** Runs on the 1.37 million grievances we already hold,
 using code we have already written. Needs no app, no travel and no permission.
@@ -87,15 +95,16 @@ already written.
 | A2 smallest detectable effect | Work out, from those volumes and from the spread in handling times B4 measures, how large an improvement this pilot could detect | Gate 1 on the randomised comparison |
 | A3 turnaround baseline | Measure how long cases take end to end today, and how long they sit between recorded steps | The ageing view, and how long we follow a case after filing |
 | A4 repeat filers | Match petitioners across the full history to find how often the same person files again, and what happened the previous time | The repeat-filer panel, and the first department meeting |
-| A5 forwarding patterns | Tabulate which office received the case after the department officer forwarded it, by district and case type. The field holding this is free text, so it needs cleaning first | Whether a forwarding suggestion is worth building |
-| A6 ageing fields | Check whether the overdue date already in the record is reliable enough to count days against the 30-day deadline | The deadline half of the ageing view |
+| A5 forwarding patterns | Read the escalation chains the portal already has configured for each department, then tabulate which named office actually received the case, by district and case type. The field holding the second half is free text, so it needs cleaning | How much of a forwarding suggestion is a lookup and how much has to be learned |
+| A6 ageing fields | Check the overdue date in the record against the portal's own overdue counts, which bucket cases at 7, 15 and 30 days | Whether our per-case ageing list agrees with the portal the officer already trusts |
 | A7 what the fields mean | Audit the list of action types, count how many cases are still open when a reporting window closes, and establish whether the department field records the original assignment or the final position | Whether any number we report can be interpreted |
 | A8 department briefs | Package A1, A3, A4, A5 and A6 into one short report per department, and hand it over on the November trip | Officer cooperation, which every other track needs |
 
-A8 is the door-opener. The live portal reports counts and disposal percentages,
-and no screen on it shows how long anything takes. A profile of case age and a
-repeat-filing rate are things these officers have never seen about their own
-caseload. It costs no engineering.
+A8 is the door-opener. The Secretary's dashboard shows totals, pendings by who
+holds them, and overdue counts in 7, 15 and 30-day buckets. What it does not
+show is any history: how those numbers have moved, how this department compares
+to its own past, or how often the same petitioner comes back. That is what the
+briefs carry, and they cost no engineering.
 
 ---
 
@@ -103,14 +112,19 @@ caseload. It costs no engineering.
 
 Four field tasks.
 
-**B1, where the officer sits in the chain. This settles the feature set.** Do
-these officers receive grievances already routed to the department, or do they
-also register new ones. Everything we know about the workflow comes from one
-login, the CM Grievance Cell, which is roughly one intake in six. If the
-officers only receive already-routed cases, then suggesting a category or a
-department is worthless to them, and the only forwarding suggestion worth
-building is which office inside the department should get the case. A 45-minute
-screen share per department settles it. This is task 1 of the pilot.
+**B1, where the officer sits in the chain. Largely answered in August, and it
+changes the feature set.** We saw the Labour & ESI login on 18 August and the
+SSEPD dashboard on 19 August. Both are the department Secretary's account. It
+carries the registration screen, which takes the citizen's details and then the
+department, the escalation chain, the category and subcategory, and the
+remarks. It also carries the forwarding screen and the action history for each
+case.
+
+So these officers do both. They receive cases routed to them, and they can
+register and assign. Category and department suggestions are therefore live
+again rather than worthless, which our earlier reading had ruled out. What
+remains for B1 is how often each path is actually used, which decides how much
+weight the registration-side features carry.
 
 **B2, the officer-time baseline, so we know how long a case takes an officer
 today.** A step-by-step map per department, from the case arriving at the
@@ -137,16 +151,26 @@ is the fallback if the console's own recording underperforms.
 
 | Feature | Needs | Feasibility | What would stop it |
 |---|---|---|---|
-| Ageing view: pending cases oldest first, days elapsed, days to the 30-day deadline | A3, A6 | High | Nothing. No AI model involved, so no model risk |
+| Ageing view: pending cases oldest first, days elapsed, days to the 30-day deadline | A3, A6 | High | Nothing. No AI model involved, so no model risk. The portal has the aggregate overdue counts; what it lacks is the per-case list behind them |
 | Repeat-filer panel: has this petitioner filed before, and what happened | A4 | High | The duplicate-detection tables sit outside the analysis store. For two officers we read the live database directly |
-| Forwarding suggestion: which office inside the department should get the case | A5, B1 | Medium | Runs only if B1 says the officer makes this call and A5 says the pattern is predictable |
+| Forwarding suggestion: which office inside the department should get the case | A5 | High | The escalation chains are already configured in the portal and can be read off. Only the choice of named office has to be learned |
 | Document summary: the key facts of a scanned grievance, in text | A hand-checked sample of scanned documents, which nobody owns yet | Low | Four of twenty-six drafts left personal information in the summary. It cannot be shown to an officer in that state |
 | Low-signal flag: marking a grievance as unlikely to need action | Excluded | Not built | Safety decision, below |
 
-The first two are built and tested together in wave 1. The summary is a wave 2
-item and ships only if it first passes a check for accuracy and for leaked
-personal information. If it fails that check, it does not ship, and that outcome
-is itself worth reporting.
+The first two are built and tested together in wave 1. The forwarding suggestion
+moved up after August: we had expected to learn the chain from history, and the
+portal turns out to hold it as configuration. The summary is a wave 2 item and
+ships only if it first passes a check for accuracy and for leaked personal
+information. If it fails that check, it does not ship, and that outcome is
+itself worth reporting.
+
+Both departments have already been shown a Janasunani 2.0 feature list covering
+auto-categorisation, similar-case detection, severity and sentiment, document
+AI, and department prediction. Labour & ESI keeps its own ten-point list on the
+wall, which asks for reminders at 7 days, escalation at 15, and handling of
+duplicate and bulk petitions. Our first two features answer items on that list.
+That is the frame to use with the departments, in preference to introducing
+them as something new.
 
 **One exclusion needs your sign-off, because it is a safety judgement rather
 than a product choice. We are not building the low-signal flag for SSEPD.** The
@@ -184,7 +208,12 @@ numbers than we have.
 
 - **Gate 1, end September 2026.** The calculation of the smallest effect this
   pilot could detect. If that effect is implausibly large at the volumes we
-  measure, the comparison does not run.
+  measure, the comparison does not run. One reading from the SSEPD dashboard on
+  19 August sharpens the risk: against 51,460 tickets in total and 1,471
+  pending, only 27 were pending with the Secretary personally, and 20 were
+  overdue. The department's historical volume is large. The number of cases
+  actually passing through the officer we would randomise on may be small, and
+  that is the number gate 1 has to work from.
 - **Gate 2, January 2027.** The shadow-phase measurement of how much of the
   console's output actually reaches the portal. The tool reaches a citizen only
   because a person retypes it. Below the threshold we fix in advance, the
@@ -212,8 +241,9 @@ Where each measurement comes from, given no integration:
 | What the console records automatically | Handling time, screens opened, returns to a case, on all cases | High. Checked against the B4 stopwatch measurement |
 | The officer's decision form in the console | Office chosen, days allowed, remark, before retyping | High, though it is the officer's own account |
 | Weekly audit of 10% of cases against the portal | How much of the console output was retyped accurately, and gate 2 | High, and a headline finding in its own right |
-| Read-only access to the two departments' records | Time to the first action after the officer forwards, resolution at 30 and 60 days | Medium. Depends on ask 3 |
-| An export from the portal with one row per grievance | The same, less reliably | Low. May not exist at the department login |
+| The portal's own action history, one row per step | Date, what was done, who sent it, who holds the case now | High for reading case by case. It is on screen in the department login. Whether it can be exported in bulk is the open question |
+| Read-only access to the two departments' records | The same, without an officer opening each case | Medium. Depends on ask 3 |
+| An export from the portal with one row per grievance | Whole-caseload figures without our reading each case | Medium. Record-level reports do exist at the department login, so this is likelier than we assumed |
 | Citizen phone survey | Whether the citizen says it was resolved, and satisfaction | Medium. Depends on ask 4 |
 
 ---
@@ -239,8 +269,6 @@ randomised half runs to July.
 ---
 
 ## 7. What we need from you
-
-Asks two, three and four from the 17 August brief, carried forward.
 
 1. **Written sign-off naming both departments** for a bounded trial.
 2. **Permission to log what is suggested and what the officer does.** A
