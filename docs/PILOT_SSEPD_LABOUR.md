@@ -59,6 +59,31 @@ departments, no app and no travel. Start now. RA-owned.
 Labour & Employees' State Insurance}. Monthly filings, by district, by
 category/subcategory, by `mode`, 2021 to 2025. Sizes the pilot and feeds A2.
 
+**Measured, 2026-09-02, on `data/interim/complaints.parquet` (55,798 cases:
+SSEPD 45,339, Labour & ESI 10,459). Mode splits the caseload into two regimes
+that need different things from us.**
+
+| | SSEPD | Labour & ESI |
+|---|---|---|
+| Citizen-typed (Website, Twitter, WhatsApp, Mobile, Email) | 63.6% | 77.9% |
+| Document-borne (Physical, Letter, Joint Hearing, CM visits) | 36.4% | 22.1% |
+
+The regimes differ in what the record actually contains. In the citizen-typed
+modes the text field holds the grievance: median length 217 characters on
+Website, 271 on Twitter, 283 on Mobile. In the document-borne modes it holds a
+stub an officer typed: median 31 characters on Physical, 22 on Joint Hearing, 18
+on a CMO district visit, 58 on Letter. Those modes carry a scanned document
+98-100% of the time. Twitter carries none at all.
+
+The Odia shares confirm the split rather than contradicting it. The text field is
+41% Odia on Twitter and 38% on Website, against 2.7% on Physical and 2.4% on
+Joint Hearing. The paper cases are not more English; their text field is not the
+grievance.
+
+Median days to resolution also varies four-fold by mode, from 16 (Joint Hearing)
+to 60 (Twitter), with Website at 30 and Physical at 43. **Mode is therefore a
+pre-treatment covariate the design has to carry** (AB_PLAN §14.4).
+
 Indicative prior from the committed crosswalk
 (`janasunani/routing/reference/routing_crosswalk.json`): SSEPD's largest entry
 is `financial assistance` at support 7,020; Labour & ESI's largest is
@@ -232,7 +257,9 @@ resolution date.
 three days per department. Observer with a stopwatch and a structured form. Per
 grievance: seconds reading, seconds deciding, seconds on data entry, screens
 touched, times the officer leaves the case and returns. Target 60 to 80 observed
-cases per department. This makes the handling-time outcome interpretable, feeds
+cases per department, **stratified by mode**. A typed 217-character Website
+complaint and a scanned Odia letter are different tasks; an unstratified average
+over them describes neither (A1). This makes the handling-time outcome interpretable, feeds
 the A2 variance input, and is the fallback estimate if console telemetry
 disappoints.
 
@@ -302,8 +329,12 @@ Numbering follows the tiers below, which carry the argument.
    rate. Needs `dedup_signatures` and `dedup_groups`, which are held out of the
    lake pending Phase 18 RBAC (`janasunani/olap/materialize.py:29-41`); for two
    officers, read OLTP directly under existing controls.
-3. **Document summary and key-fact extraction.** Largest potential burden
-   reduction, least ready. Development evidence: 55/84 critical facts retained,
+3. **Document summary and key-fact extraction.** **This is the only feature that
+   reaches the document-borne third of SSEPD's caseload** (A1: 36.4% of SSEPD,
+   22.1% of Labour & ESI). In those modes the text field is an officer-typed
+   stub of 20 to 30 characters and the grievance exists only in the scan, so
+   anything reading what the citizen wrote is blind there without it. Largest
+   potential burden reduction, least ready. Development evidence: 55/84 critical facts retained,
    8/26 usable without edit, 4/26 residual PII, and it skipped all four coherent
    Odia cases. **It cannot be shown to an officer at 4/26 residual PII.** It
    clears a gate before launch or it ships in a later wave.
@@ -375,6 +406,12 @@ Ordered. Items 1 to 3 are prerequisites regardless of feature scope.
    pilot is the largest functional gap in the system. Scope it to what features
    1 and 2 need, which is very little, so it does not block launch. It becomes
    blocking only if feature 3 ships.
+
+   **State the consequence rather than leaving it implied.** Features 1 and 2
+   work across every mode, because they read dates and petitioner identity
+   rather than content. So a pilot of features 1 and 2 alone is mode-blind in a
+   good way. The moment we claim anything about understanding grievance content,
+   we are claiming it about the citizen-typed 64% of SSEPD and not the rest.
 7. **PII gate resolution.** `janasunani-evaluate-pii` exits non-zero because
    78.3% coverage sits below the 80.56% DSI reference constant at
    `janasunani/pipeline/pii_eval.py:31`, a reference every other document says
