@@ -22,10 +22,12 @@ Nothing here prints a secret, and the SSH key comes from the agent as usual.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import ipaddress
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import urllib.request
@@ -61,10 +63,41 @@ def _run_json(args: list[str], region: str) -> dict | None:
         return None
 
 
+@contextlib.contextmanager
+def _ipv4_only():
+    """Force IPv4 for the duration of the block.
+
+    A carrier-NAT network (phone tethering, in the case that found this) can
+    hand out a *different* public IPv4 depending on whether the connection took
+    the native-IPv6 path or the IPv4 one:
+
+        curl    https://checkip.amazonaws.com  -> 152.57.34.241
+        curl -4 https://checkip.amazonaws.com  -> 152.57.1.35
+
+    The box is a bare IPv4 address with no AAAA, so `ssh` can only use the
+    second path -- while a dual-stack lookup here reported the first. The script
+    then opened tcp/22 to an address the SSH connection never came from, said
+    "already permitted", and the connection timed out anyway, which looks
+    exactly like the box being down. Ask over the same family SSH will use.
+    """
+    real = socket.getaddrinfo
+
+    def ipv4_only(*args, **kwargs):
+        infos = real(*args, **kwargs)
+        v4 = [info for info in infos if info[0] == socket.AF_INET]
+        return v4 or infos
+
+    socket.getaddrinfo = ipv4_only
+    try:
+        yield
+    finally:
+        socket.getaddrinfo = real
+
+
 def current_ip() -> str | None:
     """This machine's public IPv4, from the same service the deploy job uses."""
     try:
-        with urllib.request.urlopen(IP_SERVICE, timeout=15) as response:
+        with _ipv4_only(), urllib.request.urlopen(IP_SERVICE, timeout=15) as response:
             raw = response.read().decode("utf-8").strip()
     except Exception as exc:  # noqa: BLE001 - any failure is just "unknown"
         print(f"could not determine public IP: {exc}", file=sys.stderr)
