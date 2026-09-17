@@ -52,11 +52,18 @@ from janasunani.serving.intelligence import (
     SupervisorProvider,
     supervisor_provider_from_env,
 )
+from janasunani.serving.monitoring import (
+    MonitoringArtifactError,
+    MonitoringProvider,
+    monitoring_provider_from_env,
+)
 from janasunani.serving.processor import GrievanceProcessor, MockGrievanceProcessor
 from janasunani.serving.schemas import (
     GrievanceResult,
     HealthResponse,
     HistoryPage,
+    MonitoringCatalog,
+    MonitoringDashboard,
     SupervisorDashboard,
 )
 from janasunani.serving.store import InMemoryResultStore, ResultStore
@@ -73,12 +80,14 @@ def create_app(
     history: Optional[HistoryProvider] = None,
     result_store: Optional[ResultStore] = None,
     supervisor: Optional[SupervisorProvider] = None,
+    monitoring: Optional[MonitoringProvider] = None,
 ) -> FastAPI:
     """App factory; tests and the wire-up inject their own processor/history."""
     processor = processor or MockGrievanceProcessor()
     history = history or MockHistory()
     result_store = result_store or InMemoryResultStore()
     supervisor = supervisor if supervisor is not None else supervisor_provider_from_env()
+    monitoring = monitoring if monitoring is not None else monitoring_provider_from_env()
 
     app = FastAPI(title="Janasunani 2.0 API", version="0.1.0")
     app.add_middleware(
@@ -165,6 +174,25 @@ def create_app(
         """Return only validated aggregate findings, otherwise explicit gaps."""
 
         return supervisor.dashboard()
+
+    @app.get("/supervisor/monitoring/catalog", response_model=MonitoringCatalog)
+    def get_monitoring_catalog() -> MonitoringCatalog:
+        try:
+            return monitoring.catalog()
+        except MonitoringArtifactError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.get("/supervisor/monitoring", response_model=MonitoringDashboard)
+    def get_monitoring_dashboard(
+        scope_id: str = Query(..., min_length=1, max_length=160, pattern=r"^[a-z0-9-]+$"),
+        period: str = Query(..., min_length=1, max_length=40, pattern=r"^[a-z0-9-]+$"),
+    ) -> MonitoringDashboard:
+        try:
+            return monitoring.dashboard(scope_id, period)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except MonitoringArtifactError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     return app
 
