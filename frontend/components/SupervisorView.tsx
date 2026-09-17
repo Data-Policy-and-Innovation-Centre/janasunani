@@ -244,30 +244,15 @@ export function SupervisorView({ data }: { data: SupervisorDashboard }) {
       </div>
 
       <Card title={data.workload.title} hint={data.workload.kind}>
-        <div className="flex flex-col gap-3">
-          <div>
-            <Badge tone="maroon">{data.workload.kind}</Badge>
-          </div>
-          <WorkloadFinding data={data.workload} />
-        </div>
+        <WorkloadFinding data={data.workload} />
       </Card>
 
       <Card title={data.spike.title} hint={data.spike.kind}>
-        <div className="flex flex-col gap-3">
-          <div>
-            <Badge tone="maroon">{data.spike.kind}</Badge>
-          </div>
-          <SpikeFinding data={data.spike} />
-        </div>
+        <SpikeFinding data={data.spike} />
       </Card>
 
       <Card title={data.closure.title} hint={data.closure.kind}>
-        <div className="flex flex-col gap-3">
-          <div>
-            <Badge tone="neutral">{data.closure.kind}</Badge>
-          </div>
-          <ClosureFinding data={data.closure} />
-        </div>
+        <ClosureFinding data={data.closure} />
       </Card>
     </div>
   );

@@ -61,8 +61,8 @@ function Footer() {
         </span>
         <span className="text-white/70">
           Data, Policy and Innovation Centre — demo build. A &quot;mock
-          result&quot; badge marks illustrative responses; unmarked results
-          come from the live pipeline.
+          result&quot; badge marks illustrative grievance responses. Supervisor
+          metrics come from validated aggregate artifacts.
         </span>
       </div>
     </footer>
