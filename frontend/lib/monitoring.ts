@@ -1,9 +1,13 @@
+// Mirrors the serving contract's MonitoringScope.kind
+// (janasunani/serving/schemas.py). Both subtype kinds are children reached
+// through the same parent cascade rather than viewpoints of their own.
 export type ScopeKind =
   | "statewide"
   | "department"
   | "entry_office"
   | "handling_office"
-  | "handling_office_subtype";
+  | "handling_office_subtype"
+  | "subcategory";
 
 export interface MonitoringScope {
   id: string;

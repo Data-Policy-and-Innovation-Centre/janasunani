@@ -221,6 +221,14 @@ export function MonitoringDashboard() {
     catalog && parentScope
       ? publishedScopes(subtypesFor(catalog, parentScope.id))
       : [];
+  // A department's children are its subcategories; a handling office's are its
+  // places. Same cascade, so the control is named after what it currently holds
+  // rather than carrying one label that is wrong half the time.
+  const childrenAreSubcategories = children[0]?.kind === "subcategory";
+  const childFieldLabel = childrenAreSubcategories ? "Subcategory" : "Subtype";
+  const childAllLabel = childrenAreSubcategories
+    ? "All subcategories"
+    : "All recorded steps";
   const quick = catalog ? quickScopes(catalog) : [];
 
   function chooseView(next: string) {
@@ -343,7 +351,7 @@ export function MonitoringDashboard() {
             </select>
           </label>
           <label className={labelClass}>
-            Subtype
+            {childFieldLabel}
             <select
               disabled={!children.length}
               value={children.some((child) => child.id === scopeId) ? scopeId : ""}
@@ -353,7 +361,7 @@ export function MonitoringDashboard() {
               className={selectClass}
             >
               <option value="">
-                {children.length ? "All recorded steps" : "No subtype"}
+                {children.length ? childAllLabel : `No ${childFieldLabel.toLowerCase()}`}
               </option>
               {children.map((scope) => (
                 <option key={scope.id} value={scope.id}>

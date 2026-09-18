@@ -52,8 +52,10 @@ const EN: Dictionary = {
     "transfer-rate": "Share of cases transferred",
     "loop-rate": "Came back to the same office",
     "followup-proxy": "No follow-up within 7 days",
-    // How long a case takes
-    "median-total": "Typical time to close",
+    // How long a case takes. The mean leads because it is the total the five
+    // phases add up to; the median is phrased so it cannot be mistaken for it.
+    "mean-total": "Average time to close",
+    "median-total": "Half of cases close within",
     "tiling-coverage": "Cases with usable dates",
     // How many cases
     filings: "Cases filed",

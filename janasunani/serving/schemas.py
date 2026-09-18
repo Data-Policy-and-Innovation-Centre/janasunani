@@ -604,6 +604,10 @@ class MonitoringScope(MonitoringResponseModel):
     kind: Literal[
         "statewide", "department", "entry_office", "handling_office",
         "handling_office_subtype",
+        # A cut within a department rather than a viewpoint of its own, so it
+        # is parented to its department and reached through the same cascade
+        # as handling_office_subtype.
+        "subcategory",
     ]
     parent_id: str | None = None
     definition: str
