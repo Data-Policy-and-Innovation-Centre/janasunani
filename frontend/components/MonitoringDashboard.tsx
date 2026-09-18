@@ -14,6 +14,12 @@ import {
   type MonitoringMetric,
   type MonitoringPanel,
 } from "@/lib/monitoring";
+import {
+  denominatorLabel,
+  metricLabel,
+  panelTitle,
+  rowLabel,
+} from "@/lib/labels";
 import { CountUp, Reveal } from "./motion";
 import { Note } from "./ui";
 
@@ -62,7 +68,7 @@ function MetricCell({
   return (
     <div className="border-t border-hair-soft pt-3.5 first:border-t-0 sm:border-t-0 sm:border-l sm:pl-5 sm:first:border-l-0 sm:first:pl-0">
       <p className="font-mono text-[9.5px] uppercase leading-tight tracking-[0.13em] text-text-secondary">
-        {metric.label}
+        {metricLabel(metric.id, metric.label)}
       </p>
       {metric.state === "unavailable" ? (
         <p className="mt-2 font-display text-[22px] leading-none text-text-secondary">
@@ -98,7 +104,7 @@ function PanelCard({ panel, index }: { panel: MonitoringPanel; index: number }) 
     return (
       <Reveal as="article" className="border-t-2 border-hair bg-panel/60 p-6">
         <h3 className="font-display text-[20px] leading-tight text-text-dark">
-          {panel.title}
+          {panelTitle(panel.id, panel.title)}
         </h3>
         <p className="mt-3 text-[13.5px] leading-relaxed text-text-body">
           {panel.reason}
@@ -116,14 +122,14 @@ function PanelCard({ panel, index }: { panel: MonitoringPanel; index: number }) 
     <Reveal as="article" className="border-t-2 border-maroon bg-surface p-6">
       <div className="flex items-start justify-between gap-4">
         <h3 className="font-display text-[20px] leading-tight text-text-dark">
-          {panel.title}
+          {panelTitle(panel.id, panel.title)}
         </h3>
         <span className="flex-none font-mono text-[9px] uppercase tracking-[0.14em] text-maroon-soft">
           {String(index + 1).padStart(2, "0")}
         </span>
       </div>
       <p className="mt-1.5 font-mono text-[9.5px] uppercase tracking-[0.1em] text-text-secondary">
-        {panel.denominator.label} &middot;{" "}
+        {denominatorLabel(panel.denominator.label)} &middot;{" "}
         {panel.denominator.value.toLocaleString("en-IN")}
       </p>
 
@@ -141,7 +147,7 @@ function PanelCard({ panel, index }: { panel: MonitoringPanel; index: number }) 
           {panel.breakdown.map((row, position) => (
             <div key={row.label} className="mt-3 first:mt-0">
               <div className="flex items-baseline justify-between gap-3 text-[12.5px]">
-                <span className="text-text-body">{row.label}</span>
+                <span className="text-text-body">{rowLabel(row.label)}</span>
                 <strong className="font-mono text-[12px] font-medium tabular-nums text-text-dark">
                   {row.value.toLocaleString("en-IN")}
                 </strong>
@@ -289,7 +295,7 @@ export function MonitoringDashboard() {
                     className="figure block text-[42px]"
                   />
                   <p className="mt-2 font-mono text-[9.5px] uppercase leading-tight tracking-[0.13em] text-text-secondary">
-                    {metric.label}
+                    {metricLabel(metric.id, metric.label)}
                   </p>
                 </div>
               ))}

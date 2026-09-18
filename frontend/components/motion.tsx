@@ -160,7 +160,13 @@ export function CountUp({
           }
         }
       },
-      { threshold: 0.2 },
+      // Threshold 0, so the count starts the moment any part of the figure
+      // enters. Reveal uses 0.05 with a negative rootMargin and so always
+      // fires later: that ordering matters, because a figure sitting at its
+      // pre-count 0 while already on screen would read as a real zero, and
+      // for these measures ("No action for 7 days or more") zero is a
+      // plausible value rather than an obvious placeholder.
+      { threshold: 0 },
     );
     observer.observe(node);
 
