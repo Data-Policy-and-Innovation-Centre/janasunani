@@ -105,6 +105,19 @@ export function quickScopes(catalog: MonitoringCatalog): MonitoringScope[] {
   return catalog.scopes.filter((scope) => scope.quickView);
 }
 
+/**
+ * Keeps only the scopes a validated aggregate has actually been published for.
+ *
+ * The catalogue lists every scope the release knows about, and only a handful
+ * carry a period — 5 of 1,175 in the current release. Offering the rest as
+ * dead entries makes the picker look broken, so the selectors filter through
+ * this. It is deliberately separate from `scopesForView`/`subtypesFor`, which
+ * answer "every scope of this kind" and are relied on to keep doing so.
+ */
+export function publishedScopes(scopes: MonitoringScope[]): MonitoringScope[] {
+  return scopes.filter((scope) => scope.availablePeriods.length > 0);
+}
+
 const FORBIDDEN = new Set([
   "grievance", "ticket_no", "ticketNo", "mobile", "email", "petitioner_name",
   "action_taken_by", "identity_key", "identityKey", "signature", "hash",

@@ -5,6 +5,7 @@ import { fetchMonitoringCatalog, fetchMonitoringDashboard } from "@/lib/api";
 import {
   childChoice,
   parentScopeFor,
+  publishedScopes,
   quickScopes,
   scopesForView,
   subtypesFor,
@@ -203,13 +204,17 @@ export function MonitoringDashboard() {
       );
   }, [catalog, scopeId, period]);
 
+  // Both selectors offer only scopes with a published aggregate; the rest
+  // would be dead entries. See `publishedScopes`.
   const parentScopes = useMemo(
-    () => (catalog ? scopesForView(catalog, view) : []),
+    () => (catalog ? publishedScopes(scopesForView(catalog, view)) : []),
     [catalog, view],
   );
   const parentScope = catalog ? parentScopeFor(catalog, scopeId) : undefined;
   const children =
-    catalog && parentScope ? subtypesFor(catalog, parentScope.id) : [];
+    catalog && parentScope
+      ? publishedScopes(subtypesFor(catalog, parentScope.id))
+      : [];
   const quick = catalog ? quickScopes(catalog) : [];
 
   function chooseView(next: string) {
@@ -320,16 +325,15 @@ export function MonitoringDashboard() {
               onChange={(event) => chooseScope(event.target.value)}
               className={selectClass}
             >
-              {parentScopes.map((scope) => (
-                <option
-                  key={scope.id}
-                  value={scope.id}
-                  disabled={!scope.availablePeriods.length}
-                >
-                  {scope.label}
-                  {scope.availablePeriods.length ? "" : " — not published"}
-                </option>
-              ))}
+              {parentScopes.length ? (
+                parentScopes.map((scope) => (
+                  <option key={scope.id} value={scope.id}>
+                    {scope.label}
+                  </option>
+                ))
+              ) : (
+                <option value="">Nothing published for this viewpoint</option>
+              )}
             </select>
           </label>
           <label className={labelClass}>
@@ -346,11 +350,7 @@ export function MonitoringDashboard() {
                 {children.length ? "All recorded steps" : "No subtype"}
               </option>
               {children.map((scope) => (
-                <option
-                  key={scope.id}
-                  value={scope.id}
-                  disabled={!scope.availablePeriods.length}
-                >
+                <option key={scope.id} value={scope.id}>
                   {scope.label}
                 </option>
               ))}
