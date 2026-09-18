@@ -44,15 +44,15 @@ export function SubmitForm() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-10">
       <form
         onSubmit={onSubmit}
-        className="flex flex-col gap-4 rounded-md border border-hair bg-surface p-5"
+        className="flex max-w-[820px] flex-col gap-7 border-t-2 border-maroon bg-surface p-7"
       >
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-2">
           <label
             htmlFor="grievance-text"
-            className="text-xs font-semibold uppercase tracking-wide text-maroon"
+            className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-maroon-soft"
           >
             Grievance text
           </label>
@@ -63,14 +63,14 @@ export function SubmitForm() {
             disabled={!!file}
             rows={6}
             placeholder="Describe the grievance in the citizen's own words…"
-            className="resize-y rounded-sm border border-hair bg-surface px-3 py-2 text-sm text-text-body outline-none focus:border-maroon disabled:bg-card disabled:text-text-secondary"
+            className="resize-y rounded-none border-0 border-b border-hair bg-transparent px-0 py-2 text-[15px] leading-relaxed text-text-body outline-none transition-colors focus:border-maroon disabled:text-text-secondary"
           />
         </div>
 
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-2">
           <label
             htmlFor="grievance-file"
-            className="text-xs font-semibold uppercase tracking-wide text-maroon"
+            className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-maroon-soft"
           >
             …or upload a document
           </label>
@@ -78,7 +78,7 @@ export function SubmitForm() {
             id="grievance-file"
             type="file"
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            className="text-sm text-text-body file:mr-3 file:rounded-sm file:border-0 file:bg-maroon file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white hover:file:bg-maroon-full"
+            className="text-[13px] text-text-secondary file:mr-3 file:rounded-full file:border-0 file:bg-maroon file:px-4 file:py-1.5 file:font-mono file:text-[10px] file:uppercase file:tracking-[0.12em] file:text-white hover:file:bg-maroon-full"
           />
           {file && (
             <span className="text-xs text-text-secondary">
@@ -95,10 +95,10 @@ export function SubmitForm() {
           )}
         </div>
 
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-2">
           <label
             htmlFor="district"
-            className="text-xs font-semibold uppercase tracking-wide text-maroon"
+            className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-maroon-soft"
           >
             District (optional)
           </label>
@@ -107,7 +107,7 @@ export function SubmitForm() {
             value={district}
             onChange={(e) => setDistrict(e.target.value)}
             placeholder="e.g. Khordha"
-            className="rounded-sm border border-hair bg-surface px-3 py-2 text-sm text-text-body outline-none focus:border-maroon"
+            className="rounded-none border-0 border-b border-hair bg-transparent px-0 py-2 text-[15px] text-text-body outline-none transition-colors focus:border-maroon"
           />
         </div>
 
@@ -115,7 +115,7 @@ export function SubmitForm() {
           <button
             type="submit"
             disabled={!canSubmit}
-            className="rounded-sm bg-maroon px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-maroon-full disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-full bg-maroon px-6 py-2.5 font-mono text-[10.5px] uppercase tracking-[0.14em] text-white transition-colors duration-200 hover:bg-maroon-full disabled:cursor-not-allowed disabled:opacity-40"
           >
             {loading ? "Processing…" : "Submit grievance"}
           </button>
@@ -123,7 +123,7 @@ export function SubmitForm() {
             <button
               type="button"
               onClick={reset}
-              className="rounded-sm border border-hair px-4 py-2 text-sm font-medium text-text-body transition-colors hover:border-maroon hover:text-maroon"
+              className="rounded-full border border-hair px-6 py-2.5 font-mono text-[10.5px] uppercase tracking-[0.14em] text-text-secondary transition-colors duration-200 hover:border-maroon hover:text-maroon"
             >
               New grievance
             </button>
@@ -131,7 +131,7 @@ export function SubmitForm() {
         </div>
 
         {error && (
-          <p className="rounded-sm border border-negative/40 bg-negative/10 px-3 py-2 text-sm text-negative">
+          <p className="border-l-2 border-negative bg-negative/5 py-2 pl-3 text-[13.5px] text-negative">
             {error}
           </p>
         )}

@@ -1,4 +1,5 @@
 import { HistoryView } from "@/components/HistoryView";
+import { PageHead } from "@/components/ui";
 
 export default async function HistoryPageRoute({
   searchParams,
@@ -9,14 +10,16 @@ export default async function HistoryPageRoute({
   const initialQuery = Array.isArray(q) ? (q[0] ?? "") : (q ?? "");
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-bold text-text-dark">Grievance history</h1>
-        <p className="max-w-2xl text-sm text-text-secondary">
-          Browse and search historical grievances. Filter by free-text,
-          district, or category.
-        </p>
-      </div>
+    <div className="pb-16">
+      <PageHead
+        kicker="Archive"
+        title={
+          <>
+            Grievance <em>history</em>
+          </>
+        }
+        lead="Browse and search historical grievances. Filter by free text, district, or category."
+      />
       <HistoryView initialQuery={initialQuery} />
     </div>
   );

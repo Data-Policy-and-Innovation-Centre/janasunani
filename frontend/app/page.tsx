@@ -1,18 +1,18 @@
 import { SubmitForm } from "@/components/SubmitForm";
+import { PageHead } from "@/components/ui";
 
 export default function SubmitPage() {
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-bold text-text-dark">
-          Submit a grievance
-        </h1>
-        <p className="max-w-2xl text-sm text-text-secondary">
-          Enter grievance text or upload a document. The demo extracts the
-          text, redacts PII, classifies the grievance, summarises it, and
-          proposes a routing.
-        </p>
-      </div>
+    <div className="pb-16">
+      <PageHead
+        kicker="Intake"
+        title={
+          <>
+            Submit a <em>grievance</em>
+          </>
+        }
+        lead="Enter grievance text or upload a document. The demo extracts the text, redacts personally identifying information, classifies the grievance, summarises it, and proposes a routing."
+      />
       <SubmitForm />
     </div>
   );

@@ -1,18 +1,18 @@
 import { SupervisorSections } from "@/components/SupervisorSections";
+import { PageHead } from "@/components/ui";
 
 export default function SupervisorPage() {
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-bold text-text-dark">
-          Supervisor monitoring
-        </h1>
-        <p className="max-w-3xl text-sm leading-relaxed text-text-secondary">
-          Track queue health, routing, the end-to-end journey, ATR discipline,
-          demand, and closure outcomes. The earlier intelligence briefing is
-          retained as a separate section.
-        </p>
-      </div>
+    <div className="pb-16">
+      <PageHead
+        kicker="Oversight"
+        title={
+          <>
+            Supervisor <em>monitoring</em>
+          </>
+        }
+        lead="Queue health, routing, the end-to-end journey, ATR discipline, demand, and closure outcomes — read from validated aggregate artifacts. The earlier intelligence briefing is kept as a separate section."
+      />
       <SupervisorSections />
     </div>
   );
