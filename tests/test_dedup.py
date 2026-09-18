@@ -818,6 +818,75 @@ class TestMobileIdentityKeyUnderMasking:
         assert composite != identity_key(MOBILE_ASCII, self.SALT)
 
 
+class TestMobileIdentityKeyBlock:
+    """The block fragment. Four masked digits plus four name letters still
+    collide on common names: one group in the served department-21 artifact
+    held 411 filings over 402 distinct names and a single mobile tail. Block
+    is the cheapest fragment that separates them.
+    """
+
+    SALT = "test-salt"
+
+    def test_two_common_name_filers_in_different_blocks_no_longer_share_a_key(self):
+        """The collision this fragment exists to break."""
+        from janasunani.pipeline.dedup import mobile_identity_key
+
+        one = mobile_identity_key("******1234", "Ranjan Kumar", self.SALT, "Agalpur")
+        other = mobile_identity_key("******1234", "Ranjan Kumar", self.SALT, "Balangir")
+        assert one is not None and other is not None
+        assert one != other
+        # ...and without the fragment they are the same person, which is the
+        # behaviour being replaced.
+        assert mobile_identity_key("******1234", "Ranjan Kumar", self.SALT) == (
+            mobile_identity_key("******1234", "Ranjan Kumar", self.SALT)
+        )
+
+    def test_the_same_filer_in_one_block_still_links(self):
+        from janasunani.pipeline.dedup import mobile_identity_key
+
+        assert mobile_identity_key("******1234", "Ranjan Kumar", self.SALT, "Agalpur") == (
+            mobile_identity_key("******1234", "ranjan  kumar", self.SALT, "  AGALPUR ")
+        )
+
+    def test_an_unrecorded_block_falls_back_rather_than_abstaining(self):
+        """Block is absent on 6.5% of department 21 and 31.4% of department
+        40. Abstaining there would drop those rows out of linkage entirely."""
+        from janasunani.pipeline.dedup import mobile_identity_key
+
+        for blank in (None, "", "   ", "-"):
+            assert mobile_identity_key("******1234", "Ranjan Kumar", self.SALT, blank) == (
+                mobile_identity_key("******1234", "Ranjan Kumar", self.SALT)
+            )
+
+    def test_a_blocked_key_never_collides_with_an_unblocked_one(self):
+        """Namespaced, so the fallback can never be mistaken for a block whose
+        token happens to match the concatenation."""
+        from janasunani.pipeline.dedup import mobile_identity_key
+
+        assert mobile_identity_key("******1234", "Ranjan Kumar", self.SALT, "x") != (
+            mobile_identity_key("******1234", "Ranjan Kumarx", self.SALT)
+        )
+
+    def test_a_real_number_ignores_block_and_keeps_linking(self):
+        """An unmasked number is the strongest key available and must not be
+        weakened: the same citizen filing from two blocks stays one identity."""
+        from janasunani.pipeline.dedup import identity_key, mobile_identity_key
+
+        assert mobile_identity_key(MOBILE_ASCII, "Ranjan Kumar", self.SALT, "Agalpur") == (
+            identity_key(MOBILE_ASCII, self.SALT)
+        )
+        assert mobile_identity_key(MOBILE_ASCII, "Ranjan Kumar", self.SALT, "Agalpur") == (
+            mobile_identity_key(MOBILE_ASCII, "Ranjan Kumar", self.SALT, "Balangir")
+        )
+
+    def test_the_sentinel_still_abstains_with_a_block_present(self):
+        """A block must not resurrect a row with no usable mobile fragment."""
+        from janasunani.pipeline.dedup import mobile_identity_key
+
+        assert mobile_identity_key("~::~", "Ranjan Kumar", self.SALT, "Agalpur") is None
+        assert mobile_identity_key("******1234", "Li", self.SALT, "Agalpur") is None
+
+
 class TestEmailIdentityKey:
     """#341. The email column is healthy -- 261,161 of 262,159 keyed
     signatures carry an address -- so the derivation is unchanged. Only the
