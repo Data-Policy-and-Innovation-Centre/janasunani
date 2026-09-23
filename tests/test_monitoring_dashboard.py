@@ -611,16 +611,19 @@ def _flow_lake() -> duckdb.DuckDBPyConnection:
     reviewed but open, and two that close (one needing no review)."""
     con = duckdb.connect()
     con.execute("""
-        CREATE TABLE shapes(kind VARCHAR, status VARCHAR, nodes INT, replied BOOL, required BOOL, reviewed BOOL, closed BOOL);
+        CREATE TABLE shapes(kind VARCHAR, status VARCHAR, nodes INT, replied BOOL, required BOOL, reviewed BOOL, closed BOOL,
+                            resolved_on TIMESTAMP DEFAULT NULL);
         INSERT INTO shapes VALUES
-          ('discarded', 'Discard',  3, FALSE, TRUE,  FALSE, FALSE),
-          ('no_flow',   'Pending',  0, FALSE, FALSE, FALSE, FALSE),
-          ('no_atr',    'Pending',  3, FALSE, TRUE,  FALSE, FALSE),
-          ('skipped',   'Disposed', 3, TRUE,  TRUE,  FALSE, TRUE),
-          ('open',      'Pending',  3, TRUE,  TRUE,  TRUE,  FALSE),
-          ('closed',    'Disposed', 3, TRUE,  TRUE,  TRUE,  TRUE),
-          ('direct',    'Disposed', 2, TRUE,  FALSE, FALSE, TRUE);
-        CREATE TABLE atr_cases AS SELECT kind || '-' || i AS ticket_no, nodes, required, replied, reviewed, closed
+          ('discarded', 'Discard',  3, FALSE, TRUE,  FALSE, FALSE, TIMESTAMP '2025-06-01'),
+          -- discarded after the snapshot: still on the path at 30 July
+          ('discarded_later', 'Discard', 3, FALSE, TRUE, FALSE, FALSE, TIMESTAMP '2025-08-10'),
+          ('no_flow',   'Pending',  0, FALSE, FALSE, FALSE, FALSE, NULL),
+          ('no_atr',    'Pending',  3, FALSE, TRUE,  FALSE, FALSE, NULL),
+          ('skipped',   'Disposed', 3, TRUE,  TRUE,  FALSE, TRUE,  NULL),
+          ('open',      'Pending',  3, TRUE,  TRUE,  TRUE,  FALSE, NULL),
+          ('closed',    'Disposed', 3, TRUE,  TRUE,  TRUE,  TRUE,  NULL),
+          ('direct',    'Disposed', 2, TRUE,  FALSE, FALSE, TRUE,  NULL);
+        CREATE TABLE atr_cases AS SELECT kind || '-' || i AS ticket_no, resolved_on, nodes, required, replied, reviewed, closed
           FROM shapes, range(10) r(i);
         -- The open cases were filed first.
         CREATE TABLE complaints AS SELECT kind || '-' || i AS ticket_no, status,
@@ -640,8 +643,8 @@ def test_flow_stages_nest_and_say_when_repeats_are_not_removed():
     # Each stage is (count, the stage before): without dedup, routing follows "kept".
     got = {k: (m["numerator"], m["denominator"]) for k, m in stages.items() if m["state"] == "recorded"}
     assert got == {
-        "flow-filed": (70, None), "flow-kept": (60, 70), "flow-routed": (50, 60),
-        "flow-atr": (40, 50), "flow-reviewed": (30, 40), "flow-closed": (20, 30),
+        "flow-filed": (80, None), "flow-kept": (70, 80), "flow-routed": (60, 70),
+        "flow-atr": (40, 60), "flow-reviewed": (30, 40), "flow-closed": (20, 30),
     }
 
 
@@ -652,20 +655,20 @@ def test_flow_keeps_the_earliest_filing_per_duplicate_group(tmp_path):
     groups.write_text("ticket_no,duplicate_group_id,group_size\n" + "".join(
         f"{kind}-{i},g{i},2\n" for i in range(10) for kind in ("open", "closed")))
     stages = {m["id"]: m for m in _flow(_flow_lake(), groups)["metrics"]}
-    assert (stages["flow-unique"]["numerator"], stages["flow-unique"]["denominator"]) == (50, 60)
+    assert (stages["flow-unique"]["numerator"], stages["flow-unique"]["denominator"]) == (60, 70)
     assert stages["flow-unique"]["basis"] == "proxy"
     assert stages["flow-closed"]["numerator"] == 10  # direct only
 
 
 def test_flow_withholds_a_stage_whose_loss_is_below_ten(tmp_path):
-    # Five repeats: 60 kept and 55 unique would show a loss of five.
+    # Five repeats: 70 kept and 65 unique would show a loss of five.
     groups = tmp_path / "groups.csv"
     groups.write_text("ticket_no,duplicate_group_id,group_size\n" + "".join(
         f"closed-{i},g{i // 2},2\n" for i in range(10)))
     stages = {m["id"]: m for m in _flow(_flow_lake(), groups)["metrics"]}
     assert stages["flow-unique"]["state"] == "unavailable"
     # The next stage is measured from the last one shown, not the withheld one.
-    assert (stages["flow-routed"]["numerator"], stages["flow-routed"]["denominator"]) == (45, 60)
+    assert (stages["flow-routed"]["numerator"], stages["flow-routed"]["denominator"]) == (55, 70)
     assert stages["flow-closed"]["numerator"] == 15
 
 

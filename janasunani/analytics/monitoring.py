@@ -987,7 +987,9 @@ def _flow(con: duckdb.DuckDBPyConnection, identity_path: Path | None) -> dict[st
     """ if deduped else "SELECT * FROM kept"
     row = _one(con, f"""
         WITH base AS (SELECT a.*, c.status, c.created_on FROM atr_cases a JOIN complaints c USING(ticket_no)),
-        kept AS (SELECT * FROM base WHERE status IS DISTINCT FROM 'Discard'),
+        -- Discarded by the snapshot; a later discard was still on the path.
+        kept AS (SELECT * FROM base WHERE NOT (status IS NOT DISTINCT FROM 'Discard'
+                 AND (resolved_on IS NULL OR CAST(resolved_on AS DATE) <= DATE '2025-07-30'))),
         reps AS ({reps})
         SELECT (SELECT COUNT(*) FROM base) filed, (SELECT COUNT(*) FROM kept) kept,
           COUNT(*) unique_n,

@@ -185,6 +185,10 @@ test("a loss after a withheld stage says it spans that stage too", () => {
   ];
   assert.match(flowDropNote(stages, 3), /No workflow assigned\. Also includes what left at "flow-unique"/);
   assert.equal(flowDropNote(stages, 1), "Discarded.");
+  // Two withheld in a row: the loss spans both.
+  const withheld = (id) => stage(id, { state: "unavailable", reason: "Withheld: fewer than 10 grievances left the path here." });
+  const run = [recorded("flow-filed", 100, null), recorded("flow-kept", 100, null), withheld("flow-unique"), withheld("flow-routed"), recorded("flow-atr", 80, "No report.")];
+  assert.equal(flowDropNote(run, 4), 'No report. Also includes what left at "flow-unique" and "flow-routed", which are withheld.');
   // Repeats not removed yet: nothing is hidden, so the reason stands alone.
   stages[2] = stage("flow-unique", { state: "unavailable", reason: "Repeats are not removed yet." });
   assert.equal(flowDropNote(stages, 3), "No workflow assigned.");

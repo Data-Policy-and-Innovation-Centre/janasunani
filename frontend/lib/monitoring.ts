@@ -69,11 +69,15 @@ function validFlowStages(stages: MonitoringMetric[]): boolean {
 export function flowDropNote(stages: MonitoringMetric[], i: number): string | null {
   const metric = stages[i];
   if (metric.state !== "recorded") return metric.reason;
-  const previous = stages[i - 1];
-  if (i > 1 && previous.state === "unavailable" && flowStageGap(previous) === "not shown") {
-    return `${metric.note ?? ""} Also includes what left at "${previous.label}", which is withheld.`.trim();
+  // Every withheld stage back to the last one shown; a stage not computed
+  // yet hides nothing and is passed over.
+  const hidden: string[] = [];
+  for (let j = i - 1; j > 0 && stages[j].state === "unavailable"; j--) {
+    const stage = stages[j];
+    if (stage.state === "unavailable" && flowStageGap(stage) === "not shown") hidden.unshift(`"${stage.label}"`);
   }
-  return metric.note;
+  if (!hidden.length) return metric.note;
+  return `${metric.note ?? ""} Also includes what left at ${hidden.join(" and ")}, which ${hidden.length > 1 ? "are" : "is"} withheld.`.trim();
 }
 
 /** What a flow stage without a figure says: withheld for privacy, or (the
