@@ -18,9 +18,11 @@ governed ticket-to-group mappings. It writes:
 - `outputs/monitoring/monitoring_dashboard_v1.json` for serving;
 - `outputs/monitoring/monitoring_results_v1.csv` for review.
 
-Both outputs are local and ignored by Git. Set
-`JANASUNANI_MONITORING_ARTIFACT` to the container-visible JSON path in a
-protected deployment.
+Both outputs are local and ignored by Git. On the box, publish into the
+repository's `outputs/monitoring/`: `deploy/docker-compose.yml` mounts it
+read-only into the API and sets `JANASUNANI_MONITORING_ARTIFACT` to the JSON
+inside it. Until a release is there, the Monitoring screen reports it as
+unavailable.
 
 ## Contract
 

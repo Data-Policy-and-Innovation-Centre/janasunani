@@ -106,6 +106,18 @@ def test_api_data_mounts_are_read_only():
     assert expected <= ro_mounts
 
 
+def test_api_can_read_the_monitoring_release():
+    """/supervisor opens on Monitoring, which reads a published release.
+    `outputs` is in .dockerignore, so the release has to be a read-only
+    bind-mount, and the provider has to be pointed at it; without both,
+    the deployed screen always gets a 503."""
+    api = _compose()["services"]["api"]
+
+    assert "../outputs/monitoring:/app/outputs/monitoring:ro" in api["volumes"]
+    artifact = api["environment"]["JANASUNANI_MONITORING_ARTIFACT"]
+    assert artifact.startswith("/app/outputs/monitoring/")
+
+
 def test_app_images_are_pinned_to_image_tag_not_latest():
     """A deploy must always be reproducible/rollback-able — no `latest`."""
     compose = _compose()
