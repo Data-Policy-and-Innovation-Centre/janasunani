@@ -42,6 +42,8 @@ There is still no auth/redaction on `/history`, so the real-history opt-in
 | `GET /grievance/{id}` | — | the submitted `GrievanceResult` (404 if unknown) |
 | `GET /history` | `q`, `district`, `category`, `limit` (≤100), `offset` | `HistoryPage` (lake column names) |
 | `GET /supervisor` | — | `SupervisorDashboard`: recorded aggregate artifacts or explicit unavailable states |
+| `GET /supervisor/monitoring/catalog` | — | allowlisted monitoring scopes and periods |
+| `GET /supervisor/monitoring` | `scope_id`, `period` | six validated recorded-or-unavailable monitoring panels |
 | `GET /health` | — | `{status, processor}` — `mock` or `pipeline` |
 
 **`schemas.py` is the contract.** Field names mirror what already exists —
@@ -78,6 +80,14 @@ own validated capability artifacts exist. In particular, the manual
 confirmed-duplicates finding is a baseline insight, not a replacement for the
 MinHash-backed workload or the three-count spike. Production proxy auth protects
 this endpoint with the rest of the API.
+
+The monitoring endpoints use the separate artifact configured by
+`JANASUNANI_MONITORING_ARTIFACT` (default:
+`outputs/monitoring/monitoring_dashboard_v1.json`). The provider checks a
+strict aggregate DTO, a 10 MB size limit, allowlisted scope-period pairs, all
+six required panels, and forbidden sensitive keys. See
+`docs/MONITORING_DASHBOARD.md` for publication and the current ATR source
+limitation.
 
 ## Mock and live modes
 

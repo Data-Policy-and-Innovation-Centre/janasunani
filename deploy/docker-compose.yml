@@ -54,10 +54,13 @@ services:
     restart: unless-stopped
     environment:
       OLTP_DB_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@oltp:5432/janasunani
+      # The aggregate-only release /supervisor reads (docs/MONITORING_DASHBOARD.md).
+      JANASUNANI_MONITORING_ARTIFACT: /app/outputs/monitoring/monitoring_dashboard_v1.json
     volumes:
       - ../models:/app/models:ro
       - ../data/interim:/app/data/interim:ro
       - ../data/raw/janasunani-mappings:/app/data/raw/janasunani-mappings:ro
+      - ../outputs/monitoring:/app/outputs/monitoring:ro
       - hf-cache:/hf-cache
     depends_on:
       oltp:

@@ -21,7 +21,7 @@ Changing a field here is an API break — coordinate with the frontend.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 import math
 from typing import Literal, Optional
 
@@ -579,3 +579,103 @@ class SupervisorDashboard(SupervisorResponseModel):
     workload: RecordedWorkloadPanel | UnavailableWorkloadPanel
     spike: RecordedSpikePanel | UnavailableSpikePanel
     closure: RecordedClosurePanel | UnavailableClosurePanel
+
+
+class MonitoringResponseModel(BaseModel):
+    """Strict aggregate-only contract for the monitoring dashboard."""
+
+    model_config = ConfigDict(
+        alias_generator=_camel_case,
+        populate_by_name=True,
+        extra="forbid",
+    )
+
+
+class MonitoringPeriod(MonitoringResponseModel):
+    id: str
+    label: str
+    start: date
+    end_exclusive: date
+
+
+class MonitoringScope(MonitoringResponseModel):
+    id: str
+    label: str
+    kind: Literal[
+        "statewide", "department", "entry_office", "handling_office",
+        "handling_office_subtype",
+    ]
+    parent_id: str | None = None
+    definition: str
+    quick_view: bool
+    available_periods: list[str]
+
+
+class MonitoringCatalog(MonitoringResponseModel):
+    schema_version: Literal[1]
+    source_freshness: dict[str, str]
+    periods: list[MonitoringPeriod]
+    scopes: list[MonitoringScope]
+
+
+class MonitoringDenominator(MonitoringResponseModel):
+    label: str
+    value: int = Field(ge=0)
+
+
+class RecordedMonitoringMetric(MonitoringResponseModel):
+    id: str
+    label: str
+    state: Literal["recorded"]
+    value: float = Field(ge=0)
+    unit: Literal["grievances", "groups", "citizens", "closures", "days", "percent"]
+    numerator: int | None = Field(default=None, ge=0)
+    denominator: int | None = Field(default=None, ge=0)
+    coverage_pct: float | None = Field(default=None, ge=0, le=100)
+    note: str | None = None
+
+
+class UnavailableMonitoringMetric(MonitoringResponseModel):
+    id: str
+    label: str
+    state: Literal["unavailable"]
+    reason: str
+
+
+class MonitoringBreakdownRow(MonitoringResponseModel):
+    label: str
+    value: float = Field(ge=0)
+
+
+class MonitoringPanel(MonitoringResponseModel):
+    id: Literal["aging", "transfers", "journey", "atr", "demand", "closure"]
+    title: str
+    state: Literal["recorded"]
+    denominator: MonitoringDenominator
+    metrics: list[RecordedMonitoringMetric | UnavailableMonitoringMetric]
+    breakdown: list[MonitoringBreakdownRow] | None = None
+    breakdown_unavailable_reason: str | None = None
+    caveats: list[str]
+
+
+class UnavailableMonitoringPanel(MonitoringResponseModel):
+    id: Literal["aging", "transfers", "journey", "atr", "demand", "closure"]
+    title: str
+    state: Literal["unavailable"]
+    reason: str
+    caveats: list[str]
+
+
+class MonitoringDashboard(MonitoringResponseModel):
+    schema_version: Literal[1]
+    generated_at: datetime
+    source_freshness: dict[str, str]
+    artifact: str
+    scope_id: str
+    scope_label: str
+    scope_kind: str
+    scope_definition: str
+    period_id: str
+    period_label: str
+    snapshot_date: date
+    panels: list[MonitoringPanel | UnavailableMonitoringPanel]

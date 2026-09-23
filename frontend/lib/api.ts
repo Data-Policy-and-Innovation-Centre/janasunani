@@ -5,6 +5,12 @@ import {
   parseSupervisorDashboard,
   type SupervisorDashboard,
 } from "@/lib/supervisor";
+import {
+  parseMonitoringCatalog,
+  parseMonitoringDashboard,
+  type MonitoringCatalog,
+  type MonitoringDashboard,
+} from "@/lib/monitoring";
 
 const API_BASE = (
   process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000"
@@ -88,4 +94,17 @@ export async function fetchSupervisorDashboard(): Promise<SupervisorDashboard> {
     throw new Error("Supervisor aggregate endpoint is unavailable.");
   }
   return parseSupervisorDashboard(await res.json());
+}
+
+export async function fetchMonitoringCatalog(): Promise<MonitoringCatalog> {
+  const res = await fetch(`${API_BASE}/supervisor/monitoring/catalog`, { cache: "no-store" });
+  if (!res.ok) throw new Error(await errorMessage(res));
+  return parseMonitoringCatalog(await res.json());
+}
+
+export async function fetchMonitoringDashboard(scopeId: string, period: string): Promise<MonitoringDashboard> {
+  const query = new URLSearchParams({ scope_id: scopeId, period });
+  const res = await fetch(`${API_BASE}/supervisor/monitoring?${query}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(await errorMessage(res));
+  return parseMonitoringDashboard(await res.json());
 }

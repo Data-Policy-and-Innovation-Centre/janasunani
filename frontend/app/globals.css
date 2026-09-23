@@ -71,6 +71,16 @@ body {
   height: 100%;
 }
 
+.monitoring-bar {
+  transition: width 360ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .monitoring-bar {
+    transition: none;
+  }
+}
+
 body {
   background: var(--dpic-surface);
   color: var(--dpic-text-body);
