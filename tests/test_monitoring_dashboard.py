@@ -621,6 +621,24 @@ def test_transfers_count_only_actions_before_the_snapshot():
     assert (metrics["transfer-rate"]["numerator"], metrics["transfer-rate"]["denominator"]) == (10, 30)
 
 
+def test_follow_up_counts_only_transfers_whose_week_ended_by_the_snapshot():
+    from janasunani.analytics.monitoring import _transfers
+    con = duckdb.connect()
+    con.execute("""
+        CREATE TABLE scope_tickets AS SELECT 'T' || i AS ticket_no, TIMESTAMP '2025-05-01' AS created_on FROM range(20) r(i);
+        -- Ten transfers on 1 July with no follow-up; ten on 28 July whose
+        -- next action (1 August) is after the snapshot, week unfinished.
+        CREATE TABLE action_history AS
+          SELECT i AS id, 'T' || i AS ticket_no,
+                 CASE WHEN i < 10 THEN TIMESTAMP '2025-07-01' ELSE TIMESTAMP '2025-07-28' END AS action_taken_date,
+                 'Complaint Transfer' AS action_status FROM range(20) r(i)
+          UNION ALL SELECT 100 + i, 'T' || i, TIMESTAMP '2025-08-01', 'Forwarded' FROM range(10, 20) r(i);
+        CREATE TABLE returns(ticket_no VARCHAR, arrivals INTEGER);
+    """)
+    metrics = {m["id"]: m for m in _transfers(con)["metrics"]}
+    assert (metrics["followup-proxy"]["numerator"], metrics["followup-proxy"]["denominator"]) == (10, 10)
+
+
 def test_a_small_district_inside_the_top_rows_is_folded_and_its_cells_withheld():
     department = next(s for s in CORE_SCOPES if s.kind == "department")
     # "Small" ranks second, inside the top rows, but has only five open cases.
