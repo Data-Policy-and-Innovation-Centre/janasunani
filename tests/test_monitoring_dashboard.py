@@ -421,6 +421,8 @@ def test_offices_orders_by_workload_folds_small_rows_and_withholds_small_cells()
     assert folded[0] == extra + 4
     # The office holding the case is the one on its latest action.
     assert [row["label"] for row in by_office["rows"]] == ["Block Development Officer"]
+    # Grouped by role, not by individual office, and titled as such.
+    assert "role" in by_office["title"]
 
 
 def test_a_small_rate_cell_is_withheld_but_its_row_stays():
