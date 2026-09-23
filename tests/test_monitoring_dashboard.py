@@ -314,16 +314,19 @@ def test_recording_reports_coverage_and_names_what_is_missing():
     con.execute("""
         CREATE TABLE complaints AS SELECT
           'T' || i AS ticket_no, DATE '2024-08-01' AS created_on,
-          CASE WHEN i < 20 THEN 'Online' END AS mode,
+          CASE WHEN i < 20 THEN 'Online' WHEN i < 25 THEN '  ' END AS mode,
           CASE WHEN i < 40 THEN 7 END AS category_id,
           CASE WHEN i < 10 THEN 'Scheme' END AS subcategory,
           NULL::VARCHAR AS review_authority
         FROM range(40) r(i);
         CREATE TABLE scope_tickets AS SELECT ticket_no, created_on FROM complaints;
         CREATE TABLE action_history AS SELECT
-          i AS id, 'T' || i AS ticket_no, TIMESTAMP '2024-08-02' AS action_taken_date,
-          'Complaint Transfer' AS action_status
-        FROM range(30) r(i);
+          i AS id, 'T' || i AS ticket_no,
+          -- 30 in-period transfers; then disposals, which are not assignment
+          -- events; then transfers dated after the snapshot.
+          CASE WHEN i < 35 THEN TIMESTAMP '2024-08-02' ELSE TIMESTAMP '2025-08-15' END AS action_taken_date,
+          CASE WHEN i < 30 OR i >= 35 THEN 'Complaint Transfer' ELSE 'Disposed' END AS action_status
+        FROM range(40) r(i);
     """)
     discards = {"metrics": [published_metric(
         "discard-reason-recognised", "Discards with a recognised reason", 50.0,
