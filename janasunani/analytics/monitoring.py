@@ -31,6 +31,17 @@ PERIOD_END = date(2025, 7, 1)
 SNAPSHOT_DATE = date(2025, 7, 30)
 MIN_CELL = 10
 COUNT_UNITS = frozenset({"grievances", "groups", "closures", "citizens"})
+# Metrics that stand in for the thing a reader cares about rather than
+# measuring it. Wording is not closure quality, a dedup group is not a proven
+# problem, an identity key is not a verified person, and the loop, follow-up
+# and FIFO measures are the proxies their labels already say they are.
+# Everything else counts what the record directly contains.
+PROXY_METRICS = frozenset({
+    "loop-rate", "followup-proxy", "fifo-exception",
+    "problems", "citizens", "duplicate-adjustment", "repeat-groups", "campaigns",
+    "bare-ladder", "bare-resolved", "action-recorded", "benefit-recorded",
+    "refiling-30", "refiling-90",
+})
 # Subcategory scopes are built per published department, largest first. Each
 # scope re-runs the whole panel suite over the lake, so this is deliberately a
 # short list rather than all 196 subcategories department 21 records.
@@ -166,6 +177,7 @@ def _metric(
         "denominator": denominator,
         "coveragePct": coverage,
         "note": note,
+        "basis": "proxy" if metric_id in PROXY_METRICS else "direct",
     }
 
 
@@ -724,7 +736,7 @@ def _flat_rows(release: dict[str, Any]) -> list[dict[str, Any]]:
                     "period": dashboard["periodLabel"], "snapshot_date": dashboard["snapshotDate"],
                     "panel": panel["title"], "metric": panel["title"], "state": "unavailable",
                     "value": None, "unit": None, "numerator": None, "denominator": None,
-                    "coverage_pct": None, "caveat": panel["reason"],
+                    "coverage_pct": None, "basis": None, "caveat": panel["reason"],
                 })
                 continue
             for metric in panel["metrics"]:
@@ -734,7 +746,8 @@ def _flat_rows(release: dict[str, Any]) -> list[dict[str, Any]]:
                     "panel": panel["title"], "metric": metric["label"], "state": metric["state"],
                     "value": metric.get("value"), "unit": metric.get("unit"),
                     "numerator": metric.get("numerator"), "denominator": metric.get("denominator"),
-                    "coverage_pct": metric.get("coveragePct"), "caveat": metric.get("note"),
+                    "coverage_pct": metric.get("coveragePct"), "basis": metric.get("basis"),
+                    "caveat": metric.get("note") or metric.get("reason"),
                 })
     return rows
 
