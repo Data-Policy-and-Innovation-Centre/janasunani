@@ -949,9 +949,9 @@ def _offices(con: duckdb.DuckDBPyConnection, scope: ScopeSpec) -> dict[str, Any]
         })
     if office:
         tables.append({
-            "title": "Open cases by the office that acted last",
+            "title": "Open cases by the role that acted last",
             "columns": open_columns,
-            "rows": _drilldown_rows(office, [(0, None), (1, 0), (2, 0)], "Other offices"),
+            "rows": _drilldown_rows(office, [(0, None), (1, 0), (2, 0)], "Other roles"),
         })
     total_open = sum(r[1] for r in district)
     return {
@@ -962,7 +962,7 @@ def _offices(con: duckdb.DuckDBPyConnection, scope: ScopeSpec) -> dict[str, Any]
         "tables": tables,
         "caveats": [
             "Ordered by workload, not ranked. A rate reflects the caseload an office receives as well as how it handles it.",
-            "The office shown is the one on the latest recorded action, which may be the office that forwarded the case rather than the one now holding it.",
+            "The role shown is the one on the latest recorded action, which may be the office that forwarded the case rather than the one now holding it. Offices are grouped by role across the department: every Block Development Officer is one row.",
             f"The {OFFICE_TABLE_TOP_N} largest rows are shown; the rest, and any under {MIN_CELL} open cases, are folded into the last row. Cells under {MIN_CELL} are withheld.",
         ],
     }

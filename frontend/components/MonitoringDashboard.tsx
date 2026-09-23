@@ -190,7 +190,7 @@ function DrilldownTable({ table }: { table: MonitoringTable }) {
   const [sort, setSort] = useState<{ column: number; descending: boolean } | null>(null);
   const [body, other] = useMemo(() => {
     const last = table.rows.at(-1);
-    const hasOther = last !== undefined && (last.label === "Other districts" || last.label === "Other offices");
+    const hasOther = last !== undefined && (last.label === "Other districts" || last.label === "Other roles");
     const rows = hasOther ? table.rows.slice(0, -1) : [...table.rows];
     if (sort) {
       const key = (row: MonitoringTable["rows"][number]) => row.values[sort.column] ?? -1;
