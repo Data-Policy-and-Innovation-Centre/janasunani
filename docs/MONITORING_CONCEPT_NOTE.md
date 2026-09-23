@@ -270,14 +270,14 @@
 
 # 5. What the current record establishes
 
-- Available analytical record:
+- Available analytical record (the Parquet lake built from the 30 July 2025 extract):
   - 1,371,288 complaints;
-  - 6,556,171 action entries.
+  - 6,548,820 action entries. The source database holds 6,556,171; the 7,351-row gap is tracked in #241.
 - Closure records are often too generic to show what happened:
   - 776,922 complaints were closed using one of six standard templates;
-  - 472,782 used the template recording no action;
+  - 472,782 used a bare disposal phrase ("the grievance has been disposed" or "the grievance has been resolved"), which names no action;
   - this is 60.9% of templated closures and 39.1% of all 1,209,144 resolved complaints;
-  - 8,974 complaints were created and closed within two days using that template.
+  - 8,974 complaints were created and closed within two days with a bare disposal phrase.
 - Officers have marked 37,299 action entries as duplicates.
 - Common recorded discard reasons include:
   - inadequate complaint details: 39,964;
@@ -288,10 +288,10 @@
   - policy decision required: 9,125;
   - outside the grievance cell's purview: 8,472;
   - address missing: 4,114.
-- Existing routing test results provide a baseline:
+- Existing routing results provide a baseline:
   - historical destination matched at first choice: 45.1%;
   - historical destination included in the top three: 69.0%;
-  - later-period test set: 208,267 complaints.
+  - later-period development holdout: 208,267 complaints. It was viewed during development, so it is not a frozen test; a frozen test slice is still required.
 - Routing agreement does not establish that the historical destination was correct.
 
 # 6. What the application should record
