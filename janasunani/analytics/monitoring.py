@@ -965,10 +965,11 @@ def _flow(con: duckdb.DuckDBPyConnection, identity_path: Path | None) -> dict[st
     deduped = bool(identity_path and _load_groups(con, identity_path, "flow_groups"))
     reps = """
         SELECT k.* FROM kept k LEFT JOIN flow_groups g USING(ticket_no)
-        QUALIFY ROW_NUMBER() OVER(PARTITION BY COALESCE(g.duplicate_group_id, k.ticket_no) ORDER BY k.ticket_no) = 1
+        -- The earliest filing stands for its group, as in analytics/bottlenecks.py.
+        QUALIFY ROW_NUMBER() OVER(PARTITION BY COALESCE(g.duplicate_group_id, k.ticket_no) ORDER BY k.created_on, k.ticket_no) = 1
     """ if deduped else "SELECT * FROM kept"
     row = _one(con, f"""
-        WITH base AS (SELECT a.*, c.status FROM atr_cases a JOIN complaints c USING(ticket_no)),
+        WITH base AS (SELECT a.*, c.status, c.created_on FROM atr_cases a JOIN complaints c USING(ticket_no)),
         kept AS (SELECT * FROM base WHERE status IS DISTINCT FROM 'Discard'),
         reps AS ({reps})
         SELECT (SELECT COUNT(*) FROM base) filed, (SELECT COUNT(*) FROM kept) kept,
@@ -980,24 +981,35 @@ def _flow(con: duckdb.DuckDBPyConnection, identity_path: Path | None) -> dict[st
         FROM reps
     """)
 
-    def stage(metric_id: str, label: str, count: int | None, previous: int | None, note: str) -> dict[str, Any]:
-        return _metric(metric_id, label, count, unit="grievances", numerator=count, denominator=previous, note=note)
+    # Complementary suppression: the viewer subtracts adjacent stages, so a
+    # stage whose loss from the last shown stage is 1-9 is withheld, and the
+    # next loss is measured from the last stage still shown.
+    shown = [row["filed"]]
+
+    def stage(metric_id: str, label: str, count: int, note: str) -> dict[str, Any]:
+        previous = shown[-1] if metric_id != "flow-filed" else None
+        if previous is not None and 0 < previous - count < MIN_CELL:
+            return _metric(metric_id, label, None, unit="grievances",
+                           note="Withheld: fewer than 10 grievances left the path here.")
+        metric = _metric(metric_id, label, count, unit="grievances", numerator=count, denominator=previous, note=note)
+        if metric["state"] == "recorded":  # a stage of 1-9 is itself withheld
+            shown.append(count)
+        return metric
 
     unique = row["unique_n"] if deduped else None
-    after_dedup = unique if deduped else row["kept"]
     return {
         "id": "flow", "title": "Case flow", "state": "recorded",
         "denominator": {"label": "Grievances created in FY 2024-25", "value": row["filed"]},
         "metrics": [
-            stage("flow-filed", "Filed", row["filed"], None, "Every grievance filed in the period."),
-            stage("flow-kept", "Not discarded", row["kept"], row["filed"], "Discarded by an officer: spam, non-grievances, missing details. There is no automated filter in the record."),
-            stage("flow-unique", "Repeats removed", unique, row["kept"], "One filing kept per group of the same person filing the same problem.")
+            stage("flow-filed", "Filed", row["filed"], "Every grievance filed in the period."),
+            stage("flow-kept", "Not discarded", row["kept"], "Discarded by an officer: spam, non-grievances, missing details. There is no automated filter in the record."),
+            stage("flow-unique", "Repeats removed", unique, "One filing kept per group of the same person filing the same problem.")
             if deduped else
             _metric("flow-unique", "Repeats removed", None, unit="grievances", note="Repeats are not removed yet: the validated duplicate groups are being rebuilt. Later stages still count repeat filings."),
-            stage("flow-routed", "Given a workflow", row["routed"], after_dedup, "No workflow assigned."),
-            stage("flow-atr", "Report submitted", row["atr"], row["routed"], "No action taken report recorded."),
-            stage("flow-reviewed", "Reviewed where required", row["reviewed"], row["atr"], "Closed or waiting without the review its workflow requires."),
-            stage("flow-closed", "Closed", row["closed"], row["reviewed"], "Still open at 30 July 2025."),
+            stage("flow-routed", "Given a workflow", row["routed"], "No workflow assigned."),
+            stage("flow-atr", "Report submitted", row["atr"], "No action taken report recorded."),
+            stage("flow-reviewed", "Reviewed where required", row["reviewed"], "Closed or waiting without the review its workflow requires."),
+            stage("flow-closed", "Closed", row["closed"], "Still open at 30 July 2025."),
         ],
         "breakdown": None, "breakdownUnavailableReason": None,
         "caveats": [

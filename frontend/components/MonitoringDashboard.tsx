@@ -330,7 +330,8 @@ function FlowPanel({ panel }: { panel: RecordedMonitoringPanel }) {
   const counts: number[] = [];
   stages.forEach((metric, i) => counts.push(metric.state === "recorded" ? metric.value : i ? counts[i - 1] : 0));
   const total = Math.max(1, counts[0]);
-  const heights = counts.map((count) => Math.max(3, (count / total) * FLOW_BAND));
+  // A floor keeps a small positive stage visible; a recorded zero draws as zero.
+  const heights = counts.map((count) => (count > 0 ? Math.max(3, (count / total) * FLOW_BAND) : 0));
   const { band, leak, step } = flowGeometry(heights);
   const drop = (i: number) => {
     const metric = stages[i];
@@ -364,8 +365,11 @@ function FlowPanel({ panel }: { panel: RecordedMonitoringPanel }) {
                 <p className="mt-2 font-display text-[22px] leading-none text-text-secondary">—</p>
               )}
               <p className="mt-1 font-mono text-[9.5px] tracking-[0.06em] text-text-secondary">
-                {metric.state === "recorded" ? share(i) : "not yet"}
+                {metric.state === "recorded" ? share(i) : metric.id === "flow-unique" ? "not yet" : "not shown"}
               </p>
+              {metric.state === "recorded" && metric.basis === "proxy" ? (
+                <div className="mt-1.5"><Badge>Proxy</Badge></div>
+              ) : null}
             </li>
           ))}
         </ol>
@@ -420,7 +424,10 @@ function FlowPanel({ panel }: { panel: RecordedMonitoringPanel }) {
                 </p>
               ) : null}
               <div className="flex items-baseline justify-between gap-3">
-                <span className="text-[13px] text-text-dark">{metricLabel(metric.id, metric.label)}</span>
+                <span className="flex items-center gap-2 text-[13px] text-text-dark">
+                  {metricLabel(metric.id, metric.label)}
+                  {metric.state === "recorded" && metric.basis === "proxy" ? <Badge>Proxy</Badge> : null}
+                </span>
                 <span className="font-mono text-[12px] tabular-nums text-text-dark">
                   {metric.state === "recorded" ? metric.value.toLocaleString("en-IN") : "—"}
                 </span>
@@ -428,7 +435,7 @@ function FlowPanel({ panel }: { panel: RecordedMonitoringPanel }) {
               <div className="mt-1.5 h-[6px] overflow-hidden bg-card">
                 <div
                   className={`monitoring-bar h-full ${metric.state === "recorded" ? "bg-maroon" : "bg-hair"}`}
-                  style={{ width: `${Math.max(1, (100 * counts[i]) / total)}%` }}
+                  style={{ width: `${counts[i] > 0 ? Math.max(1, (100 * counts[i]) / total) : 0}%` }}
                 />
               </div>
             </li>

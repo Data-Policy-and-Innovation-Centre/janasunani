@@ -563,7 +563,10 @@ def _flow_lake() -> duckdb.DuckDBPyConnection:
           ('direct',    'Disposed', 2, TRUE,  FALSE, FALSE, TRUE);
         CREATE TABLE atr_cases AS SELECT kind || '-' || i AS ticket_no, nodes, required, replied, reviewed, closed
           FROM shapes, range(10) r(i);
-        CREATE TABLE complaints AS SELECT kind || '-' || i AS ticket_no, status FROM shapes, range(10) r(i);
+        -- The open cases were filed first.
+        CREATE TABLE complaints AS SELECT kind || '-' || i AS ticket_no, status,
+            CASE WHEN kind = 'open' THEN TIMESTAMP '2024-08-01' ELSE TIMESTAMP '2024-09-01' END AS created_on
+          FROM shapes, range(10) r(i);
     """)
     return con
 
@@ -582,12 +585,25 @@ def test_flow_stages_nest_and_say_when_repeats_are_not_removed():
     }
 
 
-def test_flow_keeps_one_filing_per_duplicate_group(tmp_path):
-    # The ten 'closed' filings are five people filing twice each.
+def test_flow_keeps_the_earliest_filing_per_duplicate_group(tmp_path):
+    # Each closed filing repeats an open one filed a month earlier. The
+    # earlier, open filing stands for the group, although 'closed-' sorts first.
+    groups = tmp_path / "groups.csv"
+    groups.write_text("ticket_no,duplicate_group_id,group_size\n" + "".join(
+        f"{kind}-{i},g{i},2\n" for i in range(10) for kind in ("open", "closed")))
+    stages = {m["id"]: m for m in _flow(_flow_lake(), groups)["metrics"]}
+    assert (stages["flow-unique"]["numerator"], stages["flow-unique"]["denominator"]) == (50, 60)
+    assert stages["flow-unique"]["basis"] == "proxy"
+    assert stages["flow-closed"]["numerator"] == 10  # direct only
+
+
+def test_flow_withholds_a_stage_whose_loss_is_below_ten(tmp_path):
+    # Five repeats: 60 kept and 55 unique would show a loss of five.
     groups = tmp_path / "groups.csv"
     groups.write_text("ticket_no,duplicate_group_id,group_size\n" + "".join(
         f"closed-{i},g{i // 2},2\n" for i in range(10)))
     stages = {m["id"]: m for m in _flow(_flow_lake(), groups)["metrics"]}
-    assert (stages["flow-unique"]["numerator"], stages["flow-unique"]["denominator"]) == (55, 60)
-    assert stages["flow-unique"]["basis"] == "proxy"
+    assert stages["flow-unique"]["state"] == "unavailable"
+    # The next stage is measured from the last one shown, not the withheld one.
+    assert (stages["flow-routed"]["numerator"], stages["flow-routed"]["denominator"]) == (45, 60)
     assert stages["flow-closed"]["numerator"] == 15
