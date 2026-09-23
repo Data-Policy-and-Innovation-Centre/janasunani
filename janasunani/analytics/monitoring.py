@@ -424,7 +424,9 @@ def _transfers(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
           SELECT ticket_no FROM scope_tickets WHERE created_on >= DATE '2024-07-01' AND created_on < DATE '2025-07-01'),
         transfer AS (
           SELECT a.*, LEAD(action_taken_date) OVER(PARTITION BY a.ticket_no ORDER BY action_taken_date,id) later
-          FROM action_history a JOIN cohort USING(ticket_no)),
+          FROM action_history a JOIN cohort USING(ticket_no)
+          -- As of the snapshot, like every other panel.
+          WHERE a.action_taken_date < TIMESTAMP '2025-07-31'),
         t AS (SELECT * FROM transfer WHERE action_status='Complaint Transfer'),
         r AS (SELECT r.* FROM returns r JOIN cohort USING(ticket_no))
         SELECT (SELECT COUNT(*) FROM cohort) filings,
@@ -815,7 +817,7 @@ def _offices(con: duckdb.DuckDBPyConnection, scope: ScopeSpec) -> dict[str, Any]
           SELECT DISTINCT ticket_no FROM action_history
           WHERE action_status='Complaint Transfer' AND action_taken_date < TIMESTAMP '2025-07-31')
         SELECT COALESCE(NULLIF(trim(g.district), ''), 'District not recorded') district,
-          COALESCE(n.role_name, 'Other or unnamed office') office,
+          COALESCE(n.role_name, 'Unnamed role') office,
           (g.created_on>=DATE '2024-07-01' AND g.created_on<DATE '2025-07-01') in_fy,
           t.ticket_no IS NOT NULL is_transferred,
           (g.created_on<DATE '2025-07-31'

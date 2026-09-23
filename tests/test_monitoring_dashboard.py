@@ -478,7 +478,7 @@ def test_offices_handles_blank_districts_missing_status_and_the_snapshot():
     assert inactive == 60.0
     # The post-snapshot transfer neither moves the case nor counts as a transfer.
     assert transferred == 0.0
-    assert [row["label"] for row in by_office["rows"]] == ["Other or unnamed office"]
+    assert [row["label"] for row in by_office["rows"]] == ["Unnamed role"]
 
 
 def test_aging_counts_missing_status_and_never_updated_cases():
@@ -509,3 +509,37 @@ def test_table_cells_are_checked_against_their_unit(unit, value):
     from janasunani.serving.schemas import MonitoringTable
     with pytest.raises(ValidationError):
         MonitoringTable.model_validate({"title": "t", "columns": [{"label": "c", "unit": unit}], "rows": [{"label": "r", "values": [value]}]})
+
+
+def test_transfers_count_only_actions_before_the_snapshot():
+    from janasunani.analytics.monitoring import _transfers
+    con = duckdb.connect()
+    con.execute("""
+        CREATE TABLE scope_tickets AS SELECT 'T' || i AS ticket_no, TIMESTAMP '2025-05-01' AS created_on FROM range(30) r(i);
+        -- Ten transferred before the snapshot, ten only after it, ten never.
+        CREATE TABLE action_history AS
+          SELECT i AS id, 'T' || i AS ticket_no,
+                 CASE WHEN i < 10 THEN TIMESTAMP '2025-07-01' ELSE TIMESTAMP '2025-08-10' END AS action_taken_date,
+                 'Complaint Transfer' AS action_status
+          FROM range(20) r(i);
+        CREATE TABLE returns(ticket_no VARCHAR, arrivals INTEGER);
+    """)
+    metrics = {m["id"]: m for m in _transfers(con)["metrics"]}
+    assert (metrics["transfer-rate"]["numerator"], metrics["transfer-rate"]["denominator"]) == (10, 30)
+
+
+def test_a_small_district_inside_the_top_rows_is_folded_and_its_cells_withheld():
+    department = next(s for s in CORE_SCOPES if s.kind == "department")
+    # "Small" ranks second, inside the top rows, but has only five open cases.
+    by_district, _ = _offices(_office_lake({"Big": 40, "Small": 5}), department)["tables"]
+    rows = {row["label"]: row["values"] for row in by_district["rows"]}
+    assert "Small" not in rows
+    # The fold holds only those five: every cell in it is withheld.
+    assert rows["Other districts"] == [None] * len(by_district["columns"])
+
+
+def test_a_rate_over_a_small_denominator_is_withheld_even_at_zero():
+    from janasunani.analytics.monitoring import _drilldown_rows
+    assert _drilldown_rows([("Puri", 5, 0, 0)], [(0, None), (1, 0), (2, 0)], "Other") == [
+        {"label": "Other", "values": [None, None, None]},
+    ]
