@@ -450,7 +450,8 @@ def _atr_lake(cases, sizes=None) -> duckdb.DuckDBPyConnection:
             con.execute("INSERT INTO complaints VALUES (?, TIMESTAMP '2025-07-01' - INTERVAL 30 DAY, ?, ?, ?)", [ticket, status, resolved, chain])
             for office, action, remark, day in steps:
                 next_id += 1
-                when = f"2025-07-{day:02d}"
+                # A day number, or "DD HH:MM" for a time on that day.
+                when = f"2025-07-{day:02d}" if isinstance(day, int) else f"2025-07-{day}"
                 con.execute("INSERT INTO action_history VALUES (?, ?, ?, ?, ?)", [next_id, ticket, when, action, remark])
                 con.execute("INSERT INTO acting_office VALUES (?, ?, ?, ?, ?)", [next_id, ticket, when, action, office])
     con.execute("CREATE TABLE scope_tickets AS SELECT ticket_no, created_on FROM complaints")
@@ -476,6 +477,10 @@ ATR_CASES = [
         ("waiting", "1,2,3", "Pending", [("BDO", "Replied", None, 10)]),
         # No workflow recorded.
         ("none", "", "Pending", []),
+        # Reviewed on the afternoon of the day it closed (resolved_on is
+        # midnight): same-day actions come before closure.
+        ("sameday", "1,2,3", "Disposed", [("BDO", "Replied", None, 2), ("Collector", "Replied", None, "10 14:00"),
+                                          ("CMO", "Disposed", None, "10 15:00")]),
         # Waiting at the snapshot, disposed a week later: still in the queue.
         ("waiting_late", "1,2,3", "Disposed@2025-08-05", [("BDO", "Replied", None, 10)]),
         # A Reopen on the day of the first reply but recorded before it, by
@@ -495,11 +500,11 @@ def test_atr_reads_review_from_the_assigned_workflow():
     def fraction(metric_id):
         return metrics[metric_id]["numerator"], metrics[metric_id]["denominator"]
 
-    assert fraction("review-required") == (80, 90)       # eight three-office kinds of nine with a workflow
-    assert fraction("atr-replied") == (90, 100)
-    assert fraction("review-done") == (30, 60)            # reviewed, sent_back and twice, of the closed required cases
-    assert fraction("closed-without-review") == (30, 60)  # skipped, late and tied
-    assert fraction("atr-sent-back") == (20, 90)
+    assert fraction("review-required") == (90, 100)      # nine three-office kinds of ten with a workflow
+    assert fraction("atr-replied") == (100, 110)
+    assert fraction("review-done") == (40, 70)            # reviewed, sent_back, twice and sameday, of the closed required cases
+    assert fraction("closed-without-review") == (30, 70)  # skipped, late and tied
+    assert fraction("atr-sent-back") == (20, 100)
     assert fraction("atr-standard-reason") == (20, 20)
     assert metrics["atr-waiting"]["value"] == 20  # waiting and waiting_late
     assert metrics["atr-wait"]["value"] == 20.0            # 30 July less 10 July
