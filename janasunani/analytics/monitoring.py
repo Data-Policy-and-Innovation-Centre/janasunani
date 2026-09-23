@@ -543,8 +543,10 @@ def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
           COALESCE(p.sent_back, FALSE) sent_back,
           f.fr IS NOT NULL AND (p.repliers >= 2 OR COALESCE(p.sent_back, FALSE)) reviewed,
           c.status='Disposed' AND CAST(c.resolved_on AS DATE)<=DATE '2025-07-30' closed,
-          (c.resolved_on IS NULL OR CAST(c.resolved_on AS DATE)>DATE '2025-07-30')
-            AND COALESCE(c.status, '') NOT IN ('Disposed','Discard') AND p.last_status='Replied' atr_waiting,
+          -- Open on the snapshot, as in _aging: a later status is not the
+          -- status on the snapshot.
+          ((c.resolved_on IS NULL AND COALESCE(c.status, '') NOT IN ('Disposed','Discard'))
+            OR CAST(c.resolved_on AS DATE)>DATE '2025-07-30') AND p.last_status='Replied' atr_waiting,
           DATE '2025-07-30'-CAST(p.last_action AS DATE) wait_days
         FROM cohort c LEFT JOIN first_reply f USING(ticket_no) LEFT JOIN per_case p USING(ticket_no)
     """)

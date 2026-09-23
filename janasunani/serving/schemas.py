@@ -588,6 +588,8 @@ class MonitoringResponseModel(BaseModel):
         alias_generator=_camel_case,
         populate_by_name=True,
         extra="forbid",
+        # A NaN passes every range check and then breaks serialization.
+        allow_inf_nan=False,
     )
 
 

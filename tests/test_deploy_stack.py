@@ -1088,7 +1088,7 @@ def test_documented_live_launches_use_the_demo_extra():
     stale = [
         f"{path}: {command}"
         for path, command in commands
-        if "uv run --extra demo janasunani-api-live" not in command
+        if not re.search(r"uv run (--frozen )?--extra demo janasunani-api-live", command)
     ]
     assert not stale, f"live launches must use the complete demo extra: {stale}"
 
