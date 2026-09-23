@@ -315,9 +315,19 @@ def test_recording_reports_coverage_and_names_what_is_missing():
         CREATE TABLE complaints AS SELECT
           'T' || i AS ticket_no, DATE '2024-08-01' AS created_on,
           CASE WHEN i < 20 THEN 'Online' WHEN i < 25 THEN '  ' END AS mode,
+          -- Two filings carry only the code; a zero code is not a value.
+          CASE WHEN i IN (20, 21) THEN 5 WHEN i = 22 THEN 0 END AS mode_id,
           CASE WHEN i < 40 THEN 7 END AS category_id,
+          NULL::VARCHAR AS category,
           CASE WHEN i < 10 THEN 'Scheme' END AS subcategory,
-          NULL::VARCHAR AS review_authority
+          CASE WHEN i = 10 THEN 4 END AS subcategory_id,
+          NULL::VARCHAR AS review_authority,
+          CASE WHEN i = 0 THEN 0 END AS review_authority_id,
+          -- Assignment recorded on the complaint itself: two before the
+          -- snapshot, one after it.
+          CASE WHEN i = 33 THEN TIMESTAMP '2024-08-03' END AS assigned_on,
+          CASE WHEN i = 36 THEN TIMESTAMP '2024-08-05'
+               WHEN i = 34 THEN TIMESTAMP '2025-08-20' END AS tagged_date
         FROM range(40) r(i);
         CREATE TABLE scope_tickets AS SELECT ticket_no, created_on FROM complaints;
         CREATE TABLE action_history AS SELECT
@@ -335,11 +345,11 @@ def test_recording_reports_coverage_and_names_what_is_missing():
         unit="percent", numerator=10, denominator=20)]}
     metrics = {m["id"]: m for m in _recording(con, discards)["metrics"]}
 
-    assert (metrics["rec-entry"]["numerator"], metrics["rec-entry"]["denominator"]) == (20, 40)
+    assert (metrics["rec-entry"]["numerator"], metrics["rec-entry"]["denominator"]) == (22, 40)
     assert metrics["rec-classification"]["value"] == 100.0
     assert metrics["rec-classification"]["note"]  # only the current category
-    assert metrics["rec-events"]["numerator"] == 33
-    assert metrics["rec-scheme"]["numerator"] == 10
+    assert metrics["rec-events"]["numerator"] == 35
+    assert metrics["rec-scheme"]["numerator"] == 11
     # Both count a stand-in field, not the one the row names.
     assert metrics["rec-scheme"]["basis"] == metrics["rec-review-required"]["basis"] == "proxy"
     assert metrics["rec-entry"]["basis"] == "direct"

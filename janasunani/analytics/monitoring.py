@@ -777,13 +777,19 @@ def _recording(con: duckdb.DuckDBPyConnection, discards: dict[str, Any]) -> dict
           SELECT a.ticket_no, a.action_status FROM action_history a JOIN cohort USING(ticket_no)
           WHERE a.action_taken_date < TIMESTAMP '2025-07-31')
         SELECT COUNT(*) filings,
-          -- A blank string is a missing value, as elsewhere in analytics.
-          COUNT(*) FILTER(WHERE NULLIF(trim(mode), '') IS NOT NULL AND created_on IS NOT NULL) entry,
-          COUNT(*) FILTER(WHERE category_id IS NOT NULL) category,
-          COUNT(*) FILTER(WHERE NULLIF(trim(subcategory), '') IS NOT NULL) subcategory,
-          COUNT(*) FILTER(WHERE NULLIF(trim(review_authority), '') IS NOT NULL) review_authority,
-          (SELECT COUNT(DISTINCT ticket_no) FROM acted
-           WHERE action_status IN ('Forwarded To Subordinate', 'Forward', 'Forwarded', 'Complaint Transfer')) dated_action,
+          -- Each field counts if its label or its code is usable. A blank
+          -- label and a zero code are missing values, as elsewhere in analytics.
+          COUNT(*) FILTER(WHERE (NULLIF(trim(mode), '') IS NOT NULL OR NULLIF(mode_id, 0) IS NOT NULL)
+                                AND created_on IS NOT NULL) entry,
+          COUNT(*) FILTER(WHERE NULLIF(category_id, 0) IS NOT NULL OR NULLIF(trim(category), '') IS NOT NULL) category,
+          COUNT(*) FILTER(WHERE NULLIF(trim(subcategory), '') IS NOT NULL OR NULLIF(subcategory_id, 0) IS NOT NULL) subcategory,
+          COUNT(*) FILTER(WHERE NULLIF(trim(review_authority), '') IS NOT NULL
+                                OR NULLIF(review_authority_id, 0) IS NOT NULL) review_authority,
+          -- Assignment is dated on the complaint as well as in the history.
+          (SELECT COUNT(*) FROM cohort c WHERE
+             c.assigned_on < TIMESTAMP '2025-07-31' OR c.tagged_date < TIMESTAMP '2025-07-31'
+             OR c.ticket_no IN (SELECT ticket_no FROM acted WHERE action_status IN
+               ('Forwarded To Subordinate', 'Forward', 'Forwarded', 'Complaint Transfer'))) dated_action,
           (SELECT COUNT(DISTINCT ticket_no) FROM acted WHERE action_status='ATR Received') atr
         FROM cohort
     """)
@@ -804,7 +810,7 @@ def _recording(con: duckdb.DuckDBPyConnection, discards: dict[str, Any]) -> dict
         "metrics": [
             share("rec-entry", "Entry channel and date", row["entry"]),
             share("rec-classification", "Classification", row["category"], "Only the current category; later changes are not recorded as events."),
-            share("rec-events", "Dated assignment and transfer events", row["dated_action"], "Returns are inferred from the office sequence, not recorded as events."),
+            share("rec-events", "Dated assignment and transfer events", row["dated_action"], "Assignment dates on the complaint or in the action history. Returns are inferred from the office sequence, not recorded as events."),
             (
                 {**discard, "id": "rec-discard-reason", "label": "Discard reason", "note": "Share of discards with one of the eight standard reasons. Timing is known only relative to transfers."}
                 if discard and discard["state"] == "recorded" else
