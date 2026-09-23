@@ -94,6 +94,13 @@ export function subtypesFor(catalog: MonitoringCatalog, parentId: string): Monit
   return catalog.scopes.filter((scope) => scope.parentId === parentId);
 }
 
+/** The scope a child selector choice means. Its empty "all" option stands
+ * for the parent itself; passing "" on would request a scope that does not
+ * exist and leave both selectors with nothing selected. */
+export function childChoice(value: string, parentId: string): string {
+  return value || parentId;
+}
+
 export function quickScopes(catalog: MonitoringCatalog): MonitoringScope[] {
   return catalog.scopes.filter((scope) => scope.quickView);
 }

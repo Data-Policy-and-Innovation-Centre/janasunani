@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const { parseMonitoringCatalog, parseMonitoringDashboard, parentScopeFor, quickScopes, scopesForView, subtypesFor } = await import("../lib/monitoring.ts");
+const { childChoice, parseMonitoringCatalog, parseMonitoringDashboard, parentScopeFor, quickScopes, scopesForView, subtypesFor } = await import("../lib/monitoring.ts");
 
 const catalog = {
   schemaVersion: 1,
@@ -78,4 +78,9 @@ test("unavailable metric is explicit and carries no substitute value", () => {
   const parsed = parseMonitoringDashboard(unavailable);
   assert.equal(parsed.panels[4].metrics[0].state, "unavailable");
   assert.equal("value" in parsed.panels[4].metrics[0], false);
+});
+
+test("the empty child option selects the parent scope", () => {
+  assert.equal(childChoice("", "department-21"), "department-21");
+  assert.equal(childChoice("subcategory-21-x", "department-21"), "subcategory-21-x");
 });

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { fetchMonitoringCatalog, fetchMonitoringDashboard } from "@/lib/api";
-import { parentScopeFor, quickScopes, scopesForView, subtypesFor, type MonitoringCatalog, type MonitoringDashboard as Dashboard, type MonitoringMetric, type MonitoringPanel } from "@/lib/monitoring";
+import { childChoice, parentScopeFor, quickScopes, scopesForView, subtypesFor, type MonitoringCatalog, type MonitoringDashboard as Dashboard, type MonitoringMetric, type MonitoringPanel } from "@/lib/monitoring";
 
 const VIEWS = [
   ["statewide", "Statewide"], ["department", "Department"],
@@ -111,7 +111,7 @@ export function MonitoringDashboard() {
         <div className="grid gap-3 md:grid-cols-4">
           <label className="text-xs font-semibold text-text-secondary">Viewpoint<select value={view} onChange={(event) => chooseView(event.target.value)} className="mt-1 w-full rounded border border-hair bg-surface p-2 text-sm text-text-dark">{VIEWS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
           <label className="text-xs font-semibold text-text-secondary">Office / department<select value={parentScope?.id ?? scopeId} onChange={(event) => chooseScope(event.target.value)} className="mt-1 w-full rounded border border-hair bg-surface p-2 text-sm text-text-dark">{parentScopes.map((scope) => <option key={scope.id} value={scope.id} disabled={!scope.availablePeriods.length}>{scope.label}{scope.availablePeriods.length ? "" : " — not published"}</option>)}</select></label>
-          <label className="text-xs font-semibold text-text-secondary">Subtype<select disabled={!children.length} value={children.some((child) => child.id === scopeId) ? scopeId : ""} onChange={(event) => chooseScope(event.target.value)} className="mt-1 w-full rounded border border-hair bg-surface p-2 text-sm text-text-dark disabled:text-text-secondary"><option value="">{children.length ? "All recorded steps" : "No subtype"}</option>{children.map((scope) => <option key={scope.id} value={scope.id} disabled={!scope.availablePeriods.length}>{scope.label}</option>)}</select></label>
+          <label className="text-xs font-semibold text-text-secondary">Subtype<select disabled={!children.length} value={children.some((child) => child.id === scopeId) ? scopeId : ""} onChange={(event) => chooseScope(childChoice(event.target.value, parentScope?.id ?? scopeId))} className="mt-1 w-full rounded border border-hair bg-surface p-2 text-sm text-text-dark disabled:text-text-secondary"><option value="">{children.length ? "All recorded steps" : "No subtype"}</option>{children.map((scope) => <option key={scope.id} value={scope.id} disabled={!scope.availablePeriods.length}>{scope.label}</option>)}</select></label>
           <label className="text-xs font-semibold text-text-secondary">Period<select value={period} onChange={(event) => { setDashboard(null); setMessage("Loading selected aggregate view…"); setPeriod(event.target.value); }} className="mt-1 w-full rounded border border-hair bg-surface p-2 text-sm text-text-dark">{catalog?.periods.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
         </div>
         <div className="mt-3 flex flex-wrap gap-2"><span className="py-1 text-xs font-semibold text-text-secondary">Quick views</span>{quick.map((scope) => {
