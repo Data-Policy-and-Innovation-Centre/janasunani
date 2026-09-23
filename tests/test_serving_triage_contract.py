@@ -446,7 +446,10 @@ from janasunani.serving.triage import (  # noqa: E402
         (dict(identity_match=False, text_similarity="near", explicit_reference=True,
               follow_up_cue=True), "follow_up"),
         # Similar subject, not linked to the same filer.
-        (dict(identity_match=False, text_similarity="similar"), "related"),
+        (dict(identity_match=False, text_similarity="similar", explicit_reference=False), "related"),
+        # A similar subject with the links never checked could be a follow-up.
+        (dict(text_similarity="similar"), "uncertain"),
+        (dict(identity_match=False, text_similarity="similar"), "uncertain"),
         # Same filer and text but new information never checked: not a repeat.
         (dict(identity_match=True, text_similarity="near"), "uncertain"),
         # A reference to an unrelated problem.

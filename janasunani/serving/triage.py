@@ -136,10 +136,12 @@ def candidate_relationship(evidence: DuplicateEvidence) -> DuplicateRelationship
         and evidence.explicit_reference is False
     ):
         return "pure_duplicate"
+    # Related means a similar subject that is checked and found not linked:
+    # an unassessed link could still be a follow-up, which stays uncertain.
     if (
         evidence.text_similarity == "similar"
-        and evidence.identity_match is not True
-        and evidence.explicit_reference is not True
+        and evidence.identity_match is False
+        and evidence.explicit_reference is False
     ):
         return "related"
     return "uncertain"
