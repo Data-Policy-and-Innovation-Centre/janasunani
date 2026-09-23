@@ -181,7 +181,7 @@ def test_each_recorded_metric_says_whether_it_is_direct_or_a_proxy():
 def test_every_proxy_id_is_a_metric_the_publisher_emits():
     # A typo in PROXY_METRICS would silently publish a proxy as direct.
     source = Path("janasunani/analytics/monitoring.py").read_text()
-    emitted = set(re.findall(r'_metric\(\s*"([a-z0-9-]+)"', source))
+    emitted = set(re.findall(r'(?:_metric|share)\(\s*"([a-z0-9-]+)"', source))
     emitted |= {key for key, _label in re.findall(r'\("([a-z-]+)", "([^"]+)"\)', source)}
     assert PROXY_METRICS <= emitted, PROXY_METRICS - emitted
 
@@ -322,10 +322,12 @@ def test_recording_reports_coverage_and_names_what_is_missing():
         CREATE TABLE scope_tickets AS SELECT ticket_no, created_on FROM complaints;
         CREATE TABLE action_history AS SELECT
           i AS id, 'T' || i AS ticket_no,
-          -- 30 in-period transfers; then disposals, which are not assignment
+          -- 30 in-period transfers; three 'Forwarded', the spelling the action
+          -- taxonomy classifies; then disposals, which are not assignment
           -- events; then transfers dated after the snapshot.
           CASE WHEN i < 35 THEN TIMESTAMP '2024-08-02' ELSE TIMESTAMP '2025-08-15' END AS action_taken_date,
-          CASE WHEN i < 30 OR i >= 35 THEN 'Complaint Transfer' ELSE 'Disposed' END AS action_status
+          CASE WHEN i < 30 OR i >= 35 THEN 'Complaint Transfer'
+               WHEN i < 33 THEN 'Forwarded' ELSE 'Disposed' END AS action_status
         FROM range(40) r(i);
     """)
     discards = {"metrics": [published_metric(
@@ -336,8 +338,11 @@ def test_recording_reports_coverage_and_names_what_is_missing():
     assert (metrics["rec-entry"]["numerator"], metrics["rec-entry"]["denominator"]) == (20, 40)
     assert metrics["rec-classification"]["value"] == 100.0
     assert metrics["rec-classification"]["note"]  # only the current category
-    assert metrics["rec-events"]["numerator"] == 30
+    assert metrics["rec-events"]["numerator"] == 33
     assert metrics["rec-scheme"]["numerator"] == 10
+    # Both count a stand-in field, not the one the row names.
+    assert metrics["rec-scheme"]["basis"] == metrics["rec-review-required"]["basis"] == "proxy"
+    assert metrics["rec-entry"]["basis"] == "direct"
     # Zero is published, not withheld: nothing names a review authority.
     assert metrics["rec-review-required"]["value"] == 0.0
     # The discard row is the discards panel's own figure, relabelled.

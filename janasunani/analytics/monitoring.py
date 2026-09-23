@@ -47,6 +47,9 @@ PROXY_METRICS = frozenset({
     "problems", "citizens", "duplicate-adjustment", "repeat-groups", "campaigns",
     "bare-ladder", "bare-resolved", "action-recorded", "benefit-recorded",
     "refiling-30", "refiling-90",
+    # Coverage of a stand-in field: review authority for review required,
+    # subcategory for scheme or service.
+    "rec-review-required", "rec-scheme",
 })
 # Subcategory scopes are built per published department, largest first. Each
 # scope re-runs the whole panel suite over the lake, so this is deliberately a
@@ -780,7 +783,7 @@ def _recording(con: duckdb.DuckDBPyConnection, discards: dict[str, Any]) -> dict
           COUNT(*) FILTER(WHERE NULLIF(trim(subcategory), '') IS NOT NULL) subcategory,
           COUNT(*) FILTER(WHERE NULLIF(trim(review_authority), '') IS NOT NULL) review_authority,
           (SELECT COUNT(DISTINCT ticket_no) FROM acted
-           WHERE action_status IN ('Forwarded To Subordinate', 'Forward', 'Complaint Transfer')) dated_action,
+           WHERE action_status IN ('Forwarded To Subordinate', 'Forward', 'Forwarded', 'Complaint Transfer')) dated_action,
           (SELECT COUNT(DISTINCT ticket_no) FROM acted WHERE action_status='ATR Received') atr
         FROM cohort
     """)
