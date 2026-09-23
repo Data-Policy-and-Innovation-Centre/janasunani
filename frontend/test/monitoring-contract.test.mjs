@@ -18,7 +18,7 @@ const catalog = {
 const panels = ["aging", "transfers", "journey", "atr", "demand", "closure"].map((id) => ({
   id, title: id, state: "recorded",
   denominator: { label: "Synthetic denominator", value: 20 },
-  metrics: [{ id: `${id}-metric`, label: "Synthetic", state: "recorded", value: 50, unit: "percent", numerator: 10, denominator: 20, coveragePct: null, note: null }],
+  metrics: [{ id: `${id}-metric`, label: "Synthetic", state: "recorded", value: 50, unit: "percent", numerator: 10, denominator: 20, coveragePct: null, note: null, basis: "direct" }],
   breakdown: null, breakdownUnavailableReason: null, caveats: ["Synthetic fixture."],
 }));
 
@@ -107,4 +107,13 @@ test("unavailable metric is explicit and carries no substitute value", () => {
 test("the empty child option selects the parent scope", () => {
   assert.equal(childChoice("", "department-21"), "department-21");
   assert.equal(childChoice("subcategory-21-x", "department-21"), "subcategory-21-x");
+});
+
+test("a recorded metric must say whether it is direct or a proxy", () => {
+  const withoutBasis = structuredClone(dashboard);
+  delete withoutBasis.panels[0].metrics[0].basis;
+  assert.throws(() => parseMonitoringDashboard(withoutBasis), /malformed/);
+  const unknownBasis = structuredClone(dashboard);
+  unknownBasis.panels[0].metrics[0].basis = "estimated";
+  assert.throws(() => parseMonitoringDashboard(unknownBasis), /malformed/);
 });

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -10,7 +11,7 @@ from fastapi.testclient import TestClient
 
 import duckdb
 
-from janasunani.analytics.monitoring import _metric as published_metric, _pct, withhold_small_panel, refiling_summary, suppress_breakdown
+from janasunani.analytics.monitoring import PROXY_METRICS, _metric as published_metric, _pct, withhold_small_panel, refiling_summary, suppress_breakdown
 from janasunani.serving.api import create_app
 from janasunani.serving.monitoring import (
     ArtifactMonitoringProvider,
@@ -29,6 +30,7 @@ def _metric(metric_id: str = "count") -> dict:
         "denominator": 20,
         "coveragePct": 50.0,
         "note": None,
+        "basis": "direct",
     }
 
 
@@ -166,6 +168,35 @@ def test_refiling_censoring_includes_post_fy_followup_and_window_boundaries():
         "den90": 1,
         "num90": 1,
     }
+
+
+def test_each_recorded_metric_says_whether_it_is_direct_or_a_proxy():
+    assert published_metric("loop-rate", "L", 12.0, unit="percent")["basis"] == "proxy"
+    assert published_metric("transfer-rate", "T", 12.0, unit="percent")["basis"] == "direct"
+    # Unavailable metrics carry no value, so they carry no basis either.
+    assert "basis" not in published_metric("problems", "P", None, unit="groups")
+
+
+def test_every_proxy_id_is_a_metric_the_publisher_emits():
+    # A typo in PROXY_METRICS would silently publish a proxy as direct.
+    source = Path("janasunani/analytics/monitoring.py").read_text()
+    emitted = set(re.findall(r'_metric\(\s*"([a-z0-9-]+)"', source))
+    emitted |= {key for key, _label in re.findall(r'\("([a-z-]+)", "([^"]+)"\)', source)}
+    assert PROXY_METRICS <= emitted, PROXY_METRICS - emitted
+
+
+def test_a_metric_without_a_basis_fails_closed(tmp_path):
+    # The intact release loads, so the failure below is the missing field and
+    # nothing else.
+    ArtifactMonitoringProvider(_write(tmp_path)).dashboard("department-21", "fy-2024-25")
+
+    release = _release()
+    del release["dashboards"]["department-21:fy-2024-25"]["panels"][0]["metrics"][0]["basis"]
+    (tmp_path / "missing").mkdir()
+    provider = ArtifactMonitoringProvider(_write(tmp_path / "missing", release))
+
+    with pytest.raises(MonitoringArtifactError):
+        provider.dashboard("department-21", "fy-2024-25")
 
 
 def test_catalog_and_dashboard_are_allowlisted(tmp_path):

@@ -44,6 +44,7 @@ export type MonitoringMetric =
       denominator: number | null;
       coveragePct: number | null;
       note: string | null;
+      basis: "direct" | "proxy";
     }
   | { id: string; label: string; state: "unavailable"; reason: string };
 
@@ -182,7 +183,7 @@ export function parseMonitoringCatalog(value: unknown): MonitoringCatalog {
 function validMetric(value: unknown): boolean {
   if (!isRecord(value) || !text(value.id) || !text(value.label) || !text(value.state)) return false;
   if (value.state === "unavailable") return keys(value, ["id", "label", "state", "reason"]) && text(value.reason);
-  return value.state === "recorded" && keys(value, ["id", "label", "state", "value", "unit", "numerator", "denominator", "coveragePct", "note"]) && count(value.value) && text(value.unit) && (value.numerator === null || wholeCount(value.numerator)) && (value.denominator === null || wholeCount(value.denominator)) && (value.coveragePct === null || (count(value.coveragePct) && value.coveragePct <= 100)) && (value.note === null || text(value.note));
+  return value.state === "recorded" && keys(value, ["id", "label", "state", "value", "unit", "numerator", "denominator", "coveragePct", "note", "basis"]) && (value.basis === "direct" || value.basis === "proxy") && count(value.value) && text(value.unit) && (value.numerator === null || wholeCount(value.numerator)) && (value.denominator === null || wholeCount(value.denominator)) && (value.coveragePct === null || (count(value.coveragePct) && value.coveragePct <= 100)) && (value.note === null || text(value.note));
 }
 
 export function parseMonitoringDashboard(value: unknown): MonitoringDashboard {

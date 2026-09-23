@@ -637,6 +637,9 @@ class RecordedMonitoringMetric(MonitoringResponseModel):
     denominator: int | None = Field(default=None, ge=0)
     coverage_pct: float | None = Field(default=None, ge=0, le=100)
     note: str | None = None
+    # Whether the value counts what the record contains or stands in for it
+    # (closure wording for closure quality, a dedup group for a problem).
+    basis: Literal["direct", "proxy"]
 
 
 class UnavailableMonitoringMetric(MonitoringResponseModel):

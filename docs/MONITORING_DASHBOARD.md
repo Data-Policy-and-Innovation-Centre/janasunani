@@ -34,6 +34,10 @@ published periods. The dashboard returns exactly six panels: aging and
 escalation; transfers and loops; end-to-end journey; ATR queue discipline;
 demand and duplication; closure and return. Individual panels or metrics can
 be explicitly unavailable. No proxy value is silently substituted.
+Every recorded metric carries `basis`: `direct` when it counts what the record
+contains, `proxy` when it stands in for what its label names (closure wording
+for closure quality, a duplicate group for a problem). The list lives in
+`PROXY_METRICS` in `janasunani/analytics/monitoring.py`.
 
 The provider rejects malformed or oversized artifacts, unknown selectors,
 extra fields, traversal-shaped queries, and row-level or sensitive keys. The

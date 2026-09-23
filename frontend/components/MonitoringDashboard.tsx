@@ -21,7 +21,7 @@ import {
   rowLabel,
 } from "@/lib/labels";
 import { CountUp, Reveal } from "./motion";
-import { Note } from "./ui";
+import { Badge, Note } from "./ui";
 
 const VIEWS = [
   ["statewide", "Statewide"],
@@ -70,6 +70,14 @@ function MetricCell({
       <p className="font-mono text-[9.5px] uppercase leading-tight tracking-[0.13em] text-text-secondary">
         {metricLabel(metric.id, metric.label)}
       </p>
+      {metric.state === "recorded" && metric.basis === "proxy" ? (
+        <span
+          className="mt-1.5 inline-block"
+          title="Stands in for what the label names rather than measuring it directly."
+        >
+          <Badge>Proxy</Badge>
+        </span>
+      ) : null}
       {metric.state === "unavailable" ? (
         <p className="mt-2 font-display text-[22px] leading-none text-text-secondary">
           Unavailable
@@ -174,6 +182,40 @@ function PanelCard({ panel, index }: { panel: MonitoringPanel; index: number }) 
         <Note label="How to read this">{panel.caveats.join(" ")}</Note>
       </div>
     </Reveal>
+  );
+}
+
+/** Where every figure on the page comes from, stated once above the panels. */
+function AboutTheData({ dashboard }: { dashboard: Dashboard }) {
+  const facts: [string, string][] = [
+    ["Period", dashboard.periodLabel],
+    ["Snapshot", displayDate(dashboard.snapshotDate)],
+    ["Published", displayDate(dashboard.generatedAt.slice(0, 10))],
+  ];
+  const extract = dashboard.sourceFreshness.extractMaximum;
+  if (extract) facts.push(["Extract ends", displayDate(extract)]);
+  return (
+    <div
+      className="mt-6 border-l-2 border-hair py-1 pl-4"
+      aria-label="About this data"
+    >
+      <dl className="flex flex-wrap gap-x-6 gap-y-1.5">
+        {facts.map(([term, value]) => (
+          <div key={term} className="flex items-baseline gap-2">
+            <dt className="font-mono text-[9.5px] uppercase tracking-[0.13em] text-text-secondary">
+              {term}
+            </dt>
+            <dd className="text-[12.5px] text-text-dark">{value}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="mt-2 max-w-[720px] text-[12px] leading-relaxed text-text-secondary">
+        Counts are filings unless a figure says groups or citizens. Every rate
+        shows its numerator and base. A figure marked <em>Proxy</em> stands in
+        for what it names: closure wording for closure quality, a duplicate
+        group for a problem.
+      </p>
+    </div>
   );
 }
 
@@ -310,6 +352,8 @@ export function MonitoringDashboard() {
             </div>
           </Reveal>
         ) : null}
+
+        {dashboard ? <AboutTheData dashboard={dashboard} /> : null}
       </section>
 
       {/* Filters. Sticks below the appbar as the panels scroll past. */}
