@@ -431,8 +431,11 @@ def _transfers(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
         r AS (SELECT r.* FROM returns r JOIN cohort USING(ticket_no))
         SELECT (SELECT COUNT(*) FROM cohort) filings,
           (SELECT COUNT(DISTINCT ticket_no) FROM t) transferred,
-          (SELECT COUNT(*) FROM t) transfer_events,
-          (SELECT COUNT(*) FROM t WHERE later IS NULL OR later > action_taken_date + INTERVAL 7 DAY) no_followup_7d,
+          -- Only transfers whose seven days ended by the snapshot: a later
+          -- one's week is unfinished, and its next action may fall after it.
+          (SELECT COUNT(*) FROM t WHERE action_taken_date < TIMESTAMP '2025-07-24') transfer_events,
+          (SELECT COUNT(*) FROM t WHERE action_taken_date < TIMESTAMP '2025-07-24'
+             AND (later IS NULL OR later > action_taken_date + INTERVAL 7 DAY)) no_followup_7d,
           (SELECT COUNT(*) FROM r) ranked,
           (SELECT COUNT(*) FROM r WHERE arrivals > 1) loops
     """)
