@@ -20,6 +20,16 @@ way that means anything, by running the mart over a fixture lake in `tests/`.
 | `closure` | The disposal ladder, each resolved complaint's rung and trajectory, and the closure finding's aggregate views (#76). |
 | `action_type` | The 7-class action-type lookup over high-frequency `action_taken_remark` templates, built **per status** (#75). |
 | `handoff` | Descriptive elapsed time between recorded handling steps, with aggregate coverage and sensitivity tables. |
+| `grievance_journey` | The CA&GR note's filing-mode, outcome and timing rules, plus the office decode and its rung ladder. Shared by the grievance notebooks. |
+
+## Journey tables (`journey.py`)
+
+Not a mart or a finding. `journey.py` holds the four tables that carry a window
+over a grievance's whole action history (`steps`, `phase_bounds`, `phases`,
+`returns`), plus the route and office-wait tables built on them. They take a
+scope and materialise, because as views over all 6.5M action rows the window
+cannot be pushed through; one uncapped run peaked at 55 GB. The static
+definitions stay in `sql/grievance_journey.sql`.
 
 ### `action_type`: what the officer did (#75)
 
