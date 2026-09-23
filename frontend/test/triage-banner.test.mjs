@@ -203,3 +203,46 @@ test("the legacy disabled-review state is not treated as scored", () => {
     false,
   );
 });
+
+// -- Candidate relationship labels (concept note §2.3) --
+
+const { RELATIONSHIP_COPY, candidateEvidenceRows } = await import("../lib/types.ts");
+
+test("a labelled resubmission carries its candidate; an unlabelled one does not", () => {
+  const evidence = { identity_match: true, text_similarity: "near", follow_up_cue: true, new_information: false };
+  const labelled = classifyDuplicateDisplay({
+    duplicate_kind: "resubmission", duplicate_group_id: "G", duplicate_ticket_no: "CMO1",
+    relationship: "follow_up", evidence, rule_version: "relationship-rules-v1",
+  });
+  assert.deepEqual(labelled.candidate, { relationship: "follow_up", evidence, ruleVersion: "relationship-rules-v1" });
+  // Half a label is not a label.
+  const partial = classifyDuplicateDisplay({
+    duplicate_kind: "resubmission", duplicate_group_id: "G", duplicate_ticket_no: "CMO1", relationship: "follow_up",
+  });
+  assert.equal("candidate" in partial, false);
+});
+
+test("the campaign signatory gate still decides, whatever the label says", () => {
+  const display = classifyDuplicateDisplay({
+    duplicate_kind: "campaign", duplicate_group_id: "GOV2024999640", related_filings: 26203, distinct_signatories: 1,
+    relationship: "campaign", evidence: { identity_match: false, text_similarity: "identical" }, rule_version: "v",
+  });
+  assert.deepEqual(display, { kind: "withheld" });
+});
+
+test("every label has officer-facing copy that calls it a candidate", () => {
+  for (const relationship of ["pure_duplicate", "follow_up", "related", "campaign", "uncertain"]) {
+    assert.match(RELATIONSHIP_COPY[relationship].badge, /^candidate/);
+  }
+});
+
+test("unassessed evidence reads as not assessed, never as no", () => {
+  const rows = Object.fromEntries(candidateEvidenceRows({}));
+  assert.equal(rows["Same filer key"], "Not available");
+  assert.equal(rows["Text"], "Not assessed");
+  assert.equal(rows["New information"], "Not assessed");
+  const checked = Object.fromEntries(candidateEvidenceRows({ identity_match: false, new_information: false, days_since_earlier: 1200 }));
+  assert.equal(checked["Same filer key"], "No");
+  assert.equal(checked["New information"], "None found");
+  assert.equal(checked["Days since earlier filing"], "1,200");
+});

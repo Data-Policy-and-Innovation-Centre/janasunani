@@ -99,6 +99,34 @@ class RoutingResult(BaseModel):
         return self
 
 
+DuplicateRelationship = Literal[
+    "pure_duplicate", "follow_up", "related", "campaign", "uncertain",
+]
+
+
+class DuplicateEvidence(BaseModel):
+    """What a candidate relationship label was read from (concept note §2.3).
+
+    ``None`` means "not assessed", never "no". A pure-duplicate label in
+    particular needs ``new_information`` to have been checked and found
+    absent: an unchecked follow-up must not be read as a repeat.
+    """
+
+    #: Same privacy-protected identity key. A key is not a verified person.
+    identity_match: Optional[bool] = None
+    text_similarity: Optional[
+        Literal["identical", "near", "similar", "different"]
+    ] = None
+    days_since_earlier: Optional[int] = Field(default=None, ge=0)
+    earlier_status: Optional[Literal["open", "closed"]] = None
+    #: The filing names an earlier ticket.
+    explicit_reference: bool = False
+    #: Asks for status, or says the problem continues.
+    follow_up_cue: bool = False
+    #: New facts, dates, documents or requested action.
+    new_information: Optional[bool] = None
+
+
 class DuplicateSignal(BaseModel):
     """A possible resubmission or a collective campaign, never a disposition."""
 
@@ -122,9 +150,22 @@ class DuplicateSignal(BaseModel):
     #: consistency when the number is present; the UI enforces what may be
     #: claimed when it is absent.
     distinct_signatories: Optional[int] = Field(default=None, ge=1)
+    #: A candidate label with the evidence and rules that produced it. All
+    #: three travel together, and all are optional so results persisted
+    #: before labelling still validate on read.
+    relationship: Optional[DuplicateRelationship] = None
+    evidence: Optional[DuplicateEvidence] = None
+    rule_version: Optional[str] = Field(default=None, min_length=1)
 
     @model_validator(mode="after")
     def _kind_has_the_right_context(self) -> "DuplicateSignal":
+        labelled = (self.relationship, self.evidence, self.rule_version)
+        if any(v is not None for v in labelled) and any(v is None for v in labelled):
+            raise ValueError("relationship, evidence and rule_version travel together")
+        if self.duplicate_kind == "campaign" and self.relationship not in {None, "campaign", "uncertain"}:
+            raise ValueError("a campaign group can only be labelled campaign or uncertain")
+        if self.duplicate_kind == "resubmission" and self.relationship == "campaign":
+            raise ValueError("a single earlier ticket cannot be labelled campaign")
         if self.duplicate_kind == "resubmission":
             if not self.duplicate_ticket_no:
                 raise ValueError("resubmission requires duplicate_ticket_no")

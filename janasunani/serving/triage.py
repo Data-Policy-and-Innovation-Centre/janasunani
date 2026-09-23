@@ -23,6 +23,8 @@ from loguru import logger
 from janasunani.pipeline.ocr_quality import is_repetition_collapsed
 from janasunani.serving.schemas import (
     ActionabilityReview,
+    DuplicateEvidence,
+    DuplicateRelationship,
     DuplicateReview,
     OcrQualityEvidence,
     SpamReview,
@@ -88,6 +90,40 @@ class TriageProvider(Protocol):
         district: Optional[str],
         submitted_on: datetime,
     ) -> TriageResult: ...
+
+
+#: Bump when a rule below changes, so a stored label names the rules behind it.
+RELATIONSHIP_RULE_VERSION = "relationship-rules-v1"
+
+
+def candidate_relationship(evidence: DuplicateEvidence) -> DuplicateRelationship:
+    """Assign a candidate label from the evidence (concept note §2.3).
+
+    A candidate, not a decision: what follows each label is for government to
+    decide, and the thresholds are unvalidated until a reviewed sample exists.
+    The order matters. A follow-up is checked before a pure duplicate, and a
+    pure duplicate needs new information checked and absent, because the
+    costly error is a follow-up closed as a repeat.
+    """
+    same_text = evidence.text_similarity in {"identical", "near"}
+    linked = evidence.identity_match is True or evidence.explicit_reference
+    if same_text and evidence.identity_match is False:
+        return "campaign"
+    if (
+        linked
+        and evidence.text_similarity != "different"
+        and (evidence.follow_up_cue or evidence.new_information is True)
+    ):
+        return "follow_up"
+    if (
+        evidence.identity_match is True
+        and same_text
+        and evidence.new_information is False
+    ):
+        return "pure_duplicate"
+    if evidence.text_similarity == "similar" and not linked:
+        return "related"
+    return "uncertain"
 
 
 def unavailable_triage() -> TriageResult:

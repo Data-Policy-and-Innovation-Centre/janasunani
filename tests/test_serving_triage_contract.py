@@ -413,3 +413,68 @@ def test_the_mock_processor_emits_a_displayable_campaign():
             assert duplicate.distinct_signatories >= 2
             assert duplicate.distinct_signatories <= duplicate.related_filings
     assert seen_campaign, "no campaign was produced; the assertion above never ran"
+
+
+# -- Candidate relationship labels (concept note §2.3) ------------------------
+
+from janasunani.serving.schemas import DuplicateEvidence  # noqa: E402
+from janasunani.serving.triage import (  # noqa: E402
+    RELATIONSHIP_RULE_VERSION,
+    candidate_relationship,
+)
+
+
+@pytest.mark.parametrize(
+    ("evidence", "label"),
+    [
+        # Same filer, same text, checked and nothing new.
+        (dict(identity_match=True, text_similarity="near", new_information=False), "pure_duplicate"),
+        # The costly confusion: same filer and text, but a status request.
+        (dict(identity_match=True, text_similarity="near", follow_up_cue=True, new_information=False), "follow_up"),
+        # Same filer and text with new facts is a follow-up, not a repeat.
+        (dict(identity_match=True, text_similarity="identical", new_information=True), "follow_up"),
+        # An explicit reference links the tickets without an identity key.
+        (dict(explicit_reference=True, follow_up_cue=True), "follow_up"),
+        # Same text from different filers.
+        (dict(identity_match=False, text_similarity="identical"), "campaign"),
+        # Similar subject, not linked to the same filer.
+        (dict(identity_match=False, text_similarity="similar"), "related"),
+        # Same filer and text but new information never checked: not a repeat.
+        (dict(identity_match=True, text_similarity="near"), "uncertain"),
+        # A reference to an unrelated problem.
+        (dict(explicit_reference=True, follow_up_cue=True, text_similarity="different"), "uncertain"),
+        # Nothing assessed.
+        (dict(), "uncertain"),
+    ],
+)
+def test_candidate_relationship_rules(evidence, label):
+    assert candidate_relationship(DuplicateEvidence(**evidence)) == label
+
+
+def test_a_label_travels_with_its_evidence_and_rules():
+    base = dict(duplicate_kind="resubmission", duplicate_group_id="g", duplicate_ticket_no="CMO1")
+    with pytest.raises(ValidationError, match="travel together"):
+        DuplicateSignal(**base, relationship="follow_up")
+    with pytest.raises(ValidationError, match="cannot be labelled campaign"):
+        DuplicateSignal(**base, relationship="campaign", evidence=DuplicateEvidence(), rule_version="v")
+    with pytest.raises(ValidationError, match="campaign or uncertain"):
+        DuplicateSignal(
+            duplicate_kind="campaign", duplicate_group_id="g", related_filings=5,
+            relationship="pure_duplicate", evidence=DuplicateEvidence(), rule_version="v",
+        )
+    # A result persisted before labelling existed still loads.
+    assert DuplicateSignal(**base).relationship is None
+
+
+def test_the_mock_processor_labels_through_the_real_rules():
+    seen = set()
+    for index in range(64):
+        duplicate = _mock_triage(f"water supply irregular in ward {index}").duplicate
+        if duplicate is None:
+            continue
+        assert duplicate.rule_version == RELATIONSHIP_RULE_VERSION
+        assert duplicate.relationship == candidate_relationship(duplicate.evidence)
+        # Survives the store's serialise-and-revalidate round trip.
+        assert DuplicateSignal.model_validate_json(duplicate.model_dump_json()) == duplicate
+        seen.add((duplicate.duplicate_kind, duplicate.relationship))
+    assert seen == {("resubmission", "follow_up"), ("campaign", "campaign")}
