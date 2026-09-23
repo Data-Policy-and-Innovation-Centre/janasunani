@@ -70,7 +70,7 @@ function MetricCell({
   index: number;
 }) {
   return (
-    <div className="border-t border-hair-soft pt-3.5 first:border-t-0 sm:border-t-0 sm:border-l sm:pl-5 sm:first:border-l-0 sm:first:pl-0">
+    <div className="border-t border-hair-soft pt-3.5 first:border-t-0 sm:border-t-0 sm:border-l sm:pl-5 sm:odd:border-l-0 sm:odd:pl-0">
       <p className="font-mono text-[9.5px] uppercase leading-tight tracking-[0.13em] text-text-secondary">
         {metricLabel(metric.id, metric.label)}
       </p>
@@ -219,7 +219,7 @@ function DrilldownTable({ table }: { table: MonitoringTable }) {
     <div className="min-w-0">
       <p className="kicker">{table.title}</p>
       <div className="mt-3 overflow-x-auto">
-        <table className="w-full min-w-[520px] border-collapse">
+        <table className="w-full border-collapse" style={{ minWidth: 180 + 110 * table.columns.length }}>
           <thead>
             <tr>
               <th scope="col" className="pb-2 text-left font-mono text-[9.5px] font-normal uppercase tracking-[0.13em] text-text-secondary">
@@ -355,6 +355,12 @@ function PanelCard({ panel, index }: { panel: MonitoringPanel; index: number }) 
           {panel.breakdownUnavailableReason}
         </p>
       ) : null}
+
+      {panel.tables?.map((table) => (
+        <div key={table.title} className="mt-7 border-t border-hair-soft pt-5">
+          <DrilldownTable table={table} />
+        </div>
+      ))}
 
       <div className="mt-6">
         <Note label="How to read this">{panel.caveats.join(" ")}</Note>

@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 import duckdb
 
-from janasunani.analytics.monitoring import CORE_SCOPES, OFFICE_TABLE_TOP_N, PROXY_METRICS, UNRECORDED_FIELDS, _discards, _offices, _recording, _metric as published_metric, _pct, withhold_small_panel, refiling_summary, suppress_breakdown
+from janasunani.analytics.monitoring import _atr, CORE_SCOPES, OFFICE_TABLE_TOP_N, PROXY_METRICS, UNRECORDED_FIELDS, _discards, _offices, _recording, _metric as published_metric, _pct, withhold_small_panel, refiling_summary, suppress_breakdown
 from janasunani.serving.api import create_app
 from janasunani.serving.schemas import MONITORING_PANEL_IDS
 from janasunani.serving.monitoring import (
@@ -320,7 +320,7 @@ def test_recording_reports_coverage_and_names_what_is_missing():
           CASE WHEN i < 20 THEN 'Online' END AS mode,
           CASE WHEN i < 40 THEN 7 END AS category_id,
           CASE WHEN i < 10 THEN 'Scheme' END AS subcategory,
-          NULL::VARCHAR AS review_authority
+          CASE WHEN i < 25 THEN '11,22,33' END AS all_esc_user
         FROM range(40) r(i);
         CREATE TABLE scope_tickets AS SELECT ticket_no, created_on FROM complaints;
         CREATE TABLE action_history AS SELECT
@@ -331,20 +331,24 @@ def test_recording_reports_coverage_and_names_what_is_missing():
     discards = {"metrics": [published_metric(
         "discard-reason-recognised", "Discards with a recognised reason", 50.0,
         unit="percent", numerator=10, denominator=20)]}
-    metrics = {m["id"]: m for m in _recording(con, discards)["metrics"]}
+    atr = {"metrics": [
+        published_metric("atr-replied", "ATR submitted", 75.0, unit="percent", numerator=30, denominator=40),
+        published_metric("atr-standard-reason", "Send-backs with a standard reason", None, unit="percent", note="No ATR was sent back."),
+    ]}
+    metrics = {m["id"]: m for m in _recording(con, discards, atr)["metrics"]}
 
     assert (metrics["rec-entry"]["numerator"], metrics["rec-entry"]["denominator"]) == (20, 40)
     assert metrics["rec-classification"]["value"] == 100.0
     assert metrics["rec-classification"]["note"]  # only the current category
     assert metrics["rec-events"]["numerator"] == 30
     assert metrics["rec-scheme"]["numerator"] == 10
-    # Zero is published, not withheld: nothing names a review authority.
-    assert metrics["rec-review-required"]["value"] == 0.0
+    # Whether review is required is read from the workflow chain.
+    assert metrics["rec-review-required"]["numerator"] == 25
+    assert (metrics["rec-atr"]["numerator"], metrics["rec-atr"]["label"]) == (30, "ATR request, receipt and closure events")
+    # Another panel's unavailable figure stays unavailable, with its reason.
+    assert metrics["rec-review-event"]["state"] == "unavailable"
     # The discard row is the discards panel's own figure, relabelled.
     assert (metrics["rec-discard-reason"]["numerator"], metrics["rec-discard-reason"]["label"]) == (10, "Discard reason")
-    # No ATR event in the extract: explicit, and says what it would unlock.
-    assert metrics["rec-atr"]["state"] == "unavailable"
-    assert "ATR queue" in metrics["rec-atr"]["reason"]
     for metric_id, _label, unlocks in UNRECORDED_FIELDS:
         assert metrics[metric_id]["state"] == "unavailable"
         assert unlocks in metrics[metric_id]["reason"]
@@ -408,3 +412,54 @@ def test_a_small_rate_cell_is_withheld_but_its_row_stays():
     assert _drilldown_rows(rows, [(0, None), (1, 0), (2, 0)], "Other") == [
         {"label": "Puri", "values": [50, None, 0.0]},
     ]
+
+
+def test_atr_reads_review_from_the_assigned_workflow():
+    # (kind, workflow chain, final status, [(office, status, remark, day)])
+    cases = [
+        # Three offices: the Collector reviews and passes the ATR on.
+        ("reviewed", "1,2,3", "Disposed", [("BDO", "Replied", None, 2), ("Collector", "Replied", None, 4), ("CMO", "Disposed", None, 6)]),
+        # Three offices, but closed straight after the field office's reply.
+        ("skipped", "1,2,3", "Disposed", [("BDO", "Replied", None, 2), ("CMO", "Disposed", None, 3)]),
+        # The reviewer's only act is sending it back: that is still review.
+        ("sent_back", "1,2,3", "Disposed", [("BDO", "Replied", None, 2), ("Collector", "Reopen", "Required  more clarification.", 3),
+                                             ("BDO", "Replied", None, 5), ("CMO", "Disposed", None, 7)]),
+        # Collector -> BDO: no review required.
+        ("direct", "1,2", "Disposed", [("BDO", "Replied", None, 2), ("Collector", "Disposed", None, 3)]),
+        # An ATR waiting at the Collector at the snapshot.
+        ("waiting", "1,2,3", "Pending", [("BDO", "Replied", None, 10)]),
+        # No workflow recorded.
+        ("none", "", "Pending", []),
+    ]
+    con = duckdb.connect()
+    con.execute("CREATE TABLE complaints(ticket_no VARCHAR, created_on TIMESTAMP, status VARCHAR, resolved_on TIMESTAMP, all_esc_user VARCHAR)")
+    con.execute("CREATE TABLE action_history(id INTEGER, ticket_no VARCHAR, action_taken_date TIMESTAMP, action_status VARCHAR, action_taken_remark VARCHAR)")
+    con.execute("CREATE TABLE acting_office(id INTEGER, ticket_no VARCHAR, action_taken_date TIMESTAMP, action_status VARCHAR, code VARCHAR)")
+    next_id = 0
+    for kind, chain, status, steps in cases:
+        for i in range(10):
+            ticket = f"{kind}-{i}"
+            resolved = "2025-07-10" if status == "Disposed" else None
+            con.execute("INSERT INTO complaints VALUES (?, TIMESTAMP '2025-07-01' - INTERVAL 30 DAY, ?, ?, ?)", [ticket, status, resolved, chain])
+            for office, action, remark, day in steps:
+                next_id += 1
+                when = f"2025-07-{day:02d}"
+                con.execute("INSERT INTO action_history VALUES (?, ?, ?, ?, ?)", [next_id, ticket, when, action, remark])
+                con.execute("INSERT INTO acting_office VALUES (?, ?, ?, ?, ?)", [next_id, ticket, when, action, office])
+    con.execute("CREATE TABLE scope_tickets AS SELECT ticket_no, created_on FROM complaints")
+
+    panel = _atr(con)
+    metrics = {m["id"]: m for m in panel["metrics"]}
+    def fraction(metric_id):
+        return metrics[metric_id]["numerator"], metrics[metric_id]["denominator"]
+
+    assert fraction("review-required") == (40, 50)       # four three-office kinds of five with a workflow
+    assert fraction("atr-replied") == (50, 60)
+    assert fraction("review-done") == (20, 30)            # reviewed + sent_back, of the closed required cases
+    assert fraction("closed-without-review") == (10, 30)
+    assert fraction("atr-sent-back") == (10, 50)
+    assert fraction("atr-standard-reason") == (10, 10)
+    assert metrics["atr-waiting"]["value"] == 10
+    assert metrics["atr-wait"]["value"] == 20.0            # 30 July less 10 July
+    assert panel["tables"][0]["rows"] == [{"label": "More clarification required", "values": [10]}]
+    assert {metrics[m]["basis"] for m in ("review-done", "closed-without-review")} == {"proxy"}

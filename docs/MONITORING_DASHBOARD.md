@@ -46,13 +46,30 @@ extra fields, traversal-shaped queries, and row-level or sensitive keys. The
 minimum reportable cell is 10; a whole breakdown is withheld when a positive
 cell falls below it.
 
-## Current source limitation
+## ATRs and review
 
-The 30 July 2025 extract contains no `ATR Received` action status. The ATR
-panel is therefore unavailable. Free-text `Replied` remarks are not treated as
-equivalent. Structured ATR receipt, owner, acknowledgement, disposal, and
-notification timestamps are required before that panel can measure queue
-discipline.
+The extract has no `ATR Received` status, but the portal records the steps
+that matter under other names (checked against the CM Grievance Cell screens,
+11 Aug 2026, and the extract's own status counts):
+
+- **The workflow** is `complaints.all_esc_user`, a chain of users stored field
+  office first, exactly as the "Define Workflow" list shows it
+  (`BDO --> Collector --> CMO`). The first node acts; each later node receives
+  the ATR in turn; the last is the office that assigned it.
+- **De jure review**: a chain of three or more offices puts at least one office
+  between the field and the assigning office, and that office reviews the ATR
+  before it goes on. `BDO --> Collector` needs no review;
+  `BDO --> Collector --> CMO` does, at the Collector. There is no review flag.
+- **`Replied`** is the ATR moving up to the next node.
+- **`Reopen` after a `Replied`** is a reviewer sending the ATR back, usually
+  with one of the portal's fixed revert remarks ("Please furnish the final
+  ATR", "Required more clarification", ...). It is not a citizen reopening
+  the case, and the closure panel's `reopened` metric is labelled accordingly.
+
+"Required review happened" and "Closed without the required review" are
+inferred from the order of events (a second office replied, or a reviewer
+sent it back, before closure) and are tagged proxy. The chain is the current
+one; an earlier workflow is not kept.
 
 Discard timing is only "before any transfer" or "after a transfer". The
 extract has no event for when an officer started work or when an earlier

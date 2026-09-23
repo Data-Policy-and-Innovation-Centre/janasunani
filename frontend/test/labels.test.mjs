@@ -27,7 +27,7 @@ test("the analyst's jargon is replaced with wording an officer can read", () => 
   // five phases add up to, the median is phrased as what it actually is.
   assert.equal(metricLabel("mean-total", "Mean total time"), "Average time to close");
   assert.equal(metricLabel("median-total", "Median total time"), "Half of cases close within");
-  assert.equal(panelTitle("atr", "ATR queue discipline"), "Action taken reports");
+  assert.equal(panelTitle("atr", "ATR queue discipline"), "Action taken reports and review");
 });
 
 // The artifact is generated upstream. A metric added there must still be
