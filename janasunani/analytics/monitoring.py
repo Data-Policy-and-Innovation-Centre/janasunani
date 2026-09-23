@@ -50,6 +50,8 @@ PROXY_METRICS = frozenset({
     # Inferred from the order of recorded events, not recorded as a review.
     "review-done", "closed-without-review",
     "flow-unique", "flow-reviewed",
+    # Only cases that passed the inferred review stage reach it.
+    "flow-closed",
     # Coverage of a stand-in field: the assigned workflow for whether review
     # is required, subcategory for scheme or service.
     "rec-review-required", "rec-scheme",
@@ -1047,6 +1049,8 @@ def _flow(con: duckdb.DuckDBPyConnection, identity_path: Path | None) -> dict[st
         "caveats": [
             "Each stage keeps only the grievances that passed the one before, so the drop at each step is what left the path there, not every case with that outcome.",
             "Stages after 'Given a workflow' use the ATR panel's definitions.",
+            "A stage after a proxy stage depends on it: with repeats removed, every later count depends on the duplicate grouping.",
+            "A case discarded after 30 July is still on the path here; the discards panel counts every discard.",
         ],
     }
 

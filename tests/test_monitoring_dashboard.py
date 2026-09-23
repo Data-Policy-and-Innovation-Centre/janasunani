@@ -780,3 +780,35 @@ def test_closure_reopens_count_resolved_cases_before_the_snapshot():
     """)
     reopened = next(m for m in _closure(con, None)["metrics"] if m["id"] == "reopened")
     assert (reopened["value"], reopened["denominator"]) == (10, 20)
+
+
+def test_flow_reads_the_real_atr_cases():
+    # _atr builds the table _flow reads; this pins the column contract between them.
+    con = _atr_lake(ATR_CASES)
+    _atr(con)
+    stages = {m["id"]: m for m in _flow(con, None)["metrics"]}
+    got = {k: m.get("value") for k, m in stages.items()}
+    # Every kind but "none" has a workflow and a reply; five pass review
+    # (four reviewed, one needing none) and all five closed on 10 July.
+    assert got == {"flow-filed": 110, "flow-kept": 110, "flow-unique": None, "flow-routed": 100,
+                   "flow-atr": 100, "flow-reviewed": 50, "flow-closed": 50}
+
+
+def test_a_small_stage_is_not_used_as_the_next_stage_base():
+    con = duckdb.connect()
+    con.execute("""
+        -- 60 filed, 50 routed, 5 with a report, none reviewed.
+        CREATE TABLE atr_cases AS SELECT 'T' || i AS ticket_no, NULL::TIMESTAMP AS resolved_on,
+            CASE WHEN i < 50 THEN 3 ELSE 0 END AS nodes, TRUE AS required,
+            i < 5 AS replied, FALSE AS reviewed, FALSE AS closed
+          FROM range(60) r(i);
+        CREATE TABLE complaints AS SELECT ticket_no, 'Pending' AS status, TIMESTAMP '2025-01-01' AS created_on FROM atr_cases;
+    """)
+    stages = {m["id"]: m for m in _flow(con, None)["metrics"]}
+    assert stages["flow-atr"]["state"] == "unavailable"  # five is itself withheld
+    # The next loss is measured from the last stage shown, not from the five.
+    assert (stages["flow-reviewed"]["value"], stages["flow-reviewed"]["denominator"]) == (0, 50)
+
+
+def test_the_closed_stage_inherits_the_review_proxy():
+    assert "flow-closed" in PROXY_METRICS

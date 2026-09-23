@@ -346,7 +346,8 @@ function FlowPanel({ panel }: { panel: RecordedMonitoringPanel }) {
   const drop = (i: number) => {
     const metric = stages[i];
     if (i === 0) return null;
-    if (metric.state === "unavailable") return { text: "Not shown", note: metric.reason };
+    // A stage not computed yet lost nothing; its header already says why.
+    if (metric.state === "unavailable") return flowStageGap(metric) === "not yet" ? null : { text: "Not shown", note: metric.reason };
     const lost = counts[i - 1] - counts[i];
     return lost > 0 ? { text: `−${lost.toLocaleString("en-IN")}`, note: flowDropNote(stages, i) } : null;
   };
