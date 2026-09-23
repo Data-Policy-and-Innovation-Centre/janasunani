@@ -711,6 +711,24 @@ def test_transfers_count_only_actions_before_the_snapshot():
     assert (metrics["transfer-rate"]["numerator"], metrics["transfer-rate"]["denominator"]) == (10, 30)
 
 
+def test_follow_up_counts_only_transfers_whose_week_ended_by_the_snapshot():
+    from janasunani.analytics.monitoring import _transfers
+    con = duckdb.connect()
+    con.execute("""
+        CREATE TABLE scope_tickets AS SELECT 'T' || i AS ticket_no, TIMESTAMP '2025-05-01' AS created_on FROM range(20) r(i);
+        -- Ten transfers on 1 July with no follow-up; ten on 28 July whose
+        -- next action (1 August) is after the snapshot, week unfinished.
+        CREATE TABLE action_history AS
+          SELECT i AS id, 'T' || i AS ticket_no,
+                 CASE WHEN i < 10 THEN TIMESTAMP '2025-07-01' ELSE TIMESTAMP '2025-07-28' END AS action_taken_date,
+                 'Complaint Transfer' AS action_status FROM range(20) r(i)
+          UNION ALL SELECT 100 + i, 'T' || i, TIMESTAMP '2025-08-01', 'Forwarded' FROM range(10, 20) r(i);
+        CREATE TABLE returns(ticket_no VARCHAR, arrivals INTEGER);
+    """)
+    metrics = {m["id"]: m for m in _transfers(con)["metrics"]}
+    assert (metrics["followup-proxy"]["numerator"], metrics["followup-proxy"]["denominator"]) == (10, 10)
+
+
 def test_a_small_district_inside_the_top_rows_is_folded_and_its_cells_withheld():
     department = next(s for s in CORE_SCOPES if s.kind == "department")
     # "Small" ranks second, inside the top rows, but has only five open cases.
@@ -812,3 +830,19 @@ def test_a_small_stage_is_not_used_as_the_next_stage_base():
 
 def test_the_closed_stage_inherits_the_review_proxy():
     assert "flow-closed" in PROXY_METRICS
+
+
+@pytest.mark.parametrize("steps", [
+    # An interim disposal the reviewer reopens with a standard send-back reason.
+    [("BDO", "Replied", None, 2), ("CMO", "Disposed", None, 3),
+     ("Collector", "Reopen", "Required more clarification.", 4), ("BDO", "Replied", None, 5), ("CMO", "Disposed", None, 7)],
+    # A citizen reopen, then a reviewer sends the new ATR back.
+    [("BDO", "Replied", None, 2), ("CMO", "Disposed", None, 3),
+     ("Citizen", "Reopen", "reopened on request of petitioner", 5), ("BDO", "Replied", None, 6),
+     ("Collector", "Reopen", "Required more clarification.", 7), ("BDO", "Replied", None, 8), ("CMO", "Disposed", None, 9)],
+])
+def test_a_standard_send_back_after_a_disposal_is_still_review(steps):
+    con = _atr_lake([("k", "1,2,3", "Disposed@2025-07-09", steps)])
+    _atr(con)
+    assert con.execute("SELECT DISTINCT sent_back, reviewed FROM atr_cases").fetchall() == [(True, True)]
+    assert con.execute("SELECT DISTINCT reason FROM atr_backs").fetchall() == [("More clarification required",)]
