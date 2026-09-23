@@ -417,9 +417,30 @@ def test_a_small_rate_cell_is_withheld_but_its_row_stays():
     ]
 
 
-def test_atr_reads_review_from_the_assigned_workflow():
-    # (kind, workflow chain, final status, [(office, status, remark, day)])
-    cases = [
+def _atr_lake(cases, sizes=None) -> duckdb.DuckDBPyConnection:
+    """Ten tickets per case kind unless ``sizes`` says otherwise."""
+    sizes = sizes or {}
+    con = duckdb.connect()
+    con.execute("CREATE TABLE complaints(ticket_no VARCHAR, created_on TIMESTAMP, status VARCHAR, resolved_on TIMESTAMP, all_esc_user VARCHAR)")
+    con.execute("CREATE TABLE action_history(id INTEGER, ticket_no VARCHAR, action_taken_date TIMESTAMP, action_status VARCHAR, action_taken_remark VARCHAR)")
+    con.execute("CREATE TABLE acting_office(id INTEGER, ticket_no VARCHAR, action_taken_date TIMESTAMP, action_status VARCHAR, code VARCHAR)")
+    next_id = 0
+    for kind, chain, status, steps in cases:
+        for i in range(sizes.get(kind, 10)):
+            ticket = f"{kind}-{i}"
+            resolved = "2025-07-10" if status == "Disposed" else None
+            con.execute("INSERT INTO complaints VALUES (?, TIMESTAMP '2025-07-01' - INTERVAL 30 DAY, ?, ?, ?)", [ticket, status, resolved, chain])
+            for office, action, remark, day in steps:
+                next_id += 1
+                when = f"2025-07-{day:02d}"
+                con.execute("INSERT INTO action_history VALUES (?, ?, ?, ?, ?)", [next_id, ticket, when, action, remark])
+                con.execute("INSERT INTO acting_office VALUES (?, ?, ?, ?, ?)", [next_id, ticket, when, action, office])
+    con.execute("CREATE TABLE scope_tickets AS SELECT ticket_no, created_on FROM complaints")
+    return con
+
+
+# (kind, workflow chain, final status, [(office, status, remark, day)])
+ATR_CASES = [
         # Three offices: the Collector reviews and passes the ATR on.
         ("reviewed", "1,2,3", "Disposed", [("BDO", "Replied", None, 2), ("Collector", "Replied", None, 4), ("CMO", "Disposed", None, 6)]),
         # Three offices, but closed straight after the field office's reply.
@@ -437,39 +458,44 @@ def test_atr_reads_review_from_the_assigned_workflow():
         ("waiting", "1,2,3", "Pending", [("BDO", "Replied", None, 10)]),
         # No workflow recorded.
         ("none", "", "Pending", []),
-    ]
-    con = duckdb.connect()
-    con.execute("CREATE TABLE complaints(ticket_no VARCHAR, created_on TIMESTAMP, status VARCHAR, resolved_on TIMESTAMP, all_esc_user VARCHAR)")
-    con.execute("CREATE TABLE action_history(id INTEGER, ticket_no VARCHAR, action_taken_date TIMESTAMP, action_status VARCHAR, action_taken_remark VARCHAR)")
-    con.execute("CREATE TABLE acting_office(id INTEGER, ticket_no VARCHAR, action_taken_date TIMESTAMP, action_status VARCHAR, code VARCHAR)")
-    next_id = 0
-    for kind, chain, status, steps in cases:
-        for i in range(10):
-            ticket = f"{kind}-{i}"
-            resolved = "2025-07-10" if status == "Disposed" else None
-            con.execute("INSERT INTO complaints VALUES (?, TIMESTAMP '2025-07-01' - INTERVAL 30 DAY, ?, ?, ?)", [ticket, status, resolved, chain])
-            for office, action, remark, day in steps:
-                next_id += 1
-                when = f"2025-07-{day:02d}"
-                con.execute("INSERT INTO action_history VALUES (?, ?, ?, ?, ?)", [next_id, ticket, when, action, remark])
-                con.execute("INSERT INTO acting_office VALUES (?, ?, ?, ?, ?)", [next_id, ticket, when, action, office])
-    con.execute("CREATE TABLE scope_tickets AS SELECT ticket_no, created_on FROM complaints")
+        # A Reopen on the day of the first reply but recorded before it, by
+        # id: it precedes the ATR, so it is not a send-back.
+        ("tied", "1,2,3", "Disposed", [("Collector", "Reopen", "Required more clarification.", 2), ("BDO", "Replied", None, 2),
+                                       ("CMO", "Disposed", None, 3)]),
+        # Sent back twice for different reasons: counted once, under the first.
+        ("twice", "1,2,3", "Disposed", [("BDO", "Replied", None, 2), ("Collector", "Reopen", "Required more clarification.", 3),
+                                        ("BDO", "Replied", None, 4), ("Collector", "Reopen", "Please furnish the final ATR", 5),
+                                        ("BDO", "Replied", None, 6), ("CMO", "Disposed", None, 8)]),
+]
 
-    panel = _atr(con)
+
+def test_atr_reads_review_from_the_assigned_workflow():
+    panel = _atr(_atr_lake(ATR_CASES))
     metrics = {m["id"]: m for m in panel["metrics"]}
     def fraction(metric_id):
         return metrics[metric_id]["numerator"], metrics[metric_id]["denominator"]
 
-    assert fraction("review-required") == (50, 60)       # five three-office kinds of six with a workflow
-    assert fraction("atr-replied") == (60, 70)
-    assert fraction("review-done") == (20, 40)            # reviewed + sent_back, of the closed required cases
-    assert fraction("closed-without-review") == (20, 40)  # skipped + late
-    assert fraction("atr-sent-back") == (10, 60)
-    assert fraction("atr-standard-reason") == (10, 10)
+    assert fraction("review-required") == (70, 80)       # seven three-office kinds of eight with a workflow
+    assert fraction("atr-replied") == (80, 90)
+    assert fraction("review-done") == (30, 60)            # reviewed, sent_back and twice, of the closed required cases
+    assert fraction("closed-without-review") == (30, 60)  # skipped, late and tied
+    assert fraction("atr-sent-back") == (20, 80)
+    assert fraction("atr-standard-reason") == (20, 20)
     assert metrics["atr-waiting"]["value"] == 10
     assert metrics["atr-wait"]["value"] == 20.0            # 30 July less 10 July
-    assert panel["tables"][0]["rows"] == [{"label": "More clarification required", "values": [10]}]
+    # One row per grievance: the rows sum to the send-back count.
+    assert panel["tables"][0]["rows"] == [{"label": "More clarification required", "values": [20]}]
     assert {metrics[m]["basis"] for m in ("review-done", "closed-without-review")} == {"proxy"}
+
+
+def test_atr_withholds_the_reason_table_when_any_reason_is_small():
+    # Five sent back for a second reason: showing the 20-row and the total
+    # would give the five away, so the whole table is withheld.
+    few = ("few", "1,2,3", "Disposed", [("BDO", "Replied", None, 2), ("Collector", "Reopen", "Please furnish the final ATR", 3),
+                                        ("BDO", "Replied", None, 4), ("CMO", "Disposed", None, 6)])
+    panel = _atr(_atr_lake(ATR_CASES + [few], sizes={"few": 5}))
+    assert panel["tables"] is None
+    assert any("sent back" in caveat and "fewer than 10" in caveat for caveat in panel["caveats"])
 
 
 def _edge_lake() -> duckdb.DuckDBPyConnection:

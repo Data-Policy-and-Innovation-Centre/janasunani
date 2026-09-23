@@ -522,17 +522,18 @@ def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
             -- Review happens before closure: a closed case's later actions
             -- are not evidence that its ATR was reviewed.
             AND (c.resolved_on IS NULL OR o.action_taken_date <= c.resolved_on)),
-        first_reply AS (SELECT ticket_no, MIN(d) fr FROM acts WHERE st='Replied' GROUP BY 1),
+        -- Same-day rows order by id, as everywhere events are sequenced.
+        first_reply AS (SELECT ticket_no, MIN(d) fr, arg_min(id, (d, id)) fr_id FROM acts WHERE st='Replied' GROUP BY 1),
         per_case AS (
           SELECT a.ticket_no,
             COUNT(DISTINCT a.office) FILTER(WHERE a.st='Replied') repliers,
-            BOOL_OR(a.st='Reopen' AND a.d>=f.fr) sent_back,
+            BOOL_OR(a.st='Reopen' AND (a.d, a.id) > (f.fr, f.fr_id)) sent_back,
             arg_max(a.st, (a.d, a.id)) last_status,
             MAX(a.d) last_action
           FROM acts a LEFT JOIN first_reply f USING(ticket_no)
           GROUP BY a.ticket_no)
         SELECT c.ticket_no, c.resolved_on, c.nodes, c.nodes >= 3 required,
-          f.fr IS NOT NULL replied, f.fr,
+          f.fr IS NOT NULL replied, f.fr, f.fr_id,
           COALESCE(p.sent_back, FALSE) sent_back,
           f.fr IS NOT NULL AND (p.repliers >= 2 OR COALESCE(p.sent_back, FALSE)) reviewed,
           c.status='Disposed' AND CAST(c.resolved_on AS DATE)<=DATE '2025-07-30' closed,
@@ -563,12 +564,15 @@ def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     con.execute(f"""
         CREATE OR REPLACE TEMP TABLE atr_backs AS
         WITH revert(template, label) AS (VALUES {revert_values})
-        SELECT DISTINCT a.ticket_no, COALESCE(r.label, 'Other wording') AS reason
+        -- One reason per grievance, the first send-back's, so the rows add
+        -- up to the grievances sent back.
+        SELECT a.ticket_no, arg_min(COALESCE(r.label, 'Other wording'), (a.action_taken_date, a.id)) AS reason
         FROM action_history a JOIN atr_cases c USING(ticket_no)
         LEFT JOIN revert r ON r.template = {_NORMALIZED_REMARK}
-        WHERE c.replied AND a.action_status='Reopen' AND a.action_taken_date>=c.fr
+        WHERE c.replied AND a.action_status='Reopen' AND (a.action_taken_date, a.id) > (c.fr, c.fr_id)
           AND a.action_taken_date < TIMESTAMP '2025-07-31'
           AND (c.resolved_on IS NULL OR a.action_taken_date <= c.resolved_on)
+        GROUP BY a.ticket_no
     """)
     reasons = con.execute(
         "SELECT reason, COUNT(*) n FROM atr_backs GROUP BY reason "
@@ -581,11 +585,14 @@ def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     """)
     buckets = suppress_breakdown([{"label": a, "value": b} for a, b in ages])
     tables = None
-    if reasons:
+    # Any small reason row is withheld with the whole table: the others and
+    # the send-back total would give it away.
+    reasons_withheld = any(0 < n < MIN_CELL for _label, n in reasons)
+    if reasons and not reasons_withheld:
         tables = [{
             "title": "Why ATRs were sent back",
             "columns": [{"label": "Grievances", "unit": "grievances"}],
-            "rows": [{"label": label, "values": [_cell(n)]} for label, n in reasons],
+            "rows": [{"label": label, "values": [n]} for label, n in reasons],
         }]
     return {
         "id": "atr", "title": "ATRs and review", "state": "recorded",
@@ -608,6 +615,7 @@ def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
             "An ATR is 'submitted' when the case records Replied. Review happened when a second office replied or a reviewer sent it back before closure.",
             "'Reopen' after an ATR is a reviewer sending it back, not a citizen reopening the case.",
             "The breakdown is how long waiting ATRs have waited since the last action.",
+            *(["The reasons ATRs were sent back are withheld: at least one reason covers fewer than 10 grievances."] if reasons_withheld else []),
         ],
     }
 
