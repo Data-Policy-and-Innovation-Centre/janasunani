@@ -501,7 +501,7 @@ def test_review_csv_carries_drilldown_cells():
     ]
 
 
-@pytest.mark.parametrize(("unit", "value"), [("percent", 150.0), ("grievances", 1.5)])
+@pytest.mark.parametrize(("unit", "value"), [("percent", 150.0), ("grievances", 1.5), ("percent", float("nan")), ("grievances", float("inf"))])
 def test_table_cells_are_checked_against_their_unit(unit, value):
     from pydantic import ValidationError
     from janasunani.serving.schemas import MonitoringTable
