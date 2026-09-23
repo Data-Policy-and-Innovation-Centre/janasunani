@@ -48,10 +48,15 @@ export type MonitoringMetric =
     }
   | { id: string; label: string; state: "unavailable"; reason: string };
 
+/** The governed panels, in display order. Mirrors MonitoringPanelId in
+ * janasunani/serving/schemas.py; a dashboard carries each exactly once. */
+export const PANEL_IDS = ["aging", "transfers", "journey", "atr", "demand", "closure", "discards"] as const;
+export type PanelId = (typeof PANEL_IDS)[number];
+
 export type MonitoringPanel = RecordedMonitoringPanel | UnavailableMonitoringPanel;
 
 export interface RecordedMonitoringPanel {
-  id: "aging" | "transfers" | "journey" | "atr" | "demand" | "closure";
+  id: PanelId;
   title: string;
   state: "recorded";
   denominator: { label: string; value: number };
@@ -62,7 +67,7 @@ export interface RecordedMonitoringPanel {
 }
 
 export interface UnavailableMonitoringPanel {
-  id: "aging" | "transfers" | "journey" | "atr" | "demand" | "closure";
+  id: PanelId;
   title: string;
   state: "unavailable";
   reason: string;
@@ -189,7 +194,7 @@ function validMetric(value: unknown): boolean {
 export function parseMonitoringDashboard(value: unknown): MonitoringDashboard {
   rejectSensitive(value);
   const top = ["schemaVersion", "generatedAt", "sourceFreshness", "artifact", "scopeId", "scopeLabel", "scopeKind", "scopeDefinition", "periodId", "periodLabel", "snapshotDate", "panels"];
-  if (!isRecord(value) || !keys(value, top) || value.schemaVersion !== 1 || !text(value.generatedAt) || !stringRecord(value.sourceFreshness) || !text(value.artifact) || value.artifact.includes("/") || !text(value.scopeId) || !text(value.scopeLabel) || !text(value.scopeKind) || !text(value.scopeDefinition) || !text(value.periodId) || !text(value.periodLabel) || !dateText(value.snapshotDate) || !Array.isArray(value.panels) || value.panels.length !== 6) throw new Error("Monitoring dashboard response is malformed.");
+  if (!isRecord(value) || !keys(value, top) || value.schemaVersion !== 1 || !text(value.generatedAt) || !stringRecord(value.sourceFreshness) || !text(value.artifact) || value.artifact.includes("/") || !text(value.scopeId) || !text(value.scopeLabel) || !text(value.scopeKind) || !text(value.scopeDefinition) || !text(value.periodId) || !text(value.periodLabel) || !dateText(value.snapshotDate) || !Array.isArray(value.panels) || value.panels.length !== PANEL_IDS.length) throw new Error("Monitoring dashboard response is malformed.");
   const ids = new Set<string>();
   for (const panel of value.panels) {
     if (!isRecord(panel) || !text(panel.id) || !text(panel.title) || !text(panel.state) || !Array.isArray(panel.caveats) || !panel.caveats.every(text)) throw new Error("Monitoring dashboard response is malformed.");
@@ -198,6 +203,6 @@ export function parseMonitoringDashboard(value: unknown): MonitoringDashboard {
     } else if (panel.state !== "recorded" || !keys(panel, ["id", "title", "state", "denominator", "metrics", "breakdown", "breakdownUnavailableReason", "caveats"]) || !isRecord(panel.denominator) || !keys(panel.denominator, ["label", "value"]) || !text(panel.denominator.label) || !wholeCount(panel.denominator.value) || !Array.isArray(panel.metrics) || !panel.metrics.every(validMetric) || (panel.breakdown !== null && (!Array.isArray(panel.breakdown) || !panel.breakdown.every((row) => isRecord(row) && keys(row, ["label", "value"]) && text(row.label) && count(row.value)))) || (panel.breakdownUnavailableReason !== null && !text(panel.breakdownUnavailableReason))) throw new Error("Monitoring dashboard response is malformed.");
     ids.add(panel.id);
   }
-  if (["aging", "transfers", "journey", "atr", "demand", "closure"].some((id) => !ids.has(id))) throw new Error("Monitoring dashboard response is malformed.");
+  if (PANEL_IDS.some((id) => !ids.has(id))) throw new Error("Monitoring dashboard response is malformed.");
   return value as unknown as MonitoringDashboard;
 }

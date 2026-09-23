@@ -43,6 +43,7 @@ const EN: Dictionary = {
     atr: "Action taken reports",
     demand: "How many cases, and how many are repeats",
     closure: "How cases were closed",
+    discards: "Why cases were discarded, and when",
   },
   metrics: {
     // Cases waiting
@@ -72,6 +73,10 @@ const EN: Dictionary = {
     reopened: "Reopened",
     "refiling-30": "Same problem filed again within 30 days",
     "refiling-90": "Same problem filed again within 90 days",
+    // Why cases were discarded
+    "discard-rate": "Share of cases discarded",
+    "discard-reason-recognised": "Discards with a standard reason",
+    "discard-after-transfer": "Reason given after a transfer",
   },
   rows: {
     // Journey phases. The aging buckets ("0-6 days") are already plain and

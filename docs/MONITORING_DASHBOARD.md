@@ -30,9 +30,11 @@ unavailable.
 - `GET /supervisor/monitoring?scope_id=<allowlisted-id>&period=<allowlisted-period>`
 
 The catalogue exposes stable IDs, labels, parent scopes, definitions, and
-published periods. The dashboard returns exactly six panels: aging and
-escalation; transfers and loops; end-to-end journey; ATR queue discipline;
-demand and duplication; closure and return. Individual panels or metrics can
+published periods. The dashboard returns every governed panel, once each:
+aging and escalation; transfers and loops; end-to-end journey; ATR queue
+discipline; demand and duplication; closure and return; discard reasons and
+timing. The list is `MonitoringPanelId` in `janasunani/serving/schemas.py`,
+mirrored by `PANEL_IDS` in `frontend/lib/monitoring.ts`. Individual panels or metrics can
 be explicitly unavailable. No proxy value is silently substituted.
 Every recorded metric carries `basis`: `direct` when it counts what the record
 contains, `proxy` when it stands in for what its label names (closure wording
@@ -51,3 +53,11 @@ panel is therefore unavailable. Free-text `Replied` remarks are not treated as
 equivalent. Structured ATR receipt, owner, acknowledgement, disposal, and
 notification timestamps are required before that panel can measure queue
 discipline.
+
+Discard timing is only "before any transfer" or "after a transfer". The
+extract has no event for when an officer started work or when an earlier
+ticket was found, so the note's other two timings (§2.2) cannot be measured.
+Reasons are the eight governed templates in
+`janasunani/analytics/findings/discards.py`. Other wording is not read as a
+reason, and the "Discards with a recognised reason" metric shows how much of
+the discard status those templates explain.

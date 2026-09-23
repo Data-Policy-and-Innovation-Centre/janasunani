@@ -10,7 +10,11 @@ from typing import Protocol
 from pydantic import ValidationError
 
 from janasunani.analytics.monitoring import MAX_ARTIFACT_BYTES
-from janasunani.serving.schemas import MonitoringCatalog, MonitoringDashboard
+from janasunani.serving.schemas import (
+    MONITORING_PANEL_IDS,
+    MonitoringCatalog,
+    MonitoringDashboard,
+)
 
 _FORBIDDEN_KEYS = {
     "grievance", "ticket_no", "ticketNo", "mobile", "email", "petitioner_name",
@@ -94,10 +98,10 @@ class ArtifactMonitoringProvider:
             })
         except ValidationError as exc:
             raise MonitoringArtifactError("monitoring dashboard failed validation") from exc
-        if len(result.panels) != 6 or {panel.id for panel in result.panels} != {
-            "aging", "transfers", "journey", "atr", "demand", "closure",
-        }:
-            raise MonitoringArtifactError("monitoring dashboard must contain all six panels")
+        if len(result.panels) != len(MONITORING_PANEL_IDS) or {
+            panel.id for panel in result.panels
+        } != set(MONITORING_PANEL_IDS):
+            raise MonitoringArtifactError("monitoring dashboard must contain every governed panel")
         return result
 
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const { childChoice, parseMonitoringCatalog, parseMonitoringDashboard, parentScopeFor, publishedScopes, quickScopes, scopesForView, subtypesFor } = await import("../lib/monitoring.ts");
+const { PANEL_IDS, childChoice, parseMonitoringCatalog, parseMonitoringDashboard, parentScopeFor, publishedScopes, quickScopes, scopesForView, subtypesFor } = await import("../lib/monitoring.ts");
 
 const catalog = {
   schemaVersion: 1,
@@ -15,7 +15,7 @@ const catalog = {
   ],
 };
 
-const panels = ["aging", "transfers", "journey", "atr", "demand", "closure"].map((id) => ({
+const panels = PANEL_IDS.map((id) => ({
   id, title: id, state: "recorded",
   denominator: { label: "Synthetic denominator", value: 20 },
   metrics: [{ id: `${id}-metric`, label: "Synthetic", state: "recorded", value: 50, unit: "percent", numerator: 10, denominator: 20, coveragePct: null, note: null, basis: "direct" }],
@@ -68,9 +68,11 @@ test("filtering the pickers does not narrow scopesForView itself", () => {
   ]);
 });
 
-test("dashboard requires all six governed panels", () => {
-  assert.equal(parseMonitoringDashboard(dashboard).panels.length, 6);
-  assert.throws(() => parseMonitoringDashboard({ ...dashboard, panels: panels.slice(0, 5) }), /malformed/i);
+test("dashboard requires every governed panel", () => {
+  assert.deepEqual(parseMonitoringDashboard(dashboard).panels.map((panel) => panel.id), [...PANEL_IDS]);
+  assert.throws(() => parseMonitoringDashboard({ ...dashboard, panels: panels.slice(0, -1) }), /malformed/i);
+  // Right count, but one governed panel replaced by a repeat.
+  assert.throws(() => parseMonitoringDashboard({ ...dashboard, panels: [...panels.slice(0, -1), panels[0]] }), /malformed/i);
 });
 
 test("malformed arithmetic and row-level fields fail closed", () => {
