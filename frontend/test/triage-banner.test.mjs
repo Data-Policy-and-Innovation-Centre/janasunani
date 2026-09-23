@@ -238,11 +238,19 @@ test("every label has officer-facing copy that calls it a candidate", () => {
 
 test("unassessed evidence reads as not assessed, never as no", () => {
   const rows = Object.fromEntries(candidateEvidenceRows({}));
-  assert.equal(rows["Same filer key"], "Not available");
+  assert.equal(rows["Same identity key"], "Not available");
   assert.equal(rows["Text"], "Not assessed");
   assert.equal(rows["New information"], "Not assessed");
+  // Unchecked follow-up signals must not read as a checked "No".
+  assert.equal(rows["Names an earlier ticket"], "Not assessed");
+  assert.equal(rows["Asks for status or says it continues"], "Not assessed");
+  assert.equal(Object.fromEntries(candidateEvidenceRows({ follow_up_cue: false }))["Asks for status or says it continues"], "No");
   const checked = Object.fromEntries(candidateEvidenceRows({ identity_match: false, new_information: false, days_since_earlier: 1200 }));
-  assert.equal(checked["Same filer key"], "No");
+  assert.equal(checked["Same identity key"], "No");
   assert.equal(checked["New information"], "None found");
   assert.equal(checked["Days since earlier filing"], "1,200");
+});
+
+test("the officer copy stays at identity-key level, never verified filers", () => {
+  for (const copy of Object.values(RELATIONSHIP_COPY)) assert.doesNotMatch(copy.explanation, /filer/i);
 });

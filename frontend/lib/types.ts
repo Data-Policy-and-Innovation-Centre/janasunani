@@ -79,8 +79,8 @@ export interface DuplicateEvidence {
   text_similarity?: "identical" | "near" | "similar" | "different" | null;
   days_since_earlier?: number | null;
   earlier_status?: "open" | "closed" | null;
-  explicit_reference?: boolean;
-  follow_up_cue?: boolean;
+  explicit_reference?: boolean | null;
+  follow_up_cue?: boolean | null;
   new_information?: boolean | null;
 }
 
@@ -99,23 +99,23 @@ export const RELATIONSHIP_COPY: Record<
   pure_duplicate: {
     badge: "candidate · repeat",
     headline: "Possible repeat of ticket",
-    explanation: "Same filer and the same problem, and nothing new was found in this filing.",
+    explanation: "The same identity key and the same problem, and nothing new was found in this filing.",
   },
   follow_up: {
     badge: "candidate · follow-up",
     headline: "Possible follow-up to ticket",
     explanation:
-      "Linked to an earlier filing, and it asks for status, says the problem continues, or adds something new. Treat it as live, not as a copy.",
+      "Linked to an earlier filing about the same problem, by identity key or a named ticket, and it asks for status, says the problem continues, or adds something new. Treat it as live, not as a copy.",
   },
   related: {
     badge: "candidate · related",
     headline: "Possibly related to ticket",
-    explanation: "A similar subject, but not linked to the same filer. It may be a separate grievance.",
+    explanation: "A similar subject, but not linked by identity key or a named ticket. It may be a separate grievance.",
   },
   campaign: {
     badge: "candidate · campaign",
     headline: "Possibly part of a campaign",
-    explanation: "Very similar text from different filers.",
+    explanation: "Very similar text under different identity keys.",
   },
   uncertain: {
     badge: "candidate · uncertain",
@@ -132,13 +132,15 @@ const SIMILARITY_TEXT = {
   different: "Different",
 } as const;
 
+const yesNo = (value: boolean | null | undefined) => (value == null ? "Not assessed" : value ? "Yes" : "No");
+
 /** The evidence behind a candidate label as [label, value] rows. Unassessed
  * fields say so rather than disappearing, so absence never reads as "no". */
 export function candidateEvidenceRows(evidence: DuplicateEvidence): [string, string][] {
   const assessed = (value: string | null | undefined) => value ?? "Not assessed";
   const rows: [string, string][] = [
     [
-      "Same filer key",
+      "Same identity key",
       evidence.identity_match == null
         ? "Not available"
         : evidence.identity_match
@@ -151,8 +153,8 @@ export function candidateEvidenceRows(evidence: DuplicateEvidence): [string, str
       assessed(evidence.days_since_earlier == null ? null : evidence.days_since_earlier.toLocaleString("en-IN")),
     ],
     ["Earlier ticket", assessed(evidence.earlier_status && (evidence.earlier_status === "open" ? "Open" : "Closed"))],
-    ["Names an earlier ticket", evidence.explicit_reference ? "Yes" : "No"],
-    ["Asks for status or says it continues", evidence.follow_up_cue ? "Yes" : "No"],
+    ["Names an earlier ticket", yesNo(evidence.explicit_reference)],
+    ["Asks for status or says it continues", yesNo(evidence.follow_up_cue)],
     [
       "New information",
       evidence.new_information == null ? "Not assessed" : evidence.new_information ? "Yes" : "None found",

@@ -120,9 +120,9 @@ class DuplicateEvidence(BaseModel):
     days_since_earlier: Optional[int] = Field(default=None, ge=0)
     earlier_status: Optional[Literal["open", "closed"]] = None
     #: The filing names an earlier ticket.
-    explicit_reference: bool = False
+    explicit_reference: Optional[bool] = None
     #: Asks for status, or says the problem continues.
-    follow_up_cue: bool = False
+    follow_up_cue: Optional[bool] = None
     #: New facts, dates, documents or requested action.
     new_information: Optional[bool] = None
 

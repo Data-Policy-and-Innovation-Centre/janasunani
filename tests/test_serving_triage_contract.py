@@ -427,8 +427,13 @@ from janasunani.serving.triage import (  # noqa: E402
 @pytest.mark.parametrize(
     ("evidence", "label"),
     [
-        # Same filer, same text, checked and nothing new.
-        (dict(identity_match=True, text_similarity="near", new_information=False), "pure_duplicate"),
+        # Same key, same text, and every follow-up signal checked and absent.
+        (dict(identity_match=True, text_similarity="near", new_information=False,
+              follow_up_cue=False, explicit_reference=False), "pure_duplicate"),
+        # Same, but the follow-up cue and reference were never checked.
+        (dict(identity_match=True, text_similarity="near", new_information=False), "uncertain"),
+        # Same key and new facts, but no evidence it is the same problem.
+        (dict(identity_match=True, new_information=True), "uncertain"),
         # The costly confusion: same filer and text, but a status request.
         (dict(identity_match=True, text_similarity="near", follow_up_cue=True, new_information=False), "follow_up"),
         # Same filer and text with new facts is a follow-up, not a repeat.

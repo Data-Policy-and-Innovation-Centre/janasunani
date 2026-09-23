@@ -155,7 +155,12 @@ export function TriageBanner({ triage }: { triage: TriageResult }) {
 
         {duplicateDisplay.kind === "campaign" && (
           <article className="border-l-2 border-positive bg-positive-soft/50 px-4 py-3">
-            <Badge tone="positive">collective grievance</Badge>
+            <div className="flex flex-wrap gap-2">
+              <Badge tone="positive">collective grievance</Badge>
+              {duplicateDisplay.candidate && (
+                <Badge tone="neutral">{RELATIONSHIP_COPY[duplicateDisplay.candidate.relationship].badge}</Badge>
+              )}
+            </div>
             <h3 className="mt-1.5 text-[14px] font-semibold text-text-dark">
               Part of a campaign
             </h3>
@@ -165,6 +170,11 @@ export function TriageBanner({ triage }: { triage: TriageResult }) {
               were found. This is a collective grievance, not spam; each
               filing remains visible for review.
             </p>
+            {duplicateDisplay.candidate && duplicateDisplay.candidate.relationship !== "campaign" && (
+              <p className="mt-1.5 text-[12.5px] leading-relaxed text-text-secondary">
+                {RELATIONSHIP_COPY[duplicateDisplay.candidate.relationship].explanation}
+              </p>
+            )}
             {duplicateDisplay.candidate && (
               <CandidateEvidence candidate={duplicateDisplay.candidate} />
             )}

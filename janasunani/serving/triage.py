@@ -106,22 +106,35 @@ def candidate_relationship(evidence: DuplicateEvidence) -> DuplicateRelationship
     costly error is a follow-up closed as a repeat.
     """
     same_text = evidence.text_similarity in {"identical", "near"}
-    linked = evidence.identity_match is True or evidence.explicit_reference
+    # An identity key alone says the same filer key, not the same problem:
+    # the identity path needs affirmative text evidence as well.
+    same_problem = evidence.explicit_reference is True or (
+        evidence.identity_match is True
+        and evidence.text_similarity in {"identical", "near", "similar"}
+    )
     if same_text and evidence.identity_match is False:
         return "campaign"
     if (
-        linked
+        same_problem
         and evidence.text_similarity != "different"
-        and (evidence.follow_up_cue or evidence.new_information is True)
+        and (evidence.follow_up_cue is True or evidence.new_information is True)
     ):
         return "follow_up"
+    # Every follow-up signal must have been checked and found absent;
+    # unchecked is not absent.
     if (
         evidence.identity_match is True
         and same_text
         and evidence.new_information is False
+        and evidence.follow_up_cue is False
+        and evidence.explicit_reference is False
     ):
         return "pure_duplicate"
-    if evidence.text_similarity == "similar" and not linked:
+    if (
+        evidence.text_similarity == "similar"
+        and evidence.identity_match is not True
+        and evidence.explicit_reference is not True
+    ):
         return "related"
     return "uncertain"
 
