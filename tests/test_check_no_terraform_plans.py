@@ -316,6 +316,34 @@ def test_staged_scan_catches_a_plan_under_an_unignored_name(tmp_path):
     assert "tfstate" in result.stdout
 
 
+@pytest.mark.parametrize("path", ["data/raw/plan.bin", "outputs/run/plan.bin"])
+def test_staged_scan_refuses_a_non_allowlisted_protected_path(tmp_path, path):
+    # The content scan never opens data/ or outputs/, and the allowlist check
+    # only selects allowlisted names, so a plan saved under any other name
+    # there passed the hook and was disclosed by the push CI then rejected.
+    # Refused by name, as the workflow's raw-data step does.
+    repo = _repo(tmp_path)
+    target = repo / path
+    target.parent.mkdir(parents=True)
+    _plan_archive(target, ("tfstate",))
+    _git(repo, "add", "-f", path)
+
+    result = _run_staged(repo)
+
+    assert result.returncode == 1
+    assert path in result.stdout
+    assert "not on the data allowlist" in result.stdout
+
+
+def test_staged_scan_still_admits_an_allowlisted_marker(tmp_path):
+    repo = _repo(tmp_path)
+    (repo / "data").mkdir()
+    (repo / "data" / ".gitkeep").write_text("")
+    _git(repo, "add", "-f", "data/.gitkeep")
+
+    assert _run_staged(repo).returncode == 0
+
+
 def test_staged_scan_reads_the_index_not_the_worktree(tmp_path):
     # A pre-commit check must judge what is being committed. Stage the plan,
     # then overwrite the worktree copy with innocuous text: the commit still
@@ -1513,6 +1541,9 @@ def test_the_accepted_keys_are_the_ones_the_repository_actually_uses():
         ("a[9876]543210.dvc", True),
         ("987/654/3210.dvc", True),
         ("+91 98765 43210.dvc", True),
+        # Written with thousands separators, Western and Indian grouping.
+        ("Ram-987,654,3210", True),
+        ("98,76,54,32,10.dvc", True),
         # Real names from this repository, which must keep passing.
         ("Dump20250730.sql.dvc", False),
         ("historical_gold_180.jsonl.dvc", False),

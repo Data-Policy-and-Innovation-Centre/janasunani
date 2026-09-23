@@ -302,8 +302,9 @@ HASH_NAMES = frozenset({"md5", "sha256", "sha1", "etag", "checksum", "crc32"})
 # refuses the identifier shapes with margin and breaks nothing.
 # The separator class is everything people put *between* digits when they
 # write a number down -- parentheses and slashes included, as in
-# `(987) 654-3210`. Anything not in this class ends the group.
-DIGIT_GROUP = re.compile(r"\d(?:[\d\s._\-()\[\]/+]*\d)?")
+# `(987) 654-3210`, and commas, as in `987,654,3210` or the Indian
+# `98,76,54,32,10`. Anything not in this class ends the group.
+DIGIT_GROUP = re.compile(r"\d(?:[\d\s._\-()\[\]/+,]*\d)?")
 IDENTIFIER_DIGITS = 9
 
 # Shapes that are an identifier whatever field they sit in.
@@ -664,6 +665,36 @@ def blob_bytes(sha: str) -> bytes:
     ).stdout
 
 
+# The roots the workflow's raw-data step protects. Anything staged under
+# them must be on ALLOWLIST_PATHSPECS.
+PROTECTED_ROOTS = ("data", "outputs")
+
+
+def staged_unallowlisted_protected() -> list[tuple[Path, list[str]]]:
+    """Staged paths under a protected root that the allowlist does not cover.
+
+    Judged by name only: the content scan never opens data/, and
+    `staged_allowlisted_entries` selects only allowlisted names, so without
+    this a plan saved as `data/raw/plan.bin` passed the hook and reached
+    GitHub before the workflow's raw-data step refused it. The same names
+    are refused here, before the commit.
+    """
+    changed = subprocess.run(
+        [
+            "git", "diff", "--cached", "--name-only", "-z",
+            "--diff-filter=ACMRT", "--", *PROTECTED_ROOTS,
+        ],
+        check=True,
+        capture_output=True,
+    ).stdout
+    staged = {name for name in changed.decode("utf-8").split("\0") if name}
+    allowed = {path.as_posix() for path, _, _ in staged_allowlisted_entries()}
+    return [
+        (Path(name), ["not on the data allowlist"])
+        for name in sorted(staged - allowed)
+    ]
+
+
 def scan_staged() -> list[tuple[Path, list[str]]]:
     """Offenders among the blobs staged for the next commit."""
     offenders: list[tuple[Path, list[str]]] = []
@@ -693,7 +724,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.staged:
         return report(
-            scan_staged() + allowlisted_offenders(staged_allowlisted_entries())
+            scan_staged()
+            + staged_unallowlisted_protected()
+            + allowlisted_offenders(staged_allowlisted_entries())
         )
 
     # Reads blobs, never the worktree: see `tracked_entries`. Nothing here
