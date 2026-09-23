@@ -717,8 +717,16 @@ class MonitoringPanel(MonitoringResponseModel):
 
     @model_validator(mode="after")
     def _flow_stages_in_order(self) -> "MonitoringPanel":
-        if self.id == "flow" and tuple(m.id for m in self.metrics) != MONITORING_FLOW_STAGE_IDS:
+        if self.id != "flow":
+            return self
+        if tuple(m.id for m in self.metrics) != MONITORING_FLOW_STAGE_IDS:
             raise ValueError("the flow panel needs every stage, in order")
+        # Each stage is a subset of the one before: whole counts that never grow.
+        shown = [m for m in self.metrics if isinstance(m, RecordedMonitoringMetric)]
+        if any(m.unit != "grievances" or not float(m.value).is_integer() for m in shown):
+            raise ValueError("flow stages are whole grievance counts")
+        if any(later.value > earlier.value for earlier, later in zip(shown, shown[1:])):
+            raise ValueError("a flow stage cannot exceed the one before it")
         return self
 
 

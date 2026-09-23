@@ -664,12 +664,23 @@ def test_flow_withholds_a_stage_whose_loss_is_below_ten(tmp_path):
     assert stages["flow-closed"]["numerator"] == 15
 
 
-@pytest.mark.parametrize("change", ["empty", "partial", "reordered"])
+def _widen(metrics):
+    metrics[3] = {**metrics[3], "value": metrics[1]["value"] + 1}
+    return metrics
+
+
+@pytest.mark.parametrize("change", ["empty", "partial", "reordered", "fractional", "percent", "widening"])
 def test_a_flow_panel_without_every_stage_in_order_is_rejected(change):
     from pydantic import ValidationError
     from janasunani.serving.schemas import MonitoringPanel
     panel = _flow(_flow_lake(), None)
     metrics = panel["metrics"]
-    panel["metrics"] = {"empty": [], "partial": metrics[:3], "reordered": [metrics[1], metrics[0], *metrics[2:]]}[change]
+    panel["metrics"] = {
+        "empty": lambda: [], "partial": lambda: metrics[:3],
+        "reordered": lambda: [metrics[1], metrics[0], *metrics[2:]],
+        "fractional": lambda: [{**metrics[0], "value": 70.5}, *metrics[1:]],
+        "percent": lambda: [{**metrics[0], "unit": "percent", "value": 70.0}, *metrics[1:]],
+        "widening": lambda: _widen(list(metrics)),
+    }[change]()
     with pytest.raises(ValidationError):
         MonitoringPanel.model_validate(panel)

@@ -4,6 +4,7 @@ import { useEffect, useId, useMemo, useState } from "react";
 import { fetchMonitoringCatalog, fetchMonitoringDashboard } from "@/lib/api";
 import {
   childChoice,
+  flowDropNote,
   flowStageGap,
   parentScopeFor,
   publishedScopes,
@@ -347,7 +348,7 @@ function FlowPanel({ panel }: { panel: RecordedMonitoringPanel }) {
     if (i === 0) return null;
     if (metric.state === "unavailable") return { text: "Not shown", note: metric.reason };
     const lost = counts[i - 1] - counts[i];
-    return lost > 0 ? { text: `−${lost.toLocaleString("en-IN")}`, note: metric.note } : null;
+    return lost > 0 ? { text: `−${lost.toLocaleString("en-IN")}`, note: flowDropNote(stages, i) } : null;
   };
   const share = (i: number) => (i === 0 ? "all filings" : `${((100 * counts[i]) / total).toFixed(0)}% of filed`);
 
