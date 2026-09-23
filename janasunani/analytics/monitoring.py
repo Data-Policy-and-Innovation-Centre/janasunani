@@ -517,8 +517,11 @@ def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
           WHERE s.created_on>=DATE '2024-07-01' AND s.created_on<DATE '2025-07-01'),
         acts AS (
           SELECT o.ticket_no, o.id, o.action_taken_date d, o.action_status st, o.code office
-          FROM acting_office o JOIN cohort USING(ticket_no)
-          WHERE o.action_taken_date < TIMESTAMP '2025-07-31'),
+          FROM acting_office o JOIN cohort c USING(ticket_no)
+          WHERE o.action_taken_date < TIMESTAMP '2025-07-31'
+            -- Review happens before closure: a closed case's later actions
+            -- are not evidence that its ATR was reviewed.
+            AND (c.resolved_on IS NULL OR o.action_taken_date <= c.resolved_on)),
         first_reply AS (SELECT ticket_no, MIN(d) fr FROM acts WHERE st='Replied' GROUP BY 1),
         per_case AS (
           SELECT a.ticket_no,
@@ -528,13 +531,13 @@ def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
             MAX(a.d) last_action
           FROM acts a LEFT JOIN first_reply f USING(ticket_no)
           GROUP BY a.ticket_no)
-        SELECT c.ticket_no, c.nodes, c.nodes >= 3 required,
+        SELECT c.ticket_no, c.resolved_on, c.nodes, c.nodes >= 3 required,
           f.fr IS NOT NULL replied, f.fr,
           COALESCE(p.sent_back, FALSE) sent_back,
           f.fr IS NOT NULL AND (p.repliers >= 2 OR COALESCE(p.sent_back, FALSE)) reviewed,
           c.status='Disposed' AND CAST(c.resolved_on AS DATE)<=DATE '2025-07-30' closed,
           (c.resolved_on IS NULL OR CAST(c.resolved_on AS DATE)>DATE '2025-07-30')
-            AND c.status NOT IN ('Disposed','Discard') AND p.last_status='Replied' atr_waiting,
+            AND COALESCE(c.status, '') NOT IN ('Disposed','Discard') AND p.last_status='Replied' atr_waiting,
           DATE '2025-07-30'-CAST(p.last_action AS DATE) wait_days
         FROM cohort c LEFT JOIN first_reply f USING(ticket_no) LEFT JOIN per_case p USING(ticket_no)
     """)
@@ -565,6 +568,7 @@ def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
         LEFT JOIN revert r ON r.template = {_NORMALIZED_REMARK}
         WHERE c.replied AND a.action_status='Reopen' AND a.action_taken_date>=c.fr
           AND a.action_taken_date < TIMESTAMP '2025-07-31'
+          AND (c.resolved_on IS NULL OR a.action_taken_date <= c.resolved_on)
     """)
     reasons = con.execute(
         "SELECT reason, COUNT(*) n FROM atr_backs GROUP BY reason "
@@ -730,7 +734,7 @@ def _closure(con: duckdb.DuckDBPyConnection, full_path: Path | None) -> dict[str
             _metric("bare-resolved", "Bare disposal / all resolved", _pct(row["bare"], row["resolved"]), unit="percent", numerator=row["bare"], denominator=row["resolved"]),
             _metric("action-recorded", "Action recorded", row["action_recorded"], unit="closures", denominator=row["ladder"]),
             _metric("benefit-recorded", "Benefit recorded", row["benefit_recorded"], unit="closures", denominator=row["ladder"]),
-            _metric("reopened", "Sent back by a reviewer (Reopen)", row["reopened"], unit="grievances", denominator=row["resolved"], note="The portal records a reviewer returning an ATR as Reopen; this is not a citizen reopening the case."),
+            _metric("reopened", "Recorded Reopen events", row["reopened"], unit="grievances", denominator=row["resolved"], note="Most Reopen events follow an ATR and are a reviewer sending it back (see the ATR panel); some are citizen reopenings. The record does not separate them."),
             *refiling_metrics,
         ],
         "breakdown": None, "breakdownUnavailableReason": None,
@@ -1018,7 +1022,7 @@ def _recording(con: duckdb.DuckDBPyConnection, discards: dict[str, Any], atr: di
             share("rec-review-required", "Whether review is required", row["workflow"],
                   "Read from the assigned workflow (three or more offices); the portal holds no review flag."),
             reuse(atr, "atr-standard-reason", "rec-review-event", "Review date, reviewer role, decision and reason",
-                  "A send-back is dated, by an office, with a standard reason this often. Acceptance is not recorded as a decision.",
+                  "Of ATRs sent back (not of all filings): the share whose reason is a standard one. A send-back is dated and by an office; acceptance is not recorded as a decision.",
                   "No ATR was sent back in this scope."),
             share("rec-scheme", "Scheme or service", row["subcategory"], "Subcategory often names the scheme; there is no scheme or service field."),
             *(
@@ -1028,7 +1032,7 @@ def _recording(con: duckdb.DuckDBPyConnection, discards: dict[str, Any], atr: di
         ],
         "breakdown": None, "breakdownUnavailableReason": None,
         "caveats": [
-            "Shares are of FY 2024-25 filings in this scope, except discard reason, which is of discards.",
+            "Shares are of FY 2024-25 filings in this scope, except discard reason (of discards) and the review decision (of ATRs sent back).",
             "A field that is present can still be recorded inconsistently; presence is not quality.",
         ],
     }

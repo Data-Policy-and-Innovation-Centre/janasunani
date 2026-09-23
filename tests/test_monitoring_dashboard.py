@@ -429,6 +429,10 @@ def test_atr_reads_review_from_the_assigned_workflow():
                                              ("BDO", "Replied", None, 5), ("CMO", "Disposed", None, 7)]),
         # Collector -> BDO: no review required.
         ("direct", "1,2", "Disposed", [("BDO", "Replied", None, 2), ("Collector", "Disposed", None, 3)]),
+        # Closed on 10 July after the field reply; the Collector's reply and
+        # send-back on 12 July come after closure and are not its review.
+        ("late", "1,2,3", "Disposed", [("BDO", "Replied", None, 2), ("CMO", "Disposed", None, 3),
+                                       ("Collector", "Reopen", "Please furnish the final ATR", 12), ("Collector", "Replied", None, 12)]),
         # An ATR waiting at the Collector at the snapshot.
         ("waiting", "1,2,3", "Pending", [("BDO", "Replied", None, 10)]),
         # No workflow recorded.
@@ -456,11 +460,11 @@ def test_atr_reads_review_from_the_assigned_workflow():
     def fraction(metric_id):
         return metrics[metric_id]["numerator"], metrics[metric_id]["denominator"]
 
-    assert fraction("review-required") == (40, 50)       # four three-office kinds of five with a workflow
-    assert fraction("atr-replied") == (50, 60)
-    assert fraction("review-done") == (20, 30)            # reviewed + sent_back, of the closed required cases
-    assert fraction("closed-without-review") == (10, 30)
-    assert fraction("atr-sent-back") == (10, 50)
+    assert fraction("review-required") == (50, 60)       # five three-office kinds of six with a workflow
+    assert fraction("atr-replied") == (60, 70)
+    assert fraction("review-done") == (20, 40)            # reviewed + sent_back, of the closed required cases
+    assert fraction("closed-without-review") == (20, 40)  # skipped + late
+    assert fraction("atr-sent-back") == (10, 60)
     assert fraction("atr-standard-reason") == (10, 10)
     assert metrics["atr-waiting"]["value"] == 10
     assert metrics["atr-wait"]["value"] == 20.0            # 30 July less 10 July
