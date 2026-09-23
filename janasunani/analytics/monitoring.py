@@ -29,6 +29,7 @@ PERIOD_START = date(2024, 7, 1)
 PERIOD_END = date(2025, 7, 1)
 SNAPSHOT_DATE = date(2025, 7, 30)
 MIN_CELL = 10
+COUNT_UNITS = frozenset({"grievances", "groups", "closures", "citizens"})
 CAMPAIGN_THRESHOLD = 200  # existing large/campaign bucket threshold
 MAX_ARTIFACT_BYTES = 10_000_000
 SUBTYPE_ROLES = {
@@ -130,6 +131,19 @@ def _metric(
             "label": label,
             "state": "unavailable",
             "reason": note or "The source does not contain this measure.",
+        }
+    # The minimum reportable cell covers headline metrics as well as
+    # breakdowns: a count, or the numerator or denominator behind a rate or a
+    # mean, of 1-9 is withheld. Zero is published, as in suppress_breakdown.
+    cells = [numerator, denominator]
+    if unit in COUNT_UNITS:
+        cells.append(value)
+    if any(cell is not None and 0 < cell < MIN_CELL for cell in cells):
+        return {
+            "id": metric_id,
+            "label": label,
+            "state": "unavailable",
+            "reason": f"Withheld because a cell is below {MIN_CELL}.",
         }
     return {
         "id": metric_id,

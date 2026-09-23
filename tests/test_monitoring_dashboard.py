@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 import duckdb
 
-from janasunani.analytics.monitoring import _pct, refiling_summary, suppress_breakdown
+from janasunani.analytics.monitoring import _metric as published_metric, _pct, refiling_summary, suppress_breakdown
 from janasunani.serving.api import create_app
 from janasunani.serving.monitoring import (
     ArtifactMonitoringProvider,
@@ -84,6 +84,36 @@ def test_formula_boundaries_and_small_cell_suppression():
     assert _pct(1, 3) == 33.3
     assert suppress_breakdown([{"value": 0}, {"value": 10}]) is not None
     assert suppress_breakdown([{"value": 9}, {"value": 100}]) is None
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"value": 3, "unit": "closures"},
+        {"value": 0.1, "unit": "percent", "numerator": 3, "denominator": 3000},
+        {"value": 4.0, "unit": "days", "denominator": 7},
+    ],
+)
+def test_small_metric_cells_are_withheld(kwargs):
+    # The minimum reportable cell applies to headline metrics, not only to
+    # breakdowns: a subcategory published benefit-recorded = 3.
+    metric = published_metric("m", "M", **kwargs)
+    assert metric["state"] == "unavailable"
+    assert "value" not in metric
+    assert "below 10" in metric["reason"]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"value": 0, "unit": "grievances"},
+        {"value": 10, "unit": "closures"},
+        {"value": 0.0, "unit": "percent", "numerator": 0, "denominator": 500},
+        {"value": 12.5, "unit": "days"},
+    ],
+)
+def test_zero_and_reportable_metric_cells_are_published(kwargs):
+    assert published_metric("m", "M", **kwargs)["state"] == "recorded"
 
 
 def test_refiling_censoring_includes_post_fy_followup_and_window_boundaries():
