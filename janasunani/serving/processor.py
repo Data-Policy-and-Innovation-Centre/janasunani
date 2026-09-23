@@ -210,6 +210,7 @@ def _mock_triage(text: str) -> TriageResult:
                 distinct_signatories=16,
             ), DuplicateEvidence(
                 identity_match=False, text_similarity="identical",
+                explicit_reference=False,
                 days_since_earlier=3, earlier_status="open",
             )),
             duplicate_review=DuplicateReview(decision="matched"),

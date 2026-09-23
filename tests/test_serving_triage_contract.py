@@ -441,7 +441,9 @@ from janasunani.serving.triage import (  # noqa: E402
         # An explicit reference links the tickets without an identity key.
         (dict(explicit_reference=True, follow_up_cue=True), "follow_up"),
         # Same text from different filers.
-        (dict(identity_match=False, text_similarity="identical"), "campaign"),
+        (dict(identity_match=False, text_similarity="identical", explicit_reference=False), "campaign"),
+        # The same, with the reference never checked: it could be a follow-up.
+        (dict(identity_match=False, text_similarity="identical"), "uncertain"),
         # A different key that names the earlier ticket is a follow-up, not a campaign.
         (dict(identity_match=False, text_similarity="near", explicit_reference=True,
               follow_up_cue=True), "follow_up"),
