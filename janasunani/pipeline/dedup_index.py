@@ -524,6 +524,7 @@ async def _load_pending_signature_batch(
             Complaint.petitioner_mobile,
             Complaint.petitioner_email,
             Complaint.petitioner_name,
+            Complaint.block,
         )
         .join(Complaint, Complaint.ticket_no == GrievanceRedaction.ticket_no)
         .where(
@@ -548,6 +549,7 @@ def _source_record(
     mobile: str | None,
     email: str | None,
     name: str | None,
+    block: str | None,
 ) -> dict[str, object]:
     """The exact source fields captured by a signature provenance digest."""
     return {
@@ -561,6 +563,8 @@ def _source_record(
         # composite (#341). In the digest because it feeds the identity key:
         # if the name changes, the key changes, and the row is stale.
         "petitioner_name": name,
+        # Feeds the identity key, so it certifies the row (as name does).
+        "block": block,
         "grievance_redacted": redacted_text,
     }
 
@@ -585,6 +589,7 @@ def _signature_rows_for_source_batch(
         mobile,
         email,
         name,
+        block,
     ) in batch:
         text = redacted_text or ""
         shingle_set = shingles(text)
@@ -592,7 +597,8 @@ def _signature_rows_for_source_batch(
         script = _script_of(text)
         window_index = _window_index(created_on, epoch, window_days)
         source = _source_record(
-            ticket_no, redacted_text, row_district, row_year, created_on, mobile, email, name
+            ticket_no, redacted_text, row_district, row_year, created_on, mobile, email, name,
+            block,
         )
         rows.append(
             {
@@ -607,7 +613,7 @@ def _signature_rows_for_source_batch(
                 # A separate path from text above: computed from the complaints
                 # columns directly, never from redacted_text (dedup.py module
                 # docstring point 3).
-                "identity_key_mobile": mobile_identity_key(mobile, name, salt),
+                "identity_key_mobile": mobile_identity_key(mobile, name, salt, block),
                 "identity_key_email": email_identity_key(email, salt),
                 "source_record_digest": source_record_digest(source),
                 "index_version": version,
@@ -649,6 +655,7 @@ async def _source_digest_mismatches(conn, district: Optional[str], year: Optiona
             Complaint.petitioner_mobile,
             Complaint.petitioner_email,
             Complaint.petitioner_name,
+            Complaint.block,
             GrievanceRedaction.grievance_redacted,
         )
         .select_from(DedupSignature)
@@ -669,6 +676,7 @@ async def _source_digest_mismatches(conn, district: Optional[str], year: Optiona
         mobile,
         email,
         name,
+        block,
         redacted_text,
     ) in result:
         if row_district is None or row_year is None or redacted_text is None:
@@ -676,7 +684,8 @@ async def _source_digest_mismatches(conn, district: Optional[str], year: Optiona
             continue
         current = source_record_digest(
             _source_record(
-                ticket_no, redacted_text, row_district, row_year, created_on, mobile, email, name
+                ticket_no, redacted_text, row_district, row_year, created_on, mobile, email,
+                name, block,
             )
         )
         if stored_digest is not None and stored_digest != current:
@@ -702,6 +711,7 @@ async def _load_source_rows_for_tickets(conn, ticket_nos: list[str]):
             Complaint.petitioner_mobile,
             Complaint.petitioner_email,
             Complaint.petitioner_name,
+            Complaint.block,
         )
         .select_from(DedupSignature)
         .outerjoin(Complaint, Complaint.ticket_no == DedupSignature.ticket_no)

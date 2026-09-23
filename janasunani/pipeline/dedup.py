@@ -187,6 +187,8 @@ def _canonical_source_record(record: Mapping[str, object]) -> tuple[str, bytes]:
         # staleness. Omitting it would let `_source_digest_mismatches` certify
         # a row whose key was derived from a name the record no longer has.
         "petitioner_name",
+        # Also feeds the masked-mobile key, so a corrected block is staleness.
+        "block",
         "grievance_redacted",
     )
     try:
@@ -308,7 +310,8 @@ def source_snapshot_id(records: Iterable[Mapping[str, object]]) -> str:
 
     Each record must carry these OLTP/lake columns: ``ticket_no``, ``district``,
     ``created_year``, ``created_on``, ``petitioner_mobile``,
-    ``petitioner_email``, and ``grievance_redacted``.  They are every source
+    ``petitioner_email``, ``petitioner_name``, ``block``, and
+    ``grievance_redacted``.  They are every source
     value that changes the runner's membership, blocking, text signature, or
     identity candidates.  The digest contains no reversible text or identity
     value, but remains ``dpic-infra`` provenance because it is derived from
@@ -829,7 +832,7 @@ def identity_key(value: str, salt: str) -> str | None:
 
 #: Marker for the identity-key derivation, stamped into the index version so
 #: a change here is visible as staleness rather than as silently mixed keys.
-IDENTITY_ALGORITHM = "mobile-tail4-name-v1"
+IDENTITY_ALGORITHM = "mobile-tail4-fullname-block-v2"
 
 #: Digits kept from a masked mobile. The portal masks `petitioner_mobile` as
 #: a `******`-style prefix plus the last four digits, and those four are
@@ -837,9 +840,9 @@ IDENTITY_ALGORITHM = "mobile-tail4-name-v1"
 #: over the 1.37M-row corpus, which is what real last-four digits look like.
 MASKED_MOBILE_TAIL = 4
 
-#: Characters kept from the petitioner name. `petitioner_name` is effectively
-#: unmasked (6 of 1,371,285 rows carry a mask), so this is real signal.
-NAME_TAIL = 4
+#: Minimum letters required from `petitioner_name`, which is effectively
+#: unmasked (6 of 1,371,285 rows carry a mask). The whole name is used.
+NAME_MIN = 4
 
 
 def _tail_digits(value: str | None, n: int) -> str | None:
@@ -847,13 +850,20 @@ def _tail_digits(value: str | None, n: int) -> str | None:
     return "".join(digits[-n:]) if len(digits) >= n else None
 
 
-def _tail_alpha(value: str | None, n: int) -> str | None:
-    alpha = [ch.lower() for ch in (value or "") if ch.isalpha()]
-    return "".join(alpha[-n:]) if len(alpha) >= n else None
+def _name_token(value: str | None) -> str | None:
+    """The whole petitioner name, lowercased, letters only."""
+    alpha = "".join(ch.lower() for ch in (value or "") if ch.isalpha())
+    return alpha if len(alpha) >= NAME_MIN else None
+
+
+def _block_token(value: str | None) -> str | None:
+    """The block, lowercased, alphanumerics only. None when unrecorded."""
+    token = "".join(ch.lower() for ch in (value or "") if ch.isalnum())
+    return token or None
 
 
 def mobile_identity_key(
-    mobile: str | None, name: str | None, salt: str
+    mobile: str | None, name: str | None, salt: str, block: str | None = None
 ) -> str | None:
     """Same-citizen key for a mobile column that arrives masked (#341).
 
@@ -874,10 +884,9 @@ def mobile_identity_key(
     and must not be weakened for data that may yet arrive unmasked.
 
     **Otherwise the surviving fragments.** The last four digits of the mask,
-    plus the last four letters of the petitioner name. Neither is sufficient
-    alone: four digits is ~10^4 values over 1.37M rows, about 108 rows each,
-    which would rebuild the very buckets this exists to remove. Together they
-    yield ~658k keys of which most are singletons.
+    the full petitioner name, and the block when recorded. Four digits alone is
+    ~10^4 values over 1.37M rows, which rebuilds the buckets this exists to
+    remove; the name and block carry the discrimination.
 
     Abstains -- ``None``, the module's "nothing meaningful here" contract --
     when the mobile carries fewer than four digits, which is what removes
@@ -893,9 +902,8 @@ def mobile_identity_key(
     merge two citizens unless their filings are also near-duplicate in
     content, which is a duplicate on its own terms.
 
-    ``name`` is read only to derive four lowercase letters. It is never
-    stored, and the return value is a salted hash exactly as elsewhere in
-    this module.
+    ``name`` and ``block`` are read only to derive the key. Neither is
+    stored; the return value is a salted hash as elsewhere in this module.
     """
     canonical = _canonical_phone_digits(mobile or "")
     if canonical is not None:
@@ -907,10 +915,19 @@ def mobile_identity_key(
     tail = _tail_digits(mobile, MASKED_MOBILE_TAIL)
     if tail is None:
         return None
-    name_tail = _tail_alpha(name, NAME_TAIL)
-    if name_tail is None:
+    name_token = _name_token(name)
+    if name_token is None:
         return None
-    return identity_key(f"mobile{MASKED_MOBILE_TAIL}:{tail}:{name_tail}", salt)
+    # Namespaced, so a row keyed with a block never collides with one keyed
+    # without. They do not link to each other: block is missing on 6.5% of
+    # department 21 and 31.4% of department 40, and bridging that gap would
+    # merge strangers.
+    block_token = _block_token(block)
+    if block_token is None:
+        return identity_key(f"mobile{MASKED_MOBILE_TAIL}:{tail}:{name_token}", salt)
+    return identity_key(
+        f"mobile{MASKED_MOBILE_TAIL}b:{tail}:{name_token}:{block_token}", salt
+    )
 
 
 def email_identity_key(email: str | None, salt: str) -> str | None:
