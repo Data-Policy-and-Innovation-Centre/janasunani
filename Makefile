@@ -856,7 +856,7 @@ models:
 # `'$(OLTP_DB_URL)'` fixes that but then breaks on an embedded `'` instead.
 # sh_quote handles both.
 preflight:
-	@OLTP_DB_URL=$(call sh_quote,$(OLTP_DB_URL_RAW)) uv run --extra demo janasunani-demo-preflight
+	@OLTP_DB_URL=$(call sh_quote,$(OLTP_DB_URL_RAW)) uv run --frozen --extra demo janasunani-demo-preflight
 
 # Idempotent: create the throwaway Postgres only if missing, start it if stopped,
 # always (re-)apply migrations (alembic upgrade head is a no-op when current).
@@ -898,7 +898,7 @@ db:
 # checks still fail fast ahead of provisioning a container.
 api: preflight db
 	@OLTP_DB_URL=$(call sh_quote,$(OLTP_DB_URL_RAW)) JANASUNANI_API_HOST="$(API_HOST)" \
-	  JANASUNANI_API_PORT="$(API_PORT)" uv run --extra demo janasunani-api-live
+	  JANASUNANI_API_PORT="$(API_PORT)" uv run --frozen --extra demo janasunani-api-live
 
 # The mock processor: canned/regex responses behind the same frozen contract as
 # `api`, over an in-memory store. No models, no Postgres, no DVC pull — which is
@@ -907,9 +907,15 @@ api: preflight db
 # `processor: mock`, never `pipeline`. Same env contract as `api`
 # (janasunani/serving/api.py's main reads the JANASUNANI_API_HOST/PORT that
 # janasunani/inference/serve.py does), so API_PORT/API_HOST work identically.
+# `--frozen` on every server target (demo-preflight, api, mock-api,
+# frontend, up): it installs from uv.lock as
+# committed without re-validating the lock, which otherwise re-fetches
+# metadata for direct-URL dependencies such as the spaCy model wheel. That
+# wheel is in the pii/pipeline-core extras, not these, and a slow GitHub
+# release host was enough to stop `make frontend` from ever starting.
 mock-api:
 	JANASUNANI_API_HOST="$(API_HOST)" JANASUNANI_API_PORT="$(API_PORT)" \
-	  uv run --extra serving janasunani-api
+	  uv run --frozen --extra serving janasunani-api
 
 # The UI needs an API on API_PORT: the supervisor page fetches its scope
 # catalogue on mount, so with nothing listening it renders empty dropdowns and
@@ -939,7 +945,7 @@ frontend:
 	else \
 	  echo "Nothing on :$(API_PORT); starting the mock processor in the background..."; \
 	  JANASUNANI_API_HOST="$(API_HOST)" JANASUNANI_API_PORT="$(API_PORT)" \
-	    uv run --extra serving janasunani-api & \
+	    uv run --frozen --extra serving janasunani-api & \
 	  API_PID=$$!; \
 	  trap 'pkill -P $$API_PID 2>/dev/null; kill $$API_PID 2>/dev/null || true' EXIT INT TERM; \
 	  ready=; \
@@ -967,7 +973,7 @@ up: preflight db
 	@set -e; \
 	echo "Starting live API (:$(API_PORT)) in the background..."; \
 	OLTP_DB_URL=$(call sh_quote,$(OLTP_DB_URL_RAW)) JANASUNANI_API_HOST="$(API_HOST)" \
-	  JANASUNANI_API_PORT="$(API_PORT)" uv run --extra demo janasunani-api-live & \
+	  JANASUNANI_API_PORT="$(API_PORT)" uv run --frozen --extra demo janasunani-api-live & \
 	API_PID=$$!; \
 	trap 'pkill -P $$API_PID 2>/dev/null; kill $$API_PID 2>/dev/null || true' EXIT INT TERM; \
 	echo "Waiting for the API to report processor=pipeline (model warm-up)..."; \
