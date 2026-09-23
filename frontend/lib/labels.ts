@@ -44,6 +44,7 @@ const EN: Dictionary = {
     demand: "How many cases, and how many are repeats",
     closure: "How cases were closed",
     discards: "Why cases were discarded, and when",
+    recording: "What the records hold",
   },
   metrics: {
     // Cases waiting
