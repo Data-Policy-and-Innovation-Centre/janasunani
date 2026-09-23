@@ -50,7 +50,9 @@ OLTP_DB_URL    ?= $(DEMO_OLTP_URL)
 # compose) is docs/DEPLOY.md's job, not `make up`. To view a local/box-run demo
 # from another machine, SSH-tunnel the ports and keep this default:
 #   ssh -L $(FRONTEND_PORT):127.0.0.1:$(FRONTEND_PORT) -L $(API_PORT):127.0.0.1:$(API_PORT) <box>
-# API_URL/API_HOST remain overridable for advanced setups.
+# API_URL/API_HOST remain overridable for advanced setups. The Next dev server binds
+# API_HOST too: its dev chunks are refused (403) to any origin outside
+# allowedDevOrigins, so a LAN URL would render a page that never loads.
 API_URL        ?= http://127.0.0.1:$(API_PORT)
 # Deliberately NOT `-include .env`: that makes GNU Make parse the file as
 # Makefile syntax, not key=value (#60). `$` starts a variable reference (a
@@ -884,7 +886,7 @@ db:
 	  docker exec $(PG_CONTAINER) pg_isready -U postgres -d janasunani >/dev/null 2>&1 && break; \
 	  sleep 1; \
 	done; \
-	OLTP_DB_URL=$(call sh_quote,$(OLTP_DB_URL_RAW)) uv run alembic upgrade head; \
+	OLTP_DB_URL=$(call sh_quote,$(OLTP_DB_URL_RAW)) uv run --frozen alembic upgrade head; \
 	echo "Demo DB ready."
 
 # `@` so the OLTP DSN is not echoed. API_HOST=0.0.0.0 to serve off-box.
@@ -907,12 +909,13 @@ api: preflight db
 # `processor: mock`, never `pipeline`. Same env contract as `api`
 # (janasunani/serving/api.py's main reads the JANASUNANI_API_HOST/PORT that
 # janasunani/inference/serve.py does), so API_PORT/API_HOST work identically.
-# `--frozen` on every server target (demo-preflight, api, mock-api,
-# frontend, up): it installs from uv.lock as
-# committed without re-validating the lock, which otherwise re-fetches
-# metadata for direct-URL dependencies such as the spaCy model wheel. That
-# wheel is in the pii/pipeline-core extras, not these, and a slow GitHub
-# release host was enough to stop `make frontend` from ever starting.
+# `--frozen` on every server target (demo-preflight, db, api, mock-api,
+# frontend, up): it installs from uv.lock as committed without re-validating
+# the lock, which otherwise re-fetches metadata for direct-URL dependencies
+# such as the spaCy model wheel. A slow GitHub release host was enough to
+# stop `make frontend` from ever starting. The serving-only targets
+# (mock-api, frontend) never need that wheel. The demo extra does include
+# it, so a live target on a fresh environment still downloads it once.
 mock-api:
 	JANASUNANI_API_HOST="$(API_HOST)" JANASUNANI_API_PORT="$(API_PORT)" \
 	  uv run --frozen --extra serving janasunani-api
@@ -958,7 +961,7 @@ frontend:
 	  echo "Mock API healthy (:$(API_PORT)) — results will be badged 'mock'."; \
 	fi; \
 	cd frontend && npm install && \
-	  PORT="$(FRONTEND_PORT)" NEXT_PUBLIC_API_URL="$(API_URL)" npm run dev
+	  PORT="$(FRONTEND_PORT)" NEXT_PUBLIC_API_URL="$(API_URL)" npm run dev -- -H "$(API_HOST)"
 
 # One command for the demo: ensure the DB, start the API in the background, wait
 # for it to report `processor: pipeline`, THEN start the frontend in the
@@ -986,7 +989,7 @@ up: preflight db
 	[ -n "$$ready" ] || { echo "Live API did not become healthy in time; aborting."; exit 1; }; \
 	echo "Live API healthy (:$(API_PORT)). Starting frontend (:$(FRONTEND_PORT))..."; \
 	cd frontend && npm install && \
-	  PORT="$(FRONTEND_PORT)" NEXT_PUBLIC_API_URL="$(API_URL)" npm run dev
+	  PORT="$(FRONTEND_PORT)" NEXT_PUBLIC_API_URL="$(API_URL)" npm run dev -- -H "$(API_HOST)"
 
 # Tear down by PORT (overridable), not a global process-name match, so this
 # never kills an unrelated live API/frontend on the same machine. Needs `lsof`
