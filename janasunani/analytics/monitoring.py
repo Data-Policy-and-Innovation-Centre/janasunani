@@ -369,13 +369,15 @@ def _aging(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
         ), open AS (
           SELECT g.ticket_no,
             DATE '2025-07-30' - CAST(g.created_on AS DATE) age_days,
-            DATE '2025-07-30' - CAST(COALESCE(GREATEST(g.last_updated_on, l.latest_action), g.created_on) AS DATE) inactive_days,
+            DATE '2025-07-30' - CAST(COALESCE(GREATEST(CASE WHEN g.last_updated_on < TIMESTAMP '2025-07-31' THEN g.last_updated_on END, l.latest_action), g.created_on) AS DATE) inactive_days,
             g.escalation_date
           FROM complaints g JOIN scope_tickets s USING (ticket_no)
           LEFT JOIN latest l USING (ticket_no)
           WHERE g.created_on < DATE '2025-07-31'
-            AND (g.resolved_on IS NULL OR CAST(g.resolved_on AS DATE) > DATE '2025-07-30')
-            AND COALESCE(g.status, '') NOT IN ('Disposed', 'Discard')
+            -- Open on the snapshot: resolved after it, or not closed at all. A
+            -- later status is not the status on the snapshot.
+            AND ((g.resolved_on IS NULL AND COALESCE(g.status, '') NOT IN ('Disposed', 'Discard'))
+                 OR CAST(g.resolved_on AS DATE) > DATE '2025-07-30')
         )
         SELECT CASE WHEN age_days <= 6 THEN '0-6 days'
                     WHEN age_days <= 14 THEN '7-14 days'
@@ -389,11 +391,11 @@ def _aging(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     summary = _one(con, """
         WITH latest AS (SELECT ticket_no, MAX(action_taken_date) latest_action FROM action_history WHERE action_taken_date < TIMESTAMP '2025-07-31' GROUP BY ticket_no),
         open AS (
-          SELECT DATE '2025-07-30' - CAST(COALESCE(GREATEST(g.last_updated_on, l.latest_action), g.created_on) AS DATE) inactive_days,
+          SELECT DATE '2025-07-30' - CAST(COALESCE(GREATEST(CASE WHEN g.last_updated_on < TIMESTAMP '2025-07-31' THEN g.last_updated_on END, l.latest_action), g.created_on) AS DATE) inactive_days,
                  g.escalation_date
           FROM complaints g JOIN scope_tickets s USING(ticket_no) LEFT JOIN latest l USING(ticket_no)
-          WHERE g.created_on < DATE '2025-07-31' AND (g.resolved_on IS NULL OR CAST(g.resolved_on AS DATE)>DATE '2025-07-30')
-            AND COALESCE(g.status, '') NOT IN ('Disposed', 'Discard'))
+          WHERE g.created_on < DATE '2025-07-31' AND ((g.resolved_on IS NULL AND COALESCE(g.status, '') NOT IN ('Disposed', 'Discard'))
+                 OR CAST(g.resolved_on AS DATE) > DATE '2025-07-30'))
         SELECT COUNT(*) denominator,
           COUNT(*) FILTER (WHERE inactive_days >= 7) inactive,
           COUNT(*) FILTER (WHERE escalation_date < TIMESTAMP '2025-07-31') escalation_passed
@@ -814,10 +816,10 @@ def _offices(con: duckdb.DuckDBPyConnection, scope: ScopeSpec) -> dict[str, Any]
           (g.created_on>=DATE '2024-07-01' AND g.created_on<DATE '2025-07-01') in_fy,
           t.ticket_no IS NOT NULL is_transferred,
           (g.created_on<DATE '2025-07-31'
-            AND (g.resolved_on IS NULL OR CAST(g.resolved_on AS DATE)>DATE '2025-07-30')
-            AND COALESCE(g.status, '') NOT IN ('Disposed', 'Discard')) is_open,
+            AND ((g.resolved_on IS NULL AND COALESCE(g.status, '') NOT IN ('Disposed', 'Discard'))
+                 OR CAST(g.resolved_on AS DATE) > DATE '2025-07-30')) is_open,
           DATE '2025-07-30'-CAST(g.created_on AS DATE) age_days,
-          DATE '2025-07-30'-CAST(COALESCE(GREATEST(g.last_updated_on, l.latest_action), g.created_on) AS DATE) inactive_days
+          DATE '2025-07-30'-CAST(COALESCE(GREATEST(CASE WHEN g.last_updated_on < TIMESTAMP '2025-07-31' THEN g.last_updated_on END, l.latest_action), g.created_on) AS DATE) inactive_days
         FROM complaints g JOIN scope_tickets s USING(ticket_no)
         LEFT JOIN latest l USING(ticket_no)
         LEFT JOIN acting_office_named n ON n.id=l.last_id

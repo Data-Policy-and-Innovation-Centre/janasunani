@@ -114,6 +114,12 @@ export function recordingState(metric: MonitoringMetric): RecordingState {
   return metric.value >= 99.5 && metric.note === null ? "recorded" : "partial";
 }
 
+/** Drill-down columns a viewer may sort by: workload, never a raw rate, which
+ * would rank offices before case-mix adjustment (ROADMAP, office comparison). */
+export function sortableColumn(column: MonitoringTable["columns"][number]): boolean {
+  return column.unit === "grievances";
+}
+
 export function scopesForView(catalog: MonitoringCatalog, kind: string): MonitoringScope[] {
   return catalog.scopes.filter((scope) => scope.kind === kind);
 }

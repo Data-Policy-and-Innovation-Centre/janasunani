@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const { PANEL_IDS, childChoice, recordingState, parseMonitoringCatalog, parseMonitoringDashboard, parentScopeFor, publishedScopes, quickScopes, scopesForView, subtypesFor } = await import("../lib/monitoring.ts");
+const { PANEL_IDS, childChoice, sortableColumn, recordingState, parseMonitoringCatalog, parseMonitoringDashboard, parentScopeFor, publishedScopes, quickScopes, scopesForView, subtypesFor } = await import("../lib/monitoring.ts");
 
 const catalog = {
   schemaVersion: 1,
@@ -151,4 +151,9 @@ test("drill-down tables must have one cell per column", () => {
   const negative = structuredClone(good);
   negative.panels[0].tables[0].rows[0].values = [-1, 2];
   assert.throws(() => parseMonitoringDashboard(negative), /malformed/i);
+});
+
+test("drill-down tables sort by workload, never by a raw rate", () => {
+  assert.equal(sortableColumn({ label: "Open now", unit: "grievances" }), true);
+  assert.equal(sortableColumn({ label: "Open 30+ days", unit: "percent" }), false);
 });

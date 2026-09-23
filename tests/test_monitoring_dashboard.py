@@ -414,21 +414,26 @@ def test_a_small_rate_cell_is_withheld_but_its_row_stays():
 
 
 def _edge_lake() -> duckdb.DuckDBPyConnection:
-    """Ten each of four open cases the queries used to get wrong."""
+    """Ten each of six open cases the queries used to get wrong."""
     con = duckdb.connect()
     con.execute("""
-        CREATE TABLE shapes(kind VARCHAR, district VARCHAR, status VARCHAR, last_updated TIMESTAMP, later_action BOOL);
+        CREATE TABLE shapes(kind VARCHAR, district VARCHAR, status VARCHAR, last_updated TIMESTAMP, later_action BOOL,
+                            resolved TIMESTAMP DEFAULT NULL);
         INSERT INTO shapes VALUES
           -- a blank district must not become a blank (frontend-fatal) label
-          ('blank', '  ', 'Pending', TIMESTAMP '2025-07-29', FALSE),
+          ('blank', '  ', 'Pending', TIMESTAMP '2025-07-29', FALSE, NULL),
           -- no status and no resolution is open, as grievance_base.outcome says
-          ('nostatus', 'Puri', NULL, TIMESTAMP '2025-07-29', FALSE),
+          ('nostatus', 'Puri', NULL, TIMESTAMP '2025-07-29', FALSE, NULL),
           -- never updated and no action: inactive since filing
-          ('silent', 'Puri', 'Pending', NULL, FALSE),
+          ('silent', 'Puri', 'Pending', NULL, FALSE, NULL),
           -- active only after the snapshot: inactive at the snapshot
-          ('later', 'Puri', 'Pending', NULL, TRUE);
+          ('later', 'Puri', 'Pending', NULL, TRUE, NULL),
+          -- disposed after the snapshot: open on it, whatever the status now
+          ('closedlater', 'Puri', 'Disposed', TIMESTAMP '2025-07-29', FALSE, TIMESTAMP '2025-08-05'),
+          -- updated only after the snapshot: inactive at the snapshot
+          ('updatedlater', 'Puri', 'Pending', TIMESTAMP '2025-08-12', FALSE, NULL);
         CREATE TABLE complaints AS SELECT kind || '-' || i AS ticket_no, district, status,
-            TIMESTAMP '2025-05-01' AS created_on, NULL::TIMESTAMP AS resolved_on,
+            TIMESTAMP '2025-05-01' AS created_on, resolved AS resolved_on,
             last_updated AS last_updated_on, NULL::TIMESTAMP AS escalation_date
           FROM shapes, range(10) r(i);
         CREATE TABLE scope_tickets AS SELECT ticket_no, created_on FROM complaints;
@@ -447,12 +452,13 @@ def test_offices_handles_blank_districts_missing_status_and_the_snapshot():
     rows = {row["label"]: row["values"] for row in by_district["rows"]}
     assert "" not in rows and "  " not in rows
     assert rows["District not recorded"][0] == 10
-    # Puri: no-status, silent and later-only cases, all open. The no-status
-    # cases were updated on 29 July; the other 20 had no activity by the
-    # snapshot, so they are inactive.
+    # Puri: no-status, silent, later-only, closed-later and updated-later
+    # cases, all open on the snapshot. The no-status and closed-later cases
+    # were updated on 29 July; the other 30 had no activity by the snapshot,
+    # so they are inactive.
     open_now, _, inactive, _, transferred = rows["Puri"]
-    assert open_now == 30
-    assert inactive == 66.7
+    assert open_now == 50
+    assert inactive == 60.0
     # The post-snapshot transfer neither moves the case nor counts as a transfer.
     assert transferred == 0.0
     assert [row["label"] for row in by_office["rows"]] == ["Other or unnamed office"]
@@ -461,8 +467,9 @@ def test_offices_handles_blank_districts_missing_status_and_the_snapshot():
 def test_aging_counts_missing_status_and_never_updated_cases():
     con = _edge_lake()
     summary = {m["id"]: m for m in _aging(con)["metrics"]}
-    assert summary["inactive-7"]["denominator"] == 40
-    assert summary["inactive-7"]["numerator"] == 20  # silent + later; blank and nostatus were updated 29 July
+    assert summary["inactive-7"]["denominator"] == 60
+    # silent, later and updated-later; the rest were updated 29 July
+    assert summary["inactive-7"]["numerator"] == 30
 
 
 def test_review_csv_carries_drilldown_cells():
