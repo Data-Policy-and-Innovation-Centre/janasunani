@@ -206,9 +206,11 @@ For the briefs, run `janasunani-dedup-index` for the two departments. Officers
 said in the 12 August field record that they do not know their repeat-filing
 rate.
 
-**The lookup, for answering officer questions** (§6): given a petitioner's name,
-mobile number, or ticket number, return that person's filing history and the
-outcome of each case. Ghazal will run it by hand when officers ask from
+**The lookup, for answering officer questions** (§6): given a ticket number,
+return the filings linked to it and the outcome of each case. Given a name or
+mobile number, return candidate tickets for the officer to confirm. Do not
+present these as one person's history. Mobile numbers in the extract are masked,
+so a name and mobile match can belong to a different citizen. Ghazal will run it by hand when officers ask from
 October. It needs to be queryable, but it does not need to be a finished
 statistic. It is needed in October, before the briefs.
 
@@ -517,6 +519,18 @@ information.
 Officers send a ticket number or a petitioner detail. We return the filing
 history within a day, by hand, using the extract. **Log every request:** what the
 officer asked, what we returned, and whether it changed the officer's action.
+
+**Two rules protect citizen data in this service.**
+
+- **Agree a governed channel first.** Requests and answers carry names, mobile
+  numbers and case histories. No lookup runs until the channel is recorded the
+  way ARCHITECTURE.md's security invariants require: who holds the data, where
+  it goes, how long it is kept, and how access is audited. Personal messaging
+  apps and personal email do not qualify.
+- **Confirm identity before returning a history.** A ticket number identifies a
+  case. A name or mobile number does not identify a person, because mobiles in
+  the extract are masked. For those requests, return candidate tickets and let
+  the officer confirm which are the petitioner's.
 
 **Divide the work so neither part requires everyone to be in the same place.**
 Utkarsh will manage the officer relationship and the question channel. Ghazal
