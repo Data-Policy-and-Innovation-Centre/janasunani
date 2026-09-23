@@ -663,6 +663,11 @@ MonitoringPanelId = Literal[
     "recording", "offices",
 ]
 MONITORING_PANEL_IDS: tuple[str, ...] = get_args(MonitoringPanelId)
+#: The flow panel's stages, in order: each keeps what passed the one before,
+#: and the renderer subtracts neighbours, so the sequence is the contract.
+MONITORING_FLOW_STAGE_IDS: tuple[str, ...] = (
+    "flow-filed", "flow-kept", "flow-unique", "flow-routed", "flow-atr", "flow-reviewed", "flow-closed",
+)
 
 
 class MonitoringTableColumn(MonitoringResponseModel):
@@ -709,6 +714,12 @@ class MonitoringPanel(MonitoringResponseModel):
     #: Drill-down tables, published only where a panel carries them.
     tables: list[MonitoringTable] | None = None
     caveats: list[str]
+
+    @model_validator(mode="after")
+    def _flow_stages_in_order(self) -> "MonitoringPanel":
+        if self.id == "flow" and tuple(m.id for m in self.metrics) != MONITORING_FLOW_STAGE_IDS:
+            raise ValueError("the flow panel needs every stage, in order")
+        return self
 
 
 class UnavailableMonitoringPanel(MonitoringResponseModel):

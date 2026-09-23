@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const { PANEL_IDS, childChoice, sortableColumn, recordingState, parseMonitoringCatalog, parseMonitoringDashboard, parentScopeFor, publishedScopes, quickScopes, scopesForView, subtypesFor } = await import("../lib/monitoring.ts");
+const { PANEL_IDS, FLOW_STAGE_IDS, flowStageGap, childChoice, sortableColumn, recordingState, parseMonitoringCatalog, parseMonitoringDashboard, parentScopeFor, publishedScopes, quickScopes, scopesForView, subtypesFor } = await import("../lib/monitoring.ts");
 
 const catalog = {
   schemaVersion: 1,
@@ -18,7 +18,8 @@ const catalog = {
 const panels = PANEL_IDS.map((id) => ({
   id, title: id, state: "recorded",
   denominator: { label: "Synthetic denominator", value: 20 },
-  metrics: [{ id: `${id}-metric`, label: "Synthetic", state: "recorded", value: 50, unit: "percent", numerator: 10, denominator: 20, coveragePct: null, note: null, basis: "direct" }],
+  metrics: (id === "flow" ? FLOW_STAGE_IDS : [`${id}-metric`]).map((metricId) => (
+    { id: metricId, label: "Synthetic", state: "recorded", value: 50, unit: "percent", numerator: 10, denominator: 20, coveragePct: null, note: null, basis: "direct" })),
   breakdown: null, breakdownUnavailableReason: null, tables: null, caveats: ["Synthetic fixture."],
 }));
 
@@ -158,4 +159,22 @@ test("drill-down tables must have one cell per column", () => {
 test("drill-down tables sort by workload, never by a raw rate", () => {
   assert.equal(sortableColumn({ label: "Open now", unit: "grievances" }), true);
   assert.equal(sortableColumn({ label: "Open 30+ days", unit: "percent" }), false);
+});
+
+test("a flow panel must carry every stage, in order", () => {
+  const flowAt = dashboard.panels.findIndex((panel) => panel.id === "flow");
+  for (const change of [[], (m) => m.slice(0, 3), (m) => [m[1], m[0], ...m.slice(2)]]) {
+    const broken = structuredClone(dashboard);
+    const metrics = broken.panels[flowAt].metrics;
+    broken.panels[flowAt].metrics = Array.isArray(change) ? change : change(metrics);
+    assert.throws(() => parseMonitoringDashboard(broken), /malformed/);
+  }
+  assert.doesNotThrow(() => parseMonitoringDashboard(dashboard));
+});
+
+test("a withheld repeats stage says not shown, a missing grouping says not yet", () => {
+  assert.equal(flowStageGap({ id: "flow-unique", reason: "Repeats are not removed yet: the groups are being rebuilt." }), "not yet");
+  assert.equal(flowStageGap({ id: "flow-unique", reason: "Withheld: fewer than 10 grievances left the path here." }), "not shown");
+  assert.equal(flowStageGap({ id: "flow-unique", reason: "Withheld because a cell is below 10." }), "not shown");
+  assert.equal(flowStageGap({ id: "flow-atr", reason: "Withheld because a cell is below 10." }), "not shown");
 });

@@ -4,6 +4,7 @@ import { useEffect, useId, useMemo, useState } from "react";
 import { fetchMonitoringCatalog, fetchMonitoringDashboard } from "@/lib/api";
 import {
   childChoice,
+  flowStageGap,
   parentScopeFor,
   publishedScopes,
   quickScopes,
@@ -373,7 +374,7 @@ function FlowPanel({ panel }: { panel: RecordedMonitoringPanel }) {
                 <p className="mt-2 font-display text-[22px] leading-none text-text-secondary">—</p>
               )}
               <p className="mt-1 font-mono text-[9.5px] tracking-[0.06em] text-text-secondary">
-                {metric.state === "recorded" ? share(i) : metric.id === "flow-unique" ? "not yet" : "not shown"}
+                {metric.state === "recorded" ? share(i) : flowStageGap(metric)}
               </p>
               {metric.state === "recorded" && metric.basis === "proxy" ? (
                 <div className="mt-1.5"><Badge>Proxy</Badge></div>

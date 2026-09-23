@@ -13,7 +13,7 @@ import duckdb
 
 from janasunani.analytics.monitoring import _aging, _atr, _flat_rows, _flow, CORE_SCOPES, OFFICE_TABLE_TOP_N, PROXY_METRICS, UNRECORDED_FIELDS, _discards, _offices, _recording, _metric as published_metric, _pct, withhold_small_panel, refiling_summary, suppress_breakdown
 from janasunani.serving.api import create_app
-from janasunani.serving.schemas import MONITORING_PANEL_IDS
+from janasunani.serving.schemas import MONITORING_FLOW_STAGE_IDS, MONITORING_PANEL_IDS
 from janasunani.serving.monitoring import (
     ArtifactMonitoringProvider,
     MonitoringArtifactError,
@@ -42,7 +42,8 @@ def _release() -> dict:
             "title": panel_id.title(),
             "state": "recorded",
             "denominator": {"label": "Synthetic denominator", "value": 20},
-            "metrics": [_metric(panel_id)],
+            # The flow panel's contract is its full stage sequence.
+            "metrics": [_metric(m) for m in MONITORING_FLOW_STAGE_IDS] if panel_id == "flow" else [_metric(panel_id)],
             "breakdown": None,
             "breakdownUnavailableReason": None,
             "caveats": ["Synthetic fixture."],
@@ -625,8 +626,9 @@ def _flow_lake() -> duckdb.DuckDBPyConnection:
 def test_flow_stages_nest_and_say_when_repeats_are_not_removed():
     panel = _flow(_flow_lake(), None)
     stages = {m["id"]: m for m in panel["metrics"]}
-    assert [m["id"] for m in panel["metrics"]] == [
-        "flow-filed", "flow-kept", "flow-unique", "flow-routed", "flow-atr", "flow-reviewed", "flow-closed"]
+    from janasunani.serving.schemas import MONITORING_FLOW_STAGE_IDS, MonitoringPanel
+    assert tuple(m["id"] for m in panel["metrics"]) == MONITORING_FLOW_STAGE_IDS
+    MonitoringPanel.model_validate(panel)
     assert stages["flow-unique"]["state"] == "unavailable"
     # Each stage is (count, the stage before): without dedup, routing follows "kept".
     got = {k: (m["numerator"], m["denominator"]) for k, m in stages.items() if m["state"] == "recorded"}
@@ -658,3 +660,14 @@ def test_flow_withholds_a_stage_whose_loss_is_below_ten(tmp_path):
     # The next stage is measured from the last one shown, not the withheld one.
     assert (stages["flow-routed"]["numerator"], stages["flow-routed"]["denominator"]) == (45, 60)
     assert stages["flow-closed"]["numerator"] == 15
+
+
+@pytest.mark.parametrize("change", ["empty", "partial", "reordered"])
+def test_a_flow_panel_without_every_stage_in_order_is_rejected(change):
+    from pydantic import ValidationError
+    from janasunani.serving.schemas import MonitoringPanel
+    panel = _flow(_flow_lake(), None)
+    metrics = panel["metrics"]
+    panel["metrics"] = {"empty": [], "partial": metrics[:3], "reordered": [metrics[1], metrics[0], *metrics[2:]]}[change]
+    with pytest.raises(ValidationError):
+        MonitoringPanel.model_validate(panel)

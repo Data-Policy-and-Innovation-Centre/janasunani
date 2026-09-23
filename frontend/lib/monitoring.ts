@@ -52,6 +52,14 @@ export type MonitoringMetric =
  * janasunani/serving/schemas.py; a dashboard carries each exactly once. */
 export const PANEL_IDS = ["flow", "aging", "transfers", "journey", "atr", "demand", "closure", "discards", "recording", "offices"] as const;
 export type PanelId = (typeof PANEL_IDS)[number];
+/** The flow panel's stages, in order; mirrors MONITORING_FLOW_STAGE_IDS. */
+export const FLOW_STAGE_IDS = ["flow-filed", "flow-kept", "flow-unique", "flow-routed", "flow-atr", "flow-reviewed", "flow-closed"] as const;
+
+/** What a flow stage without a figure says: withheld for privacy, or (the
+ * repeats stage only) not computed yet because no grouping is validated. */
+export function flowStageGap(metric: { id: string; reason: string }): "not shown" | "not yet" {
+  return metric.id === "flow-unique" && !metric.reason.startsWith("Withheld") ? "not yet" : "not shown";
+}
 
 export type MonitoringPanel = RecordedMonitoringPanel | UnavailableMonitoringPanel;
 
@@ -246,6 +254,9 @@ export function parseMonitoringDashboard(value: unknown): MonitoringDashboard {
     if (panel.state === "unavailable") {
       if (!keys(panel, ["id", "title", "state", "reason", "caveats"]) || !text(panel.reason)) throw new Error("Monitoring dashboard response is malformed.");
     } else if (panel.state !== "recorded" || !keys(panel, ["id", "title", "state", "denominator", "metrics", "breakdown", "breakdownUnavailableReason", "tables", "caveats"]) || !isRecord(panel.denominator) || !keys(panel.denominator, ["label", "value"]) || !text(panel.denominator.label) || !wholeCount(panel.denominator.value) || !Array.isArray(panel.metrics) || !panel.metrics.every(validMetric) || (panel.breakdown !== null && (!Array.isArray(panel.breakdown) || !panel.breakdown.every((row) => isRecord(row) && keys(row, ["label", "value"]) && text(row.label) && count(row.value)))) || (panel.breakdownUnavailableReason !== null && !text(panel.breakdownUnavailableReason)) || (panel.tables !== null && (!Array.isArray(panel.tables) || !panel.tables.every(validTable)))) throw new Error("Monitoring dashboard response is malformed.");
+    // Checked after the metrics themselves, so each one has an id.
+    const stages = panel.metrics as { id: unknown }[];
+    if (panel.id === "flow" && panel.state === "recorded" && (stages.length !== FLOW_STAGE_IDS.length || FLOW_STAGE_IDS.some((id, i) => stages[i].id !== id))) throw new Error("Monitoring dashboard response is malformed.");
     ids.add(panel.id);
   }
   if (PANEL_IDS.some((id) => !ids.has(id))) throw new Error("Monitoring dashboard response is malformed.");
