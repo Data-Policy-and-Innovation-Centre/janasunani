@@ -943,10 +943,36 @@ class TestSourceDigestCoversTheIdentityInputs:
             "petitioner_mobile": "******1234",
             "petitioner_email": None,
             "petitioner_name": "Ranjan Kumar",
+            "block": "Rengali",
             "grievance_redacted": "text",
         }
         base.update(overrides)
         return base
+
+    def test_a_changed_block_changes_the_digest(self):
+        """Block feeds the masked-mobile key, so a corrected block must read
+        as staleness rather than certify a key built from the old one."""
+        from janasunani.pipeline.dedup import source_record_digest
+
+        assert source_record_digest(self._record()) != source_record_digest(
+            self._record(block="Jujumura")
+        )
+
+    def test_a_record_without_the_block_is_refused(self):
+        from janasunani.pipeline.dedup import source_record_digest
+
+        partial = self._record()
+        del partial["block"]
+        with pytest.raises(ValueError, match="missing 'block'"):
+            source_record_digest(partial)
+
+    def test_the_name_tail_algorithm_marker_is_retired(self):
+        """Rows indexed under #346 carry this marker in their index_version.
+        Reusing it would let `--refresh-stale` certify their name-tail keys
+        as current, so the full-name-and-block keys would never be built."""
+        from janasunani.pipeline.dedup import IDENTITY_ALGORITHM
+
+        assert IDENTITY_ALGORITHM != "mobile-tail4-name-v1"
 
     def test_a_changed_name_changes_the_digest(self):
         from janasunani.pipeline.dedup import source_record_digest

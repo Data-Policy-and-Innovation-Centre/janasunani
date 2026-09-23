@@ -187,6 +187,8 @@ def _canonical_source_record(record: Mapping[str, object]) -> tuple[str, bytes]:
         # staleness. Omitting it would let `_source_digest_mismatches` certify
         # a row whose key was derived from a name the record no longer has.
         "petitioner_name",
+        # Also feeds the masked-mobile key, so a corrected block is staleness.
+        "block",
         "grievance_redacted",
     )
     try:
@@ -308,7 +310,8 @@ def source_snapshot_id(records: Iterable[Mapping[str, object]]) -> str:
 
     Each record must carry these OLTP/lake columns: ``ticket_no``, ``district``,
     ``created_year``, ``created_on``, ``petitioner_mobile``,
-    ``petitioner_email``, and ``grievance_redacted``.  They are every source
+    ``petitioner_email``, ``petitioner_name``, ``block``, and
+    ``grievance_redacted``.  They are every source
     value that changes the runner's membership, blocking, text signature, or
     identity candidates.  The digest contains no reversible text or identity
     value, but remains ``dpic-infra`` provenance because it is derived from
@@ -829,7 +832,7 @@ def identity_key(value: str, salt: str) -> str | None:
 
 #: Marker for the identity-key derivation, stamped into the index version so
 #: a change here is visible as staleness rather than as silently mixed keys.
-IDENTITY_ALGORITHM = "mobile-tail4-name-v1"
+IDENTITY_ALGORITHM = "mobile-tail4-fullname-block-v2"
 
 #: Digits kept from a masked mobile. The portal masks `petitioner_mobile` as
 #: a `******`-style prefix plus the last four digits, and those four are
