@@ -213,9 +213,13 @@ def plan_members_of_blob(data: bytes) -> list[str]:
         # Would not open, or opened and listed nothing -- both mean a damaged
         # archive, whose secrets are still in the bytes. Fall back to them.
         return damaged_plan_members(data)
-    # A real listing. An ordinary archive whose *contents* happen to contain
-    # the word `tfstate` is not a plan, and scanning its bytes would say so.
-    return _plan_members_in(entries)
+    # A real listing, but only of the *last* archive: zipfile reads one
+    # central directory, from the end, so a plan with an ordinary zip
+    # appended after it lists only the ordinary one. The local headers name
+    # every entry in the blob, so they are read as well. They are parsed by
+    # declared length, not matched as substrings, so an ordinary archive
+    # whose contents mention `tfstate` is still not a plan.
+    return sorted(set(_plan_members_in(entries)) | set(damaged_plan_members(data)))
 
 
 # Mirrors MAX_BYTES in scripts/check_provenance_sidecars.py. A per-value

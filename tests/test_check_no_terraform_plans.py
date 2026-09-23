@@ -1831,3 +1831,27 @@ def test_the_signature_constant_is_not_duplicated():
     source = SCRIPT.read_text()
 
     assert source.count('= b"PK\\x03\\x04"') == 1
+
+
+def test_a_plan_followed_by_an_ordinary_archive_is_still_found():
+    # zipfile reads only the last central directory, so the listing named
+    # notes.txt alone and the plan in front of it was never looked at.
+    data = _zip_of(("tfstate", '{"serial": 1}')) + _zip_of(("notes.txt", "x"))
+
+    assert plan_members_of_blob(data) == ["tfstate"]
+
+
+def test_two_ordinary_archives_back_to_back_are_not_a_plan():
+    data = _zip_of(("a.txt", "tfstate")) + _zip_of(("notes.txt", "x"))
+
+    assert plan_members_of_blob(data) == []
+
+
+def test_a_masked_plan_is_refused_by_the_hook(tmp_path):
+    repo = _repo(tmp_path)
+    (repo / "artifact.bin").write_bytes(
+        _zip_of(("tfstate", '{"serial": 1}')) + _zip_of(("notes.txt", "x"))
+    )
+    _git(repo, "add", "artifact.bin")
+
+    assert _run_staged(repo).returncode == 1
