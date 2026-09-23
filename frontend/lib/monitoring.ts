@@ -111,7 +111,11 @@ export function recordingState(metric: MonitoringMetric): RecordingState {
   if (metric.state === "unavailable") {
     return metric.reason.startsWith("Not recorded") ? "absent" : "withheld";
   }
-  return metric.value >= 99.5 && metric.note === null ? "recorded" : "partial";
+  // The unrounded ratio where there is one: 99.46% publishes as 99.5.
+  const pct = metric.numerator !== null && metric.denominator
+    ? (metric.numerator / metric.denominator) * 100
+    : metric.value;
+  return pct >= 99.5 && metric.note === null ? "recorded" : "partial";
 }
 
 /** Drill-down columns a viewer may sort by: workload, never a raw rate, which
