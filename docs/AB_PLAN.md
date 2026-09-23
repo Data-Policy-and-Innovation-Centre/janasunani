@@ -2,7 +2,7 @@
 
 **Component (d) · Phase 16 · Issue #81 (parent #52)**
 **Status:** DRAFT — to be locked before any outcome data is viewed
-**Version:** 0.2 DRAFT — 2026-08-10
+**Version:** 0.3 DRAFT — 2026-09-01 (amends 0.2 of 2026-08-10)
 **Authors:** planner-opus (draft), accountable engineer (sign-off)
 **Decides:** which offices get the tool when, what effect we can detect, and how we will estimate it.
 
@@ -10,6 +10,13 @@
 > calculation, not running software on the demo date. ROADMAP §5.4 is the
 > specification; this document is a draft instantiation. It is not locked and
 > none of its illustrative power values is an approved MDE.
+
+> ⚠️ **Read §14 first.** The approved pilot (SSEPD and Labour & ESI) cannot run
+> the stepped wedge specified in §3–§5. Sections 3, 4 and 5 are **superseded for
+> that pilot** and retained deliberately as the design we would run with
+> workflow integration. Sections 6, 7, 9, 10 and 12 carry forward substantially
+> unchanged. §14 records what changed, why, and what is no longer identified.
+> The operational plan lives in [PILOT_SSEPD_LABOUR.md](PILOT_SSEPD_LABOUR.md).
 
 ---
 
@@ -696,7 +703,330 @@ transfer-free assignment ___ pp; 90-day RMST ___ days
 
 ---
 
+## 14. Amendment v0.3 — the SSEPD / Labour & ESI pilot (2026-09-01)
+
+**What happened.** Two departments approved a pilot: Social Security &
+Empowerment of Persons with Disabilities (SSEPD) and Labour & Employees' State
+Insurance (Labour & ESI). Two facts arrived with the approval and invalidate the
+design in §3–§5.
+
+1. **OCAC, the vendor maintaining the legacy Janasunani system, has not approved
+   integration.** Our system cannot sit inside the workflow. Officers will read
+   our outputs and re-key what they choose into the legacy portal by hand. There
+   is no path by which we write to, read from, or observe the production system.
+2. **Each department has one grievance officer.** N = 2 officers, total.
+   Departments have no backend access; at best they can download reports from
+   the portal frontend, and whether any of those reports is record-level rather
+   than an aggregate count is an open question (§14.5).
+
+### 14.1 What this costs, stated before anything else
+
+The stepped wedge required ~320 intake-office clusters, staggered adoption, and
+outcomes read automatically from the corpus. None of the three is available.
+Consequently, **this pilot cannot produce a department-level or state-level
+causal estimate, and cannot produce a well-powered citizen-outcome estimate.**
+Any readout that implies otherwise is wrong.
+
+**What the pilot delivers instead.** Descriptive and feasibility evidence: the
+corpus analysis, the officer-side process map, hand-answered officer questions, and a measured
+evaluation of our own pipeline. That work needs no console, does not depend on
+officer adoption, and is the artifact for the integration ask. **The randomized
+comparison in §14.3 is deferred out of 2026 entirely; see §14.9.**
+
+§5.4 of ROADMAP asserts that "the corpus already carries the outcome variables"
+and that "the primary outcomes need no new instrumentation". That is true of a
+retrospective analysis and false of this pilot: without integration, nothing
+about a pilot grievance is written to a store we can read.
+
+| v0.2 element | Status for this pilot |
+|---|---|
+| §3 stepped wedge over intake-office transfer-network clusters | **Superseded.** No integration; 2 officers is not a cluster panel |
+| §4 Callaway–Sant'Anna, Sun–Abraham, Borusyak–Jaravel–Spiess | **Superseded.** No staggered cluster adoption to identify from |
+| §5 power on cluster-period aggregates | **Superseded** by §14.4 |
+| §2 estimand | **Downgraded**, see §14.3 |
+| §6 outcome construction and its validation debts | **Carries forward**, and the semantics audit is still the blocker |
+| §7 assignment / exposure / decision / feedback event contract | **Carries forward essentially unchanged**, hosted in our console instead of the portal. This is the half of v0.2 that survives intact, and it is why the pilot is buildable at all |
+| §9 lock procedure, §10 harm and pause conditions, §12 governance | **Carry forward** |
+| Appendix A | **Reversed**, see §14.2 |
+
+### 14.2 Reversing Appendix A, knowingly
+
+Appendix A rejected grievance-level randomization because an officer sees both
+arms, learns from the treated ones, and applies that learning to controls. That
+reasoning remains correct. It is overridden because at N = 2 officers every
+coarser unit has **zero** power, not merely less: there is no cluster panel to
+estimate on. The choice is a contaminated grievance-level design or no
+randomized evidence.
+
+We take the contaminated design and bound it rather than assume it away:
+
+- **Sign.** Learning transfer from treated to control cases makes control cases
+  better, which attenuates the estimate toward zero. A positive result survives
+  the bias; a null does not distinguish "no effect" from "fully contaminated".
+  State that in the readout, not in a footnote.
+- **Diagnostic.** Estimate the control-arm outcome level against calendar time
+  and against cumulative treated-case exposure. A control arm that improves as
+  treated exposure accumulates is the contamination signature. This is a
+  descriptive diagnostic, not a correction.
+- **What it changes about the estimand.** Grievance-level assignment identifies
+  the effect of *this grievance* being shown support, holding the officer's
+  accumulated learning fixed at its realized level. It does not identify the
+  effect of an officer having the tool at all, which is the policy quantity and
+  which only §3's design could deliver.
+
+Interference through inbox composition, the second objection in Appendix A, was
+argued to be weaker here than at intake, on the assumption that these officers
+sit downstream of the department routing decision.
+
+**That assumption is now in doubt, and the trigger this paragraph set has
+fired.** The 18 August Labour & ESI walkthrough and the 19 August SSEPD
+dashboard reading show the grievance officer's account carries the registration
+screen (`/Admin/Eabhijog/Register/regNext/...`) with
+department, escalation chain, category, subcategory and remarks, alongside the
+forwarding screen and the per-case action history. These officers can register
+and assign, not only receive.
+
+What remains unknown is how often they do. If registration is a routine part of
+the caseload, the Appendix A objection returns in force and the design needs
+revisiting before launch. If it is an exception path used for walk-ins and
+physical letters, the downstream argument mostly holds and the exposure needs
+bounding rather than the design replacing. **Settling this is now a gate-1
+input, not a field detail** (PILOT_SSEPD_LABOUR §B1).
+
+### 14.3 Revised design and estimand
+
+- **Population.** Grievances arriving at the SSEPD and Labour & ESI department
+  grievance officers during the pilot window, excluding any case the officer
+  flags as out of scope before assignment is revealed.
+- **Randomization unit.** The grievance.
+- **Blocking.** Permuted blocks within (officer × week), so arms stay balanced
+  against secular drift, officer learning and caseload composition over a short
+  pilot. Block membership is pre-treatment and fixed at arrival. **Whether to
+  block on mode regime as well** (citizen-typed against document-borne) is a
+  power question for §14.4: it is the covariate most likely to unbalance a small
+  sample, and blocking on it costs nothing if the arrival rate supports the
+  finer blocks.
+- **Treatment.** The AI panel renders in the pilot console. **Both arms pass
+  through the same console**: control cases get the identical case view with the
+  panel suppressed, and the officer records their decision in both arms before
+  re-keying into the portal. This is the mechanism that replaces integration.
+  The model still runs on control cases with output withheld (§7.3 shadow mode,
+  unchanged).
+- **Primary estimand, deferred (§14.9).** ITT effect of the panel being *shown*
+  on officer handling time for that grievance, log active seconds, within
+  officer-week blocks. Nothing is currently working toward this.
+- **Secondary operational estimands.** Screens touched, revisits, decision
+  changed after panel view (treated only, descriptive), and the officer's
+  recorded downstream authority and typed resolution days.
+- **Exploratory citizen estimands.** Time to first downstream action, 30-day and
+  60-day resolution, citizen-reported resolution and satisfaction. Reported with
+  their intervals and **no causal headline** unless an interval is informative,
+  which §14.4 suggests it will usually not be.
+- **Not estimated.** Any department-level, office-level or state-level effect.
+  Any effect of tool availability as opposed to per-case display.
+
+### 14.4 Estimator and power
+
+The §4 staggered-adoption machinery does not apply and must not be carried over
+by habit. The design is a blocked, individually randomized experiment, and the
+estimator should be the simplest one that respects the blocking.
+
+- **Point estimate.** OLS of the outcome on treatment with officer-week block
+  fixed effects. Equivalently, the precision-weighted average of within-block
+  differences in means.
+- **Inference, primary.** Fisher randomization test against the sharp null,
+  permuting within blocks under the realized assignment mechanism, at least
+  10,000 draws. With two officers and a short window this is the honest choice:
+  it is exact under the design and makes no asymptotic appeal.
+- **Inference, reported alongside.** Neyman variance with HC2, so a
+  conventional interval exists for readers who want one.
+- **Covariate adjustment.** Pre-specified and pre-treatment only: **mode**,
+  subcategory, district, page count of attached documents, whether the case is
+  flagged a duplicate by the shadow prediction. Mode leads the list because it
+  is the strongest structural predictor of the work a case represents: in the
+  pilot departments the citizen-typed modes carry the grievance in the text
+  field (median 217-283 characters) while the document-borne modes carry a
+  20-to-30-character officer stub and a scan, and median days to resolution runs
+  from 16 to 60 across modes (PILOT_SSEPD_LABOUR §A1). Omitting it would leave
+  the largest source of outcome variance in the residual. Lin (2013) interaction form, to guarantee
+  the adjustment cannot hurt precision asymptotically.
+- **Multiplicity.** One primary outcome. The secondary operational family and
+  the exploratory citizen family are each FDR-controlled at 10% within family,
+  as in §4.
+- **Power.** Computed at grievance level from measured pilot-department volumes
+  and the observed dispersion of handling time from the time-and-motion baseline
+  (PILOT_SSEPD_LABOUR §B4). **Due end September 2026, before anything is
+  locked. This is gate 1 of §14.9: if the MDE for officer handling time is not
+  credible at the measured volumes, the randomized comparison does not run at
+  all.** The fallback is the shadow phase and the descriptive endpoints. Two
+  further things it must settle:
+  - **Whether the blocks can carry mode.** If (officer × week × mode regime)
+    leaves blocks too thin, mode stays a covariate rather than a blocking
+    factor. Decide this at gate 1, not by habit.
+  - Whether either department has enough volume **passing through the officer**
+    to randomize at all. The 19 August SSEPD dashboard read 51,460 tickets in
+    total and 1,471 pending, of which 27 sat with the department node itself
+    and 20 were overdue. Historical department volume is not the
+    denominator; the officer's own throughput is, and it may be an order of
+    magnitude smaller. Establish the arrival rate at the officer directly.
+  - Whether Labour & ESI has enough volume to randomize at all. Indicative
+    evidence says probably not on its own: in the committed crosswalk
+    (`janasunani/routing/reference/routing_crosswalk.json`) SSEPD's largest
+    entry carries support 7,020 while Labour & ESI's largest is 1,451, and
+    Labour & ESI appears at **no** category-level or category-district-level key.
+  - The MDE for the exploratory citizen endpoints, which is expected to be wide
+    enough that those endpoints are descriptive. Say so at lock rather than
+    discovering it at readout.
+
+No illustrative power table is offered here. §5's legacy table is not applicable
+and must not be quoted for this pilot.
+
+### 14.5 Outcome capture without integration
+
+§6's constructions still define the outcomes. What changes is the source, and
+every source is now worse. In descending order of preference, and to be settled
+by the field work:
+
+1. **The read-only API brought back up, then scoped to these two departments**
+   (`getGrievanceDetails` / `getGrievanceHistory`,
+   `janasunani/ingestion/client.py`). **The endpoint is not running.** The client
+   has never been exercised against a live API, and what we hold is a one-time
+   historical extract with no refresh path. So this rung is two asks, not one:
+   revive the service, then grant scoped read access. Still far short of the
+   integration OCAC refused, and it should be made separately and explicitly.
+   Until it lands, nothing in the pilot reads current state.
+2. **The portal's own per-case action history**, which the 18 August walkthrough
+   confirms is present in the department login: one row per step with action
+   date, description, sender, and who currently holds the case. Reading it case
+   by case is available today; whether it can be exported in bulk is the open
+   question.
+3. **A record-level portal report export.** The department login carries
+   record-level reports, the Joint Hearing data report among them, so this rung
+   is likelier than the CM Grievance Cell surface suggested. That surface was
+   counts only, and it is no longer the best evidence about what a department
+   login can do.
+4. **Public ticket-status lookup** for the pilot cohort, whose ticket numbers we
+   hold because they passed through our console. Requires department permission
+   and a stated position on rate and terms of use before anyone writes it.
+5. **Officer weekly log.** Self-reported, lowest confidence, always available.
+
+**Re-key fidelity is a first-class measurement, not an implementation detail.**
+The intervention reaches the citizen only through a human retyping it. Audit a
+random 10% of treated cases weekly by having the officer show the portal record
+against the console record. If fidelity falls below the threshold set at lock,
+the finding is the attenuation itself, and no citizen-effect claim is made.
+
+### 14.6 Feature scope, and one exclusion that is a safety decision
+
+The tested bundle is decided in PILOT_SSEPD_LABOUR §4. One exclusion belongs in
+this document because it is a harm judgement rather than a product choice.
+
+**Actionability / low-signal triage is excluded from SSEPD entirely.** The
+low-signal markers officers described in the 12 August field record are requests
+for government jobs and requests for financial assistance carrying no detail.
+`financial assistance` is effectively SSEPD's entire caseload. A triage flag
+built on those markers would systematically route disability-benefit claims to
+review. That is a foreseeable, patterned harm to the exact population the
+department exists to serve, and no measured accuracy figure would license it.
+It is not built for this pilot. Any later reconsideration for Labour & ESI needs
+an officer-confirmed five-class gold set, which does not exist.
+
+Separately, the two features most likely to be tested are the ones the corpus
+work already supports and the portal conspicuously lacks: an ageing and deadline
+view, and a repeat-filer panel. Neither depends on a model clearing a gate. The
+document summarizer does, and at 4/26 residual-PII cases on its development set
+it cannot be shown to an officer as it stands.
+
+### 14.7 Governance changes
+
+- **The research-exemption determination must be re-confirmed, not assumed.**
+  The ED's 2026-07-27 determination (§9, §12) rests on this being deployment of
+  a government service rather than research for publication, and it was made
+  about an analysis of administrative records. **This pilot adds a direct
+  citizen phone survey**, which is prospective data collection from identified
+  individuals and is a materially different activity. Put it back to the
+  decision owner before any call is made. DPDP obligations apply regardless.
+- **Sign-off scope narrows.** §12 requires departmental sign-off on eligible
+  clusters and switch order. There is no switch order now. What replaces it:
+  written sign-off naming the two departments, permission to log what is
+  suggested and what the officer does, and permission for the citizen follow-up.
+- **Harm monitoring (§10) carries forward with the same discipline**, on the
+  pilot's own endpoints. Control cases keep the current process, treatment adds
+  advice only, no automated rejection, any confirmed PII exposure halts the
+  pilot, and the ED reviews arm-level degradation within 2 business days. The
+  effect-size margins stay blank until §14.4's power calculation lands.
+- **The lock procedure (§9) is unchanged and now matters more.** With one
+  primary outcome, two officers and a short window, the temptation to search
+  across endpoints is at its highest. Tag `ab-plan-locked-v1` before any arm
+  outcome is viewed.
+
+### 14.8 What v0.2 is now for
+
+Sections 3 through 5 are not dead weight. They are the design we would run if
+the tool sat inside the workflow, they are costed and reviewed, and they are the
+most concrete statement available of what integration would buy. Use them as the
+technical annex to the integration ask, unchanged.
+
+### 14.9 Deferred, 2026-09-02
+
+**The randomized comparison is deferred out of 2026 entirely**, and §14.3
+through §14.6 describe a design nothing is currently working toward. Three
+things removed it, none of them statistical:
+
+- **No engineer.** The console, assignment service and event tables the design
+  needs sit on one part-time person.
+- **No API access.** The read-only grievance API is not running and we hold no
+  credentials for it. The extract ends 2025-07-30. Outside the workflow the only
+  cases we can take in natively are
+  those both originating at the department and arriving on paper: 1.8% of SSEPD
+  and 2.9% of Labour & ESI, roughly five a week across both departments.
+- **Throughput unknown, and probably small.** SSEPD showed 27 cases pending with
+  the department node. Officer throughput rather than department volume is the
+  denominator, and it may never support a randomized comparison.
+
+The 2026 work is descriptive: the data analysis, process maps at department and
+district level, hand-answered officer questions, and a measured evaluation of
+our own pipeline (PILOT_SSEPD_LABOUR §2 to §5). **Its deliverable is the case for integration,
+which is what would make this design runnable in the first place.**
+
+Four questions decide whether the design returns, and they are taken in December
+2026 (PILOT_SSEPD_LABOUR §10): did API access land, do officers want what we
+would build, are the pipeline numbers defensible, and is there anyone to finish
+the app. All four, plus a measured throughput, before §14.3 is scoped again.
+
+§14.1 through §14.8 stand as the design integration would buy. They are the
+technical annex to the ask, unchanged.
+
+### 14.9.1 The former gates, retained
+
+Had the comparison run in 2027, it would have run behind these. Both are read
+against a criterion fixed beforehand.
+
+- **Gate 1, end September 2026, principal.** The §14.4 power calculation. Fails
+  if the MDE for officer handling time is not credible at the measured pilot
+  volumes. Gate 1 is also where Labour & ESI is included or dropped from
+  randomization independently of SSEPD.
+- **Gate 2, end January 2027, principal.** Re-key fidelity measured over the
+  four-week shadow phase (§14.5), against a threshold written into the lock. The
+  intervention reaches a citizen only through a human retyping it; below the
+  threshold the treatment is diluted before it can act, and the attenuation is
+  the finding.
+
+**On a fail of either gate**, the process map, the department reports and the
+descriptive work run unchanged. What is lost is the
+within-officer causal estimate. The readout states which gate failed and reports
+no arm comparison.
+
+§9 is unchanged. The lock still happens before any arm outcome is viewed, and
+gate 2 is read from shadow-phase data in which no randomization has occurred.
+
+---
+
 ## Appendix A. Why assignment is coarser than the grievance
+
+> **Reversed for the SSEPD / Labour & ESI pilot, 2026-09-01.** The reasoning
+> below stands; it is overridden because at two officers no coarser unit has
+> any power at all. See §14.2 for the argument and the bias it accepts.
 
 Randomizing grievances within an office lets an officer see both arms, learn
 from treated cases and apply that learning to controls. Assigning individual

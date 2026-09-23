@@ -16,6 +16,28 @@ status: Internal
 > routing gain, deployable threshold, causal impact or recommendation. See
 > [QUALITY_BENCHMARKS.md](QUALITY_BENCHMARKS.md#routing--outcome-not-destination).
 >
+> **Pilot approved and the A/B design superseded, 1 September 2026.** SSEPD and
+> Labour & Employees' State Insurance have approved a bounded trial. Two
+> conditions came with it and change component (d) below. OCAC has not approved
+> integration, so our system cannot sit inside the legacy workflow and officers
+> will re-key our outputs by hand; and each department has **one** grievance
+> officer, so there is no cluster panel to randomise over. The stepped-wedge
+> design committed as "Framework only" on 14 August is therefore superseded for
+> this pilot, and is retained as the design that integration would unlock.
+>
+> **Rescoped to December 2026, 2 September.** The randomised component is
+> deferred out of 2026: there is no engineer for the console it needs, the
+> grievance API is not running, and outside the workflow we can take in only the
+> cases that both originate at the department and arrive on paper, 1.8% of SSEPD
+> and 2.9% of Labour & ESI. What runs instead is data analysis, process maps,
+> field visits, hand-answered officer questions, and a measured evaluation of our
+> own pipeline. December ships two department briefs, an integration memo, and
+> honest accuracy numbers. See [PILOT_SSEPD_LABOUR.md](PILOT_SSEPD_LABOUR.md).
+> **No department-level or
+> state-level effect is estimable from this pilot, and no citizen-outcome claim
+> is made unless its interval supports one.** See
+> [AB_PLAN.md](AB_PLAN.md) §14 and [PILOT_SSEPD_LABOUR.md](PILOT_SSEPD_LABOUR.md).
+>
 > **Sarvam spend resumed, 25 August 2026.** "No new paid calls" and "new spend
 > is paused" below describe the position up to 14 August and are superseded. A
 > 200-page stratified draw from Sambalpur/2024 ran on 25 August across both

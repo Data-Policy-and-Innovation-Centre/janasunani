@@ -89,7 +89,7 @@ The only place phase status is recorded.
 | 13 | II | **Pipeline completion**: PII gold set, Presidio tuning, end-to-end run *(a)* | 🔄 *(gold set underway, #15)* |
 | 14 | II | **Spam & duplicate detection** *(b)* | 🔄 *(55,544/55,544 indexed into 10,963 groups; bounded low-signal regression and binary actionability development scorer measured; officer gold and a release gate remain)* |
 | 15 | II | **Structured analytics I**: metrics layer, dashboards, spikes *(c)* — metric-registry slice: governed total-filings definition and protected grouped releases; cluster/citizen metrics remain unavailable pending dedup lake artifacts | 🔄 |
-| 16 | II | **A/B instrumentation + retrospective impact evidence** *(d)* | 🔄 *(draft design and developmental routing-outcome diagnostics built; assignment, exposure, shadow execution, locked power inputs and a governed pilot remain unbuilt)* |
+| 16 | II | **A/B instrumentation + retrospective impact evidence** *(d)* | 🔄 *(SSEPD and Labour & ESI approved a bounded pilot, 01 Sep. Rescoped 02 Sep to descriptive work delivered by December: data analysis, process maps at department and district level, hand-answered officer questions and a measured pipeline evaluation. Randomisation deferred out of 2026 for want of an engineer, API access and measured officer throughput. See AB_PLAN §14.9 and [PILOT_SSEPD_LABOUR.md](PILOT_SSEPD_LABOUR.md))* |
 | 17 | II | **Sarvam benchmark + provider registry + egress control** *(e)* | 🔄 *(200-page paid run on Sambalpur/2024, 25 Aug 2026, ₹300 list: latency distribution and divergence 0.995 measured, category grade measures our own v1 schema not the provider; schema v2 pinned; no hand-transcribed OCR accuracy set (#53))* |
 | 18 | III | Evaluation harness & operational safety (RBAC, restore, observability) | ⬜ |
 | 19 | III | Model & pipeline platform (one recipe, release manifest, API v1) | 🔄 *(immutable local release/materialization slice built; no reviewed production manifest, shared recipe or API-v1 policy yet)* |
@@ -1072,6 +1072,20 @@ Deliberately **not** in this phase: office-vs-office ranking and natural-languag
 querying. Both are Phase 20, for reasons given there.
 
 ### 5.4 Phase 16 — A/B evaluation of AI automation (component d)
+
+> **Amended 2026-09-01: the approved pilot cannot run this design.** SSEPD and
+> Labour & ESI have approved a bounded trial, with two conditions. OCAC has not
+> approved integration, so the tool cannot sit inside the workflow; and each
+> department has **one** grievance officer, so there is no cluster panel. Two
+> claims below are consequently false for that pilot and must not be quoted from
+> here: that **`office_id` is the randomization and clustering unit**, and that
+> **"the primary outcomes need no new instrumentation" because the corpus
+> already carries the outcome variables.** Without integration, nothing about a
+> pilot grievance is written to a store we can read; outcome capture becomes
+> manual and partial. The section below is retained as the design that
+> integration would unlock. See [AB_PLAN.md](AB_PLAN.md) §14 for what replaces
+> it and [PILOT_SSEPD_LABOUR.md](PILOT_SSEPD_LABOUR.md) for the operational
+> plan.
 
 The question is not "is the model accurate". It is "does the automation help".
 Those need different evidence, and the roadmap has so far only planned for the
