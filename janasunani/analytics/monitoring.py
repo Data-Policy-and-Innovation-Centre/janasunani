@@ -50,6 +50,9 @@ PROXY_METRICS = frozenset({
     # Inferred from the order of recorded events, not recorded as a review.
     "review-done", "closed-without-review",
     "flow-unique", "flow-reviewed",
+    # Coverage of a stand-in field: the assigned workflow for whether review
+    # is required, subcategory for scheme or service.
+    "rec-review-required", "rec-scheme",
 })
 # Subcategory scopes are built per published department, largest first. Each
 # scope re-runs the whole panel suite over the lake, so this is deliberately a
@@ -372,13 +375,15 @@ def _aging(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
         ), open AS (
           SELECT g.ticket_no,
             DATE '2025-07-30' - CAST(g.created_on AS DATE) age_days,
-            DATE '2025-07-30' - CAST(COALESCE(GREATEST(g.last_updated_on, l.latest_action), g.created_on) AS DATE) inactive_days,
+            DATE '2025-07-30' - CAST(COALESCE(GREATEST(CASE WHEN g.last_updated_on < TIMESTAMP '2025-07-31' THEN g.last_updated_on END, l.latest_action), g.created_on) AS DATE) inactive_days,
             g.escalation_date
           FROM complaints g JOIN scope_tickets s USING (ticket_no)
           LEFT JOIN latest l USING (ticket_no)
           WHERE g.created_on < DATE '2025-07-31'
-            AND (g.resolved_on IS NULL OR CAST(g.resolved_on AS DATE) > DATE '2025-07-30')
-            AND COALESCE(g.status, '') NOT IN ('Disposed', 'Discard')
+            -- Open on the snapshot: resolved after it, or not closed at all. A
+            -- later status is not the status on the snapshot.
+            AND ((g.resolved_on IS NULL AND COALESCE(g.status, '') NOT IN ('Disposed', 'Discard'))
+                 OR CAST(g.resolved_on AS DATE) > DATE '2025-07-30')
         )
         SELECT CASE WHEN age_days <= 6 THEN '0-6 days'
                     WHEN age_days <= 14 THEN '7-14 days'
@@ -392,11 +397,11 @@ def _aging(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     summary = _one(con, """
         WITH latest AS (SELECT ticket_no, MAX(action_taken_date) latest_action FROM action_history WHERE action_taken_date < TIMESTAMP '2025-07-31' GROUP BY ticket_no),
         open AS (
-          SELECT DATE '2025-07-30' - CAST(COALESCE(GREATEST(g.last_updated_on, l.latest_action), g.created_on) AS DATE) inactive_days,
+          SELECT DATE '2025-07-30' - CAST(COALESCE(GREATEST(CASE WHEN g.last_updated_on < TIMESTAMP '2025-07-31' THEN g.last_updated_on END, l.latest_action), g.created_on) AS DATE) inactive_days,
                  g.escalation_date
           FROM complaints g JOIN scope_tickets s USING(ticket_no) LEFT JOIN latest l USING(ticket_no)
-          WHERE g.created_on < DATE '2025-07-31' AND (g.resolved_on IS NULL OR CAST(g.resolved_on AS DATE)>DATE '2025-07-30')
-            AND COALESCE(g.status, '') NOT IN ('Disposed', 'Discard'))
+          WHERE g.created_on < DATE '2025-07-31' AND ((g.resolved_on IS NULL AND COALESCE(g.status, '') NOT IN ('Disposed', 'Discard'))
+                 OR CAST(g.resolved_on AS DATE) > DATE '2025-07-30'))
         SELECT COUNT(*) denominator,
           COUNT(*) FILTER (WHERE inactive_days >= 7) inactive,
           COUNT(*) FILTER (WHERE escalation_date < TIMESTAMP '2025-07-31') escalation_passed
@@ -523,17 +528,18 @@ def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
             -- Review happens before closure: a closed case's later actions
             -- are not evidence that its ATR was reviewed.
             AND (c.resolved_on IS NULL OR o.action_taken_date <= c.resolved_on)),
-        first_reply AS (SELECT ticket_no, MIN(d) fr FROM acts WHERE st='Replied' GROUP BY 1),
+        -- Same-day rows order by id, as everywhere events are sequenced.
+        first_reply AS (SELECT ticket_no, MIN(d) fr, arg_min(id, (d, id)) fr_id FROM acts WHERE st='Replied' GROUP BY 1),
         per_case AS (
           SELECT a.ticket_no,
             COUNT(DISTINCT a.office) FILTER(WHERE a.st='Replied') repliers,
-            BOOL_OR(a.st='Reopen' AND a.d>=f.fr) sent_back,
+            BOOL_OR(a.st='Reopen' AND (a.d, a.id) > (f.fr, f.fr_id)) sent_back,
             arg_max(a.st, (a.d, a.id)) last_status,
             MAX(a.d) last_action
           FROM acts a LEFT JOIN first_reply f USING(ticket_no)
           GROUP BY a.ticket_no)
         SELECT c.ticket_no, c.resolved_on, c.nodes, c.nodes >= 3 required,
-          f.fr IS NOT NULL replied, f.fr,
+          f.fr IS NOT NULL replied, f.fr, f.fr_id,
           COALESCE(p.sent_back, FALSE) sent_back,
           f.fr IS NOT NULL AND (p.repliers >= 2 OR COALESCE(p.sent_back, FALSE)) reviewed,
           c.status='Disposed' AND CAST(c.resolved_on AS DATE)<=DATE '2025-07-30' closed,
@@ -564,12 +570,15 @@ def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     con.execute(f"""
         CREATE OR REPLACE TEMP TABLE atr_backs AS
         WITH revert(template, label) AS (VALUES {revert_values})
-        SELECT DISTINCT a.ticket_no, COALESCE(r.label, 'Other wording') AS reason
+        -- One reason per grievance, the first send-back's, so the rows add
+        -- up to the grievances sent back.
+        SELECT a.ticket_no, arg_min(COALESCE(r.label, 'Other wording'), (a.action_taken_date, a.id)) AS reason
         FROM action_history a JOIN atr_cases c USING(ticket_no)
         LEFT JOIN revert r ON r.template = {_NORMALIZED_REMARK}
-        WHERE c.replied AND a.action_status='Reopen' AND a.action_taken_date>=c.fr
+        WHERE c.replied AND a.action_status='Reopen' AND (a.action_taken_date, a.id) > (c.fr, c.fr_id)
           AND a.action_taken_date < TIMESTAMP '2025-07-31'
           AND (c.resolved_on IS NULL OR a.action_taken_date <= c.resolved_on)
+        GROUP BY a.ticket_no
     """)
     reasons = con.execute(
         "SELECT reason, COUNT(*) n FROM atr_backs GROUP BY reason "
@@ -582,11 +591,14 @@ def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     """)
     buckets = suppress_breakdown([{"label": a, "value": b} for a, b in ages])
     tables = None
-    if reasons:
+    # Any small reason row is withheld with the whole table: the others and
+    # the send-back total would give it away.
+    reasons_withheld = any(0 < n < MIN_CELL for _label, n in reasons)
+    if reasons and not reasons_withheld:
         tables = [{
             "title": "Why ATRs were sent back",
             "columns": [{"label": "Grievances", "unit": "grievances"}],
-            "rows": [{"label": label, "values": [_cell(n)]} for label, n in reasons],
+            "rows": [{"label": label, "values": [n]} for label, n in reasons],
         }]
     return {
         "id": "atr", "title": "ATRs and review", "state": "recorded",
@@ -609,6 +621,7 @@ def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
             "An ATR is 'submitted' when the case records Replied. Review happened when a second office replied or a reviewer sent it back before closure.",
             "'Reopen' after an ATR is a reviewer sending it back, not a citizen reopening the case.",
             "The breakdown is how long waiting ATRs have waited since the last action.",
+            *(["The reasons ATRs were sent back are withheld: at least one reason covers fewer than 10 grievances."] if reasons_withheld else []),
         ],
     }
 
@@ -891,10 +904,10 @@ def _offices(con: duckdb.DuckDBPyConnection, scope: ScopeSpec) -> dict[str, Any]
           (g.created_on>=DATE '2024-07-01' AND g.created_on<DATE '2025-07-01') in_fy,
           t.ticket_no IS NOT NULL is_transferred,
           (g.created_on<DATE '2025-07-31'
-            AND (g.resolved_on IS NULL OR CAST(g.resolved_on AS DATE)>DATE '2025-07-30')
-            AND COALESCE(g.status, '') NOT IN ('Disposed', 'Discard')) is_open,
+            AND ((g.resolved_on IS NULL AND COALESCE(g.status, '') NOT IN ('Disposed', 'Discard'))
+                 OR CAST(g.resolved_on AS DATE) > DATE '2025-07-30')) is_open,
           DATE '2025-07-30'-CAST(g.created_on AS DATE) age_days,
-          DATE '2025-07-30'-CAST(COALESCE(GREATEST(g.last_updated_on, l.latest_action), g.created_on) AS DATE) inactive_days
+          DATE '2025-07-30'-CAST(COALESCE(GREATEST(CASE WHEN g.last_updated_on < TIMESTAMP '2025-07-31' THEN g.last_updated_on END, l.latest_action), g.created_on) AS DATE) inactive_days
         FROM complaints g JOIN scope_tickets s USING(ticket_no)
         LEFT JOIN latest l USING(ticket_no)
         LEFT JOIN acting_office_named n ON n.id=l.last_id
@@ -1052,13 +1065,18 @@ def _recording(con: duckdb.DuckDBPyConnection, discards: dict[str, Any], atr: di
           SELECT a.ticket_no, a.action_status FROM action_history a JOIN cohort USING(ticket_no)
           WHERE a.action_taken_date < TIMESTAMP '2025-07-31')
         SELECT COUNT(*) filings,
-          -- A blank string is a missing value, as elsewhere in analytics.
-          COUNT(*) FILTER(WHERE NULLIF(trim(mode), '') IS NOT NULL AND created_on IS NOT NULL) entry,
-          COUNT(*) FILTER(WHERE category_id IS NOT NULL) category,
-          COUNT(*) FILTER(WHERE NULLIF(trim(subcategory), '') IS NOT NULL) subcategory,
+          -- Each field counts if its label or its code is usable. A blank
+          -- label and a zero code are missing values, as elsewhere in analytics.
+          COUNT(*) FILTER(WHERE (NULLIF(trim(mode), '') IS NOT NULL OR NULLIF(mode_id, 0) IS NOT NULL)
+                                AND created_on IS NOT NULL) entry,
+          COUNT(*) FILTER(WHERE NULLIF(category_id, 0) IS NOT NULL OR NULLIF(trim(category), '') IS NOT NULL) category,
+          COUNT(*) FILTER(WHERE NULLIF(trim(subcategory), '') IS NOT NULL OR NULLIF(subcategory_id, 0) IS NOT NULL) subcategory,
           COUNT(*) FILTER(WHERE trim(COALESCE(all_esc_user, '')) <> '') workflow,
-          (SELECT COUNT(DISTINCT ticket_no) FROM acted
-           WHERE action_status IN ('Forwarded To Subordinate', 'Forward', 'Complaint Transfer')) dated_action
+          -- Assignment is dated on the complaint as well as in the history.
+          (SELECT COUNT(*) FROM cohort c WHERE
+             c.assigned_on < TIMESTAMP '2025-07-31' OR c.tagged_date < TIMESTAMP '2025-07-31'
+             OR c.ticket_no IN (SELECT ticket_no FROM acted WHERE action_status IN
+               ('Forwarded To Subordinate', 'Forward', 'Forwarded', 'Complaint Transfer'))) dated_action
         FROM cohort
     """)
     n = row["filings"]
@@ -1079,7 +1097,7 @@ def _recording(con: duckdb.DuckDBPyConnection, discards: dict[str, Any], atr: di
         "metrics": [
             share("rec-entry", "Entry channel and date", row["entry"]),
             share("rec-classification", "Classification", row["category"], "Only the current category; later changes are not recorded as events."),
-            share("rec-events", "Dated assignment and transfer events", row["dated_action"], "Returns are inferred from the office sequence, not recorded as events."),
+            share("rec-events", "Dated assignment and transfer events", row["dated_action"], "Assignment dates on the complaint or in the action history. Returns are inferred from the office sequence, not recorded as events."),
             reuse(discards, "discard-reason-recognised", "rec-discard-reason", "Discard reason",
                   "Share of discards with one of the eight standard reasons. Timing is known only relative to transfers.",
                   "No discards in this scope."),

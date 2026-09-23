@@ -319,17 +319,28 @@ def test_recording_reports_coverage_and_names_what_is_missing():
         CREATE TABLE complaints AS SELECT
           'T' || i AS ticket_no, DATE '2024-08-01' AS created_on,
           CASE WHEN i < 20 THEN 'Online' WHEN i < 25 THEN '  ' END AS mode,
+          -- Two filings carry only the code; a zero code is not a value.
+          CASE WHEN i IN (20, 21) THEN 5 WHEN i = 22 THEN 0 END AS mode_id,
           CASE WHEN i < 40 THEN 7 END AS category_id,
+          NULL::VARCHAR AS category,
           CASE WHEN i < 10 THEN 'Scheme' END AS subcategory,
-          CASE WHEN i < 25 THEN '11,22,33' END AS all_esc_user
+          CASE WHEN i = 10 THEN 4 END AS subcategory_id,
+          CASE WHEN i < 25 THEN '11,22,33' END AS all_esc_user,
+          -- Assignment recorded on the complaint itself: two before the
+          -- snapshot, one after it.
+          CASE WHEN i = 33 THEN TIMESTAMP '2024-08-03' END AS assigned_on,
+          CASE WHEN i = 36 THEN TIMESTAMP '2024-08-05'
+               WHEN i = 34 THEN TIMESTAMP '2025-08-20' END AS tagged_date
         FROM range(40) r(i);
         CREATE TABLE scope_tickets AS SELECT ticket_no, created_on FROM complaints;
         CREATE TABLE action_history AS SELECT
           i AS id, 'T' || i AS ticket_no,
-          -- 30 in-period transfers; then disposals, which are not assignment
+          -- 30 in-period transfers; three 'Forwarded', the spelling the action
+          -- taxonomy classifies; then disposals, which are not assignment
           -- events; then transfers dated after the snapshot.
           CASE WHEN i < 35 THEN TIMESTAMP '2024-08-02' ELSE TIMESTAMP '2025-08-15' END AS action_taken_date,
-          CASE WHEN i < 30 OR i >= 35 THEN 'Complaint Transfer' ELSE 'Disposed' END AS action_status
+          CASE WHEN i < 30 OR i >= 35 THEN 'Complaint Transfer'
+               WHEN i < 33 THEN 'Forwarded' ELSE 'Disposed' END AS action_status
         FROM range(40) r(i);
     """)
     discards = {"metrics": [published_metric(
@@ -341,13 +352,16 @@ def test_recording_reports_coverage_and_names_what_is_missing():
     ]}
     metrics = {m["id"]: m for m in _recording(con, discards, atr)["metrics"]}
 
-    assert (metrics["rec-entry"]["numerator"], metrics["rec-entry"]["denominator"]) == (20, 40)
+    assert (metrics["rec-entry"]["numerator"], metrics["rec-entry"]["denominator"]) == (22, 40)
     assert metrics["rec-classification"]["value"] == 100.0
     assert metrics["rec-classification"]["note"]  # only the current category
-    assert metrics["rec-events"]["numerator"] == 30
-    assert metrics["rec-scheme"]["numerator"] == 10
+    assert metrics["rec-events"]["numerator"] == 35
+    assert metrics["rec-scheme"]["numerator"] == 11
     # Whether review is required is read from the workflow chain.
     assert metrics["rec-review-required"]["numerator"] == 25
+    # Both count a stand-in, not the field the row names.
+    assert metrics["rec-scheme"]["basis"] == metrics["rec-review-required"]["basis"] == "proxy"
+    assert metrics["rec-entry"]["basis"] == "direct"
     assert (metrics["rec-atr"]["numerator"], metrics["rec-atr"]["label"]) == (30, "ATR request, receipt and closure events")
     # Another panel's unavailable figure stays unavailable, with its reason.
     assert metrics["rec-review-event"]["state"] == "unavailable"
@@ -418,9 +432,30 @@ def test_a_small_rate_cell_is_withheld_but_its_row_stays():
     ]
 
 
-def test_atr_reads_review_from_the_assigned_workflow():
-    # (kind, workflow chain, final status, [(office, status, remark, day)])
-    cases = [
+def _atr_lake(cases, sizes=None) -> duckdb.DuckDBPyConnection:
+    """Ten tickets per case kind unless ``sizes`` says otherwise."""
+    sizes = sizes or {}
+    con = duckdb.connect()
+    con.execute("CREATE TABLE complaints(ticket_no VARCHAR, created_on TIMESTAMP, status VARCHAR, resolved_on TIMESTAMP, all_esc_user VARCHAR)")
+    con.execute("CREATE TABLE action_history(id INTEGER, ticket_no VARCHAR, action_taken_date TIMESTAMP, action_status VARCHAR, action_taken_remark VARCHAR)")
+    con.execute("CREATE TABLE acting_office(id INTEGER, ticket_no VARCHAR, action_taken_date TIMESTAMP, action_status VARCHAR, code VARCHAR)")
+    next_id = 0
+    for kind, chain, status, steps in cases:
+        for i in range(sizes.get(kind, 10)):
+            ticket = f"{kind}-{i}"
+            resolved = "2025-07-10" if status == "Disposed" else None
+            con.execute("INSERT INTO complaints VALUES (?, TIMESTAMP '2025-07-01' - INTERVAL 30 DAY, ?, ?, ?)", [ticket, status, resolved, chain])
+            for office, action, remark, day in steps:
+                next_id += 1
+                when = f"2025-07-{day:02d}"
+                con.execute("INSERT INTO action_history VALUES (?, ?, ?, ?, ?)", [next_id, ticket, when, action, remark])
+                con.execute("INSERT INTO acting_office VALUES (?, ?, ?, ?, ?)", [next_id, ticket, when, action, office])
+    con.execute("CREATE TABLE scope_tickets AS SELECT ticket_no, created_on FROM complaints")
+    return con
+
+
+# (kind, workflow chain, final status, [(office, status, remark, day)])
+ATR_CASES = [
         # Three offices: the Collector reviews and passes the ATR on.
         ("reviewed", "1,2,3", "Disposed", [("BDO", "Replied", None, 2), ("Collector", "Replied", None, 4), ("CMO", "Disposed", None, 6)]),
         # Three offices, but closed straight after the field office's reply.
@@ -438,57 +473,67 @@ def test_atr_reads_review_from_the_assigned_workflow():
         ("waiting", "1,2,3", "Pending", [("BDO", "Replied", None, 10)]),
         # No workflow recorded.
         ("none", "", "Pending", []),
-    ]
-    con = duckdb.connect()
-    con.execute("CREATE TABLE complaints(ticket_no VARCHAR, created_on TIMESTAMP, status VARCHAR, resolved_on TIMESTAMP, all_esc_user VARCHAR)")
-    con.execute("CREATE TABLE action_history(id INTEGER, ticket_no VARCHAR, action_taken_date TIMESTAMP, action_status VARCHAR, action_taken_remark VARCHAR)")
-    con.execute("CREATE TABLE acting_office(id INTEGER, ticket_no VARCHAR, action_taken_date TIMESTAMP, action_status VARCHAR, code VARCHAR)")
-    next_id = 0
-    for kind, chain, status, steps in cases:
-        for i in range(10):
-            ticket = f"{kind}-{i}"
-            resolved = "2025-07-10" if status == "Disposed" else None
-            con.execute("INSERT INTO complaints VALUES (?, TIMESTAMP '2025-07-01' - INTERVAL 30 DAY, ?, ?, ?)", [ticket, status, resolved, chain])
-            for office, action, remark, day in steps:
-                next_id += 1
-                when = f"2025-07-{day:02d}"
-                con.execute("INSERT INTO action_history VALUES (?, ?, ?, ?, ?)", [next_id, ticket, when, action, remark])
-                con.execute("INSERT INTO acting_office VALUES (?, ?, ?, ?, ?)", [next_id, ticket, when, action, office])
-    con.execute("CREATE TABLE scope_tickets AS SELECT ticket_no, created_on FROM complaints")
+        # A Reopen on the day of the first reply but recorded before it, by
+        # id: it precedes the ATR, so it is not a send-back.
+        ("tied", "1,2,3", "Disposed", [("Collector", "Reopen", "Required more clarification.", 2), ("BDO", "Replied", None, 2),
+                                       ("CMO", "Disposed", None, 3)]),
+        # Sent back twice for different reasons: counted once, under the first.
+        ("twice", "1,2,3", "Disposed", [("BDO", "Replied", None, 2), ("Collector", "Reopen", "Required more clarification.", 3),
+                                        ("BDO", "Replied", None, 4), ("Collector", "Reopen", "Please furnish the final ATR", 5),
+                                        ("BDO", "Replied", None, 6), ("CMO", "Disposed", None, 8)]),
+]
 
-    panel = _atr(con)
+
+def test_atr_reads_review_from_the_assigned_workflow():
+    panel = _atr(_atr_lake(ATR_CASES))
     metrics = {m["id"]: m for m in panel["metrics"]}
     def fraction(metric_id):
         return metrics[metric_id]["numerator"], metrics[metric_id]["denominator"]
 
-    assert fraction("review-required") == (50, 60)       # five three-office kinds of six with a workflow
-    assert fraction("atr-replied") == (60, 70)
-    assert fraction("review-done") == (20, 40)            # reviewed + sent_back, of the closed required cases
-    assert fraction("closed-without-review") == (20, 40)  # skipped + late
-    assert fraction("atr-sent-back") == (10, 60)
-    assert fraction("atr-standard-reason") == (10, 10)
+    assert fraction("review-required") == (70, 80)       # seven three-office kinds of eight with a workflow
+    assert fraction("atr-replied") == (80, 90)
+    assert fraction("review-done") == (30, 60)            # reviewed, sent_back and twice, of the closed required cases
+    assert fraction("closed-without-review") == (30, 60)  # skipped, late and tied
+    assert fraction("atr-sent-back") == (20, 80)
+    assert fraction("atr-standard-reason") == (20, 20)
     assert metrics["atr-waiting"]["value"] == 10
     assert metrics["atr-wait"]["value"] == 20.0            # 30 July less 10 July
-    assert panel["tables"][0]["rows"] == [{"label": "More clarification required", "values": [10]}]
+    # One row per grievance: the rows sum to the send-back count.
+    assert panel["tables"][0]["rows"] == [{"label": "More clarification required", "values": [20]}]
     assert {metrics[m]["basis"] for m in ("review-done", "closed-without-review")} == {"proxy"}
 
 
+def test_atr_withholds_the_reason_table_when_any_reason_is_small():
+    # Five sent back for a second reason: showing the 20-row and the total
+    # would give the five away, so the whole table is withheld.
+    few = ("few", "1,2,3", "Disposed", [("BDO", "Replied", None, 2), ("Collector", "Reopen", "Please furnish the final ATR", 3),
+                                        ("BDO", "Replied", None, 4), ("CMO", "Disposed", None, 6)])
+    panel = _atr(_atr_lake(ATR_CASES + [few], sizes={"few": 5}))
+    assert panel["tables"] is None
+    assert any("sent back" in caveat and "fewer than 10" in caveat for caveat in panel["caveats"])
+
+
 def _edge_lake() -> duckdb.DuckDBPyConnection:
-    """Ten each of four open cases the queries used to get wrong."""
+    """Ten each of six open cases the queries used to get wrong."""
     con = duckdb.connect()
     con.execute("""
-        CREATE TABLE shapes(kind VARCHAR, district VARCHAR, status VARCHAR, last_updated TIMESTAMP, later_action BOOL);
+        CREATE TABLE shapes(kind VARCHAR, district VARCHAR, status VARCHAR, last_updated TIMESTAMP, later_action BOOL,
+                            resolved TIMESTAMP DEFAULT NULL);
         INSERT INTO shapes VALUES
           -- a blank district must not become a blank (frontend-fatal) label
-          ('blank', '  ', 'Pending', TIMESTAMP '2025-07-29', FALSE),
+          ('blank', '  ', 'Pending', TIMESTAMP '2025-07-29', FALSE, NULL),
           -- no status and no resolution is open, as grievance_base.outcome says
-          ('nostatus', 'Puri', NULL, TIMESTAMP '2025-07-29', FALSE),
+          ('nostatus', 'Puri', NULL, TIMESTAMP '2025-07-29', FALSE, NULL),
           -- never updated and no action: inactive since filing
-          ('silent', 'Puri', 'Pending', NULL, FALSE),
+          ('silent', 'Puri', 'Pending', NULL, FALSE, NULL),
           -- active only after the snapshot: inactive at the snapshot
-          ('later', 'Puri', 'Pending', NULL, TRUE);
+          ('later', 'Puri', 'Pending', NULL, TRUE, NULL),
+          -- disposed after the snapshot: open on it, whatever the status now
+          ('closedlater', 'Puri', 'Disposed', TIMESTAMP '2025-07-29', FALSE, TIMESTAMP '2025-08-05'),
+          -- updated only after the snapshot: inactive at the snapshot
+          ('updatedlater', 'Puri', 'Pending', TIMESTAMP '2025-08-12', FALSE, NULL);
         CREATE TABLE complaints AS SELECT kind || '-' || i AS ticket_no, district, status,
-            TIMESTAMP '2025-05-01' AS created_on, NULL::TIMESTAMP AS resolved_on,
+            TIMESTAMP '2025-05-01' AS created_on, resolved AS resolved_on,
             last_updated AS last_updated_on, NULL::TIMESTAMP AS escalation_date
           FROM shapes, range(10) r(i);
         CREATE TABLE scope_tickets AS SELECT ticket_no, created_on FROM complaints;
@@ -507,12 +552,13 @@ def test_offices_handles_blank_districts_missing_status_and_the_snapshot():
     rows = {row["label"]: row["values"] for row in by_district["rows"]}
     assert "" not in rows and "  " not in rows
     assert rows["District not recorded"][0] == 10
-    # Puri: no-status, silent and later-only cases, all open. The no-status
-    # cases were updated on 29 July; the other 20 had no activity by the
-    # snapshot, so they are inactive.
+    # Puri: no-status, silent, later-only, closed-later and updated-later
+    # cases, all open on the snapshot. The no-status and closed-later cases
+    # were updated on 29 July; the other 30 had no activity by the snapshot,
+    # so they are inactive.
     open_now, _, inactive, _, transferred = rows["Puri"]
-    assert open_now == 30
-    assert inactive == 66.7
+    assert open_now == 50
+    assert inactive == 60.0
     # The post-snapshot transfer neither moves the case nor counts as a transfer.
     assert transferred == 0.0
     assert [row["label"] for row in by_office["rows"]] == ["Other or unnamed office"]
@@ -521,8 +567,9 @@ def test_offices_handles_blank_districts_missing_status_and_the_snapshot():
 def test_aging_counts_missing_status_and_never_updated_cases():
     con = _edge_lake()
     summary = {m["id"]: m for m in _aging(con)["metrics"]}
-    assert summary["inactive-7"]["denominator"] == 40
-    assert summary["inactive-7"]["numerator"] == 20  # silent + later; blank and nostatus were updated 29 July
+    assert summary["inactive-7"]["denominator"] == 60
+    # silent, later and updated-later; the rest were updated 29 July
+    assert summary["inactive-7"]["numerator"] == 30
 
 
 def test_review_csv_carries_drilldown_cells():

@@ -9,6 +9,7 @@ import {
   quickScopes,
   recordingState,
   scopesForView,
+  sortableColumn,
   subtypesFor,
   type MonitoringCatalog,
   type MonitoringDashboard as Dashboard,
@@ -180,8 +181,10 @@ function RecordingPanel({ panel }: { panel: RecordedMonitoringPanel }) {
   );
 }
 
-/** One drill-down table. Sortable by any column; the publisher's order
- * (workload) is the default, and the folded "other" row always stays last. */
+/** One drill-down table. Sortable by workload only: ordering offices by an
+ * unadjusted rate is the ranking the roadmap rules out before case-mix
+ * adjustment. The publisher's order is the default, and the folded "other"
+ * row always stays last. */
 function DrilldownTable({ table }: { table: MonitoringTable }) {
   const [sort, setSort] = useState<{ column: number; descending: boolean } | null>(null);
   const [body, other] = useMemo(() => {
@@ -227,21 +230,26 @@ function DrilldownTable({ table }: { table: MonitoringTable }) {
               </th>
               {table.columns.map((column, index) => {
                 const active = sort?.column === index;
+                const label = (
+                  <span className={`font-mono text-[9.5px] uppercase leading-tight tracking-[0.13em] ${active ? "text-maroon" : "text-text-secondary"}`}>
+                    {column.label}
+                  </span>
+                );
                 return (
                   <th
                     key={column.label}
                     scope="col"
-                    aria-sort={active ? (sort.descending ? "descending" : "ascending") : "none"}
+                    aria-sort={active ? (sort.descending ? "descending" : "ascending") : undefined}
                     className="pb-2 pl-4 text-right align-bottom"
                   >
-                    <button
+                    {!sortableColumn(column) ? label : <button
                       type="button"
                       onClick={() => setSort({ column: index, descending: active ? !sort.descending : true })}
                       className={`font-mono text-[9.5px] uppercase leading-tight tracking-[0.13em] hover:text-maroon ${active ? "text-maroon" : "text-text-secondary"}`}
                     >
                       {column.label}
                       <span aria-hidden className="ml-1 inline-block w-2">{active ? (sort.descending ? "↓" : "↑") : ""}</span>
-                    </button>
+                    </button>}
                   </th>
                 );
               })}
