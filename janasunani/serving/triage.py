@@ -127,14 +127,14 @@ def candidate_relationship(evidence: DuplicateEvidence) -> DuplicateRelationship
         and (evidence.follow_up_cue is True or evidence.new_information is True)
     ):
         return "follow_up"
-    # Every follow-up signal must have been checked and found absent;
-    # unchecked is not absent.
+    # Both follow-up signals must have been checked and found absent;
+    # unchecked is not absent. A reference to the earlier ticket links the
+    # two but, without a cue or new facts, does not make a follow-up (note §2.3).
     if (
         evidence.identity_match is True
         and same_text
         and evidence.new_information is False
         and evidence.follow_up_cue is False
-        and evidence.explicit_reference is False
     ):
         return "pure_duplicate"
     # "related" (a similar subject but a distinct problem) needs evidence of

@@ -430,8 +430,12 @@ from janasunani.serving.triage import (  # noqa: E402
         # Same key, same text, and every follow-up signal checked and absent.
         (dict(identity_match=True, text_similarity="near", new_information=False,
               follow_up_cue=False, explicit_reference=False), "pure_duplicate"),
-        # Same, but the follow-up cue and reference were never checked.
+        # Same, but the follow-up cue was never checked.
         (dict(identity_match=True, text_similarity="near", new_information=False), "uncertain"),
+        # A copy that names the earlier ticket, with no cue or new facts, is
+        # still a repeat: a reference links, it does not make a follow-up.
+        (dict(identity_match=True, text_similarity="near", new_information=False,
+              follow_up_cue=False, explicit_reference=True), "pure_duplicate"),
         # Same key and new facts, but no evidence it is the same problem.
         (dict(identity_match=True, new_information=True), "uncertain"),
         # The costly confusion: same filer and text, but a status request.
