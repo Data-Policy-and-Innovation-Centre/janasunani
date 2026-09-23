@@ -212,9 +212,12 @@ export function parseMonitoringCatalog(value: unknown): MonitoringCatalog {
 
 function validTable(value: unknown): boolean {
   if (!isRecord(value) || !keys(value, ["title", "columns", "rows"]) || !text(value.title) || !Array.isArray(value.columns) || value.columns.length === 0 || !Array.isArray(value.rows)) return false;
-  const width = value.columns.length;
-  return value.columns.every((column) => isRecord(column) && keys(column, ["label", "unit"]) && text(column.label) && (column.unit === "grievances" || column.unit === "percent"))
-    && value.rows.every((row) => isRecord(row) && keys(row, ["label", "values"]) && text(row.label) && Array.isArray(row.values) && row.values.length === width && row.values.every((cell) => cell === null || count(cell)));
+  if (!value.columns.every((column) => isRecord(column) && keys(column, ["label", "unit"]) && text(column.label) && (column.unit === "grievances" || column.unit === "percent"))) return false;
+  // Each cell is checked against its own column: a percent is at most 100, a
+  // grievance count is whole. null is a withheld or undefined cell.
+  const units = (value.columns as { unit: string }[]).map((column) => column.unit);
+  return value.rows.every((row) => isRecord(row) && keys(row, ["label", "values"]) && text(row.label) && Array.isArray(row.values) && row.values.length === units.length
+    && row.values.every((cell, i) => cell === null || (units[i] === "percent" ? count(cell) && cell <= 100 : wholeCount(cell))));
 }
 
 function validMetric(value: unknown): boolean {

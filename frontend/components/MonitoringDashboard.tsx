@@ -197,7 +197,7 @@ function DrilldownTable({ table }: { table: MonitoringTable }) {
 
   const cell = (value: number | null, unit: string) =>
     value === null ? (
-      <span className="text-text-secondary" title="Withheld: fewer than 10 cases">—</span>
+      <span className="text-text-secondary" title="Not shown: fewer than 10 cases, or nothing to divide by">—</span>
     ) : unit === "percent" ? (
       `${value.toFixed(1)}%`
     ) : (

@@ -367,17 +367,17 @@ def _aging(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     rows = con.execute("""
         WITH latest AS (
           SELECT ticket_no, MAX(action_taken_date) latest_action
-          FROM action_history GROUP BY ticket_no
+          FROM action_history WHERE action_taken_date < TIMESTAMP '2025-07-31' GROUP BY ticket_no
         ), open AS (
           SELECT g.ticket_no,
             DATE '2025-07-30' - CAST(g.created_on AS DATE) age_days,
-            DATE '2025-07-30' - CAST(GREATEST(g.last_updated_on, l.latest_action) AS DATE) inactive_days,
+            DATE '2025-07-30' - CAST(COALESCE(GREATEST(g.last_updated_on, l.latest_action), g.created_on) AS DATE) inactive_days,
             g.escalation_date
           FROM complaints g JOIN scope_tickets s USING (ticket_no)
           LEFT JOIN latest l USING (ticket_no)
           WHERE g.created_on < DATE '2025-07-31'
             AND (g.resolved_on IS NULL OR CAST(g.resolved_on AS DATE) > DATE '2025-07-30')
-            AND g.status NOT IN ('Disposed', 'Discard')
+            AND COALESCE(g.status, '') NOT IN ('Disposed', 'Discard')
         )
         SELECT CASE WHEN age_days <= 6 THEN '0-6 days'
                     WHEN age_days <= 14 THEN '7-14 days'
@@ -389,13 +389,13 @@ def _aging(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
                  WHEN '15-29 days' THEN 3 WHEN '30-59 days' THEN 4 ELSE 5 END
     """).fetchall()
     summary = _one(con, """
-        WITH latest AS (SELECT ticket_no, MAX(action_taken_date) latest_action FROM action_history GROUP BY ticket_no),
+        WITH latest AS (SELECT ticket_no, MAX(action_taken_date) latest_action FROM action_history WHERE action_taken_date < TIMESTAMP '2025-07-31' GROUP BY ticket_no),
         open AS (
-          SELECT DATE '2025-07-30' - CAST(GREATEST(g.last_updated_on, l.latest_action) AS DATE) inactive_days,
+          SELECT DATE '2025-07-30' - CAST(COALESCE(GREATEST(g.last_updated_on, l.latest_action), g.created_on) AS DATE) inactive_days,
                  g.escalation_date
           FROM complaints g JOIN scope_tickets s USING(ticket_no) LEFT JOIN latest l USING(ticket_no)
           WHERE g.created_on < DATE '2025-07-31' AND (g.resolved_on IS NULL OR CAST(g.resolved_on AS DATE)>DATE '2025-07-30')
-            AND g.status NOT IN ('Disposed','Discard'))
+            AND COALESCE(g.status, '') NOT IN ('Disposed', 'Discard'))
         SELECT COUNT(*) denominator,
           COUNT(*) FILTER (WHERE inactive_days >= 7) inactive,
           COUNT(*) FILTER (WHERE escalation_date < TIMESTAMP '2025-07-31') escalation_passed
@@ -877,18 +877,19 @@ def _offices(con: duckdb.DuckDBPyConnection, scope: ScopeSpec) -> dict[str, Any]
         WITH latest AS (
           SELECT ticket_no, MAX(action_taken_date) latest_action,
                  arg_max(id, (action_taken_date, id)) last_id
-          FROM action_history GROUP BY ticket_no),
+          FROM action_history WHERE action_taken_date < TIMESTAMP '2025-07-31' GROUP BY ticket_no),
         transferred AS (
-          SELECT DISTINCT ticket_no FROM action_history WHERE action_status='Complaint Transfer')
-        SELECT COALESCE(g.district, 'District not recorded') district,
+          SELECT DISTINCT ticket_no FROM action_history
+          WHERE action_status='Complaint Transfer' AND action_taken_date < TIMESTAMP '2025-07-31')
+        SELECT COALESCE(NULLIF(trim(g.district), ''), 'District not recorded') district,
           COALESCE(n.role_name, 'Other or unnamed office') office,
           (g.created_on>=DATE '2024-07-01' AND g.created_on<DATE '2025-07-01') in_fy,
           t.ticket_no IS NOT NULL is_transferred,
           (g.created_on<DATE '2025-07-31'
             AND (g.resolved_on IS NULL OR CAST(g.resolved_on AS DATE)>DATE '2025-07-30')
-            AND g.status NOT IN ('Disposed','Discard')) is_open,
+            AND COALESCE(g.status, '') NOT IN ('Disposed', 'Discard')) is_open,
           DATE '2025-07-30'-CAST(g.created_on AS DATE) age_days,
-          DATE '2025-07-30'-CAST(GREATEST(g.last_updated_on, l.latest_action) AS DATE) inactive_days
+          DATE '2025-07-30'-CAST(COALESCE(GREATEST(g.last_updated_on, l.latest_action), g.created_on) AS DATE) inactive_days
         FROM complaints g JOIN scope_tickets s USING(ticket_no)
         LEFT JOIN latest l USING(ticket_no)
         LEFT JOIN acting_office_named n ON n.id=l.last_id
@@ -928,7 +929,7 @@ def _offices(con: duckdb.DuckDBPyConnection, scope: ScopeSpec) -> dict[str, Any]
         })
     if office:
         tables.append({
-            "title": "Open cases by the office holding them",
+            "title": "Open cases by the office that acted last",
             "columns": open_columns,
             "rows": _drilldown_rows(office, [(0, None), (1, 0), (2, 0)], "Other offices"),
         })
@@ -941,7 +942,7 @@ def _offices(con: duckdb.DuckDBPyConnection, scope: ScopeSpec) -> dict[str, Any]
         "tables": tables,
         "caveats": [
             "Ordered by workload, not ranked. A rate reflects the caseload an office receives as well as how it handles it.",
-            "The office holding a case is the office on its latest recorded action.",
+            "The office shown is the one on the latest recorded action, which may be the office that forwarded the case rather than the one now holding it.",
             f"The {OFFICE_TABLE_TOP_N} largest rows are shown; the rest, and any under {MIN_CELL} open cases, are folded into the last row. Cells under {MIN_CELL} are withheld.",
         ],
     }
@@ -978,13 +979,15 @@ def _recording(con: duckdb.DuckDBPyConnection, discards: dict[str, Any], atr: di
           WHERE s.created_on>=DATE '2024-07-01' AND s.created_on<DATE '2025-07-01'),
         acted AS (
           SELECT a.ticket_no, a.action_status FROM action_history a JOIN cohort USING(ticket_no)
-          WHERE a.action_taken_date IS NOT NULL)
+          WHERE a.action_taken_date < TIMESTAMP '2025-07-31')
         SELECT COUNT(*) filings,
-          COUNT(*) FILTER(WHERE mode IS NOT NULL AND created_on IS NOT NULL) entry,
+          -- A blank string is a missing value, as elsewhere in analytics.
+          COUNT(*) FILTER(WHERE NULLIF(trim(mode), '') IS NOT NULL AND created_on IS NOT NULL) entry,
           COUNT(*) FILTER(WHERE category_id IS NOT NULL) category,
-          COUNT(*) FILTER(WHERE subcategory IS NOT NULL) subcategory,
+          COUNT(*) FILTER(WHERE NULLIF(trim(subcategory), '') IS NOT NULL) subcategory,
           COUNT(*) FILTER(WHERE trim(COALESCE(all_esc_user, '')) <> '') workflow,
-          (SELECT COUNT(DISTINCT ticket_no) FROM acted) dated_action
+          (SELECT COUNT(DISTINCT ticket_no) FROM acted
+           WHERE action_status IN ('Forwarded To Subordinate', 'Forward', 'Complaint Transfer')) dated_action
         FROM cohort
     """)
     n = row["filings"]
@@ -1125,6 +1128,22 @@ def _flat_rows(release: dict[str, Any]) -> list[dict[str, Any]]:
                     "coverage_pct": metric.get("coveragePct"), "basis": metric.get("basis"),
                     "caveat": metric.get("note") or metric.get("reason"),
                 })
+            # Drill-down cells, one row per cell, so the review CSV carries
+            # every published figure and not only the headline metrics.
+            for table in panel.get("tables") or []:
+                for table_row in table["rows"]:
+                    for column, value in zip(table["columns"], table_row["values"], strict=True):
+                        rows.append({
+                            "scope_id": dashboard["scopeId"], "scope_label": dashboard["scopeLabel"],
+                            "period": dashboard["periodLabel"], "snapshot_date": dashboard["snapshotDate"],
+                            "panel": panel["title"],
+                            "metric": f"{table['title']} · {table_row['label']} · {column['label']}",
+                            "state": "recorded" if value is not None else "unavailable",
+                            "value": value, "unit": column["unit"],
+                            "numerator": None, "denominator": None, "coverage_pct": None,
+                            "basis": "direct",
+                            "caveat": None if value is not None else f"Withheld (under {MIN_CELL}) or nothing to divide by.",
+                        })
     return rows
 
 
