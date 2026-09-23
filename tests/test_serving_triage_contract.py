@@ -448,7 +448,9 @@ from janasunani.serving.triage import (  # noqa: E402
         (dict(identity_match=False, text_similarity="near", explicit_reference=True,
               follow_up_cue=True), "follow_up"),
         # Similar subject, not linked to the same filer.
-        (dict(identity_match=False, text_similarity="similar", explicit_reference=False), "related"),
+        # Not linked by key or reference is not evidence of a distinct problem:
+        # the evidence cannot yet show one, so related is never assigned.
+        (dict(identity_match=False, text_similarity="similar", explicit_reference=False), "uncertain"),
         # A similar subject with the links never checked could be a follow-up.
         (dict(text_similarity="similar"), "uncertain"),
         (dict(identity_match=False, text_similarity="similar"), "uncertain"),
@@ -491,3 +493,16 @@ def test_the_mock_processor_labels_through_the_real_rules():
         assert DuplicateSignal.model_validate_json(duplicate.model_dump_json()) == duplicate
         seen.add((duplicate.duplicate_kind, duplicate.relationship))
     assert seen == {("resubmission", "follow_up"), ("campaign", "campaign")}
+
+
+def test_a_label_that_contradicts_its_evidence_is_rejected():
+    from pydantic import ValidationError
+    from janasunani.serving.schemas import DuplicateSignal
+    evidence = DuplicateEvidence(identity_match=True, text_similarity="near", follow_up_cue=True, new_information=False)
+    signal = dict(duplicate_kind="resubmission", duplicate_group_id="g1", duplicate_ticket_no="T1", evidence=evidence,
+                  rule_version=RELATIONSHIP_RULE_VERSION)
+    assert DuplicateSignal(**signal, relationship="follow_up").relationship == "follow_up"
+    with pytest.raises(ValidationError, match="contradicts"):
+        DuplicateSignal(**signal, relationship="pure_duplicate")
+    # Another rule version's label is not recomputed under these rules.
+    assert DuplicateSignal(**{**signal, "rule_version": "other-rules"}, relationship="pure_duplicate")

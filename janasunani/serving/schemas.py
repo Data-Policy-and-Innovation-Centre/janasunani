@@ -162,6 +162,14 @@ class DuplicateSignal(BaseModel):
         labelled = (self.relationship, self.evidence, self.rule_version)
         if any(v is not None for v in labelled) and any(v is None for v in labelled):
             raise ValueError("relationship, evidence and rule_version travel together")
+        if self.evidence is not None:
+            # Deferred: triage imports this module.
+            from janasunani.serving.triage import RELATIONSHIP_RULE_VERSION, candidate_relationship
+            if (
+                self.rule_version == RELATIONSHIP_RULE_VERSION
+                and self.relationship != candidate_relationship(self.evidence)
+            ):
+                raise ValueError("the relationship contradicts its evidence under its rule version")
         if self.duplicate_kind == "campaign" and self.relationship not in {None, "campaign", "uncertain"}:
             raise ValueError("a campaign group can only be labelled campaign or uncertain")
         if self.duplicate_kind == "resubmission" and self.relationship == "campaign":
