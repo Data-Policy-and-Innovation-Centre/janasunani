@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 import duckdb
 
-from janasunani.analytics.monitoring import _metric as published_metric, _pct, refiling_summary, suppress_breakdown
+from janasunani.analytics.monitoring import _metric as published_metric, _pct, withhold_small_panel, refiling_summary, suppress_breakdown
 from janasunani.serving.api import create_app
 from janasunani.serving.monitoring import (
     ArtifactMonitoringProvider,
@@ -114,6 +114,31 @@ def test_small_metric_cells_are_withheld(kwargs):
 )
 def test_zero_and_reportable_metric_cells_are_published(kwargs):
     assert published_metric("m", "M", **kwargs)["state"] == "recorded"
+
+
+def _recorded_panel(denominator: int) -> dict:
+    return {
+        "id": "journey", "title": "End-to-end journey", "state": "recorded",
+        "denominator": {"label": "Disposed journeys that tile", "value": denominator},
+        "metrics": [], "breakdown": None, "breakdownUnavailableReason": None,
+        "caveats": ["c"],
+    }
+
+
+def test_a_panel_with_a_small_denominator_is_withheld():
+    # The dashboard always renders the panel denominator, so a cohort of 1-9
+    # is itself a small cell, whatever _metric withheld inside it.
+    panel = withhold_small_panel(_recorded_panel(4))
+    assert panel == {
+        "id": "journey", "title": "End-to-end journey", "state": "unavailable",
+        "reason": "Withheld because the panel's cohort is below 10.", "caveats": ["c"],
+    }
+
+
+@pytest.mark.parametrize("denominator", [0, 10])
+def test_a_panel_with_a_reportable_denominator_is_kept(denominator):
+    panel = _recorded_panel(denominator)
+    assert withhold_small_panel(panel) is panel
 
 
 def test_refiling_censoring_includes_post_fy_followup_and_window_boundaries():

@@ -165,6 +165,25 @@ def suppress_breakdown(rows: list[dict[str, Any]], count_key: str = "value") -> 
     return rows
 
 
+def withhold_small_panel(panel: dict[str, Any]) -> dict[str, Any]:
+    """Withhold a whole panel whose cohort is 1-9.
+
+    The dashboard always renders a recorded panel's denominator, so a small
+    cohort is itself a reportable cell, whatever _metric withheld inside it.
+    """
+    denominator = panel.get("denominator") or {}
+    value = denominator.get("value")
+    if panel.get("state") != "recorded" or value is None or not 0 < value < MIN_CELL:
+        return panel
+    return {
+        "id": panel["id"],
+        "title": panel["title"],
+        "state": "unavailable",
+        "reason": f"Withheld because the panel's cohort is below {MIN_CELL}.",
+        "caveats": panel["caveats"],
+    }
+
+
 def _one(con: duckdb.DuckDBPyConnection, sql: str, params: list[Any] | None = None) -> dict[str, Any]:
     cur = con.execute(sql, params or [])
     columns = [item[0] for item in cur.description]
@@ -594,6 +613,8 @@ def build_release(
                     _closure(con, identity),
                 ],
             }
+        for dashboard in dashboards.values():
+            dashboard["panels"] = [withhold_small_panel(p) for p in dashboard["panels"]]
         return {
             "schemaVersion": 1,
             "generatedAt": datetime.now(timezone.utc).isoformat(),
