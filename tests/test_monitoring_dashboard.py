@@ -573,7 +573,7 @@ def test_offices_handles_blank_districts_missing_status_and_the_snapshot():
     assert inactive == 60.0
     # The post-snapshot transfer neither moves the case nor counts as a transfer.
     assert transferred == 0.0
-    assert [row["label"] for row in by_office["rows"]] == ["Other or unnamed office"]
+    assert [row["label"] for row in by_office["rows"]] == ["Unnamed role"]
 
 
 def test_aging_counts_missing_status_and_never_updated_cases():
@@ -692,3 +692,91 @@ def test_a_flow_panel_without_every_stage_in_order_is_rejected(change):
     }[change]()
     with pytest.raises(ValidationError):
         MonitoringPanel.model_validate(panel)
+
+
+def test_transfers_count_only_actions_before_the_snapshot():
+    from janasunani.analytics.monitoring import _transfers
+    con = duckdb.connect()
+    con.execute("""
+        CREATE TABLE scope_tickets AS SELECT 'T' || i AS ticket_no, TIMESTAMP '2025-05-01' AS created_on FROM range(30) r(i);
+        -- Ten transferred before the snapshot, ten only after it, ten never.
+        CREATE TABLE action_history AS
+          SELECT i AS id, 'T' || i AS ticket_no,
+                 CASE WHEN i < 10 THEN TIMESTAMP '2025-07-01' ELSE TIMESTAMP '2025-08-10' END AS action_taken_date,
+                 'Complaint Transfer' AS action_status
+          FROM range(20) r(i);
+        CREATE TABLE returns(ticket_no VARCHAR, arrivals INTEGER);
+    """)
+    metrics = {m["id"]: m for m in _transfers(con)["metrics"]}
+    assert (metrics["transfer-rate"]["numerator"], metrics["transfer-rate"]["denominator"]) == (10, 30)
+
+
+def test_a_small_district_inside_the_top_rows_is_folded_and_its_cells_withheld():
+    department = next(s for s in CORE_SCOPES if s.kind == "department")
+    # "Small" ranks second, inside the top rows, but has only five open cases.
+    by_district, _ = _offices(_office_lake({"Big": 40, "Small": 5}), department)["tables"]
+    rows = {row["label"]: row["values"] for row in by_district["rows"]}
+    assert "Small" not in rows
+    # The fold holds only those five: every cell in it is withheld.
+    assert rows["Other districts"] == [None] * len(by_district["columns"])
+
+
+def test_a_rate_over_a_small_denominator_is_withheld_even_at_zero():
+    from janasunani.analytics.monitoring import _drilldown_rows
+    assert _drilldown_rows([("Puri", 5, 0, 0)], [(0, None), (1, 0), (2, 0)], "Other") == [
+        {"label": "Other", "values": [None, None, None]},
+    ]
+
+
+def _atr_case(kind, spec, steps, chain="1,2,3"):
+    con = _atr_lake([(kind, chain, spec, steps)])
+    _atr(con)
+    return con.execute("SELECT sent_back, reviewed, atr_waiting FROM atr_cases LIMIT 1").fetchone()
+
+
+def test_a_reopen_after_disposal_is_a_citizen_reopen_not_a_send_back():
+    # Closed on the 3rd without review; the citizen reopens it on the 5th.
+    con = _atr_lake([("citizen", "1,2,3", "Disposed", [
+        ("BDO", "Replied", None, 2), ("CMO", "Disposed", None, 3),
+        ("Citizen", "Reopen", "reopened on request of petitioner", 5),
+        ("BDO", "Replied", None, 6), ("CMO", "Disposed", None, 8)])])
+    _atr(con)
+    assert con.execute("SELECT DISTINCT sent_back, reviewed FROM atr_cases").fetchall() == [(False, False)]
+    # Nor does its remark land in the send-back reasons.
+    assert con.execute("SELECT COUNT(*) FROM atr_backs").fetchone()[0] == 0
+
+
+def test_a_same_day_reopen_after_the_reply_is_a_send_back():
+    # Replied then Reopen on the same date, the Reopen recorded second.
+    assert _atr_case("sameday_back", "Pending", [
+        ("BDO", "Replied", None, 2), ("Collector", "Reopen", "Required more clarification.", 2)])[0] is True
+
+
+def test_a_closed_case_whose_last_action_is_a_reply_is_not_waiting():
+    assert _atr_case("closed_reply", "Disposed", [("BDO", "Replied", None, 2), ("CMO", "Replied", None, 4)])[2] is False
+
+
+def test_a_send_back_after_the_snapshot_does_not_count():
+    con = _atr_lake([("later", "1,2,3", "Pending", [("BDO", "Replied", None, 2)])])
+    con.execute("INSERT INTO action_history VALUES (9999, 'later-0', TIMESTAMP '2025-08-05', 'Reopen', 'Required more clarification.')")
+    con.execute("INSERT INTO acting_office VALUES (9999, 'later-0', TIMESTAMP '2025-08-05', 'Reopen', 'Collector')")
+    panel = _atr(con)
+    assert con.execute("SELECT COUNT(*) FROM atr_backs").fetchone()[0] == 0
+    assert panel["tables"] is None
+
+
+def test_closure_reopens_count_resolved_cases_before_the_snapshot():
+    from janasunani.analytics.monitoring import _closure
+    con = duckdb.connect()
+    con.execute("""
+        CREATE TABLE scope_tickets AS SELECT 'T' || i AS ticket_no, TIMESTAMP '2025-01-01' AS created_on FROM range(30) r(i);
+        -- T0-T19 are resolved; T20-T29 are open.
+        CREATE TABLE closure_rung AS SELECT 'T' || i AS ticket_no, 1 AS on_ladder, 'bare' AS rung FROM range(20) r(i);
+        -- Reopened: T0-T9 before the snapshot, T10-T19 after it, T20-T29 while open.
+        CREATE TABLE action_history AS SELECT i AS id, 'T' || i AS ticket_no,
+            CASE WHEN i BETWEEN 10 AND 19 THEN TIMESTAMP '2025-08-05' ELSE TIMESTAMP '2025-03-01' END AS action_taken_date,
+            'Reopen' AS action_status
+          FROM range(30) r(i);
+    """)
+    reopened = next(m for m in _closure(con, None)["metrics"] if m["id"] == "reopened")
+    assert (reopened["value"], reopened["denominator"]) == (10, 20)
