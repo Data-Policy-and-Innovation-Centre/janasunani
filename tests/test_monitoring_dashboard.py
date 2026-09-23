@@ -11,8 +11,9 @@ from fastapi.testclient import TestClient
 
 import duckdb
 
-from janasunani.analytics.monitoring import PROXY_METRICS, _metric as published_metric, _pct, withhold_small_panel, refiling_summary, suppress_breakdown
+from janasunani.analytics.monitoring import PROXY_METRICS, _discards, _metric as published_metric, _pct, withhold_small_panel, refiling_summary, suppress_breakdown
 from janasunani.serving.api import create_app
+from janasunani.serving.schemas import MONITORING_PANEL_IDS
 from janasunani.serving.monitoring import (
     ArtifactMonitoringProvider,
     MonitoringArtifactError,
@@ -46,7 +47,7 @@ def _release() -> dict:
             "breakdownUnavailableReason": None,
             "caveats": ["Synthetic fixture."],
         }
-        for panel_id in ("aging", "transfers", "journey", "atr", "demand", "closure")
+        for panel_id in MONITORING_PANEL_IDS
     ]
     return {
         "schemaVersion": 1,
@@ -212,7 +213,7 @@ def test_catalog_and_dashboard_are_allowlisted(tmp_path):
         params={"scope_id": "department-21", "period": "fy-2024-25"},
     )
     assert response.status_code == 200
-    assert len(response.json()["panels"]) == 6
+    assert [p["id"] for p in response.json()["panels"]] == list(MONITORING_PANEL_IDS)
     assert "inputDigests" not in response.json()
 
 
@@ -248,3 +249,61 @@ def test_extra_fields_fail_strict_validation(tmp_path):
     provider = ArtifactMonitoringProvider(_write(tmp_path, release))
     with pytest.raises(MonitoringArtifactError, match="failed validation"):
         provider.dashboard("department-21", "fy-2024-25")
+
+
+def test_a_dashboard_missing_a_governed_panel_fails_closed(tmp_path):
+    release = _release()
+    panels = release["dashboards"]["department-21:fy-2024-25"]["panels"]
+    panels[:] = [p for p in panels if p["id"] != "discards"]
+    provider = ArtifactMonitoringProvider(_write(tmp_path, release))
+    with pytest.raises(MonitoringArtifactError, match="every governed panel"):
+        provider.dashboard("department-21", "fy-2024-25")
+
+
+def test_discards_reports_reason_and_timing_together():
+    # Each case is repeated ten times so no cell falls under the minimum.
+    con = duckdb.connect()
+    con.execute("""
+        CREATE TABLE cases(kind VARCHAR, created DATE, status VARCHAR,
+                           transfer_first BOOLEAN, remark VARCHAR, remark_on DATE);
+        INSERT INTO cases VALUES
+          -- transfer, then an officer template with odd spacing and a full stop
+          ('dup_after', '2024-08-01', 'Discard', TRUE, '  Duplicate   copy.', '2024-08-10'),
+          -- no transfer before the reason
+          ('details_before', '2024-09-01', 'Discard', FALSE, 'Complaint details inadequate', '2024-09-02'),
+          -- discarded, but the wording is not a governed template
+          ('unrecognised', '2024-10-01', 'Discard', FALSE, 'not a template', '2024-10-02'),
+          -- a governed reason on a grievance that was later disposed
+          ('taken_up', '2024-11-01', 'Disposed', FALSE, 'case taken up earlier hence closed', '2024-11-02'),
+          -- filed outside the period
+          ('outside_fy', '2025-07-05', 'Discard', FALSE, 'duplicate copy', '2025-07-06'),
+          -- reason recorded after the snapshot
+          ('after_snapshot', '2025-06-01', 'Discard', FALSE, 'duplicate copy', '2025-08-01');
+        CREATE TABLE complaints AS
+          SELECT kind || '-' || i AS ticket_no, created AS created_on, status
+          FROM cases, range(10) r(i);
+        CREATE TABLE scope_tickets AS SELECT ticket_no, created_on FROM complaints;
+        CREATE TABLE action_history AS
+          SELECT row_number() OVER () AS id, * FROM (
+            SELECT kind || '-' || i AS ticket_no, CAST(created AS TIMESTAMP) AS action_taken_date,
+                   'Complaint Transfer' AS action_status, NULL AS action_taken_remark
+            FROM cases, range(10) r(i) WHERE transfer_first
+            UNION ALL
+            SELECT kind || '-' || i, CAST(remark_on AS TIMESTAMP), 'Disposed', remark
+            FROM cases, range(10) r(i));
+    """)
+    panel = _discards(con)
+    metrics = {m["id"]: m for m in panel["metrics"]}
+
+    assert panel["denominator"]["value"] == 50  # outside_fy excluded
+    # 40 discards in the period; 20 carry a governed reason before the snapshot.
+    assert (metrics["discard-rate"]["numerator"], metrics["discard-rate"]["denominator"]) == (40, 50)
+    assert (metrics["discard-reason-recognised"]["numerator"], metrics["discard-reason-recognised"]["denominator"]) == (20, 40)
+    # 30 grievances have a governed reason (taken_up counts too); 10 after a transfer.
+    assert (metrics["discard-after-transfer"]["numerator"], metrics["discard-after-transfer"]["denominator"]) == (10, 30)
+    assert {m["basis"] for m in panel["metrics"]} == {"direct"}
+    assert panel["breakdown"] == [
+        {"label": "Details inadequate · before any transfer", "value": 10},
+        {"label": "Case already taken up / taken up earlier · before any transfer", "value": 10},
+        {"label": "Duplicate copy · after a transfer", "value": 10},
+    ]

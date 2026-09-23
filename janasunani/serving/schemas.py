@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 import math
-from typing import Literal, Optional
+from typing import Literal, Optional, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -654,8 +654,16 @@ class MonitoringBreakdownRow(MonitoringResponseModel):
     value: float = Field(ge=0)
 
 
+# The governed panels, in display order. Every published dashboard carries
+# each of them exactly once, recorded or explicitly unavailable.
+MonitoringPanelId = Literal[
+    "aging", "transfers", "journey", "atr", "demand", "closure", "discards",
+]
+MONITORING_PANEL_IDS: tuple[str, ...] = get_args(MonitoringPanelId)
+
+
 class MonitoringPanel(MonitoringResponseModel):
-    id: Literal["aging", "transfers", "journey", "atr", "demand", "closure"]
+    id: MonitoringPanelId
     title: str
     state: Literal["recorded"]
     denominator: MonitoringDenominator
@@ -666,7 +674,7 @@ class MonitoringPanel(MonitoringResponseModel):
 
 
 class UnavailableMonitoringPanel(MonitoringResponseModel):
-    id: Literal["aging", "transfers", "journey", "atr", "demand", "closure"]
+    id: MonitoringPanelId
     title: str
     state: Literal["unavailable"]
     reason: str

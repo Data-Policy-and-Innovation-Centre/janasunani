@@ -21,6 +21,12 @@ from typing import Any
 import duckdb
 
 from janasunani.analytics import journey
+from janasunani.analytics.findings.discards import (
+    FAMILY_LABELS as DISCARD_FAMILY_LABELS,
+    TEMPLATES as DISCARD_TEMPLATES,
+    _NORMALIZED_REMARK,
+    _lookup_values as _discard_lookup_values,
+)
 from janasunani.config import directories
 from janasunani.olap import lake
 
@@ -660,6 +666,80 @@ def _closure(con: duckdb.DuckDBPyConnection, full_path: Path | None) -> dict[str
     }
 
 
+def _discards(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
+    """Discard reasons and their timing, reported together (note §2.2).
+
+    A reason is one of the eight governed officer templates in
+    ``analytics/findings/discards.py``; nothing else is read as a reason. Each
+    grievance counts once, at its first recognised reason before the snapshot.
+    Timing is whether a recorded transfer came before that reason: the extract
+    has no event for "officer action started" or "earlier ticket located".
+    """
+    row = _one(con, """
+        WITH cohort AS (
+          SELECT s.ticket_no, c.status FROM scope_tickets s JOIN complaints c USING(ticket_no)
+          WHERE s.created_on>=DATE '2024-07-01' AND s.created_on<DATE '2025-07-01')
+        SELECT (SELECT COUNT(*) FROM cohort) filings,
+          (SELECT COUNT(*) FROM cohort WHERE status='Discard') discarded
+    """)
+    con.execute(f"""
+        CREATE OR REPLACE TEMP TABLE discard_events AS
+        WITH cohort AS (
+          SELECT s.ticket_no, c.status FROM scope_tickets s JOIN complaints c USING(ticket_no)
+          WHERE s.created_on>=DATE '2024-07-01' AND s.created_on<DATE '2025-07-01'),
+        discard_template(family, template) AS (VALUES {_discard_lookup_values()}),
+        acts AS (
+          SELECT a.id, a.ticket_no, a.action_taken_date, a.action_status, d.family
+          FROM action_history a JOIN cohort USING(ticket_no)
+          LEFT JOIN discard_template d ON d.template = {_NORMALIZED_REMARK}
+          WHERE a.action_taken_date < TIMESTAMP '2025-07-31'),
+        first_reason AS (
+          SELECT * FROM (
+            SELECT *, ROW_NUMBER() OVER(PARTITION BY ticket_no ORDER BY action_taken_date, id) rn
+            FROM acts WHERE family IS NOT NULL) WHERE rn=1)
+        SELECT e.ticket_no, e.family, c.status,
+          EXISTS(SELECT 1 FROM acts t WHERE t.ticket_no=e.ticket_no
+            AND t.action_status='Complaint Transfer'
+            AND (t.action_taken_date<e.action_taken_date
+                 OR (t.action_taken_date=e.action_taken_date AND t.id<e.id))) after_transfer
+        FROM first_reason e JOIN cohort c USING(ticket_no)
+    """)
+    events = _one(con, """
+        SELECT COUNT(*) with_reason,
+          COUNT(*) FILTER(WHERE status='Discard') discarded_with_reason,
+          COUNT(*) FILTER(WHERE after_transfer) after_transfer
+        FROM discard_events
+    """)
+    counts = dict(
+        ((family, after), n) for family, after, n in con.execute(
+            "SELECT family, after_transfer, COUNT(*) FROM discard_events GROUP BY ALL"
+        ).fetchall()
+    )
+    breakdown = suppress_breakdown([
+        {"label": f"{DISCARD_FAMILY_LABELS[family]} · {timing}", "value": counts[(family, after)]}
+        for family in DISCARD_TEMPLATES
+        for after, timing in ((False, "before any transfer"), (True, "after a transfer"))
+        if (family, after) in counts
+    ])
+    return {
+        "id": "discards", "title": "Discard reasons and timing", "state": "recorded",
+        "denominator": {"label": "Grievances created in FY 2024-25", "value": row["filings"]},
+        "metrics": [
+            _metric("discard-rate", "Discard status", _pct(row["discarded"], row["filings"]), unit="percent", numerator=row["discarded"], denominator=row["filings"]),
+            _metric("discard-reason-recognised", "Discards with a recognised reason", _pct(events["discarded_with_reason"], row["discarded"]), unit="percent", numerator=events["discarded_with_reason"], denominator=row["discarded"]),
+            _metric("discard-after-transfer", "Reason recorded after a transfer", _pct(events["after_transfer"], events["with_reason"]), unit="percent", numerator=events["after_transfer"], denominator=events["with_reason"]),
+        ],
+        "breakdown": breakdown,
+        "breakdownUnavailableReason": None if breakdown is not None else "Withheld because a positive reason-and-timing cell is below 10.",
+        "caveats": [
+            "Reasons are the eight governed officer templates; other wording is not read as a reason.",
+            "Rows count grievances at their first recognised reason, whatever their final status.",
+            "Timing is only before or after a recorded transfer. The extract does not record when officer action started or when an earlier ticket was found.",
+            "Each reason is a different situation, not one operational failure.",
+        ],
+    }
+
+
 def build_release(
     *,
     lake_dir: Path,
@@ -702,6 +782,7 @@ def build_release(
                     _aging(con), _transfers(con), _journey(con, coverage), _atr(con),
                     _demand(con, identity, full, citizens.get(scope.id)),
                     _closure(con, identity),
+                    _discards(con),
                 ],
             }
         for dashboard in dashboards.values():
