@@ -442,6 +442,9 @@ from janasunani.serving.triage import (  # noqa: E402
         (dict(explicit_reference=True, follow_up_cue=True), "follow_up"),
         # Same text from different filers.
         (dict(identity_match=False, text_similarity="identical"), "campaign"),
+        # A different key that names the earlier ticket is a follow-up, not a campaign.
+        (dict(identity_match=False, text_similarity="near", explicit_reference=True,
+              follow_up_cue=True), "follow_up"),
         # Similar subject, not linked to the same filer.
         (dict(identity_match=False, text_similarity="similar"), "related"),
         # Same filer and text but new information never checked: not a repeat.

@@ -112,7 +112,13 @@ def candidate_relationship(evidence: DuplicateEvidence) -> DuplicateRelationship
         evidence.identity_match is True
         and evidence.text_similarity in {"identical", "near", "similar"}
     )
-    if same_text and evidence.identity_match is False:
+    # A different key that names the earlier ticket is the same filer
+    # following up from elsewhere, so the reference outranks the text match.
+    if (
+        same_text
+        and evidence.identity_match is False
+        and evidence.explicit_reference is not True
+    ):
         return "campaign"
     if (
         same_problem
