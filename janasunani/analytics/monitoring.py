@@ -49,6 +49,7 @@ PROXY_METRICS = frozenset({
     "refiling-30", "refiling-90",
     # Inferred from the order of recorded events, not recorded as a review.
     "review-done", "closed-without-review",
+    "flow-unique", "flow-reviewed",
 })
 # Subcategory scopes are built per published department, largest first. Each
 # scope re-runs the whole panel suite over the lake, so this is deliberately a
@@ -947,6 +948,60 @@ def _offices(con: duckdb.DuckDBPyConnection, scope: ScopeSpec) -> dict[str, Any]
     }
 
 
+def _flow(con: duckdb.DuckDBPyConnection, identity_path: Path | None) -> dict[str, Any]:
+    """The FY cohort as one pipeline, each stage a subset of the one before.
+
+    Reads ``atr_cases``, which ``_atr`` builds for the same scope, so the
+    stages use exactly the ATR panel's definitions and must run after it.
+    Repeats are removed by keeping one filing per validated duplicate group;
+    without a validated grouping that stage is explicitly unavailable and
+    the later stages still include repeat filings.
+    """
+    deduped = bool(identity_path and _load_groups(con, identity_path, "flow_groups"))
+    reps = """
+        SELECT k.* FROM kept k LEFT JOIN flow_groups g USING(ticket_no)
+        QUALIFY ROW_NUMBER() OVER(PARTITION BY COALESCE(g.duplicate_group_id, k.ticket_no) ORDER BY k.ticket_no) = 1
+    """ if deduped else "SELECT * FROM kept"
+    row = _one(con, f"""
+        WITH base AS (SELECT a.*, c.status FROM atr_cases a JOIN complaints c USING(ticket_no)),
+        kept AS (SELECT * FROM base WHERE status IS DISTINCT FROM 'Discard'),
+        reps AS ({reps})
+        SELECT (SELECT COUNT(*) FROM base) filed, (SELECT COUNT(*) FROM kept) kept,
+          COUNT(*) unique_n,
+          COUNT(*) FILTER(WHERE nodes>0) routed,
+          COUNT(*) FILTER(WHERE nodes>0 AND replied) atr,
+          COUNT(*) FILTER(WHERE nodes>0 AND replied AND (NOT required OR reviewed)) reviewed,
+          COUNT(*) FILTER(WHERE nodes>0 AND replied AND (NOT required OR reviewed) AND closed) closed
+        FROM reps
+    """)
+
+    def stage(metric_id: str, label: str, count: int | None, previous: int | None, note: str) -> dict[str, Any]:
+        return _metric(metric_id, label, count, unit="grievances", numerator=count, denominator=previous, note=note)
+
+    unique = row["unique_n"] if deduped else None
+    after_dedup = unique if deduped else row["kept"]
+    return {
+        "id": "flow", "title": "Case flow", "state": "recorded",
+        "denominator": {"label": "Grievances created in FY 2024-25", "value": row["filed"]},
+        "metrics": [
+            stage("flow-filed", "Filed", row["filed"], None, "Every grievance filed in the period."),
+            stage("flow-kept", "Not discarded", row["kept"], row["filed"], "Discarded by an officer: spam, non-grievances, missing details. There is no automated filter in the record."),
+            stage("flow-unique", "Repeats removed", unique, row["kept"], "One filing kept per group of the same person filing the same problem.")
+            if deduped else
+            _metric("flow-unique", "Repeats removed", None, unit="grievances", note="Repeats are not removed yet: the validated duplicate groups are being rebuilt. Later stages still count repeat filings."),
+            stage("flow-routed", "Given a workflow", row["routed"], after_dedup, "No workflow assigned."),
+            stage("flow-atr", "Report submitted", row["atr"], row["routed"], "No action taken report recorded."),
+            stage("flow-reviewed", "Reviewed where required", row["reviewed"], row["atr"], "Closed or waiting without the review its workflow requires."),
+            stage("flow-closed", "Closed", row["closed"], row["reviewed"], "Still open at 30 July 2025."),
+        ],
+        "breakdown": None, "breakdownUnavailableReason": None,
+        "caveats": [
+            "Each stage keeps only the grievances that passed the one before, so the drop at each step is what left the path there, not every case with that outcome.",
+            "Stages after 'Given a workflow' use the ATR panel's definitions.",
+        ],
+    }
+
+
 # Concept note §6 fields the extract has no column or event for, each with the
 # measure recording it would make possible. Order follows the note.
 UNRECORDED_FIELDS = (
@@ -1072,6 +1127,7 @@ def build_release(
                 "periodLabel": PERIOD_LABEL,
                 "snapshotDate": SNAPSHOT_DATE.isoformat(),
                 "panels": [
+                    _flow(con, identity),
                     _aging(con), _transfers(con), _journey(con, coverage), atr,
                     _demand(con, identity, full, citizens.get(scope.id)),
                     _closure(con, identity),

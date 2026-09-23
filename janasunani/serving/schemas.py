@@ -657,7 +657,7 @@ class MonitoringBreakdownRow(MonitoringResponseModel):
 # The governed panels, in display order. Every published dashboard carries
 # each of them exactly once, recorded or explicitly unavailable.
 MonitoringPanelId = Literal[
-    "aging", "transfers", "journey", "atr", "demand", "closure", "discards",
+    "flow", "aging", "transfers", "journey", "atr", "demand", "closure", "discards",
     "recording", "offices",
 ]
 MONITORING_PANEL_IDS: tuple[str, ...] = get_args(MonitoringPanelId)

@@ -50,7 +50,7 @@ export type MonitoringMetric =
 
 /** The governed panels, in display order. Mirrors MonitoringPanelId in
  * janasunani/serving/schemas.py; a dashboard carries each exactly once. */
-export const PANEL_IDS = ["aging", "transfers", "journey", "atr", "demand", "closure", "discards", "recording", "offices"] as const;
+export const PANEL_IDS = ["flow", "aging", "transfers", "journey", "atr", "demand", "closure", "discards", "recording", "offices"] as const;
 export type PanelId = (typeof PANEL_IDS)[number];
 
 export type MonitoringPanel = RecordedMonitoringPanel | UnavailableMonitoringPanel;

@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 import duckdb
 
-from janasunani.analytics.monitoring import _atr, CORE_SCOPES, OFFICE_TABLE_TOP_N, PROXY_METRICS, UNRECORDED_FIELDS, _discards, _offices, _recording, _metric as published_metric, _pct, withhold_small_panel, refiling_summary, suppress_breakdown
+from janasunani.analytics.monitoring import _atr, _flow, CORE_SCOPES, OFFICE_TABLE_TOP_N, PROXY_METRICS, UNRECORDED_FIELDS, _discards, _offices, _recording, _metric as published_metric, _pct, withhold_small_panel, refiling_summary, suppress_breakdown
 from janasunani.serving.api import create_app
 from janasunani.serving.schemas import MONITORING_PANEL_IDS
 from janasunani.serving.monitoring import (
@@ -181,7 +181,8 @@ def test_each_recorded_metric_says_whether_it_is_direct_or_a_proxy():
 def test_every_proxy_id_is_a_metric_the_publisher_emits():
     # A typo in PROXY_METRICS would silently publish a proxy as direct.
     source = Path("janasunani/analytics/monitoring.py").read_text()
-    emitted = set(re.findall(r'_metric\(\s*"([a-z0-9-]+)"', source))
+    # The metric helpers inside panel builders (stage, share) emit ids too.
+    emitted = set(re.findall(r'(?:_metric|stage|share)\(\s*"([a-z0-9-]+)"', source))
     emitted |= {key for key, _label in re.findall(r'\("([a-z-]+)", "([^"]+)"\)', source)}
     assert PROXY_METRICS <= emitted, PROXY_METRICS - emitted
 
@@ -463,3 +464,49 @@ def test_atr_reads_review_from_the_assigned_workflow():
     assert metrics["atr-wait"]["value"] == 20.0            # 30 July less 10 July
     assert panel["tables"][0]["rows"] == [{"label": "More clarification required", "values": [10]}]
     assert {metrics[m]["basis"] for m in ("review-done", "closed-without-review")} == {"proxy"}
+
+
+def _flow_lake() -> duckdb.DuckDBPyConnection:
+    """Ten of each path: discarded, no workflow, no ATR, skipped review,
+    reviewed but open, and two that close (one needing no review)."""
+    con = duckdb.connect()
+    con.execute("""
+        CREATE TABLE shapes(kind VARCHAR, status VARCHAR, nodes INT, replied BOOL, required BOOL, reviewed BOOL, closed BOOL);
+        INSERT INTO shapes VALUES
+          ('discarded', 'Discard',  3, FALSE, TRUE,  FALSE, FALSE),
+          ('no_flow',   'Pending',  0, FALSE, FALSE, FALSE, FALSE),
+          ('no_atr',    'Pending',  3, FALSE, TRUE,  FALSE, FALSE),
+          ('skipped',   'Disposed', 3, TRUE,  TRUE,  FALSE, TRUE),
+          ('open',      'Pending',  3, TRUE,  TRUE,  TRUE,  FALSE),
+          ('closed',    'Disposed', 3, TRUE,  TRUE,  TRUE,  TRUE),
+          ('direct',    'Disposed', 2, TRUE,  FALSE, FALSE, TRUE);
+        CREATE TABLE atr_cases AS SELECT kind || '-' || i AS ticket_no, nodes, required, replied, reviewed, closed
+          FROM shapes, range(10) r(i);
+        CREATE TABLE complaints AS SELECT kind || '-' || i AS ticket_no, status FROM shapes, range(10) r(i);
+    """)
+    return con
+
+
+def test_flow_stages_nest_and_say_when_repeats_are_not_removed():
+    panel = _flow(_flow_lake(), None)
+    stages = {m["id"]: m for m in panel["metrics"]}
+    assert [m["id"] for m in panel["metrics"]] == [
+        "flow-filed", "flow-kept", "flow-unique", "flow-routed", "flow-atr", "flow-reviewed", "flow-closed"]
+    assert stages["flow-unique"]["state"] == "unavailable"
+    # Each stage is (count, the stage before): without dedup, routing follows "kept".
+    got = {k: (m["numerator"], m["denominator"]) for k, m in stages.items() if m["state"] == "recorded"}
+    assert got == {
+        "flow-filed": (70, None), "flow-kept": (60, 70), "flow-routed": (50, 60),
+        "flow-atr": (40, 50), "flow-reviewed": (30, 40), "flow-closed": (20, 30),
+    }
+
+
+def test_flow_keeps_one_filing_per_duplicate_group(tmp_path):
+    # The ten 'closed' filings are five people filing twice each.
+    groups = tmp_path / "groups.csv"
+    groups.write_text("ticket_no,duplicate_group_id,group_size\n" + "".join(
+        f"closed-{i},g{i // 2},2\n" for i in range(10)))
+    stages = {m["id"]: m for m in _flow(_flow_lake(), groups)["metrics"]}
+    assert (stages["flow-unique"]["numerator"], stages["flow-unique"]["denominator"]) == (55, 60)
+    assert stages["flow-unique"]["basis"] == "proxy"
+    assert stages["flow-closed"]["numerator"] == 15
