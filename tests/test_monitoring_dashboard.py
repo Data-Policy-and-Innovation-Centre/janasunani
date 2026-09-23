@@ -439,10 +439,12 @@ def _atr_lake(cases, sizes=None) -> duckdb.DuckDBPyConnection:
     con.execute("CREATE TABLE action_history(id INTEGER, ticket_no VARCHAR, action_taken_date TIMESTAMP, action_status VARCHAR, action_taken_remark VARCHAR)")
     con.execute("CREATE TABLE acting_office(id INTEGER, ticket_no VARCHAR, action_taken_date TIMESTAMP, action_status VARCHAR, code VARCHAR)")
     next_id = 0
-    for kind, chain, status, steps in cases:
+    for kind, chain, spec, steps in cases:
+        # "Disposed@<date>" closes on that date; plain "Disposed" on 10 July.
+        status, _, resolved = spec.partition("@")
+        resolved = resolved or ("2025-07-10" if status == "Disposed" else None)
         for i in range(sizes.get(kind, 10)):
             ticket = f"{kind}-{i}"
-            resolved = "2025-07-10" if status == "Disposed" else None
             con.execute("INSERT INTO complaints VALUES (?, TIMESTAMP '2025-07-01' - INTERVAL 30 DAY, ?, ?, ?)", [ticket, status, resolved, chain])
             for office, action, remark, day in steps:
                 next_id += 1
@@ -472,6 +474,8 @@ ATR_CASES = [
         ("waiting", "1,2,3", "Pending", [("BDO", "Replied", None, 10)]),
         # No workflow recorded.
         ("none", "", "Pending", []),
+        # Waiting at the snapshot, disposed a week later: still in the queue.
+        ("waiting_late", "1,2,3", "Disposed@2025-08-05", [("BDO", "Replied", None, 10)]),
         # A Reopen on the day of the first reply but recorded before it, by
         # id: it precedes the ATR, so it is not a send-back.
         ("tied", "1,2,3", "Disposed", [("Collector", "Reopen", "Required more clarification.", 2), ("BDO", "Replied", None, 2),
@@ -489,13 +493,13 @@ def test_atr_reads_review_from_the_assigned_workflow():
     def fraction(metric_id):
         return metrics[metric_id]["numerator"], metrics[metric_id]["denominator"]
 
-    assert fraction("review-required") == (70, 80)       # seven three-office kinds of eight with a workflow
-    assert fraction("atr-replied") == (80, 90)
+    assert fraction("review-required") == (80, 90)       # eight three-office kinds of nine with a workflow
+    assert fraction("atr-replied") == (90, 100)
     assert fraction("review-done") == (30, 60)            # reviewed, sent_back and twice, of the closed required cases
     assert fraction("closed-without-review") == (30, 60)  # skipped, late and tied
-    assert fraction("atr-sent-back") == (20, 80)
+    assert fraction("atr-sent-back") == (20, 90)
     assert fraction("atr-standard-reason") == (20, 20)
-    assert metrics["atr-waiting"]["value"] == 10
+    assert metrics["atr-waiting"]["value"] == 20  # waiting and waiting_late
     assert metrics["atr-wait"]["value"] == 20.0            # 30 July less 10 July
     # One row per grievance: the rows sum to the send-back count.
     assert panel["tables"][0]["rows"] == [{"label": "More clarification required", "values": [20]}]
