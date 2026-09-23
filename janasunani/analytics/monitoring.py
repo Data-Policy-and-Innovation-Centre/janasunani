@@ -533,16 +533,24 @@ def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
             AND (c.resolved_on IS NULL OR CAST(o.action_taken_date AS DATE) <= CAST(c.resolved_on AS DATE))),
         -- Same-day rows order by id, as everywhere events are sequenced.
         first_reply AS (SELECT ticket_no, MIN(d) fr, arg_min(id, (d, id)) fr_id FROM acts WHERE st='Replied' GROUP BY 1),
+        -- The first disposal after that reply. A Reopen after it is the case
+        -- being reopened (often by the citizen), not a reviewer sending the
+        -- ATR back.
+        first_close AS (
+          SELECT a.ticket_no, MIN(a.d) fc, arg_min(a.id, (a.d, a.id)) fc_id
+          FROM acts a JOIN first_reply f USING(ticket_no)
+          WHERE a.st='Disposed' AND (a.d, a.id) > (f.fr, f.fr_id) GROUP BY 1),
         per_case AS (
           SELECT a.ticket_no,
             COUNT(DISTINCT a.office) FILTER(WHERE a.st='Replied') repliers,
-            BOOL_OR(a.st='Reopen' AND (a.d, a.id) > (f.fr, f.fr_id)) sent_back,
+            BOOL_OR(a.st='Reopen' AND (a.d, a.id) > (f.fr, f.fr_id)
+                    AND (x.fc IS NULL OR (a.d, a.id) < (x.fc, x.fc_id))) sent_back,
             arg_max(a.st, (a.d, a.id)) last_status,
             MAX(a.d) last_action
-          FROM acts a LEFT JOIN first_reply f USING(ticket_no)
+          FROM acts a LEFT JOIN first_reply f USING(ticket_no) LEFT JOIN first_close x USING(ticket_no)
           GROUP BY a.ticket_no)
         SELECT c.ticket_no, c.resolved_on, c.nodes, c.nodes >= 3 required,
-          f.fr IS NOT NULL replied, f.fr, f.fr_id,
+          f.fr IS NOT NULL replied, f.fr, f.fr_id, x.fc, x.fc_id,
           COALESCE(p.sent_back, FALSE) sent_back,
           f.fr IS NOT NULL AND (p.repliers >= 2 OR COALESCE(p.sent_back, FALSE)) reviewed,
           c.status='Disposed' AND CAST(c.resolved_on AS DATE)<=DATE '2025-07-30' closed,
@@ -551,7 +559,8 @@ def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
           ((c.resolved_on IS NULL AND COALESCE(c.status, '') NOT IN ('Disposed','Discard'))
             OR CAST(c.resolved_on AS DATE)>DATE '2025-07-30') AND p.last_status='Replied' atr_waiting,
           DATE '2025-07-30'-CAST(p.last_action AS DATE) wait_days
-        FROM cohort c LEFT JOIN first_reply f USING(ticket_no) LEFT JOIN per_case p USING(ticket_no)
+        FROM cohort c LEFT JOIN first_reply f USING(ticket_no) LEFT JOIN first_close x USING(ticket_no)
+        LEFT JOIN per_case p USING(ticket_no)
     """)
     row = _one(con, """
         SELECT COUNT(*) filings,
@@ -581,6 +590,7 @@ def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
         FROM action_history a JOIN atr_cases c USING(ticket_no)
         LEFT JOIN revert r ON r.template = {_NORMALIZED_REMARK}
         WHERE c.replied AND a.action_status='Reopen' AND (a.action_taken_date, a.id) > (c.fr, c.fr_id)
+          AND (c.fc IS NULL OR (a.action_taken_date, a.id) < (c.fc, c.fc_id))
           AND a.action_taken_date < TIMESTAMP '2025-07-31'
           AND (c.resolved_on IS NULL OR CAST(a.action_taken_date AS DATE) <= CAST(c.resolved_on AS DATE))
         GROUP BY a.ticket_no
@@ -727,8 +737,9 @@ def _closure(con: duckdb.DuckDBPyConnection, full_path: Path | None) -> dict[str
     row = _one(con, """
         WITH cohort AS (SELECT ticket_no FROM scope_tickets WHERE created_on>=DATE '2024-07-01' AND created_on<DATE '2025-07-01'),
         r AS (SELECT c.* FROM closure_rung c JOIN cohort USING(ticket_no)),
-        reopened AS (SELECT COUNT(DISTINCT a.ticket_no) n FROM action_history a JOIN cohort USING(ticket_no)
-                     WHERE LOWER(a.action_status) LIKE '%reopen%')
+        -- Of the resolved cases the metric is shown against, as of the snapshot.
+        reopened AS (SELECT COUNT(DISTINCT a.ticket_no) n FROM action_history a JOIN r USING(ticket_no)
+                     WHERE LOWER(a.action_status) LIKE '%reopen%' AND a.action_taken_date < TIMESTAMP '2025-07-31')
         SELECT COUNT(*) resolved, SUM(on_ladder) ladder,
           COUNT(*) FILTER(WHERE rung='bare') bare,
           COUNT(*) FILTER(WHERE rung='with_action') action_recorded,
