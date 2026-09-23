@@ -50,7 +50,7 @@ export type MonitoringMetric =
 
 /** The governed panels, in display order. Mirrors MonitoringPanelId in
  * janasunani/serving/schemas.py; a dashboard carries each exactly once. */
-export const PANEL_IDS = ["aging", "transfers", "journey", "atr", "demand", "closure", "discards"] as const;
+export const PANEL_IDS = ["aging", "transfers", "journey", "atr", "demand", "closure", "discards", "recording"] as const;
 export type PanelId = (typeof PANEL_IDS)[number];
 
 export type MonitoringPanel = RecordedMonitoringPanel | UnavailableMonitoringPanel;
@@ -87,6 +87,27 @@ export interface MonitoringDashboard {
   periodLabel: string;
   snapshotDate: string;
   panels: MonitoringPanel[];
+}
+
+/**
+ * Whether a recording-panel field is in the source (concept note §6).
+ *
+ * "absent" only when the publisher says the field is not recorded; any other
+ * unavailable metric was withheld (a small cell, or nothing to count) and
+ * must not be shown as a gap in the record. "partial" when coverage is short
+ * of complete or the publisher notes which part is missing.
+ */
+export type RecordingState = "recorded" | "partial" | "absent" | "withheld";
+
+export function recordingState(metric: MonitoringMetric): RecordingState {
+  if (metric.state === "unavailable") {
+    return metric.reason.startsWith("Not recorded") ? "absent" : "withheld";
+  }
+  // The unrounded ratio where there is one: 99.46% publishes as 99.5.
+  const pct = metric.numerator !== null && metric.denominator
+    ? (metric.numerator / metric.denominator) * 100
+    : metric.value;
+  return pct >= 99.5 && metric.note === null ? "recorded" : "partial";
 }
 
 export function scopesForView(catalog: MonitoringCatalog, kind: string): MonitoringScope[] {

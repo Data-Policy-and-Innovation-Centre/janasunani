@@ -47,6 +47,9 @@ PROXY_METRICS = frozenset({
     "problems", "citizens", "duplicate-adjustment", "repeat-groups", "campaigns",
     "bare-ladder", "bare-resolved", "action-recorded", "benefit-recorded",
     "refiling-30", "refiling-90",
+    # Coverage of a stand-in field: review authority for review required,
+    # subcategory for scheme or service.
+    "rec-review-required", "rec-scheme",
 })
 # Subcategory scopes are built per published department, largest first. Each
 # scope re-runs the whole panel suite over the lake, so this is deliberately a
@@ -740,6 +743,95 @@ def _discards(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     }
 
 
+# Concept note §6 fields the extract has no column or event for, each with the
+# measure recording it would make possible. Order follows the note.
+UNRECORDED_FIELDS = (
+    ("rec-earlier-reference", "Reference to an earlier ticket", "separating follow-ups from repeats"),
+    ("rec-candidate-relationship", "Candidate relationship to an earlier ticket", "duplicate and follow-up counts by label"),
+    ("rec-detection-evidence", "Detection evidence", "checking why a filing was linked"),
+    ("rec-confidence", "Confidence score and model or rule version", "label error rates by version"),
+    ("rec-reviewed-relationship", "Reviewed relationship label and reason", "precision of the candidate labels"),
+    ("rec-operational-action", "Operational action chosen, apart from the label", "what happens to each label"),
+    ("rec-review-event", "Review date, reviewer role, decision and reason", "review rate and post-review outcomes"),
+    ("rec-closure-reason", "Fixed closure reason", "closure quality without reading wording"),
+    ("rec-closure-evidence", "Supporting evidence at closure", "which closures are evidenced"),
+    ("rec-route-change-reason", "Reason for changing a category or route", "routing override analysis"),
+    ("rec-citizen-contact", "Citizen contact before closure", "whether citizens were reached"),
+    ("rec-citizen-feedback", "Citizen feedback after closure", "satisfaction by office and category"),
+)
+
+
+def _recording(con: duckdb.DuckDBPyConnection, discards: dict[str, Any]) -> dict[str, Any]:
+    """Which note §6 fields the source records, and how completely (§6).
+
+    A field the extract holds is published as the share of FY filings that
+    carry it. A field it cannot hold is an explicit unavailable metric naming
+    what recording it would make measurable. Fields that exist only in part
+    say which part is missing in their note.
+    """
+    row = _one(con, """
+        WITH cohort AS (
+          SELECT c.* FROM complaints c JOIN scope_tickets s USING(ticket_no)
+          WHERE s.created_on>=DATE '2024-07-01' AND s.created_on<DATE '2025-07-01'),
+        acted AS (
+          SELECT a.ticket_no, a.action_status FROM action_history a JOIN cohort USING(ticket_no)
+          WHERE a.action_taken_date < TIMESTAMP '2025-07-31')
+        SELECT COUNT(*) filings,
+          -- Each field counts if its label or its code is usable. A blank
+          -- label and a zero code are missing values, as elsewhere in analytics.
+          COUNT(*) FILTER(WHERE (NULLIF(trim(mode), '') IS NOT NULL OR NULLIF(mode_id, 0) IS NOT NULL)
+                                AND created_on IS NOT NULL) entry,
+          COUNT(*) FILTER(WHERE NULLIF(category_id, 0) IS NOT NULL OR NULLIF(trim(category), '') IS NOT NULL) category,
+          COUNT(*) FILTER(WHERE NULLIF(trim(subcategory), '') IS NOT NULL OR NULLIF(subcategory_id, 0) IS NOT NULL) subcategory,
+          COUNT(*) FILTER(WHERE NULLIF(trim(review_authority), '') IS NOT NULL
+                                OR NULLIF(review_authority_id, 0) IS NOT NULL) review_authority,
+          -- Assignment is dated on the complaint as well as in the history.
+          (SELECT COUNT(*) FROM cohort c WHERE
+             c.assigned_on < TIMESTAMP '2025-07-31' OR c.tagged_date < TIMESTAMP '2025-07-31'
+             OR c.ticket_no IN (SELECT ticket_no FROM acted WHERE action_status IN
+               ('Forwarded To Subordinate', 'Forward', 'Forwarded', 'Complaint Transfer'))) dated_action,
+          (SELECT COUNT(DISTINCT ticket_no) FROM acted WHERE action_status='ATR Received') atr
+        FROM cohort
+    """)
+    n = row["filings"]
+
+    def share(metric_id: str, label: str, count: int, note: str | None = None, denominator: int = n) -> dict[str, Any]:
+        return _metric(metric_id, label, _pct(count, denominator), unit="percent", numerator=count, denominator=denominator, note=note)
+
+    discard = next((m for m in discards.get("metrics", []) if m["id"] == "discard-reason-recognised"), None)
+    atr = (
+        share("rec-atr", "ATR request, receipt and closure events", row["atr"], "Only receipt exists as a status; request, return and acceptance are not separate events.")
+        if row["atr"] else
+        _metric("rec-atr", "ATR request, receipt and closure events", None, unit="percent", note="Not recorded: the extract has no 'ATR Received' event. Would make the ATR queue measurable.")
+    )
+    return {
+        "id": "recording", "title": "What the source records", "state": "recorded",
+        "denominator": {"label": "Grievances created in FY 2024-25", "value": n},
+        "metrics": [
+            share("rec-entry", "Entry channel and date", row["entry"]),
+            share("rec-classification", "Classification", row["category"], "Only the current category; later changes are not recorded as events."),
+            share("rec-events", "Dated assignment and transfer events", row["dated_action"], "Assignment dates on the complaint or in the action history. Returns are inferred from the office sequence, not recorded as events."),
+            (
+                {**discard, "id": "rec-discard-reason", "label": "Discard reason", "note": "Share of discards with one of the eight standard reasons. Timing is known only relative to transfers."}
+                if discard and discard["state"] == "recorded" else
+                _metric("rec-discard-reason", "Discard reason", None, unit="percent", note=(discard or {}).get("reason") or "No discards in this scope.")
+            ),
+            atr,
+            share("rec-review-required", "Whether review is required", row["review_authority"], "A review authority is named; whether review was required is not recorded."),
+            share("rec-scheme", "Scheme or service", row["subcategory"], "Subcategory often names the scheme; there is no scheme or service field."),
+            *(
+                _metric(metric_id, label, None, unit="percent", note=f"Not recorded. Would make possible: {unlocks}.")
+                for metric_id, label, unlocks in UNRECORDED_FIELDS
+            ),
+        ],
+        "breakdown": None, "breakdownUnavailableReason": None,
+        "caveats": [
+            "Shares are of FY 2024-25 filings in this scope, except discard reason, which is of discards.",
+            "A field that is present can still be recorded inconsistently; presence is not quality.",
+        ],
+    }
+
+
 def build_release(
     *,
     lake_dir: Path,
@@ -770,6 +862,7 @@ def build_release(
                 base = dedup_names.get(scope.parent_id)
             identity = dedup_dir / f"{base}_dedup_groups.csv" if base else None
             full = dedup_dir / f"{base}_dedup_full_groups.csv" if base else None
+            discards = _discards(con)
             dashboards[f"{scope.id}:{PERIOD_ID}"] = {
                 "scopeId": scope.id,
                 "scopeLabel": scope.label,
@@ -782,7 +875,8 @@ def build_release(
                     _aging(con), _transfers(con), _journey(con, coverage), _atr(con),
                     _demand(con, identity, full, citizens.get(scope.id)),
                     _closure(con, identity),
-                    _discards(con),
+                    discards,
+                    _recording(con, discards),
                 ],
             }
         for dashboard in dashboards.values():

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const { PANEL_IDS, childChoice, parseMonitoringCatalog, parseMonitoringDashboard, parentScopeFor, publishedScopes, quickScopes, scopesForView, subtypesFor } = await import("../lib/monitoring.ts");
+const { PANEL_IDS, childChoice, recordingState, parseMonitoringCatalog, parseMonitoringDashboard, parentScopeFor, publishedScopes, quickScopes, scopesForView, subtypesFor } = await import("../lib/monitoring.ts");
 
 const catalog = {
   schemaVersion: 1,
@@ -118,4 +118,17 @@ test("a recorded metric must say whether it is direct or a proxy", () => {
   const unknownBasis = structuredClone(dashboard);
   unknownBasis.panels[0].metrics[0].basis = "estimated";
   assert.throws(() => parseMonitoringDashboard(unknownBasis), /malformed/);
+});
+
+test("recording states keep a withheld figure apart from a field that is not recorded", () => {
+  const recorded = { id: "r", label: "R", state: "recorded", unit: "percent", numerator: 100, denominator: 100, coveragePct: null, basis: "direct" };
+  assert.equal(recordingState({ ...recorded, value: 100, note: null }), "recorded");
+  assert.equal(recordingState({ ...recorded, value: 99.9, numerator: 999, denominator: 1000, note: null }), "recorded");
+  assert.equal(recordingState({ ...recorded, value: 62.0, numerator: 62, note: null }), "partial");
+  // 99.46% publishes as 99.5; the threshold applies to the unrounded ratio.
+  assert.equal(recordingState({ ...recorded, value: 99.5, numerator: 9946, denominator: 10000, note: null }), "partial");
+  // Complete coverage of only part of the field.
+  assert.equal(recordingState({ ...recorded, value: 100, note: "Only the current category." }), "partial");
+  assert.equal(recordingState({ id: "a", label: "A", state: "unavailable", reason: "Not recorded. Would make possible: x." }), "absent");
+  assert.equal(recordingState({ id: "w", label: "W", state: "unavailable", reason: "Withheld because a cell is below 10." }), "withheld");
 });

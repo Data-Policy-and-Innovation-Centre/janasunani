@@ -7,12 +7,15 @@ import {
   parentScopeFor,
   publishedScopes,
   quickScopes,
+  recordingState,
   scopesForView,
   subtypesFor,
   type MonitoringCatalog,
   type MonitoringDashboard as Dashboard,
   type MonitoringMetric,
   type MonitoringPanel,
+  type RecordedMonitoringPanel,
+  type RecordingState,
 } from "@/lib/monitoring";
 import {
   denominatorLabel,
@@ -107,7 +110,79 @@ function MetricCell({
   );
 }
 
+const RECORDING_BADGE: Record<RecordingState, { text: string; tone: "positive" | "neutral" | "negative" }> = {
+  recorded: { text: "Recorded", tone: "positive" },
+  partial: { text: "Partly", tone: "neutral" },
+  absent: { text: "Not recorded", tone: "negative" },
+  withheld: { text: "Not shown", tone: "neutral" },
+};
+
+/** Note §6 as a checklist: each field, whether the source holds it, and how
+ * completely. Fields are listed recorded-first so the gaps read as one block. */
+function RecordingPanel({ panel }: { panel: RecordedMonitoringPanel }) {
+  const order: RecordingState[] = ["recorded", "partial", "withheld", "absent"];
+  const rows = panel.metrics
+    .map((metric) => ({ metric, state: recordingState(metric) }))
+    .sort((a, b) => order.indexOf(a.state) - order.indexOf(b.state));
+  const held = rows.filter((row) => row.state === "recorded" || row.state === "partial").length;
+  return (
+    <Reveal as="article" className="border-t-2 border-maroon bg-surface p-6 xl:col-span-2">
+      <h3 className="font-display text-[20px] leading-tight text-text-dark">
+        {panelTitle(panel.id, panel.title)}
+      </h3>
+      <p className="mt-1.5 max-w-[720px] text-[13.5px] leading-relaxed text-text-body">
+        The source holds <strong className="text-text-dark">{held}</strong> of the{" "}
+        {rows.length} fields the monitoring note asks for, some only in part.
+        The fields it does not hold are why several measures on this page are
+        unavailable.
+      </p>
+      <ul className="mt-6 grid gap-x-8 lg:grid-cols-2">
+        {rows.map(({ metric, state }, position) => {
+          const badge = RECORDING_BADGE[state];
+          // The badge already says "Not recorded"; the text says what it costs.
+          const note =
+            metric.state === "recorded" ? metric.note : metric.reason.replace(/^Not recorded[.:]\s*/, "");
+          return (
+            <li key={metric.id} className="border-t border-hair-soft py-3.5">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-[13.5px] text-text-dark">
+                  {metricLabel(metric.id, metric.label)}
+                </span>
+                <span className="flex-none whitespace-nowrap">
+                  <Badge tone={badge.tone}>{badge.text}</Badge>
+                </span>
+              </div>
+              {metric.state === "recorded" ? (
+                <div className="mt-2 flex items-center gap-3">
+                  <div className="h-[3px] flex-1 overflow-hidden bg-card">
+                    <div
+                      className="monitoring-bar h-full bg-maroon"
+                      style={{ width: `${Math.min(100, metric.value)}%`, transitionDelay: `${position * 40}ms` }}
+                    />
+                  </div>
+                  <span className="font-mono text-[11px] tabular-nums text-text-dark">
+                    {metric.value.toFixed(1)}%
+                  </span>
+                </div>
+              ) : null}
+              {note ? (
+                <p className="mt-1.5 text-[12px] leading-snug text-text-secondary">{note}</p>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+      <div className="mt-6">
+        <Note label="How to read this">{panel.caveats.join(" ")}</Note>
+      </div>
+    </Reveal>
+  );
+}
+
 function PanelCard({ panel, index }: { panel: MonitoringPanel; index: number }) {
+  if (panel.id === "recording" && panel.state === "recorded") {
+    return <RecordingPanel panel={panel} />;
+  }
   if (panel.state === "unavailable") {
     return (
       <Reveal as="article" className="border-t-2 border-hair bg-panel/60 p-6">

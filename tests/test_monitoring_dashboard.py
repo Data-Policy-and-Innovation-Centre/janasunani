@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 import duckdb
 
-from janasunani.analytics.monitoring import PROXY_METRICS, _discards, _metric as published_metric, _pct, withhold_small_panel, refiling_summary, suppress_breakdown
+from janasunani.analytics.monitoring import PROXY_METRICS, UNRECORDED_FIELDS, _discards, _recording, _metric as published_metric, _pct, withhold_small_panel, refiling_summary, suppress_breakdown
 from janasunani.serving.api import create_app
 from janasunani.serving.schemas import MONITORING_PANEL_IDS
 from janasunani.serving.monitoring import (
@@ -181,7 +181,7 @@ def test_each_recorded_metric_says_whether_it_is_direct_or_a_proxy():
 def test_every_proxy_id_is_a_metric_the_publisher_emits():
     # A typo in PROXY_METRICS would silently publish a proxy as direct.
     source = Path("janasunani/analytics/monitoring.py").read_text()
-    emitted = set(re.findall(r'_metric\(\s*"([a-z0-9-]+)"', source))
+    emitted = set(re.findall(r'(?:_metric|share)\(\s*"([a-z0-9-]+)"', source))
     emitted |= {key for key, _label in re.findall(r'\("([a-z-]+)", "([^"]+)"\)', source)}
     assert PROXY_METRICS <= emitted, PROXY_METRICS - emitted
 
@@ -307,3 +307,59 @@ def test_discards_reports_reason_and_timing_together():
         {"label": "Case already taken up / taken up earlier · before any transfer", "value": 10},
         {"label": "Duplicate copy · after a transfer", "value": 10},
     ]
+
+
+def test_recording_reports_coverage_and_names_what_is_missing():
+    con = duckdb.connect()
+    con.execute("""
+        CREATE TABLE complaints AS SELECT
+          'T' || i AS ticket_no, DATE '2024-08-01' AS created_on,
+          CASE WHEN i < 20 THEN 'Online' WHEN i < 25 THEN '  ' END AS mode,
+          -- Two filings carry only the code; a zero code is not a value.
+          CASE WHEN i IN (20, 21) THEN 5 WHEN i = 22 THEN 0 END AS mode_id,
+          CASE WHEN i < 40 THEN 7 END AS category_id,
+          NULL::VARCHAR AS category,
+          CASE WHEN i < 10 THEN 'Scheme' END AS subcategory,
+          CASE WHEN i = 10 THEN 4 END AS subcategory_id,
+          NULL::VARCHAR AS review_authority,
+          CASE WHEN i = 0 THEN 0 END AS review_authority_id,
+          -- Assignment recorded on the complaint itself: two before the
+          -- snapshot, one after it.
+          CASE WHEN i = 33 THEN TIMESTAMP '2024-08-03' END AS assigned_on,
+          CASE WHEN i = 36 THEN TIMESTAMP '2024-08-05'
+               WHEN i = 34 THEN TIMESTAMP '2025-08-20' END AS tagged_date
+        FROM range(40) r(i);
+        CREATE TABLE scope_tickets AS SELECT ticket_no, created_on FROM complaints;
+        CREATE TABLE action_history AS SELECT
+          i AS id, 'T' || i AS ticket_no,
+          -- 30 in-period transfers; three 'Forwarded', the spelling the action
+          -- taxonomy classifies; then disposals, which are not assignment
+          -- events; then transfers dated after the snapshot.
+          CASE WHEN i < 35 THEN TIMESTAMP '2024-08-02' ELSE TIMESTAMP '2025-08-15' END AS action_taken_date,
+          CASE WHEN i < 30 OR i >= 35 THEN 'Complaint Transfer'
+               WHEN i < 33 THEN 'Forwarded' ELSE 'Disposed' END AS action_status
+        FROM range(40) r(i);
+    """)
+    discards = {"metrics": [published_metric(
+        "discard-reason-recognised", "Discards with a recognised reason", 50.0,
+        unit="percent", numerator=10, denominator=20)]}
+    metrics = {m["id"]: m for m in _recording(con, discards)["metrics"]}
+
+    assert (metrics["rec-entry"]["numerator"], metrics["rec-entry"]["denominator"]) == (22, 40)
+    assert metrics["rec-classification"]["value"] == 100.0
+    assert metrics["rec-classification"]["note"]  # only the current category
+    assert metrics["rec-events"]["numerator"] == 35
+    assert metrics["rec-scheme"]["numerator"] == 11
+    # Both count a stand-in field, not the one the row names.
+    assert metrics["rec-scheme"]["basis"] == metrics["rec-review-required"]["basis"] == "proxy"
+    assert metrics["rec-entry"]["basis"] == "direct"
+    # Zero is published, not withheld: nothing names a review authority.
+    assert metrics["rec-review-required"]["value"] == 0.0
+    # The discard row is the discards panel's own figure, relabelled.
+    assert (metrics["rec-discard-reason"]["numerator"], metrics["rec-discard-reason"]["label"]) == (10, "Discard reason")
+    # No ATR event in the extract: explicit, and says what it would unlock.
+    assert metrics["rec-atr"]["state"] == "unavailable"
+    assert "ATR queue" in metrics["rec-atr"]["reason"]
+    for metric_id, _label, unlocks in UNRECORDED_FIELDS:
+        assert metrics[metric_id]["state"] == "unavailable"
+        assert unlocks in metrics[metric_id]["reason"]

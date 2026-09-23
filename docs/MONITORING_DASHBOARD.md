@@ -33,7 +33,7 @@ The catalogue exposes stable IDs, labels, parent scopes, definitions, and
 published periods. The dashboard returns every governed panel, once each:
 aging and escalation; transfers and loops; end-to-end journey; ATR queue
 discipline; demand and duplication; closure and return; discard reasons and
-timing. The list is `MonitoringPanelId` in `janasunani/serving/schemas.py`,
+timing; what the records hold. The list is `MonitoringPanelId` in `janasunani/serving/schemas.py`,
 mirrored by `PANEL_IDS` in `frontend/lib/monitoring.ts`. Individual panels or metrics can
 be explicitly unavailable. No proxy value is silently substituted.
 Every recorded metric carries `basis`: `direct` when it counts what the record
@@ -61,3 +61,11 @@ Reasons are the eight governed templates in
 `janasunani/analytics/findings/discards.py`. Other wording is not read as a
 reason, and the "Discards with a recognised reason" metric shows how much of
 the discard status those templates explain.
+
+"What the records hold" lists the concept note's §6 fields. A field the
+extract holds is the share of FY filings that carry it, with a note when only
+part of the field exists. A field it cannot hold is published as unavailable
+with a reason that starts "Not recorded" and names the measure recording it
+would allow; the frontend keys its "Not recorded" badge on that prefix, so a
+figure withheld for a small cell is never shown as a gap in the record. The
+unrecordable list is `UNRECORDED_FIELDS` in `janasunani/analytics/monitoring.py`.

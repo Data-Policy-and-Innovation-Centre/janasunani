@@ -658,6 +658,7 @@ class MonitoringBreakdownRow(MonitoringResponseModel):
 # each of them exactly once, recorded or explicitly unavailable.
 MonitoringPanelId = Literal[
     "aging", "transfers", "journey", "atr", "demand", "closure", "discards",
+    "recording",
 ]
 MONITORING_PANEL_IDS: tuple[str, ...] = get_args(MonitoringPanelId)
 
