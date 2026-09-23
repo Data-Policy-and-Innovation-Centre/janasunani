@@ -907,13 +907,15 @@ def _recording(con: duckdb.DuckDBPyConnection, discards: dict[str, Any]) -> dict
           WHERE s.created_on>=DATE '2024-07-01' AND s.created_on<DATE '2025-07-01'),
         acted AS (
           SELECT a.ticket_no, a.action_status FROM action_history a JOIN cohort USING(ticket_no)
-          WHERE a.action_taken_date IS NOT NULL)
+          WHERE a.action_taken_date < TIMESTAMP '2025-07-31')
         SELECT COUNT(*) filings,
-          COUNT(*) FILTER(WHERE mode IS NOT NULL AND created_on IS NOT NULL) entry,
+          -- A blank string is a missing value, as elsewhere in analytics.
+          COUNT(*) FILTER(WHERE NULLIF(trim(mode), '') IS NOT NULL AND created_on IS NOT NULL) entry,
           COUNT(*) FILTER(WHERE category_id IS NOT NULL) category,
-          COUNT(*) FILTER(WHERE subcategory IS NOT NULL) subcategory,
-          COUNT(*) FILTER(WHERE review_authority IS NOT NULL) review_authority,
-          (SELECT COUNT(DISTINCT ticket_no) FROM acted) dated_action,
+          COUNT(*) FILTER(WHERE NULLIF(trim(subcategory), '') IS NOT NULL) subcategory,
+          COUNT(*) FILTER(WHERE NULLIF(trim(review_authority), '') IS NOT NULL) review_authority,
+          (SELECT COUNT(DISTINCT ticket_no) FROM acted
+           WHERE action_status IN ('Forwarded To Subordinate', 'Forward', 'Complaint Transfer')) dated_action,
           (SELECT COUNT(DISTINCT ticket_no) FROM acted WHERE action_status='ATR Received') atr
         FROM cohort
     """)
