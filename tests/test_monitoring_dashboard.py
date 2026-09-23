@@ -690,3 +690,19 @@ def test_closure_reopens_count_resolved_cases_before_the_snapshot():
     """)
     reopened = next(m for m in _closure(con, None)["metrics"] if m["id"] == "reopened")
     assert (reopened["value"], reopened["denominator"]) == (10, 20)
+
+
+@pytest.mark.parametrize("steps", [
+    # An interim disposal the reviewer reopens with a standard send-back reason.
+    [("BDO", "Replied", None, 2), ("CMO", "Disposed", None, 3),
+     ("Collector", "Reopen", "Required more clarification.", 4), ("BDO", "Replied", None, 5), ("CMO", "Disposed", None, 7)],
+    # A citizen reopen, then a reviewer sends the new ATR back.
+    [("BDO", "Replied", None, 2), ("CMO", "Disposed", None, 3),
+     ("Citizen", "Reopen", "reopened on request of petitioner", 5), ("BDO", "Replied", None, 6),
+     ("Collector", "Reopen", "Required more clarification.", 7), ("BDO", "Replied", None, 8), ("CMO", "Disposed", None, 9)],
+])
+def test_a_standard_send_back_after_a_disposal_is_still_review(steps):
+    con = _atr_lake([("k", "1,2,3", "Disposed@2025-07-09", steps)])
+    _atr(con)
+    assert con.execute("SELECT DISTINCT sent_back, reviewed FROM atr_cases").fetchall() == [(True, True)]
+    assert con.execute("SELECT DISTINCT reason FROM atr_backs").fetchall() == [("More clarification required",)]

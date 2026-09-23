@@ -515,7 +515,8 @@ def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     is the ATR moving up; ``Reopen`` after it is a reviewer sending it back.
     """
     revert_values = ", ".join(f"('{k}', {_sql_str(v)})" for k, v in REVERT_TEMPLATES.items())
-    con.execute("""
+    revert_keys = ", ".join(f"'{k}'" for k in REVERT_TEMPLATES)
+    con.execute(f"""
         CREATE OR REPLACE TEMP TABLE atr_cases AS
         WITH cohort AS (
           SELECT s.ticket_no, c.status, c.resolved_on,
@@ -523,8 +524,13 @@ def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
           FROM scope_tickets s JOIN complaints c USING(ticket_no)
           WHERE s.created_on>=DATE '2024-07-01' AND s.created_on<DATE '2025-07-01'),
         acts AS (
-          SELECT o.ticket_no, o.id, o.action_taken_date d, o.action_status st, o.code office
+          SELECT o.ticket_no, o.id, o.action_taken_date d, o.action_status st, o.code office,
+            -- One of the portal's fixed send-back reasons: a reviewer's act
+            -- wherever it falls, where other Reopen wording after a disposal
+            -- is the case being reopened, often by the citizen.
+            {_NORMALIZED_REMARK} IN ({revert_keys}) standard_reason
           FROM acting_office o JOIN cohort c USING(ticket_no)
+          LEFT JOIN action_history h ON h.id = o.id
           WHERE o.action_taken_date < TIMESTAMP '2025-07-31'
             -- Review happens before closure: a closed case's later actions
             -- are not evidence that its ATR was reviewed.
@@ -544,7 +550,7 @@ def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
           SELECT a.ticket_no,
             COUNT(DISTINCT a.office) FILTER(WHERE a.st='Replied') repliers,
             BOOL_OR(a.st='Reopen' AND (a.d, a.id) > (f.fr, f.fr_id)
-                    AND (x.fc IS NULL OR (a.d, a.id) < (x.fc, x.fc_id))) sent_back,
+                    AND (x.fc IS NULL OR (a.d, a.id) < (x.fc, x.fc_id) OR a.standard_reason)) sent_back,
             arg_max(a.st, (a.d, a.id)) last_status,
             MAX(a.d) last_action
           FROM acts a LEFT JOIN first_reply f USING(ticket_no) LEFT JOIN first_close x USING(ticket_no)
@@ -590,7 +596,7 @@ def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
         FROM action_history a JOIN atr_cases c USING(ticket_no)
         LEFT JOIN revert r ON r.template = {_NORMALIZED_REMARK}
         WHERE c.replied AND a.action_status='Reopen' AND (a.action_taken_date, a.id) > (c.fr, c.fr_id)
-          AND (c.fc IS NULL OR (a.action_taken_date, a.id) < (c.fc, c.fc_id))
+          AND (c.fc IS NULL OR (a.action_taken_date, a.id) < (c.fc, c.fc_id) OR r.template IS NOT NULL)
           AND a.action_taken_date < TIMESTAMP '2025-07-31'
           AND (c.resolved_on IS NULL OR CAST(a.action_taken_date AS DATE) <= CAST(c.resolved_on AS DATE))
         GROUP BY a.ticket_no
@@ -634,7 +640,7 @@ def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
         "caveats": [
             "Review is required when the assigned workflow has three or more offices: the ones between the field office and the office that assigned it review the ATR. The workflow is the current one; an earlier workflow is not kept.",
             "An ATR is 'submitted' when the case records Replied. Review happened when a second office replied or a reviewer sent it back before closure.",
-            "'Reopen' after an ATR is a reviewer sending it back, not a citizen reopening the case.",
+            "A 'Reopen' after an ATR and before the case is disposed is a reviewer sending it back. After a disposal, only a Reopen with one of the standard send-back reasons counts; other wording is the case being reopened, often by the citizen.",
             "The breakdown is how long waiting ATRs have waited since the last action.",
             *(["The reasons ATRs were sent back are withheld: at least one reason covers fewer than 10 grievances."] if reasons_withheld else []),
         ],
@@ -764,7 +770,7 @@ def _closure(con: duckdb.DuckDBPyConnection, full_path: Path | None) -> dict[str
             _metric("bare-resolved", "Bare disposal / all resolved", _pct(row["bare"], row["resolved"]), unit="percent", numerator=row["bare"], denominator=row["resolved"]),
             _metric("action-recorded", "Action recorded", row["action_recorded"], unit="closures", denominator=row["ladder"]),
             _metric("benefit-recorded", "Benefit recorded", row["benefit_recorded"], unit="closures", denominator=row["ladder"]),
-            _metric("reopened", "Recorded Reopen events", row["reopened"], unit="grievances", denominator=row["resolved"], note="Most Reopen events follow an ATR and are a reviewer sending it back (see the ATR panel); some are citizen reopenings. The record does not separate them."),
+            _metric("reopened", "Resolved cases with a Reopen", row["reopened"], unit="grievances", numerator=row["reopened"], denominator=row["resolved"], note="Any Reopen before 30 July: a reviewer sending an ATR back or the case being reopened. The ATR panel separates the send-backs."),
             *refiling_metrics,
         ],
         "breakdown": None, "breakdownUnavailableReason": None,

@@ -72,7 +72,7 @@ const EN: Dictionary = {
     "bare-resolved": "Closed with no action, of all closed",
     "action-recorded": "Closed with an action recorded",
     "benefit-recorded": "Closed with a benefit recorded",
-    reopened: "Reopened or sent back",
+    reopened: "Resolved cases with a Reopen",
     // Action taken reports and review
     "review-required": "Workflow requires review",
     "atr-replied": "Report submitted",
