@@ -561,7 +561,8 @@ help:
 	@echo "  make preflight       Fast readiness check (models, OCR binaries, mappings/lake/OLTP)"
 	@echo "  make db              Start throwaway Postgres + run migrations"
 	@echo "  make api             Run the live real-inference API"
-	@echo "  make frontend        Run the Next.js UI against the live API"
+	@echo "  make mock-api        Run the mock-processor API (no models, no DB)"
+	@echo "  make frontend        Run the Next.js UI (starts the mock API if none is up)"
 	@echo "  make up              Serve API + frontend together (Ctrl-C stops both)"
 	@echo "  make down            Tear down the demo API + frontend + throwaway DB"
 	@echo "  make rehearsal       Run the 13 Aug freeze gate (static + stack + artifacts)"
@@ -840,7 +841,7 @@ _check_git_clean:
 # --- Live demo (real-inference API). `models` and `frontend` share names with
 # repo directories, so this whole group must be .PHONY or make treats them as
 # up-to-date files and skips the recipe.
-.PHONY: models preflight db api frontend up down rehearsal
+.PHONY: models preflight db api mock-api frontend up down rehearsal
 
 models:
 	@echo "Pulling ONLY the demo model artifacts (not the PII-bearing data)..."
@@ -898,7 +899,57 @@ api: preflight db
 	@OLTP_DB_URL=$(call sh_quote,$(OLTP_DB_URL_RAW)) JANASUNANI_API_HOST="$(API_HOST)" \
 	  JANASUNANI_API_PORT="$(API_PORT)" uv run --extra demo janasunani-api-live
 
+# The mock processor: canned/regex responses behind the same frozen contract as
+# `api`, over an in-memory store. No models, no Postgres, no DVC pull — which is
+# the point, it is the fast path for UI work. Submissions come back with
+# `routing.method: "mock"` and the UI badges them; `/health` reports
+# `processor: mock`, never `pipeline`. Same env contract as `api`
+# (janasunani/serving/api.py's main reads the JANASUNANI_API_HOST/PORT that
+# janasunani/inference/serve.py does), so API_PORT/API_HOST work identically.
+mock-api:
+	JANASUNANI_API_HOST="$(API_HOST)" JANASUNANI_API_PORT="$(API_PORT)" \
+	  uv run --extra serving janasunani-api
+
+# The UI needs an API on API_PORT: the supervisor page fetches its scope
+# catalogue on mount, so with nothing listening it renders empty dropdowns and
+# blank panels rather than an error.
+#
+# `frontend` therefore guarantees a backend, without ever displacing one:
+#   - an API already healthy on API_PORT is reused (`make api` in another
+#     terminal, or a live API — the documented two-terminal workflow);
+#   - otherwise `mock-api` is started here in the background and reaped on exit.
+# The dependency is expressed in this recipe rather than as a `mock-api`
+# prerequisite because a prerequisite runs in its own shell: it would either
+# block forever in the foreground, or orphan a background process this recipe
+# could no longer reap. `up` resolves the same problem the same way.
+#
+# The guard mirrors `db`'s: we start something ONLY when API_URL is still the
+# local default, so pointing the UI at an off-box API never quietly spawns a
+# local mock behind it. The trap reaps only the PID we launched (and its
+# children) — never a global `pkill` that could hit an unrelated API on this
+# machine. A single Ctrl-C on the frontend stops both.
 frontend:
+	@set -e; \
+	if curl -sf http://127.0.0.1:$(API_PORT)/health >/dev/null 2>&1; then \
+	  echo "Reusing the API already serving :$(API_PORT)."; \
+	elif [ "$(API_URL)" != "http://127.0.0.1:$(API_PORT)" ]; then \
+	  echo "Nothing on :$(API_PORT), and API_URL is not the local default —"; \
+	  echo "leaving it alone; bring up $(API_URL) yourself."; \
+	else \
+	  echo "Nothing on :$(API_PORT); starting the mock processor in the background..."; \
+	  JANASUNANI_API_HOST="$(API_HOST)" JANASUNANI_API_PORT="$(API_PORT)" \
+	    uv run --extra serving janasunani-api & \
+	  API_PID=$$!; \
+	  trap 'pkill -P $$API_PID 2>/dev/null; kill $$API_PID 2>/dev/null || true' EXIT INT TERM; \
+	  ready=; \
+	  for i in $$(seq 1 30); do \
+	    if ! kill -0 $$API_PID 2>/dev/null; then echo "Mock API exited during startup; aborting."; exit 1; fi; \
+	    if curl -sf http://127.0.0.1:$(API_PORT)/health >/dev/null 2>&1; then ready=1; break; fi; \
+	    sleep 1; \
+	  done; \
+	  [ -n "$$ready" ] || { echo "Mock API did not become healthy in time; aborting."; exit 1; }; \
+	  echo "Mock API healthy (:$(API_PORT)) — results will be badged 'mock'."; \
+	fi; \
 	cd frontend && npm install && \
 	  PORT="$(FRONTEND_PORT)" NEXT_PUBLIC_API_URL="$(API_URL)" npm run dev
 

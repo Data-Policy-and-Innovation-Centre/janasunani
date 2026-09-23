@@ -1,89 +1,375 @@
 @import "tailwindcss";
 
 /*
- * DPIC design tokens — single source of truth for the frontend theme.
- * Mirrored from the installed `dpic` package:
- *   .venv/lib/python3.13/site-packages/dpic/branding/colors.py
- *   .venv/lib/python3.13/site-packages/dpic/branding/typography.py
- * Maroon is the sole accent (chrome, not fills). Calibri with a web fallback
- * stack — Gotham / Adobe Garamond are licensed desktop fonts, not used here.
+ * Janasunani design tokens.
+ *
+ * Lineage: the DPIC brand maroon (`dpic/branding/colors.py`) carried onto the
+ * warm editorial ramp used by the Gramodaya Community Assessment dashboard —
+ * paper-toned ground, hairline rules instead of boxes, a display serif for
+ * numbers and headings, and a mono face reserved for kickers and labels.
+ *
+ * The role names (`surface`, `card`, `panel`, `hair`, `text-*`) are unchanged
+ * from the previous theme on purpose: they are re-pointed at the warm ramp so
+ * existing components inherit the palette without being rewritten.
  */
 
 :root {
-  /* Maroon */
-  --dpic-maroon: #8b1524; /* primary accent: headers, rules, buttons, labels */
-  --dpic-maroon-full: #800000; /* full-bleed section/hero/footer bars */
+  /* Maroon — the sole accent. Chrome and figures, not fills. */
+  --dpic-maroon: #8b1524; /* primary accent */
+  --dpic-maroon-full: #5e0e18; /* full-bleed bars, footer */
+  --dpic-maroon-deep: #46080f;
+  --dpic-maroon-soft: #a85560; /* mono kickers, de-emphasised accent */
+  --dpic-maroon-wash: #f6eaec; /* hover fill, selected row */
 
-  /* Neutrals / text ramp */
-  --dpic-white: #ffffff;
-  --dpic-text-dark: #1a1a1a; /* headings, key body */
-  --dpic-text-body: #444444; /* body copy */
-  --dpic-text-secondary: #666666; /* captions, secondary */
+  /* Warm neutral ramp */
+  --dpic-white: #fffefc;
+  --dpic-ground: #f8f6f2; /* page background */
+  --dpic-beige: #efe9df; /* tinted panels, scene backdrops */
+
+  /* Text */
+  --dpic-text-dark: #261f1c; /* headings */
+  --dpic-text-body: #4a423e; /* body copy */
+  --dpic-text-secondary: #716a64; /* captions, labels */
 
   /* Surfaces */
-  --dpic-surface: #ffffff;
-  --dpic-card: #f2f2f2; /* card fill, alt table row */
-  --dpic-panel: #f7f7f7; /* subtle panels */
-  --dpic-border: #dddddd; /* borders, hairlines */
+  --dpic-surface: #fffefc;
+  --dpic-card: #efe9df;
+  --dpic-panel: #f8f6f2;
+  --dpic-border: #ddd4c8; /* rules between sections */
+  --dpic-hair-soft: #efe9e1; /* rules within a section */
   --dpic-stat-tile: #a6a6a6;
 
   /* Greystones */
   --dpic-greystone-dark: #767676;
   --dpic-greystone-light: #d6d6ce;
 
-  /* Semantic */
-  --dpic-positive: #8a9045;
+  /* Semantic + data accents */
+  --dpic-positive: #59633a;
+  --dpic-positive-soft: #e6e9d8;
   --dpic-negative: #8f3931;
+  --dpic-gold: #a77a3a;
+  --dpic-sky: #496a82;
 
-  /* Type stacks — Calibri with faithful web fallbacks */
-  --dpic-font-sans: Calibri, "Segoe UI", system-ui, -apple-system, sans-serif;
-  --dpic-font-mono: "Courier New", monospace;
+  /* Motion. One easing curve for the whole interface. */
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --shadow: 0 1px 2px rgba(55, 31, 24, 0.05);
+  --shadow-lg: 0 18px 54px rgba(55, 31, 24, 0.13);
+
+  /* Layout */
+  --appbar-h: 64px;
+
+  /* Type stacks. The families are loaded by `next/font` in app/layout.tsx and
+     injected as --font-inter / --font-fraunces / --font-plex-mono. */
+  --dpic-font-sans: var(--font-inter), system-ui, -apple-system, sans-serif;
+  --dpic-font-display: var(--font-fraunces), Georgia, "Times New Roman", serif;
+  --dpic-font-mono: var(--font-plex-mono), ui-monospace, "Courier New", monospace;
 }
 
-/* Expose the tokens to Tailwind so utilities like `bg-maroon`,
-   `text-body`, `border-hair`, `font-sans` are generated once. */
+/* Expose the tokens to Tailwind so the utilities are generated once. */
 @theme inline {
   --color-maroon: var(--dpic-maroon);
   --color-maroon-full: var(--dpic-maroon-full);
+  --color-maroon-deep: var(--dpic-maroon-deep);
+  --color-maroon-soft: var(--dpic-maroon-soft);
+  --color-maroon-wash: var(--dpic-maroon-wash);
 
   --color-text-dark: var(--dpic-text-dark);
   --color-text-body: var(--dpic-text-body);
   --color-text-secondary: var(--dpic-text-secondary);
 
   --color-surface: var(--dpic-surface);
+  --color-ground: var(--dpic-ground);
+  --color-beige: var(--dpic-beige);
   --color-card: var(--dpic-card);
   --color-panel: var(--dpic-panel);
   --color-hair: var(--dpic-border);
+  --color-hair-soft: var(--dpic-hair-soft);
   --color-stat-tile: var(--dpic-stat-tile);
 
   --color-greystone-dark: var(--dpic-greystone-dark);
   --color-greystone-light: var(--dpic-greystone-light);
 
   --color-positive: var(--dpic-positive);
+  --color-positive-soft: var(--dpic-positive-soft);
   --color-negative: var(--dpic-negative);
+  --color-gold: var(--dpic-gold);
+  --color-sky: var(--dpic-sky);
 
   --font-sans: var(--dpic-font-sans);
+  --font-display: var(--dpic-font-display);
   --font-mono: var(--dpic-font-mono);
+
+  --ease-signature: var(--ease);
 }
 
 html,
 body {
   height: 100%;
-}
-
-.monitoring-bar {
-  transition: width 360ms ease-out;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .monitoring-bar {
-    transition: none;
-  }
+  margin: 0;
+  padding: 0;
 }
 
 body {
-  background: var(--dpic-surface);
+  background: var(--dpic-ground);
   color: var(--dpic-text-body);
   font-family: var(--dpic-font-sans);
+  line-height: 1.55;
   -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+::selection {
+  background: var(--dpic-positive-soft);
+}
+
+/* ---------------------------------------------------------------- type --- */
+
+/* Display serif for headings and figures. Weight stays light: the size does
+   the work, not the stroke. */
+.display {
+  font-family: var(--dpic-font-display);
+  font-weight: 400;
+  line-height: 1.12;
+  letter-spacing: -0.01em;
+}
+
+/* The page title idiom: a roman phrase with one maroon italic phrase in it. */
+.page-title {
+  font-family: var(--dpic-font-display);
+  font-weight: 400;
+  font-size: clamp(30px, 4.2vw, 46px);
+  line-height: 1.04;
+  letter-spacing: -0.025em;
+  color: var(--dpic-text-dark);
+}
+
+.page-title em {
+  font-style: italic;
+  color: var(--dpic-maroon);
+}
+
+/* Small uppercase mono label above a heading, or on an axis. */
+.kicker {
+  font-family: var(--dpic-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--dpic-maroon-soft);
+}
+
+/* A figure: large display serif numeral in maroon over a mono caption. */
+.figure {
+  font-family: var(--dpic-font-display);
+  font-weight: 400;
+  color: var(--dpic-maroon);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+/* ------------------------------------------------------------ app shell --- */
+
+.appbar {
+  position: sticky;
+  top: 0;
+  z-index: 900;
+  background: color-mix(in srgb, var(--dpic-ground) 94%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--dpic-border);
+}
+
+/* Reading-position bar, pinned to the underside of the appbar rule. */
+.scroll-progress {
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  height: 2px;
+  background: var(--dpic-maroon);
+  transform-origin: left center;
+  transition: width 0.08s linear;
+  z-index: 2;
+}
+
+/* A scroll container that carries no visible scrollbar — used by the nav,
+   which scrolls sideways on a narrow screen. */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Nav item with an underline that scales out from the centre. */
+.nav-link {
+  position: relative;
+  transition: color 0.18s var(--ease);
+}
+
+.nav-link::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--dpic-maroon);
+  transform: scaleX(0);
+  transform-origin: center;
+  transition: transform 0.24s var(--ease);
+}
+
+.nav-link:hover::after,
+.nav-link[data-active="true"]::after {
+  transform: scaleX(1);
+}
+
+/* ---------------------------------------------------------- reveal/motion - */
+
+/* Entrance reveal.
+ *
+ * Progressive enhancement: a revealed element is visible by default, and is
+ * only hidden-then-revealed once the inline script in app/layout.tsx has put
+ * `.js` on <html>. With JavaScript off, `.in` would never be added, so hiding
+ * by default would leave the server-rendered page blank. */
+.js .reveal {
+  opacity: 0;
+  transform: translateY(14px);
+  transition:
+    opacity 0.62s var(--ease),
+    transform 0.62s var(--ease);
+  transition-delay: var(--reveal-delay, 0ms);
+}
+
+.js .reveal.in {
+  opacity: 1;
+  transform: none;
+}
+
+/* Horizontal rule that draws itself in from the left on reveal. */
+.rule-draw {
+  position: relative;
+  overflow: hidden;
+}
+
+.rule-draw::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--dpic-maroon);
+  transform: scaleX(1);
+  transform-origin: left;
+  transition: transform 0.72s var(--ease);
+  transition-delay: var(--reveal-delay, 0ms);
+}
+
+.js .rule-draw::after {
+  transform: scaleX(0);
+}
+
+.js .reveal.in .rule-draw::after,
+.js .rule-draw.in::after {
+  transform: scaleX(1);
+}
+
+/* Data bars grow from zero once their panel is revealed, and re-animate
+   smoothly when the underlying value changes. */
+.monitoring-bar {
+  transition: width 0.72s var(--ease);
+  transition-delay: var(--reveal-delay, 0ms);
+}
+
+/* Route transition: a hairline sweeps across a translucent veil. */
+.page-thread {
+  position: fixed;
+  inset: 0;
+  z-index: 1190;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  background: color-mix(in srgb, var(--dpic-ground) 72%, transparent);
+  transition:
+    opacity 0.18s ease,
+    visibility 0.18s ease;
+}
+
+.page-thread.run {
+  opacity: 1;
+  visibility: visible;
+}
+
+.page-thread-line {
+  position: absolute;
+  left: 12vw;
+  right: 12vw;
+  top: 50%;
+  height: 1px;
+  background: var(--dpic-border);
+  overflow: hidden;
+}
+
+.page-thread-line::after {
+  content: "";
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--dpic-maroon);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.22s var(--ease);
+}
+
+.page-thread.run .page-thread-line::after {
+  transform: scaleX(1);
+}
+
+/* Slow ambient rotation for the brand glyph. */
+@keyframes glyph-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.glyph-spin {
+  animation: glyph-spin 48s linear infinite;
+  transform-origin: center;
+}
+
+/* ------------------------------------------------------- reduced motion --- */
+
+/* Everything above degrades to its resting state rather than being animated.
+   Nothing is hidden: `.reveal` is fully opaque so content is never gated on
+   an animation that will not run. */
+@media (prefers-reduced-motion: reduce) {
+  .js .reveal,
+  .js .reveal.in {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+
+  .rule-draw::after,
+  .js .rule-draw::after,
+  .js .reveal.in .rule-draw::after,
+  .js .rule-draw.in::after {
+    transform: scaleX(1);
+    transition: none;
+  }
+
+  .monitoring-bar,
+  .nav-link,
+  .nav-link::after,
+  .scroll-progress {
+    transition: none;
+  }
+
+  .glyph-spin {
+    animation: none;
+  }
+
+  .page-thread {
+    display: none;
+  }
 }

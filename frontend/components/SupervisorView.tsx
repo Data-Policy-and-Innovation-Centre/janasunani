@@ -11,7 +11,7 @@ import { Badge, Card } from "./ui";
 
 function Slice({ value }: { value: SliceLabel }) {
   return (
-    <dl className="grid grid-cols-1 gap-2 rounded-sm border border-hair bg-panel px-3 py-2 text-sm sm:grid-cols-3">
+    <dl className="grid grid-cols-1 gap-4 border-y border-hair py-4 text-[13.5px] sm:grid-cols-3">
       {(
         [
           ["District", value.district],
@@ -20,7 +20,7 @@ function Slice({ value }: { value: SliceLabel }) {
         ] as const
       ).map(([label, text]) => (
         <div key={label}>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-maroon">
+          <dt className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-maroon-soft">
             {label}
           </dt>
           <dd>{text}</dd>
@@ -32,8 +32,8 @@ function Slice({ value }: { value: SliceLabel }) {
 
 function CountTile({ count }: { count: AggregateCount }) {
   return (
-    <div className="rounded-sm border border-hair bg-surface p-3">
-      <p className="text-xs font-semibold uppercase tracking-wide text-maroon">
+    <div className="border-t border-hair pt-4">
+      <p className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-maroon-soft">
         {count.label}
       </p>
       <p className="mt-1 text-3xl font-bold tabular-nums text-text-dark">
@@ -59,7 +59,7 @@ function RecordedNotice({
   provenance: RecordedArtifactProvenance;
 }) {
   return (
-    <div className="rounded-sm border border-hair bg-panel px-3 py-2 text-sm text-text-body">
+    <div className="border-l-2 border-hair py-1.5 pl-3 text-[13.5px] text-text-body">
       <Badge tone="neutral">{provenance.label}</Badge>{" "}
       {provenance.artifact}
       <span className="block mt-1 text-xs text-text-secondary">
@@ -76,7 +76,7 @@ function UnavailableNotice({
   provenance: UnavailableProvenance;
 }) {
   return (
-    <div className="rounded-sm border border-hair bg-panel px-3 py-2 text-sm text-text-body">
+    <div className="border-l-2 border-hair py-1.5 pl-3 text-[13.5px] text-text-body">
       <Badge tone="neutral">{provenance.label}</Badge>{" "}
       {provenance.reason}
     </div>
@@ -109,7 +109,7 @@ function WorkloadFinding({ data }: { data: WorkloadPanel }) {
   return (
     <div className="flex flex-col gap-3">
       <UnavailableNotice provenance={data.provenance} />
-      <p className="rounded-sm border border-hair bg-panel px-3 py-2 text-sm leading-relaxed text-text-body">
+      <p className="border-l-2 border-hair py-1.5 pl-3 text-[13.5px] leading-relaxed text-text-body">
         <strong>Required before display:</strong> {data.requirement}
       </p>
     </div>
@@ -127,8 +127,8 @@ function SpikeFinding({ data }: { data: SpikePanel }) {
             <CountTile key={count.label} count={count} />
           ))}
         </div>
-        <div className="border-l-4 border-maroon bg-panel px-3 py-2">
-          <p className="text-xs font-semibold uppercase tracking-wide text-maroon">
+        <div className="border-l-2 border-maroon py-1.5 pl-3">
+          <p className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-maroon-soft">
             How to read it
           </p>
           <p className="mt-1 text-sm leading-relaxed text-text-body">
@@ -142,7 +142,7 @@ function SpikeFinding({ data }: { data: SpikePanel }) {
   return (
     <div className="flex flex-col gap-3">
       <UnavailableNotice provenance={data.provenance} />
-      <p className="rounded-sm border border-hair bg-panel px-3 py-2 text-sm leading-relaxed text-text-body">
+      <p className="border-l-2 border-hair py-1.5 pl-3 text-[13.5px] leading-relaxed text-text-body">
         <strong>Required before display:</strong> {data.requirement}
       </p>
     </div>
@@ -155,8 +155,8 @@ function ClosureFinding({ data }: { data: SupervisorDashboard["closure"] }) {
       <div className="flex flex-col gap-3">
         <RecordedNotice provenance={data.provenance} />
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div className="rounded-sm border border-hair bg-surface p-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-maroon">
+          <div className="border-t border-hair pt-4">
+            <p className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-maroon-soft">
               Share of templated closures
             </p>
             <p className="mt-1 text-3xl font-bold tabular-nums text-text-dark">
@@ -169,8 +169,8 @@ function ClosureFinding({ data }: { data: SupervisorDashboard["closure"] }) {
               {data.primaryDenominatorLabel.toLowerCase()}
             </p>
           </div>
-          <div className="rounded-sm border border-hair bg-panel p-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-maroon">
+          <div className="border-t border-hair-soft pt-4">
+            <p className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-maroon-soft">
               Same numerator, all resolved
             </p>
             <p className="mt-1 text-3xl font-bold tabular-nums text-text-dark">
@@ -183,7 +183,7 @@ function ClosureFinding({ data }: { data: SupervisorDashboard["closure"] }) {
             </p>
           </div>
         </div>
-        <p className="rounded-sm border border-hair bg-panel px-3 py-2 text-sm leading-relaxed text-text-body">
+        <p className="border-l-2 border-hair py-1.5 pl-3 text-[13.5px] leading-relaxed text-text-body">
           <strong>Caveat:</strong> {data.caveat}
         </p>
       </div>
@@ -194,8 +194,8 @@ function ClosureFinding({ data }: { data: SupervisorDashboard["closure"] }) {
     <div className="flex flex-col gap-3">
       <UnavailableNotice provenance={data.provenance} />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div className="rounded-sm border border-hair bg-surface p-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-maroon">
+        <div className="border-t border-hair pt-4">
+          <p className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-maroon-soft">
             Headline share
           </p>
           <p className="mt-1 text-3xl font-bold text-text-secondary">—</p>
@@ -204,24 +204,24 @@ function ClosureFinding({ data }: { data: SupervisorDashboard["closure"] }) {
             available together, so no figure is rendered.
           </p>
         </div>
-        <dl className="rounded-sm border border-hair bg-panel p-3 text-sm">
-          <dt className="text-xs font-semibold uppercase tracking-wide text-maroon">
+        <dl className="border-t border-hair-soft pt-4 text-[13.5px]">
+          <dt className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-maroon-soft">
             Numerator required
           </dt>
           <dd className="mb-3 text-text-body">{data.numeratorLabel}</dd>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-maroon">
+          <dt className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-maroon-soft">
             Denominator beside headline
           </dt>
           <dd className="mb-3 text-text-body">
             {data.primaryDenominatorLabel}
           </dd>
-          <dt className="text-xs font-semibold uppercase tracking-wide text-maroon">
+          <dt className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-maroon-soft">
             Comparison denominator
           </dt>
           <dd className="text-text-body">{data.secondaryDenominatorLabel}</dd>
         </dl>
       </div>
-      <p className="rounded-sm border border-hair bg-panel px-3 py-2 text-sm leading-relaxed text-text-body">
+      <p className="border-l-2 border-hair py-1.5 pl-3 text-[13.5px] leading-relaxed text-text-body">
         <strong>Caveat:</strong> {data.caveat}
       </p>
     </div>
@@ -231,7 +231,7 @@ function ClosureFinding({ data }: { data: SupervisorDashboard["closure"] }) {
 export function SupervisorView({ data }: { data: SupervisorDashboard }) {
   return (
     <div className="flex flex-col gap-5">
-      <div className="rounded-md border border-hair bg-card px-4 py-3">
+      <div className="border-t-2 border-maroon pt-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm font-semibold text-text-dark">
             {data.generatedLabel}

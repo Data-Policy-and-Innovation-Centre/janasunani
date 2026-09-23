@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const { childChoice, parseMonitoringCatalog, parseMonitoringDashboard, parentScopeFor, quickScopes, scopesForView, subtypesFor } = await import("../lib/monitoring.ts");
+const { childChoice, parseMonitoringCatalog, parseMonitoringDashboard, parentScopeFor, publishedScopes, quickScopes, scopesForView, subtypesFor } = await import("../lib/monitoring.ts");
 
 const catalog = {
   schemaVersion: 1,
@@ -42,6 +42,30 @@ test("cascading selectors retain the parent, subtype, and quick-view relationshi
   assert.equal(parentScopeFor(parsed, "handling-collector-puri").id, "handling-collector");
   assert.deepEqual(subtypesFor(parsed, "handling-collector").map((scope) => scope.id), ["handling-collector-puri"]);
   assert.deepEqual(quickScopes(parsed).map((scope) => scope.id), ["department-21", "handling-collector"]);
+});
+
+test("the selectors offer only scopes with a published aggregate", () => {
+  const parsed = parseMonitoringCatalog(catalog);
+  // department-22 carries no period, so it must not reach the picker.
+  assert.deepEqual(
+    publishedScopes(scopesForView(parsed, "department")).map((scope) => scope.id),
+    ["department-21"],
+  );
+  assert.deepEqual(
+    publishedScopes(subtypesFor(parsed, "handling-collector")).map((scope) => scope.id),
+    ["handling-collector-puri"],
+  );
+  assert.deepEqual(publishedScopes([]), []);
+});
+
+test("filtering the pickers does not narrow scopesForView itself", () => {
+  // scopesForView answers "every scope of this kind" and other callers rely on
+  // that; the published-only filter belongs at the call site, not inside it.
+  const parsed = parseMonitoringCatalog(catalog);
+  assert.deepEqual(scopesForView(parsed, "department").map((scope) => scope.id), [
+    "department-21",
+    "department-22",
+  ]);
 });
 
 test("dashboard requires all six governed panels", () => {

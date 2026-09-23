@@ -15,6 +15,7 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
+from collections.abc import Sequence
 from typing import Any
 
 import duckdb
@@ -30,6 +31,11 @@ PERIOD_END = date(2025, 7, 1)
 SNAPSHOT_DATE = date(2025, 7, 30)
 MIN_CELL = 10
 COUNT_UNITS = frozenset({"grievances", "groups", "closures", "citizens"})
+# Subcategory scopes are built per published department, largest first. Each
+# scope re-runs the whole panel suite over the lake, so this is deliberately a
+# short list rather than all 196 subcategories department 21 records.
+SUBCATEGORY_TOP_N = 5
+SUBCATEGORY_MIN_FILINGS = 500
 CAMPAIGN_THRESHOLD = 200  # existing large/campaign bucket threshold
 MAX_ARTIFACT_BYTES = 10_000_000
 SUBTYPE_ROLES = {
@@ -100,6 +106,11 @@ CORE_SCOPES = (
 
 def _slug(value: str) -> str:
     return _SAFE_ID.sub("-", value.lower()).strip("-")
+
+
+def _sql_str(value: str) -> str:
+    """Quote a literal for inlining into a scope predicate."""
+    return "'" + value.replace("'", "''") + "'"
 
 
 def _digest(path: Path) -> str:
@@ -190,8 +201,57 @@ def _one(con: duckdb.DuckDBPyConnection, sql: str, params: list[Any] | None = No
     return dict(zip(columns, cur.fetchone(), strict=True))
 
 
-def _catalog(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
-    scopes = list(CORE_SCOPES)
+def _subcategory_scopes(
+    con: duckdb.DuckDBPyConnection,
+    parents: Sequence[ScopeSpec],
+) -> tuple[ScopeSpec, ...]:
+    """Build a scope per large subcategory of each published department.
+
+    Subcategory is a cut *within* a department, not a sibling of one, so each
+    scope is parented to its department and the selector cascades exactly as
+    the handling-office subtypes already do.
+
+    Only the departments that already carry a dashboard are cut this way, and
+    only their largest subcategories: every scope re-runs the full panel suite
+    over the lake, so this multiplies the build.
+    """
+    scopes: list[ScopeSpec] = []
+    for parent in parents:
+        if parent.kind != "department":
+            continue
+        dept_id = int(parent.id.removeprefix("department-"))
+        rows = con.execute(
+            """
+            SELECT subcategory, COUNT(*) n FROM complaints
+            WHERE dept_id = ? AND subcategory IS NOT NULL
+              AND created_on >= ? AND created_on < ?
+            GROUP BY subcategory
+            HAVING COUNT(*) >= ?
+            ORDER BY n DESC, subcategory
+            LIMIT ?
+            """,
+            [dept_id, PERIOD_START, PERIOD_END, SUBCATEGORY_MIN_FILINGS, SUBCATEGORY_TOP_N],
+        ).fetchall()
+        for label, _count in rows:
+            scopes.append(ScopeSpec(
+                f"subcategory-{dept_id}-{_slug(label)}",
+                label,
+                "subcategory",
+                f"Grievances recorded against department {dept_id}, subcategory {label}.",
+                f"dept_id = {dept_id} AND subcategory = {_sql_str(label)}",
+                parent_id=parent.id,
+            ))
+    return tuple(scopes)
+
+
+def _catalog(
+    con: duckdb.DuckDBPyConnection,
+    extra_scopes: Sequence[ScopeSpec] = (),
+) -> list[dict[str, Any]]:
+    # `extra_scopes` are the scopes built dynamically for this release that
+    # also get a dashboard, so they must carry an available period like the
+    # core ones. Everything else in the catalogue is listed without a period.
+    scopes = list(CORE_SCOPES) + list(extra_scopes)
     core_ids = {scope.id for scope in scopes}
     for dept_id, label in con.execute(
         "SELECT DISTINCT dept_id, dept FROM complaints "
@@ -368,6 +428,7 @@ def _transfers(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
 def _journey(con: duckdb.DuckDBPyConnection, coverage: dict[str, int]) -> dict[str, Any]:
     row = _one(con, """
         SELECT COUNT(*) denominator, MEDIAN(days_to_close) median_total,
+          AVG(days_to_close) mean_total,
           AVG(registration) registration, AVG(first_assignment) first_assignment,
           AVG(field_action) field_action, AVG(review) review, AVG(closure) closure
         FROM phases_clean
@@ -376,16 +437,26 @@ def _journey(con: duckdb.DuckDBPyConnection, coverage: dict[str, int]) -> dict[s
         {"label": journey.PHASE_LABEL[name], "value": round(float(row[name] or 0), 1)}
         for name in journey.PHASES
     ]
+    # The mean leads, because it is the only total the breakdown below can add
+    # up to: the five spans tile per row, so the phase means sum to the mean
+    # total. Phase medians do not sum to the median total, so leading with the
+    # median invited a reader to reconcile the parts against a whole they can
+    # never reach. The median stays alongside it: these distributions are long
+    # tailed and the mean alone overstates the typical case.
     return {
         "id": "journey", "title": "End-to-end journey", "state": "recorded",
         "denominator": {"label": "Disposed journeys that tile", "value": row["denominator"]},
         "metrics": [
+            _metric("mean-total", "Mean total time", float(row["mean_total"] or 0), unit="days", denominator=row["denominator"]),
             _metric("median-total", "Median total time", float(row["median_total"] or 0), unit="days", denominator=row["denominator"]),
             _metric("tiling-coverage", "Tiling-sample coverage", _pct(coverage["tiling_rows"], coverage["all_rows"]), unit="percent", numerator=coverage["tiling_rows"], denominator=coverage["all_rows"]),
         ],
         "breakdown": breakdown,
         "breakdownUnavailableReason": None,
-        "caveats": ["Reuses the governed five-phase journey; phase means are over clean tiling journeys."],
+        "caveats": [
+            "Reuses the governed five-phase journey; phase means are over clean tiling journeys.",
+            "The five phases below are means and add up to the mean total. They do not add up to the median, because medians do not sum.",
+        ],
     }
 
 
@@ -586,7 +657,8 @@ def build_release(
     con = lake.connect(lake_dir, tables=("complaints", "action_history"))
     try:
         _prepare(con)
-        catalog = _catalog(con)
+        subcategories = _subcategory_scopes(con, CORE_SCOPES)
+        catalog = _catalog(con, subcategories)
         citizens = json.loads(citizen_aggregates.read_text()) if citizen_aggregates else {}
         dashboards: dict[str, Any] = {}
         dedup_names = {
@@ -594,9 +666,16 @@ def build_release(
             "department-40": "ssepd",
             "handling-cm-grievance-cell": "cm_cell",
         }
-        for scope in CORE_SCOPES:
+        for scope in (*CORE_SCOPES, *subcategories):
             coverage = _scope_tables(con, scope)
+            # A subcategory inherits its department's ticket-to-group index.
+            # That is correct rather than approximate: the demand and closure
+            # queries join the index to `scope_tickets`, which is already cut
+            # to the subcategory, so the department-wide file is filtered to
+            # this scope before anything is counted.
             base = dedup_names.get(scope.id)
+            if base is None and scope.parent_id:
+                base = dedup_names.get(scope.parent_id)
             identity = dedup_dir / f"{base}_dedup_groups.csv" if base else None
             full = dedup_dir / f"{base}_dedup_full_groups.csv" if base else None
             dashboards[f"{scope.id}:{PERIOD_ID}"] = {

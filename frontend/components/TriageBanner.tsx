@@ -27,7 +27,7 @@ export function TriageBanner({ triage }: { triage: TriageResult }) {
   // Advisory either way: a numeric score never determines the review outcome,
   // so the caveat travels with the value.
   const spamScoreLine = wasActuallyScored(spam) ? (
-    <p className="mt-1 text-xs text-text-secondary">
+    <p className="mt-1.5 text-[12px] leading-relaxed text-text-secondary">
       low-signal: <code>{spam.spam_reason ?? spam.reason_code}</code>{" "}
       (spam_score {spam.spam_score!.toFixed(2)}). Advisory only — it does
       not determine the review outcome.
@@ -37,66 +37,66 @@ export function TriageBanner({ triage }: { triage: TriageResult }) {
   return (
     <section
       aria-label="Advisory triage signals"
-      className="rounded-md border border-hair bg-card p-4"
+      className="border-t border-hair bg-panel/60 p-5"
     >
-      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-sm font-bold text-text-dark">
+      <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="font-display text-[18px] font-normal text-text-dark">
           Advisory triage signals
         </h2>
         <Badge tone="neutral">review only</Badge>
       </div>
-      <p className="mb-3 text-xs leading-relaxed text-text-secondary">
+      <p className="mb-5 text-[12.5px] leading-relaxed text-text-secondary">
         These signals assist officer review. They do not block, reject, or
         remove this grievance.
       </p>
 
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-3">
         {duplicate_review.decision === "not_indexed" && (
-          <article className="rounded-sm border border-hair bg-surface px-3 py-2">
+          <article className="border-l-2 border-hair bg-surface px-4 py-3">
             <Badge tone="neutral">duplicate check not indexed</Badge>
-            <p className="mt-1 text-sm text-text-body">
+            <p className="mt-1.5 text-[13.5px] leading-relaxed text-text-body">
               {duplicate_review.reason}
             </p>
-            <p className="mt-1 text-xs text-text-secondary">
+            <p className="mt-1.5 text-[12px] leading-relaxed text-text-secondary">
               This is not a finding that there are no related filings.
             </p>
           </article>
         )}
 
         {duplicate_review.decision === "unavailable" && (
-          <article className="rounded-sm border border-hair bg-surface px-3 py-2">
+          <article className="border-l-2 border-hair bg-surface px-4 py-3">
             <Badge tone="neutral">duplicate check unavailable</Badge>
-            <p className="mt-1 text-sm text-text-body">
+            <p className="mt-1.5 text-[13.5px] leading-relaxed text-text-body">
               {duplicate_review.reason}
             </p>
           </article>
         )}
 
         {duplicate_review.decision === "abstained" && (
-          <article className="rounded-sm border border-hair bg-surface px-3 py-2">
+          <article className="border-l-2 border-hair bg-surface px-4 py-3">
             <Badge tone="neutral">duplicate check abstained</Badge>
-            <p className="mt-1 text-sm text-text-body">
+            <p className="mt-1.5 text-[13.5px] leading-relaxed text-text-body">
               {duplicate_review.reason}
             </p>
-            <p className="mt-1 text-xs text-text-secondary">
+            <p className="mt-1.5 text-[12px] leading-relaxed text-text-secondary">
               No duplicate finding was made.
             </p>
           </article>
         )}
 
         {duplicate_review.decision === "no_match" && (
-          <article className="rounded-sm border border-hair bg-surface px-3 py-2">
+          <article className="border-l-2 border-hair bg-surface px-4 py-3">
             <Badge tone="neutral">duplicate check complete</Badge>
-            <p className="mt-1 text-sm text-text-body">
+            <p className="mt-1.5 text-[13.5px] leading-relaxed text-text-body">
               No verified related filing was found in the checked index.
             </p>
           </article>
         )}
 
         {duplicateDisplay.kind === "resubmission" && (
-          <article className="rounded-sm border border-hair bg-surface px-3 py-2">
+          <article className="border-l-2 border-hair bg-surface px-4 py-3">
             <Badge tone="neutral">possible duplicate</Badge>
-            <p className="mt-1 text-sm text-text-body">
+            <p className="mt-1.5 text-[13.5px] leading-relaxed text-text-body">
               Possible duplicate of ticket{" "}
               <Link
                 href={`/history?q=${encodeURIComponent(duplicateDisplay.ticketNo)}`}
@@ -110,12 +110,12 @@ export function TriageBanner({ triage }: { triage: TriageResult }) {
         )}
 
         {duplicateDisplay.kind === "campaign" && (
-          <article className="rounded-sm border border-positive bg-positive/10 px-3 py-2">
+          <article className="border-l-2 border-positive bg-positive-soft/50 px-4 py-3">
             <Badge tone="positive">collective grievance</Badge>
-            <h3 className="mt-1 text-sm font-semibold text-text-dark">
+            <h3 className="mt-1.5 text-[14px] font-semibold text-text-dark">
               Part of a campaign
             </h3>
-            <p className="mt-1 text-sm text-text-body">
+            <p className="mt-1.5 text-[13.5px] leading-relaxed text-text-body">
               {duplicateDisplay.relatedFilings} related filings across{" "}
               {duplicateDisplay.distinctSignatories} distinct signatories
               were found. This is a collective grievance, not spam; each
@@ -131,13 +131,13 @@ export function TriageBanner({ triage }: { triage: TriageResult }) {
             anything, this state should show is an open question — #180. */}
 
         {spam.decision === "review" && (
-          <article className="rounded-sm border border-negative bg-negative/10 px-3 py-2">
+          <article className="border-l-2 border-negative bg-negative/5 px-4 py-3">
             <Badge tone="negative">low-signal review</Badge>
-            <h3 className="mt-1 text-sm font-semibold text-text-dark">
+            <h3 className="mt-1.5 text-[14px] font-semibold text-text-dark">
               Officer review requested
             </h3>
-            <p className="mt-1 text-sm text-text-body">{lowSignalMessage}</p>
-            <p className="mt-1 text-xs text-text-secondary">
+            <p className="mt-1.5 text-[13.5px] leading-relaxed text-text-body">{lowSignalMessage}</p>
+            <p className="mt-1.5 text-[12px] leading-relaxed text-text-secondary">
               Reason code: <code>{spam.reason_code}</code>. This advisory does
               not reject the grievance.
             </p>
@@ -146,16 +146,16 @@ export function TriageBanner({ triage }: { triage: TriageResult }) {
         )}
 
         {spam.decision === "abstained" && (
-          <article className="rounded-sm border border-hair bg-surface px-3 py-2">
+          <article className="border-l-2 border-hair bg-surface px-4 py-3">
             <Badge tone="neutral">low-signal review abstained</Badge>
-            <p className="mt-1 text-sm text-text-body">{lowSignalMessage}</p>
-            <p className="mt-1 text-xs text-text-secondary">
+            <p className="mt-1.5 text-[13.5px] leading-relaxed text-text-body">{lowSignalMessage}</p>
+            <p className="mt-1.5 text-[12px] leading-relaxed text-text-secondary">
               Reason code: <code>{spam.reason_code}</code>. No low-signal
               review was assigned.
             </p>
             {spamScoreLine}
             {repetitionEvidence && (
-              <p className="mt-1 text-xs text-text-secondary">
+              <p className="mt-1.5 text-[12px] leading-relaxed text-text-secondary">
                 OCR repetition-collapse guard: {repetitionEvidence.observed ? "observed" : "not observed"}. No source text is shown here.
               </p>
             )}
@@ -163,16 +163,16 @@ export function TriageBanner({ triage }: { triage: TriageResult }) {
         )}
 
         {actionability?.decision === "review" && (
-          <article className="rounded-sm border border-negative bg-negative/10 px-3 py-2">
+          <article className="border-l-2 border-negative bg-negative/5 px-4 py-3">
             <Badge tone="negative">actionability review</Badge>
-            <h3 className="mt-1 text-sm font-semibold text-text-dark">
+            <h3 className="mt-1.5 text-[14px] font-semibold text-text-dark">
               Officer review requested
             </h3>
-            <p className="mt-1 text-sm text-text-body">
+            <p className="mt-1.5 text-[13.5px] leading-relaxed text-text-body">
               Local actionability screening requested an officer review. Treat
               the model label as an advisory cue, not a determination.
             </p>
-            <p className="mt-1 text-xs text-text-secondary">
+            <p className="mt-1.5 text-[12px] leading-relaxed text-text-secondary">
               Model label: <code>{actionability.predicted_label}</code>
               {" "}(confidence {actionability.confidence.toFixed(2)}; objective{" "}
               <code>{actionability.objective}</code>). This advisory does not
@@ -182,14 +182,14 @@ export function TriageBanner({ triage }: { triage: TriageResult }) {
         )}
 
         {actionability?.decision === "abstained" && (
-          <article className="rounded-sm border border-hair bg-surface px-3 py-2">
+          <article className="border-l-2 border-hair bg-surface px-4 py-3">
             <Badge tone="neutral">actionability review abstained</Badge>
-            <p className="mt-1 text-sm text-text-body">
+            <p className="mt-1.5 text-[13.5px] leading-relaxed text-text-body">
               The local actionability screening did not request extra officer
               review. This does not establish that the grievance is actionable
               or correctly routed.
             </p>
-            <p className="mt-1 text-xs text-text-secondary">
+            <p className="mt-1.5 text-[12px] leading-relaxed text-text-secondary">
               Model label: <code>{actionability.predicted_label}</code>
               {" "}(confidence {actionability.confidence.toFixed(2)}; objective{" "}
               <code>{actionability.objective}</code>).

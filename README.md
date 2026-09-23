@@ -261,13 +261,13 @@ make rehearsal                                # the 13 Aug freeze gate (static +
 Or one piece at a time:
 
 ```bash
-uv run --extra serving janasunani-api        # mock; http://127.0.0.1:8000, docs at /docs
+make mock-api                                # mock; http://127.0.0.1:8000, docs at /docs
 
 make models                                  # legacy category/page-type mirrors only
 # Provision local BART via an approved release (see §9) before live startup.
 uv run --extra demo janasunani-demo-preflight # check local models, release + OCR binaries
 uv run --extra demo janasunani-api-live       # real models behind the same contract
-make frontend                                 # Next.js UI on :3000, pointed at the API
+make frontend                                 # Next.js UI on :3000; starts the mock API if none is up
 ```
 
 The full endpoint surface the frontend builds against (`POST /grievance`,

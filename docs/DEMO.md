@@ -23,6 +23,12 @@ see [DEPLOY.md §4 "Automated demo deploy"](DEPLOY.md#4--automated-demo-deploy-c
 > `OLTP_DB_URL` at anything other than the throwaway default they skip that step
 > and never migrate it (you manage that database yourself).
 >
+> For UI work you do not need any of that: `make mock-api` serves the same
+> frozen contract from the mock processor, with no models and no database, and
+> `make frontend` starts one for you when nothing is already listening on
+> `API_PORT` (it reuses a live API when one is, so `make api` in one terminal
+> and `make frontend` in another still works).
+>
 > This fast path is **local**. It assumes a dev machine with Docker, `uv`,
 > Node/npm, and `lsof`. The CPU box is **not** provisioned for `make up` (no
 > Node, demo ports 3000/8000 closed by the security group, and prod Postgres

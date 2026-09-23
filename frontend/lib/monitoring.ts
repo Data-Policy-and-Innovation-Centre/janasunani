@@ -1,9 +1,13 @@
+// Mirrors the serving contract's MonitoringScope.kind
+// (janasunani/serving/schemas.py). Both subtype kinds are children reached
+// through the same parent cascade rather than viewpoints of their own.
 export type ScopeKind =
   | "statewide"
   | "department"
   | "entry_office"
   | "handling_office"
-  | "handling_office_subtype";
+  | "handling_office_subtype"
+  | "subcategory";
 
 export interface MonitoringScope {
   id: string;
@@ -103,6 +107,19 @@ export function childChoice(value: string, parentId: string): string {
 
 export function quickScopes(catalog: MonitoringCatalog): MonitoringScope[] {
   return catalog.scopes.filter((scope) => scope.quickView);
+}
+
+/**
+ * Keeps only the scopes a validated aggregate has actually been published for.
+ *
+ * The catalogue lists every scope the release knows about, and only a handful
+ * carry a period — 5 of 1,175 in the current release. Offering the rest as
+ * dead entries makes the picker look broken, so the selectors filter through
+ * this. It is deliberately separate from `scopesForView`/`subtypesFor`, which
+ * answer "every scope of this kind" and are relied on to keep doing so.
+ */
+export function publishedScopes(scopes: MonitoringScope[]): MonitoringScope[] {
+  return scopes.filter((scope) => scope.availablePeriods.length > 0);
 }
 
 const FORBIDDEN = new Set([

@@ -33,7 +33,9 @@ Two backends implement the same contract:
   tesseract/poppler, throwaway Postgres or no `OLTP_DB_URL` for an in-memory
   store). First boot is slow (model warm-up); `/health` must report
   `{"processor":"pipeline"}`.
-- **Mock** — `uv run --extra serving janasunani-api`. Canned/regex responses,
+- **Mock** — `make mock-api` (or `uv run --extra serving janasunani-api`).
+  `make frontend` starts this one for you when nothing is already serving the
+  API port, so the UI is never left fetching from a dead backend. Canned/regex responses,
 useful for fast UI iteration without models loaded. Results from this API
 come back with `routing.method: "mock"` and the UI marks them with a
   "mock result" badge. Its triage states are deterministic illustrations, not

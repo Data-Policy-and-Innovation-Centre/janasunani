@@ -35,7 +35,7 @@ function HighlightedText({
   if (cursor < text.length) out.push(text.slice(cursor));
 
   return (
-    <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-text-body">
+    <p className="whitespace-pre-wrap break-words text-[14px] leading-relaxed text-text-body">
       {out}
     </p>
   );
@@ -53,14 +53,14 @@ export function ResultView({ result }: { result: GrievanceResult }) {
   const isFallbackRouting = routing.method === "fallback";
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-9">
       {/* Header strip */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-hair bg-card px-4 py-3">
-        <div className="flex flex-col">
-          <span className="text-xs font-semibold uppercase tracking-wide text-maroon">
+      <div className="flex flex-wrap items-end justify-between gap-4 border-t-2 border-maroon pt-4">
+        <div>
+          <span className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-maroon-soft">
             Ticket
           </span>
-          <span className="font-mono text-sm font-bold text-text-dark">
+          <span className="mt-1 block font-display text-[28px] leading-none text-text-dark">
             {result.ticket_no}
           </span>
         </div>
@@ -71,7 +71,7 @@ export function ResultView({ result }: { result: GrievanceResult }) {
       </div>
 
       {isMock && (
-        <p className="rounded-md border border-hair bg-panel px-4 py-2 text-xs text-text-secondary">
+        <p className="border-l-2 border-maroon/30 pl-3 text-[12.5px] leading-relaxed text-text-secondary">
           Illustrative only — produced by the mock processor. Redaction here is
           a toy regex, not the production PII analyzer.
         </p>
@@ -89,7 +89,7 @@ export function ResultView({ result }: { result: GrievanceResult }) {
             : "direct text (no OCR)"
         }
       >
-        <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-text-body">
+        <p className="whitespace-pre-wrap break-words text-[14px] leading-relaxed text-text-body">
           {extraction.extracted_text}
         </p>
       </Card>
@@ -102,16 +102,16 @@ export function ResultView({ result }: { result: GrievanceResult }) {
       >
         <div className="flex flex-col gap-3">
           <div>
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-maroon">
+            <span className="mb-1 block font-mono text-[9.5px] uppercase tracking-[0.14em] text-maroon-soft">
               Redacted text
             </span>
-            <p className="whitespace-pre-wrap break-words rounded-sm bg-panel p-2 text-sm leading-relaxed text-text-body">
+            <p className="whitespace-pre-wrap break-words border-l-2 border-hair bg-panel p-3 text-[14px] leading-relaxed text-text-body">
               {redaction.redacted_text}
             </p>
           </div>
           {redaction.entities.length > 0 && (
             <div>
-              <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-maroon">
+              <span className="mb-1 block font-mono text-[9.5px] uppercase tracking-[0.14em] text-maroon-soft">
                 Detected spans (in original)
               </span>
               <div className="mb-2 flex flex-wrap gap-1.5">
@@ -144,7 +144,7 @@ export function ResultView({ result }: { result: GrievanceResult }) {
 
       {/* 4. Summary */}
       <Card step={4} title="Summary">
-        <p className="text-sm leading-relaxed text-text-body">
+        <p className="text-[15px] leading-[1.75] text-text-body">
           {result.summary}
         </p>
       </Card>
@@ -156,14 +156,14 @@ export function ResultView({ result }: { result: GrievanceResult }) {
         hint={`method: ${routing.method}`}
       >
         {isFallbackRouting && (
-          <p className="mb-3 rounded-sm bg-panel px-3 py-2 text-xs text-text-secondary">
+          <p className="mb-4 border-l-2 border-maroon/30 pl-3 text-[12.5px] leading-relaxed text-text-secondary">
             No specific rule matched this category/district — routed to the
             generic public grievance cell as a safety net. Confidence is low
             by design.
           </p>
         )}
         {routing.method === "learned" && routing.empirical_evidence && (
-          <p className="mb-3 rounded-sm border border-hair bg-panel px-3 py-2 text-xs leading-relaxed text-text-secondary">
+          <p className="mb-4 border-l-2 border-maroon/30 pl-3 text-[12.5px] leading-relaxed text-text-secondary">
             This destination describes historical dispatch, not which office
             resolves cases best. It is based on{" "}
             {routing.empirical_evidence.support} comparable historical

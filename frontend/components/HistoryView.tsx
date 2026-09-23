@@ -95,46 +95,46 @@ export function HistoryView({ initialQuery = "" }: { initialQuery?: string }) {
   const canNext = offset + LIMIT < total;
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-7">
       <form
         onSubmit={onSearch}
-        className="grid grid-cols-1 gap-3 rounded-md border border-hair bg-surface p-4 sm:grid-cols-4"
+        className="grid grid-cols-1 items-end gap-x-6 gap-y-4 border-y border-hair py-5 sm:grid-cols-4"
       >
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Search text (q)"
-          className="rounded-sm border border-hair bg-surface px-3 py-2 text-sm text-text-body outline-none focus:border-maroon sm:col-span-2"
+          className="rounded-none border-0 border-b border-hair bg-transparent px-0 py-2 text-[14.5px] text-text-body outline-none transition-colors focus:border-maroon sm:col-span-2"
         />
         <input
           value={district}
           onChange={(e) => setDistrict(e.target.value)}
           placeholder="District"
-          className="rounded-sm border border-hair bg-surface px-3 py-2 text-sm text-text-body outline-none focus:border-maroon"
+          className="rounded-none border-0 border-b border-hair bg-transparent px-0 py-2 text-[14.5px] text-text-body outline-none transition-colors focus:border-maroon"
         />
         <input
           value={category}
           onChange={(e) => setCategory(e.target.value)}
           placeholder="Category"
-          className="rounded-sm border border-hair bg-surface px-3 py-2 text-sm text-text-body outline-none focus:border-maroon"
+          className="rounded-none border-0 border-b border-hair bg-transparent px-0 py-2 text-[14.5px] text-text-body outline-none transition-colors focus:border-maroon"
         />
         <button
           type="submit"
           disabled={loading}
-          className="rounded-sm bg-maroon px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-maroon-full disabled:opacity-50 sm:col-span-1"
+          className="justify-self-start rounded-full bg-maroon px-6 py-2.5 font-mono text-[10.5px] uppercase tracking-[0.14em] text-white transition-colors duration-200 hover:bg-maroon-full disabled:opacity-40"
         >
           {loading ? "Searching…" : "Search"}
         </button>
       </form>
 
       {error && (
-        <p className="rounded-sm border border-negative/40 bg-negative/10 px-3 py-2 text-sm text-negative">
+        <p className="border-l-2 border-negative bg-negative/5 py-2 pl-3 text-[13.5px] text-negative">
           {error}
         </p>
       )}
 
       {showMockMark && items.length > 0 && (
-        <p className="rounded-sm border border-maroon/40 bg-maroon/5 px-3 py-2 text-sm text-text-body">
+        <p className="border-l-2 border-maroon py-2 pl-3 text-[13.5px] text-text-body">
           <Badge tone="maroon">mock data</Badge>{" "}
           These rows are illustrative, not real grievance history. Run{" "}
           <code className="font-mono text-xs">janasunani-api-live</code> against
@@ -142,16 +142,16 @@ export function HistoryView({ initialQuery = "" }: { initialQuery?: string }) {
         </p>
       )}
 
-      <div className="overflow-x-auto rounded-md border border-hair">
-        <table className="w-full border-collapse text-sm">
+      <div className="overflow-x-auto border-t border-hair">
+        <table className="w-full border-collapse text-[13.5px]">
           <thead>
-            <tr className="bg-maroon text-left text-white">
-              <th className="px-3 py-2 font-semibold">Ticket</th>
-              <th className="px-3 py-2 font-semibold">Date</th>
-              <th className="px-3 py-2 font-semibold">District</th>
-              <th className="px-3 py-2 font-semibold">Category</th>
-              <th className="px-3 py-2 font-semibold">Department</th>
-              <th className="px-3 py-2 font-semibold">Status</th>
+            <tr className="border-b border-hair text-left">
+              <th className="px-3 py-3 font-mono text-[9.5px] font-normal uppercase tracking-[0.13em] text-maroon-soft">Ticket</th>
+              <th className="px-3 py-3 font-mono text-[9.5px] font-normal uppercase tracking-[0.13em] text-maroon-soft">Date</th>
+              <th className="px-3 py-3 font-mono text-[9.5px] font-normal uppercase tracking-[0.13em] text-maroon-soft">District</th>
+              <th className="px-3 py-3 font-mono text-[9.5px] font-normal uppercase tracking-[0.13em] text-maroon-soft">Category</th>
+              <th className="px-3 py-3 font-mono text-[9.5px] font-normal uppercase tracking-[0.13em] text-maroon-soft">Department</th>
+              <th className="px-3 py-3 font-mono text-[9.5px] font-normal uppercase tracking-[0.13em] text-maroon-soft">Status</th>
             </tr>
           </thead>
           <tbody>
@@ -165,10 +165,10 @@ export function HistoryView({ initialQuery = "" }: { initialQuery?: string }) {
                 </td>
               </tr>
             )}
-            {items.map((it, i) => (
+            {items.map((it) => (
               <tr
                 key={it.ticket_no}
-                className={i % 2 === 1 ? "bg-card" : "bg-surface"}
+                className="border-b border-hair-soft transition-colors duration-150 hover:bg-maroon-wash/50"
               >
                 <td className="px-3 py-2 font-mono text-text-dark">
                   {it.ticket_no}
@@ -206,7 +206,7 @@ export function HistoryView({ initialQuery = "" }: { initialQuery?: string }) {
         </table>
       </div>
 
-      <div className="flex items-center justify-between text-sm text-text-secondary">
+      <div className="flex items-center justify-between text-[12.5px] text-text-secondary">
         <span>
           {total > 0
             ? `Showing ${shownFrom}–${shownTo} of ${total}`
@@ -217,7 +217,7 @@ export function HistoryView({ initialQuery = "" }: { initialQuery?: string }) {
             type="button"
             onClick={() => setOffset(Math.max(0, offset - LIMIT))}
             disabled={!canPrev || loading}
-            className="rounded-sm border border-hair px-3 py-1.5 font-medium text-text-body transition-colors hover:border-maroon hover:text-maroon disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded-full border border-hair px-4 py-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-text-secondary transition-colors duration-200 hover:border-maroon hover:text-maroon disabled:cursor-not-allowed disabled:opacity-40"
           >
             Previous
           </button>
@@ -225,7 +225,7 @@ export function HistoryView({ initialQuery = "" }: { initialQuery?: string }) {
             type="button"
             onClick={() => setOffset(offset + LIMIT)}
             disabled={!canNext || loading}
-            className="rounded-sm border border-hair px-3 py-1.5 font-medium text-text-body transition-colors hover:border-maroon hover:text-maroon disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded-full border border-hair px-4 py-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-text-secondary transition-colors duration-200 hover:border-maroon hover:text-maroon disabled:cursor-not-allowed disabled:opacity-40"
           >
             Next
           </button>
