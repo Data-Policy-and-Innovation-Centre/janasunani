@@ -22,6 +22,20 @@ way that means anything, by running the mart over a fixture lake in `tests/`.
 | `handoff` | Descriptive elapsed time between recorded handling steps, with aggregate coverage and sensitivity tables. |
 | `grievance_journey` | The CA&GR note's filing-mode, outcome and timing rules, plus the office decode and its rung ladder. Shared by the grievance notebooks. |
 
+## Notebook support (`figures.py`, `bottlenecks.py`)
+
+Not marts or findings. They exist so the department notebooks and the report
+scripts share one copy of what they all need.
+
+* `figures.py`: the DPIC palette, the house rcParams and the layout helpers.
+  Presentation only; it computes no number. Populations are a constructor
+  argument, so a one-population notebook and a two-population notebook use the
+  same panel code.
+* `bottlenecks.py`: the department bottleneck note as a module (`DEPARTMENTS`
+  holds each department's configuration). The notebooks and the Word reports
+  both call it, so a report cannot quote a figure the notebook does not
+  produce. Needs the dev dependency group (it imports IPython for display).
+
 ## Journey tables (`journey.py`)
 
 Not a mart or a finding. `journey.py` holds the four tables that carry a window
