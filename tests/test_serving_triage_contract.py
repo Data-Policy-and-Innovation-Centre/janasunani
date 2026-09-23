@@ -532,14 +532,16 @@ def test_the_rules_never_produce_a_label_the_contract_rejects():
 #: so changing a rule without bumping the version would make stored results
 #: unreadable. Change a rule: bump RELATIONSHIP_RULE_VERSION and add its digest.
 RULE_DIGESTS = {
-    "relationship-rules-v1": "4a5968818e9b7e06bdbbc436625cf19592e4754491fb1f948bf5c712a933d9a3",
+    "relationship-rules-v1": "56ceb59198c3ee87d22f7a86c20a38383092fc6dc8f4452ce3e2288c03aa6847",
 }
 
 
 def test_changing_a_rule_requires_a_new_rule_version():
     import hashlib
+    # Only the fields the rules read, so a new evidence field is not a rule change.
+    read = ("identity_match", "text_similarity", "explicit_reference", "follow_up_cue", "new_information")
     outputs = "".join(
-        f"{e.model_dump_json()}|{kind}|{candidate_relationship(e, kind)}\n"
+        f"{[getattr(e, f) for f in read]}|{kind}|{candidate_relationship(e, kind)}\n"
         for e in _evidence_space() for kind in (None, "resubmission", "campaign")
     )
     assert RULE_DIGESTS.get(RELATIONSHIP_RULE_VERSION) == hashlib.sha256(outputs.encode()).hexdigest()
