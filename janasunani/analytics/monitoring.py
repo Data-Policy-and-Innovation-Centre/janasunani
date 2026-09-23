@@ -527,7 +527,9 @@ def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
           WHERE o.action_taken_date < TIMESTAMP '2025-07-31'
             -- Review happens before closure: a closed case's later actions
             -- are not evidence that its ATR was reviewed.
-            AND (c.resolved_on IS NULL OR o.action_taken_date <= c.resolved_on)),
+            -- By calendar date, as in sql/closure.sql: resolved_on and the
+            -- actions are written by different code paths on the same day.
+            AND (c.resolved_on IS NULL OR CAST(o.action_taken_date AS DATE) <= CAST(c.resolved_on AS DATE))),
         -- Same-day rows order by id, as everywhere events are sequenced.
         first_reply AS (SELECT ticket_no, MIN(d) fr, arg_min(id, (d, id)) fr_id FROM acts WHERE st='Replied' GROUP BY 1),
         per_case AS (
@@ -579,7 +581,7 @@ def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
         LEFT JOIN revert r ON r.template = {_NORMALIZED_REMARK}
         WHERE c.replied AND a.action_status='Reopen' AND (a.action_taken_date, a.id) > (c.fr, c.fr_id)
           AND a.action_taken_date < TIMESTAMP '2025-07-31'
-          AND (c.resolved_on IS NULL OR a.action_taken_date <= c.resolved_on)
+          AND (c.resolved_on IS NULL OR CAST(a.action_taken_date AS DATE) <= CAST(c.resolved_on AS DATE))
         GROUP BY a.ticket_no
     """)
     reasons = con.execute(
