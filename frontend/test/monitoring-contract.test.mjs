@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const { PANEL_IDS, childChoice, recordingState, parseMonitoringCatalog, parseMonitoringDashboard, parentScopeFor, publishedScopes, quickScopes, scopesForView, subtypesFor } = await import("../lib/monitoring.ts");
+const { PANEL_IDS, childChoice, sortableColumn, recordingState, parseMonitoringCatalog, parseMonitoringDashboard, parentScopeFor, publishedScopes, quickScopes, scopesForView, subtypesFor } = await import("../lib/monitoring.ts");
 
 const catalog = {
   schemaVersion: 1,
@@ -123,8 +123,10 @@ test("a recorded metric must say whether it is direct or a proxy", () => {
 test("recording states keep a withheld figure apart from a field that is not recorded", () => {
   const recorded = { id: "r", label: "R", state: "recorded", unit: "percent", numerator: 100, denominator: 100, coveragePct: null, basis: "direct" };
   assert.equal(recordingState({ ...recorded, value: 100, note: null }), "recorded");
-  assert.equal(recordingState({ ...recorded, value: 99.9, note: null }), "recorded");
-  assert.equal(recordingState({ ...recorded, value: 62.0, note: null }), "partial");
+  assert.equal(recordingState({ ...recorded, value: 99.9, numerator: 999, denominator: 1000, note: null }), "recorded");
+  assert.equal(recordingState({ ...recorded, value: 62.0, numerator: 62, note: null }), "partial");
+  // 99.46% publishes as 99.5; the threshold applies to the unrounded ratio.
+  assert.equal(recordingState({ ...recorded, value: 99.5, numerator: 9946, denominator: 10000, note: null }), "partial");
   // Complete coverage of only part of the field.
   assert.equal(recordingState({ ...recorded, value: 100, note: "Only the current category." }), "partial");
   assert.equal(recordingState({ id: "a", label: "A", state: "unavailable", reason: "Not recorded. Would make possible: x." }), "absent");
@@ -151,4 +153,9 @@ test("drill-down tables must have one cell per column", () => {
   const negative = structuredClone(good);
   negative.panels[0].tables[0].rows[0].values = [-1, 2];
   assert.throws(() => parseMonitoringDashboard(negative), /malformed/i);
+});
+
+test("drill-down tables sort by workload, never by a raw rate", () => {
+  assert.equal(sortableColumn({ label: "Open now", unit: "grievances" }), true);
+  assert.equal(sortableColumn({ label: "Open 30+ days", unit: "percent" }), false);
 });
