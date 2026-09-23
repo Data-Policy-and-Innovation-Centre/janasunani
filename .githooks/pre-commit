@@ -4,8 +4,10 @@ set -eu
 # Block local-only state and secret files before they enter Git history.
 # Keep this in sync with .github/workflows/data-check.yml.
 bad_files="$(
-  git diff --cached --name-only --diff-filter=ACMR |
-    grep -E '(^|/)(terraform\.tfstate(\..*)?|terraform\.tfvars|.*\.auto\.tfvars|\.env|.*\.pem|id_rsa|id_ed25519)$' |
+  # ACMRT, not ACMR: replacing a tracked file with a symlink stages as a
+  # type change (T), which ACMR does not select.
+  git diff --cached --name-only --diff-filter=ACMRT |
+    grep -E '(^|/)(terraform\.tfstate(\..*)?|terraform\.tfvars|.*\.auto\.tfvars|.*\.tfplan|\.env|.*\.pem|id_rsa|id_ed25519)$' |
     grep -Ev '(^|/)\.env\.example$|(^|/)terraform\.tfvars\.example$' || true
 )"
 
@@ -16,3 +18,26 @@ if [ -n "$bad_files" ]; then
   echo "Keep Terraform state, tfvars, env files, and private keys local." >&2
   exit 1
 fi
+
+# Terraform plan archives, by content rather than by name. The filename check
+# above cannot catch these: `terraform plan -out=` takes any name, and the
+# documented example (`-out=tfplan`) has no suffix at all. Without this the
+# only content scan lives in CI, which sees the plan after the push that has
+# already disclosed the embedded state.
+#
+# Deliberately `python3`, not `uv run`: the script is stdlib-only so the hook
+# keeps working before any `uv sync` and cannot be skipped by a broken
+# environment. If python3 is missing the hook fails, which is the safe
+# direction for a check whose job is to stop secrets entering history.
+python3 "$(git rev-parse --show-toplevel)/scripts/check_no_terraform_plans.py" --staged
+
+# Provenance sidecars are checked by the same call. `--staged` validates every
+# blob the data allowlist exempts -- markers, DVC pointers and sidecars -- and
+# hands sidecar payloads to `check_provenance_sidecars.check_payload`, the
+# module that owns that schema and that CI already runs.
+#
+# Deliberately one Python call rather than a shell pipeline assembling paths.
+# The previous version copied staged blobs in `sh` and could not carry a
+# filename containing a newline through `tr`, which failed by checking nothing
+# and passing. Python reads the NUL-delimited list itself, so no filename can
+# be split.
