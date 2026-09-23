@@ -683,8 +683,16 @@ class MonitoringTable(MonitoringResponseModel):
     def _rows_fit_columns(self) -> "MonitoringTable":
         if any(len(row.values) != len(self.columns) for row in self.rows):
             raise ValueError("every table row needs one value per column")
-        if any(v is not None and v < 0 for row in self.rows for v in row.values):
-            raise ValueError("table values cannot be negative")
+        for row in self.rows:
+            for column, value in zip(self.columns, row.values):
+                if value is None:
+                    continue
+                if value < 0:
+                    raise ValueError("table values cannot be negative")
+                if column.unit == "percent" and value > 100:
+                    raise ValueError("a percent cell cannot exceed 100")
+                if column.unit == "grievances" and not float(value).is_integer():
+                    raise ValueError("a grievance count must be whole")
         return self
 
 
