@@ -49,8 +49,8 @@ PROXY_METRICS = frozenset({
     "refiling-30", "refiling-90",
     # Inferred from the order of recorded events, not recorded as a review.
     "review-done", "closed-without-review",
-    # Coverage of a stand-in field: review authority for review required,
-    # subcategory for scheme or service.
+    # Coverage of a stand-in field: the assigned workflow for whether review
+    # is required, subcategory for scheme or service.
     "rec-review-required", "rec-scheme",
 })
 # Subcategory scopes are built per published department, largest first. Each
