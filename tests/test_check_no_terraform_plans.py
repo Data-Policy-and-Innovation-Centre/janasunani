@@ -1177,10 +1177,28 @@ def test_a_protected_filename_is_redacted_in_ci(tmp_path, monkeypatch):
     # Still says where and what kind, and stays identifiable locally.
     assert "data/raw/" in result.stdout
     assert ".dvc" in result.stdout
-    # The stem is hashed and the suffix kept, so the message still says
-    # what kind of file is wrong.
+    # The suffix is kept, so the message still says what kind of file is
+    # wrong. No digest of the stem is printed: a phone number is a small
+    # search space, so any stable hash of it is reversible from a public log.
     digest = hashlib.sha256(b"Ram-Kumar-9876543210").hexdigest()[:12]
-    assert digest in result.stdout
+    assert digest not in result.stdout
+    assert "<redacted:1>.dvc" in result.stdout
+
+
+def test_redaction_labels_are_per_run_ordinals(monkeypatch):
+    from scripts import check_no_terraform_plans as check
+
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setattr(check, "_REDACTIONS", {})
+    first = check.safe_path(Path("data/raw/Ram-9876543210/a.dvc"))
+    second = check.safe_path(Path("data/raw/Ram-9876543210/b.dvc"))
+    other = check.safe_path(Path("data/raw/Sita-9123456780/a.dvc"))
+
+    # One component keeps one label within the run, so a reader can see two
+    # paths share a directory; a different component gets a different one.
+    assert first.split("/")[2] == second.split("/")[2] == "<redacted:1>"
+    assert other.split("/")[2] not in {"<redacted:1>", first.split("/")[3]}
+    assert "9876543210" not in first + second + other
 
 
 def test_the_same_run_names_the_file_locally(tmp_path):
@@ -1541,6 +1559,10 @@ def test_the_accepted_keys_are_the_ones_the_repository_actually_uses():
         ("a[9876]543210.dvc", True),
         ("987/654/3210.dvc", True),
         ("+91 98765 43210.dvc", True),
+        # Unicode punctuation between digits, as a phone number is often typed.
+        ("Ram-987\u2011654\u20113210", True),
+        ("987\u2013654\u20133210.dvc", True),
+        ("987\u00b7654\u00b73210.dvc", True),
         # Written with thousands separators, Western and Indian grouping.
         ("Ram-987,654,3210", True),
         ("98,76,54,32,10.dvc", True),
@@ -1855,3 +1877,11 @@ def test_a_masked_plan_is_refused_by_the_hook(tmp_path):
     _git(repo, "add", "artifact.bin")
 
     assert _run_staged(repo).returncode == 1
+
+
+def test_crc32_is_not_an_accepted_hash_name():
+    # No CRC32 digest rule exists, so accepting the name only let a pointer
+    # through the name check to be refused at the digest.
+    from scripts.check_no_terraform_plans import HASH_NAMES
+
+    assert "crc32" not in HASH_NAMES

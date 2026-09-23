@@ -42,7 +42,6 @@ from __future__ import annotations
 
 import argparse
 import io
-import hashlib
 import json
 import os
 import re
@@ -295,7 +294,8 @@ def _checksum_problem(key: str, value: str) -> str | None:
     return None
 TOKEN = re.compile(r"\A[A-Za-z0-9_.-]{1,64}\Z")
 # The algorithms DVC actually writes. A generic token accepted prose.
-HASH_NAMES = frozenset({"md5", "sha256", "sha1", "etag", "checksum", "crc32"})
+# Every name here needs a digest rule in CHECKSUM_WIDTHS.
+HASH_NAMES = frozenset({"md5", "sha256", "sha1", "etag", "checksum"})
 
 # Digits in a name under data/, counted across the separators people write
 # identifiers with: `987-654-3210` and `9876 543210` carry no nine-digit run
@@ -304,11 +304,12 @@ HASH_NAMES = frozenset({"md5", "sha256", "sha1", "etag", "checksum", "crc32"})
 # Aadhaar 12. Measured before choosing the threshold: across all 39 path
 # components in this repository the worst group holds 8 digits, so this
 # refuses the identifier shapes with margin and breaks nothing.
-# The separator class is everything people put *between* digits when they
-# write a number down -- parentheses and slashes included, as in
-# `(987) 654-3210`, and commas, as in `987,654,3210` or the Indian
-# `98,76,54,32,10`. Anything not in this class ends the group.
-DIGIT_GROUP = re.compile(r"\d(?:[\d\s._\-()\[\]/+,]*\d)?")
+# Any run of non-alphanumeric characters joins digits into one group: a
+# hand-written class of separators always missed one (commas, then U+2011
+# non-breaking hyphens), and people type numbers with whatever punctuation
+# is to hand. A letter ends the group, which keeps `validation_5_page` and
+# `Dump20250730` from being read as one run.
+DIGIT_GROUP = re.compile(r"\d(?:[\d\W_]*\d)?")
 IDENTIFIER_DIGITS = 9
 
 # Shapes that are an identifier whatever field they sit in.
@@ -762,8 +763,15 @@ SAFE_DATA_DIRS = frozenset(
 )
 
 
+# Component -> its label for this run. An ordinal, not a digest: a phone
+# number or a name is a small search space, so any stable hash of it can be
+# reversed by anyone reading the public log.
+_REDACTIONS: dict[str, int] = {}
+
+
 def _redact(component: str) -> str:
-    return f"<redacted:{hashlib.sha256(component.encode('utf-8')).hexdigest()[:12]}>"
+    label = _REDACTIONS.setdefault(component, len(_REDACTIONS) + 1)
+    return f"<redacted:{label}>"
 
 
 def safe_path(path: Path) -> str:
@@ -775,8 +783,10 @@ def safe_path(path: Path) -> str:
     ``data/`` is redacted unless it is one of the fixed directory names this
     repository and DVC create, which say where to look and carry nothing.
 
-    The leaf keeps its suffix, which says what kind of file is wrong, and the
-    author can recompute `sha256(component)[:12]` locally to identify it.
+    The leaf keeps its suffix, which says what kind of file is wrong. Each
+    component becomes a per-run ordinal, so two paths sharing a directory
+    still show it; the author identifies the file by running the check
+    locally, where nothing is redacted.
 
     Paths outside ``data/`` print whole: they are source paths, they are not
     protected, and a reviewer has to be able to read them.
@@ -827,9 +837,9 @@ def report(offenders: list[tuple[Path, list[str]]]) -> int:
             "they are: an empty marker, a DVC pointer, or a provenance "
             "sidecar. Anything else there is refused. Rejected content is "
             "withheld on purpose, and in CI each protected path component is "
-            "shown as `sha256(component)[:12]` -- the leaf keeps its "
-            "suffix -- because a name under data/ can itself be the "
-            "disclosure: these logs are public."
+            "shown as a numbered placeholder -- the leaf keeps its suffix -- "
+            "because a name under data/ can itself be the disclosure: these "
+            "logs are public. Run the check locally to see the real path."
         )
     return 1
 
