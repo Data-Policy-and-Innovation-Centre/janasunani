@@ -167,7 +167,7 @@ class DuplicateSignal(BaseModel):
             from janasunani.serving.triage import RELATIONSHIP_RULE_VERSION, candidate_relationship
             if (
                 self.rule_version == RELATIONSHIP_RULE_VERSION
-                and self.relationship != candidate_relationship(self.evidence)
+                and self.relationship != candidate_relationship(self.evidence, self.duplicate_kind)
             ):
                 raise ValueError("the relationship contradicts its evidence under its rule version")
         if self.duplicate_kind == "campaign" and self.relationship not in {None, "campaign", "uncertain"}:

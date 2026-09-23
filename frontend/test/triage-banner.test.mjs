@@ -222,6 +222,15 @@ test("a labelled resubmission carries its candidate; an unlabelled one does not"
   assert.equal("candidate" in partial, false);
 });
 
+test("a label this frontend does not know is dropped, not rendered", () => {
+  const display = classifyDuplicateDisplay({
+    duplicate_kind: "resubmission", duplicate_group_id: "G", duplicate_ticket_no: "CMO1",
+    relationship: "sibling_case", evidence: {}, rule_version: "relationship-rules-v9",
+  });
+  assert.equal(display.kind, "resubmission");
+  assert.equal("candidate" in display, false);
+});
+
 test("the campaign signatory gate still decides, whatever the label says", () => {
   const display = classifyDuplicateDisplay({
     duplicate_kind: "campaign", duplicate_group_id: "GOV2024999640", related_filings: 26203, distinct_signatories: 1,

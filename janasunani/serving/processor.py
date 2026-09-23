@@ -163,8 +163,8 @@ def _mock_labelled(signal: DuplicateSignal, evidence: DuplicateEvidence) -> Dupl
     from janasunani.serving.triage import RELATIONSHIP_RULE_VERSION, candidate_relationship
 
     return DuplicateSignal(
-        **signal.model_dump(exclude_none=True),
-        relationship=candidate_relationship(evidence),
+        **signal.model_dump(exclude_none=True, exclude={"relationship", "evidence", "rule_version"}),
+        relationship=candidate_relationship(evidence, signal.duplicate_kind),
         evidence=evidence,
         rule_version=RELATIONSHIP_RULE_VERSION,
     )

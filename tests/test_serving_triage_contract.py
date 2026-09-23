@@ -464,6 +464,12 @@ from janasunani.serving.triage import (  # noqa: E402
         (dict(explicit_reference=True, follow_up_cue=True, text_similarity="different"), "uncertain"),
         # Nothing assessed.
         (dict(), "uncertain"),
+        # The costly error: cue checked, new information never checked.
+        (dict(identity_match=True, text_similarity="near", follow_up_cue=False), "uncertain"),
+        # A follow-up does not need near-identical wording.
+        (dict(identity_match=True, text_similarity="similar", follow_up_cue=True), "follow_up"),
+        # A pure duplicate needs the same identity key, not only a reference.
+        (dict(explicit_reference=True, text_similarity="near", follow_up_cue=False, new_information=False), "uncertain"),
     ],
 )
 def test_candidate_relationship_rules(evidence, label):
@@ -492,11 +498,51 @@ def test_the_mock_processor_labels_through_the_real_rules():
         if duplicate is None:
             continue
         assert duplicate.rule_version == RELATIONSHIP_RULE_VERSION
-        assert duplicate.relationship == candidate_relationship(duplicate.evidence)
+        assert duplicate.relationship == candidate_relationship(duplicate.evidence, duplicate.duplicate_kind)
         # Survives the store's serialise-and-revalidate round trip.
         assert DuplicateSignal.model_validate_json(duplicate.model_dump_json()) == duplicate
         seen.add((duplicate.duplicate_kind, duplicate.relationship))
     assert seen == {("resubmission", "follow_up"), ("campaign", "campaign")}
+
+
+def _evidence_space():
+    import itertools
+    tri = (True, False, None)
+    for identity, text, ref, cue, new in itertools.product(
+        tri, ("identical", "near", "similar", "different", None), tri, tri, tri,
+    ):
+        yield DuplicateEvidence(identity_match=identity, text_similarity=text,
+                                explicit_reference=ref, follow_up_cue=cue, new_information=new)
+
+
+def test_the_rules_never_produce_a_label_the_contract_rejects():
+    from janasunani.serving.schemas import DuplicateSignal
+    kinds = {
+        "resubmission": dict(duplicate_kind="resubmission", duplicate_group_id="g", duplicate_ticket_no="T1"),
+        "campaign": dict(duplicate_kind="campaign", duplicate_group_id="g", related_filings=18, distinct_signatories=16),
+    }
+    for evidence in _evidence_space():
+        for kind, signal in kinds.items():
+            label = candidate_relationship(evidence, kind)
+            DuplicateSignal(**signal, relationship=label, evidence=evidence, rule_version=RELATIONSHIP_RULE_VERSION)
+
+
+#: The rules' outputs over every evidence combination, per rule version. The
+#: validator re-checks stored labels under the current version on every read,
+#: so changing a rule without bumping the version would make stored results
+#: unreadable. Change a rule: bump RELATIONSHIP_RULE_VERSION and add its digest.
+RULE_DIGESTS = {
+    "relationship-rules-v1": "4a5968818e9b7e06bdbbc436625cf19592e4754491fb1f948bf5c712a933d9a3",
+}
+
+
+def test_changing_a_rule_requires_a_new_rule_version():
+    import hashlib
+    outputs = "".join(
+        f"{e.model_dump_json()}|{kind}|{candidate_relationship(e, kind)}\n"
+        for e in _evidence_space() for kind in (None, "resubmission", "campaign")
+    )
+    assert RULE_DIGESTS.get(RELATIONSHIP_RULE_VERSION) == hashlib.sha256(outputs.encode()).hexdigest()
 
 
 def test_a_label_that_contradicts_its_evidence_is_rejected():
@@ -510,3 +556,12 @@ def test_a_label_that_contradicts_its_evidence_is_rejected():
         DuplicateSignal(**signal, relationship="pure_duplicate")
     # Another rule version's label is not recomputed under these rules.
     assert DuplicateSignal(**{**signal, "rule_version": "other-rules"}, relationship="pure_duplicate")
+
+
+def test_relabelling_an_already_labelled_signal_replaces_its_label():
+    from janasunani.serving.processor import _mock_labelled
+    from janasunani.serving.schemas import DuplicateSignal
+    base = DuplicateSignal(duplicate_kind="resubmission", duplicate_group_id="g", duplicate_ticket_no="T1")
+    first = _mock_labelled(base, DuplicateEvidence(identity_match=True, text_similarity="near", follow_up_cue=True))
+    again = _mock_labelled(first, DuplicateEvidence())
+    assert (first.relationship, again.relationship) == ("follow_up", "uncertain")

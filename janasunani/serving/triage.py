@@ -96,7 +96,26 @@ class TriageProvider(Protocol):
 RELATIONSHIP_RULE_VERSION = "relationship-rules-v1"
 
 
-def candidate_relationship(evidence: DuplicateEvidence) -> DuplicateRelationship:
+#: Labels each kind of match can carry, as DuplicateSignal enforces them: one
+#: earlier ticket is never a campaign, and a campaign group is never a
+#: single filer's repeat or follow-up.
+_KIND_LABELS: dict[str, frozenset[str]] = {
+    "resubmission": frozenset({"pure_duplicate", "follow_up", "related", "uncertain"}),
+    "campaign": frozenset({"campaign", "uncertain"}),
+}
+
+
+def candidate_relationship(
+    evidence: DuplicateEvidence, kind: Optional[str] = None,
+) -> DuplicateRelationship:
+    """The evidence's label, or ``uncertain`` when it conflicts with the kind
+    of match the search found: the evidence and the match then disagree, and
+    a label must never make a signal fail to build."""
+    label = _evidence_label(evidence)
+    return label if kind is None or label in _KIND_LABELS[kind] else "uncertain"
+
+
+def _evidence_label(evidence: DuplicateEvidence) -> DuplicateRelationship:
     """Assign a candidate label from the evidence (concept note §2.3).
 
     A candidate, not a decision: what follows each label is for government to

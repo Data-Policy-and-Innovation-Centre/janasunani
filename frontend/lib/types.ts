@@ -164,7 +164,10 @@ export function candidateEvidenceRows(evidence: DuplicateEvidence): [string, str
 }
 
 function candidateOf(duplicate: DuplicateSignal): DuplicateCandidate | undefined {
-  return duplicate.relationship && duplicate.evidence && duplicate.rule_version
+  // A label this frontend has no copy for (a newer backend) is shown as no
+  // label rather than breaking the banner.
+  return duplicate.relationship && Object.hasOwn(RELATIONSHIP_COPY, duplicate.relationship)
+    && duplicate.evidence && duplicate.rule_version
     ? { relationship: duplicate.relationship, evidence: duplicate.evidence, ruleVersion: duplicate.rule_version }
     : undefined;
 }
