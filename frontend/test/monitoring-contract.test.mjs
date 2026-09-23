@@ -19,7 +19,7 @@ const panels = PANEL_IDS.map((id) => ({
   id, title: id, state: "recorded",
   denominator: { label: "Synthetic denominator", value: 20 },
   metrics: [{ id: `${id}-metric`, label: "Synthetic", state: "recorded", value: 50, unit: "percent", numerator: 10, denominator: 20, coveragePct: null, note: null, basis: "direct" }],
-  breakdown: null, breakdownUnavailableReason: null, caveats: ["Synthetic fixture."],
+  breakdown: null, breakdownUnavailableReason: null, tables: null, caveats: ["Synthetic fixture."],
 }));
 
 const dashboard = {
@@ -129,4 +129,20 @@ test("recording states keep a withheld figure apart from a field that is not rec
   assert.equal(recordingState({ ...recorded, value: 100, note: "Only the current category." }), "partial");
   assert.equal(recordingState({ id: "a", label: "A", state: "unavailable", reason: "Not recorded. Would make possible: x." }), "absent");
   assert.equal(recordingState({ id: "w", label: "W", state: "unavailable", reason: "Withheld because a cell is below 10." }), "withheld");
+});
+
+test("drill-down tables must have one cell per column", () => {
+  const table = { title: "By district", columns: [{ label: "Open", unit: "grievances" }, { label: "Open 30+ days", unit: "percent" }], rows: [{ label: "Puri", values: [120, 41.5] }, { label: "Khordha", values: [15, null] }] };
+  const good = structuredClone(dashboard);
+  good.panels[0].tables = [table];
+  assert.equal(parseMonitoringDashboard(good).panels[0].tables[0].rows[1].values[1], null);
+  const ragged = structuredClone(good);
+  ragged.panels[0].tables[0].rows[0].values = [120];
+  assert.throws(() => parseMonitoringDashboard(ragged), /malformed/i);
+  const badUnit = structuredClone(good);
+  badUnit.panels[0].tables[0].columns[0].unit = "days";
+  assert.throws(() => parseMonitoringDashboard(badUnit), /malformed/i);
+  const negative = structuredClone(good);
+  negative.panels[0].tables[0].rows[0].values = [-1, 2];
+  assert.throws(() => parseMonitoringDashboard(negative), /malformed/i);
 });

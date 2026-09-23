@@ -45,6 +45,7 @@ const EN: Dictionary = {
     closure: "How cases were closed",
     discards: "Why cases were discarded, and when",
     recording: "What the records hold",
+    offices: "By district and office",
   },
   metrics: {
     // Cases waiting

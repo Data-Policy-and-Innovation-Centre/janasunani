@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 import duckdb
 
-from janasunani.analytics.monitoring import PROXY_METRICS, UNRECORDED_FIELDS, _discards, _recording, _metric as published_metric, _pct, withhold_small_panel, refiling_summary, suppress_breakdown
+from janasunani.analytics.monitoring import CORE_SCOPES, OFFICE_TABLE_TOP_N, PROXY_METRICS, UNRECORDED_FIELDS, _discards, _offices, _recording, _metric as published_metric, _pct, withhold_small_panel, refiling_summary, suppress_breakdown
 from janasunani.serving.api import create_app
 from janasunani.serving.schemas import MONITORING_PANEL_IDS
 from janasunani.serving.monitoring import (
@@ -214,6 +214,9 @@ def test_catalog_and_dashboard_are_allowlisted(tmp_path):
     )
     assert response.status_code == 200
     assert [p["id"] for p in response.json()["panels"]] == list(MONITORING_PANEL_IDS)
+    # The frontend parser requires the key on every recorded panel, including
+    # releases published before tables existed.
+    assert all("tables" in p for p in response.json()["panels"])
     assert "inputDigests" not in response.json()
 
 
@@ -345,3 +348,63 @@ def test_recording_reports_coverage_and_names_what_is_missing():
     for metric_id, _label, unlocks in UNRECORDED_FIELDS:
         assert metrics[metric_id]["state"] == "unavailable"
         assert unlocks in metrics[metric_id]["reason"]
+
+
+def _office_lake(districts: dict[str, int]) -> duckdb.DuckDBPyConnection:
+    """One open, 40-day-old, transferred case per unit of each district's count."""
+    con = duckdb.connect()
+    con.execute("CREATE TABLE spec(district VARCHAR, n INTEGER)")
+    con.executemany("INSERT INTO spec VALUES (?, ?)", list(districts.items()))
+    con.execute("""
+        CREATE TABLE complaints AS
+          SELECT district || '-' || i AS ticket_no, district,
+                 TIMESTAMP '2025-06-20' AS created_on, NULL::TIMESTAMP AS resolved_on,
+                 'Pending' AS status, TIMESTAMP '2025-06-20' AS last_updated_on
+          FROM spec, range(n) r(i);
+        CREATE TABLE scope_tickets AS SELECT ticket_no, created_on FROM complaints;
+        CREATE TABLE action_history AS
+          SELECT row_number() OVER () AS id, * FROM (
+            SELECT ticket_no, TIMESTAMP '2025-06-21' AS action_taken_date, 'Complaint Transfer' AS action_status FROM complaints
+            UNION ALL
+            -- the later action names the office now holding the case
+            SELECT ticket_no, TIMESTAMP '2025-06-25', 'Forwarded' FROM complaints);
+        CREATE TABLE acting_office_named AS
+          SELECT id, CASE WHEN action_status='Forwarded' THEN 'Block Development Officer' ELSE 'District Collector' END AS role_name
+          FROM action_history;
+    """)
+    return con
+
+
+def test_offices_is_for_department_views_only():
+    statewide = next(s for s in CORE_SCOPES if s.kind == "statewide")
+    panel = _offices(_office_lake({"Puri": 12}), statewide)
+    assert panel["state"] == "unavailable"
+
+
+def test_offices_orders_by_workload_folds_small_rows_and_withholds_small_cells():
+    department = next(s for s in CORE_SCOPES if s.kind == "department")
+    # Twelve districts large enough to keep, one more beyond the top N, and
+    # one under the minimum cell: both fold into "Other districts".
+    districts = {f"D{k:02d}": 40 - k for k in range(OFFICE_TABLE_TOP_N + 1)} | {"Tiny": 4}
+    panel = _offices(_office_lake(districts), department)
+    by_district, by_office = panel["tables"]
+
+    assert panel["denominator"]["value"] == sum(districts.values())
+    labels = [row["label"] for row in by_district["rows"]]
+    assert labels == [f"D{k:02d}" for k in range(OFFICE_TABLE_TOP_N)] + ["Other districts"]
+    first = by_district["rows"][0]["values"]
+    # Open, open 30+ days, no action 7+ days, filed in FY, transferred.
+    assert first == [40, 100.0, 100.0, 40, 100.0]
+    folded = by_district["rows"][-1]["values"]
+    extra = 40 - OFFICE_TABLE_TOP_N
+    assert folded[0] == extra + 4
+    # The office holding the case is the one on its latest action.
+    assert [row["label"] for row in by_office["rows"]] == ["Block Development Officer"]
+
+
+def test_a_small_rate_cell_is_withheld_but_its_row_stays():
+    rows = [("Puri", 50, 5, 0)]
+    from janasunani.analytics.monitoring import _drilldown_rows
+    assert _drilldown_rows(rows, [(0, None), (1, 0), (2, 0)], "Other") == [
+        {"label": "Puri", "values": [50, None, 0.0]},
+    ]

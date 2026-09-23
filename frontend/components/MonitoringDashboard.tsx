@@ -14,6 +14,7 @@ import {
   type MonitoringDashboard as Dashboard,
   type MonitoringMetric,
   type MonitoringPanel,
+  type MonitoringTable,
   type RecordedMonitoringPanel,
   type RecordingState,
 } from "@/lib/monitoring";
@@ -179,9 +180,111 @@ function RecordingPanel({ panel }: { panel: RecordedMonitoringPanel }) {
   );
 }
 
+/** One drill-down table. Sortable by any column; the publisher's order
+ * (workload) is the default, and the folded "other" row always stays last. */
+function DrilldownTable({ table }: { table: MonitoringTable }) {
+  const [sort, setSort] = useState<{ column: number; descending: boolean } | null>(null);
+  const [body, other] = useMemo(() => {
+    const last = table.rows.at(-1);
+    const hasOther = last !== undefined && (last.label === "Other districts" || last.label === "Other offices");
+    const rows = hasOther ? table.rows.slice(0, -1) : [...table.rows];
+    if (sort) {
+      const key = (row: MonitoringTable["rows"][number]) => row.values[sort.column] ?? -1;
+      rows.sort((a, b) => (sort.descending ? key(b) - key(a) : key(a) - key(b)));
+    }
+    return [rows, hasOther ? last : undefined];
+  }, [table, sort]);
+
+  const cell = (value: number | null, unit: string) =>
+    value === null ? (
+      <span className="text-text-secondary" title="Withheld: fewer than 10 cases">—</span>
+    ) : unit === "percent" ? (
+      `${value.toFixed(1)}%`
+    ) : (
+      value.toLocaleString("en-IN")
+    );
+
+  const row = (item: MonitoringTable["rows"][number], muted = false) => (
+    <tr key={item.label} className={`border-t border-hair-soft ${muted ? "text-text-secondary" : "text-text-dark"}`}>
+      <th scope="row" className="py-2 pr-4 text-left font-normal text-[13px]">{item.label}</th>
+      {item.values.map((value, column) => (
+        <td key={column} className="py-2 pl-4 text-right font-mono text-[12px] tabular-nums">
+          {cell(value, table.columns[column].unit)}
+        </td>
+      ))}
+    </tr>
+  );
+
+  return (
+    <div className="min-w-0">
+      <p className="kicker">{table.title}</p>
+      <div className="mt-3 overflow-x-auto">
+        <table className="w-full min-w-[520px] border-collapse">
+          <thead>
+            <tr>
+              <th scope="col" className="pb-2 text-left font-mono text-[9.5px] font-normal uppercase tracking-[0.13em] text-text-secondary">
+                <span className="sr-only">Name</span>
+              </th>
+              {table.columns.map((column, index) => {
+                const active = sort?.column === index;
+                return (
+                  <th
+                    key={column.label}
+                    scope="col"
+                    aria-sort={active ? (sort.descending ? "descending" : "ascending") : "none"}
+                    className="pb-2 pl-4 text-right align-bottom"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setSort({ column: index, descending: active ? !sort.descending : true })}
+                      className={`font-mono text-[9.5px] uppercase leading-tight tracking-[0.13em] hover:text-maroon ${active ? "text-maroon" : "text-text-secondary"}`}
+                    >
+                      {column.label}
+                      <span aria-hidden className="ml-1 inline-block w-2">{active ? (sort.descending ? "↓" : "↑") : ""}</span>
+                    </button>
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {body.map((item) => row(item))}
+            {other ? row(other, true) : null}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function OfficesPanel({ panel }: { panel: RecordedMonitoringPanel }) {
+  return (
+    <Reveal as="article" className="border-t-2 border-maroon bg-surface p-6 xl:col-span-2">
+      <h3 className="font-display text-[20px] leading-tight text-text-dark">
+        {panelTitle(panel.id, panel.title)}
+      </h3>
+      <p className="mt-1.5 font-mono text-[9.5px] uppercase tracking-[0.1em] text-text-secondary">
+        {denominatorLabel(panel.denominator.label)} &middot;{" "}
+        {panel.denominator.value.toLocaleString("en-IN")}
+      </p>
+      <div className="mt-6 grid gap-x-10 gap-y-8 2xl:grid-cols-2">
+        {(panel.tables ?? []).map((table) => (
+          <DrilldownTable key={table.title} table={table} />
+        ))}
+      </div>
+      <div className="mt-6">
+        <Note label="How to read this">{panel.caveats.join(" ")}</Note>
+      </div>
+    </Reveal>
+  );
+}
+
 function PanelCard({ panel, index }: { panel: MonitoringPanel; index: number }) {
   if (panel.id === "recording" && panel.state === "recorded") {
     return <RecordingPanel panel={panel} />;
+  }
+  if (panel.id === "offices" && panel.state === "recorded") {
+    return <OfficesPanel panel={panel} />;
   }
   if (panel.state === "unavailable") {
     return (

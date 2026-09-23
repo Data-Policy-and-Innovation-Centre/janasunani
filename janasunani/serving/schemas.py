@@ -658,9 +658,34 @@ class MonitoringBreakdownRow(MonitoringResponseModel):
 # each of them exactly once, recorded or explicitly unavailable.
 MonitoringPanelId = Literal[
     "aging", "transfers", "journey", "atr", "demand", "closure", "discards",
-    "recording",
+    "recording", "offices",
 ]
 MONITORING_PANEL_IDS: tuple[str, ...] = get_args(MonitoringPanelId)
+
+
+class MonitoringTableColumn(MonitoringResponseModel):
+    label: str
+    unit: Literal["grievances", "percent"]
+
+
+class MonitoringTableRow(MonitoringResponseModel):
+    label: str
+    #: One per column; ``None`` is a cell withheld under the minimum cell.
+    values: list[float | None]
+
+
+class MonitoringTable(MonitoringResponseModel):
+    title: str
+    columns: list[MonitoringTableColumn] = Field(min_length=1)
+    rows: list[MonitoringTableRow]
+
+    @model_validator(mode="after")
+    def _rows_fit_columns(self) -> "MonitoringTable":
+        if any(len(row.values) != len(self.columns) for row in self.rows):
+            raise ValueError("every table row needs one value per column")
+        if any(v is not None and v < 0 for row in self.rows for v in row.values):
+            raise ValueError("table values cannot be negative")
+        return self
 
 
 class MonitoringPanel(MonitoringResponseModel):
@@ -671,6 +696,8 @@ class MonitoringPanel(MonitoringResponseModel):
     metrics: list[RecordedMonitoringMetric | UnavailableMonitoringMetric]
     breakdown: list[MonitoringBreakdownRow] | None = None
     breakdown_unavailable_reason: str | None = None
+    #: Drill-down tables, published only where a panel carries them.
+    tables: list[MonitoringTable] | None = None
     caveats: list[str]
 
 

@@ -740,6 +740,141 @@ def _discards(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     }
 
 
+OFFICE_TABLE_TOP_N = 12
+
+
+def _cell(value: int) -> int | None:
+    """A count cell, withheld at 1-9 like every other published count."""
+    return None if 0 < value < MIN_CELL else value
+
+
+def _rate_cell(numerator: int, denominator: int) -> float | None:
+    if any(0 < cell < MIN_CELL for cell in (numerator, denominator)):
+        return None
+    return _pct(numerator, denominator)
+
+
+def _drilldown_rows(
+    rows: list[tuple[Any, ...]],
+    columns: Sequence[tuple[int, int | None]],
+    other_label: str,
+) -> list[dict[str, Any]]:
+    """Top rows by the first count, the rest folded into one "other" row.
+
+    ``rows`` are ``(label, count, count, ...)`` ordered by workload; each
+    column is ``(count index)`` for a count or ``(numerator, denominator)``
+    for a rate. A row whose first count is under the minimum cell folds into
+    "other" rather than printing a wall of withheld cells.
+    """
+    # ponytail: per-cell suppression only; a department total elsewhere on the
+    # page can difference out a withheld "other" cell. Add complementary
+    # suppression if these tables leave the internal dashboard.
+    kept = [r for r in rows[:OFFICE_TABLE_TOP_N] if r[1] >= MIN_CELL]
+    folded = [r for r in rows if r not in kept]
+    if folded:
+        width = len(rows[0])
+        kept.append((other_label, *(sum(r[i] for r in folded) for i in range(1, width))))
+    out = []
+    for label, *counts in kept:
+        values: list[int | float | None] = []
+        for numerator, denominator in columns:
+            values.append(
+                _cell(counts[numerator]) if denominator is None
+                else _rate_cell(counts[numerator], counts[denominator])
+            )
+        out.append({"label": label, "values": values})
+    return out
+
+
+def _offices(con: duckdb.DuckDBPyConnection, scope: ScopeSpec) -> dict[str, Any]:
+    """A department's workload by district and by the office holding it (§3.3).
+
+    Rates sit beside the counts they are rates of, so a small district's
+    high share is read against its size. The tables are not a ranking: they
+    are ordered by workload, and an office's rate reflects its caseload mix
+    as much as its conduct.
+    """
+    if scope.kind != "department":
+        return {
+            "id": "offices", "title": "By district and office", "state": "unavailable",
+            "reason": "Published for department views only.",
+            "caveats": ["A department is where district and office comparisons are like for like."],
+        }
+    con.execute("""
+        CREATE OR REPLACE TEMP TABLE office_base AS
+        WITH latest AS (
+          SELECT ticket_no, MAX(action_taken_date) latest_action,
+                 arg_max(id, (action_taken_date, id)) last_id
+          FROM action_history GROUP BY ticket_no),
+        transferred AS (
+          SELECT DISTINCT ticket_no FROM action_history WHERE action_status='Complaint Transfer')
+        SELECT COALESCE(g.district, 'District not recorded') district,
+          COALESCE(n.role_name, 'Other or unnamed office') office,
+          (g.created_on>=DATE '2024-07-01' AND g.created_on<DATE '2025-07-01') in_fy,
+          t.ticket_no IS NOT NULL is_transferred,
+          (g.created_on<DATE '2025-07-31'
+            AND (g.resolved_on IS NULL OR CAST(g.resolved_on AS DATE)>DATE '2025-07-30')
+            AND g.status NOT IN ('Disposed','Discard')) is_open,
+          DATE '2025-07-30'-CAST(g.created_on AS DATE) age_days,
+          DATE '2025-07-30'-CAST(GREATEST(g.last_updated_on, l.latest_action) AS DATE) inactive_days
+        FROM complaints g JOIN scope_tickets s USING(ticket_no)
+        LEFT JOIN latest l USING(ticket_no)
+        LEFT JOIN acting_office_named n ON n.id=l.last_id
+        LEFT JOIN transferred t USING(ticket_no)
+    """)
+    district = con.execute("""
+        SELECT district,
+          COUNT(*) FILTER(WHERE is_open) open,
+          COUNT(*) FILTER(WHERE is_open AND age_days>=30) open30,
+          COUNT(*) FILTER(WHERE is_open AND inactive_days>=7) inactive7,
+          COUNT(*) FILTER(WHERE in_fy) filed,
+          COUNT(*) FILTER(WHERE in_fy AND is_transferred) transferred
+        FROM office_base GROUP BY district
+        ORDER BY open DESC, filed DESC, district
+    """).fetchall()
+    office = con.execute("""
+        SELECT office,
+          COUNT(*) open,
+          COUNT(*) FILTER(WHERE age_days>=30) open30,
+          COUNT(*) FILTER(WHERE inactive_days>=7) inactive7
+        FROM office_base WHERE is_open GROUP BY office
+        ORDER BY open DESC, office
+    """).fetchall()
+    open_columns = [
+        {"label": "Open now", "unit": "grievances"},
+        {"label": "Open 30+ days", "unit": "percent"},
+        {"label": "No action 7+ days", "unit": "percent"},
+    ]
+    tables = []
+    if district:
+        tables.append({
+            "title": "By district",
+            "columns": [*open_columns,
+                        {"label": "Filed in FY", "unit": "grievances"},
+                        {"label": "Transferred", "unit": "percent"}],
+            "rows": _drilldown_rows(district, [(0, None), (1, 0), (2, 0), (3, None), (4, 3)], "Other districts"),
+        })
+    if office:
+        tables.append({
+            "title": "Open cases by the office holding them",
+            "columns": open_columns,
+            "rows": _drilldown_rows(office, [(0, None), (1, 0), (2, 0)], "Other offices"),
+        })
+    total_open = sum(r[1] for r in district)
+    return {
+        "id": "offices", "title": "By district and office", "state": "recorded",
+        "denominator": {"label": "Open at 30 July 2025", "value": total_open},
+        "metrics": [],
+        "breakdown": None, "breakdownUnavailableReason": None,
+        "tables": tables,
+        "caveats": [
+            "Ordered by workload, not ranked. A rate reflects the caseload an office receives as well as how it handles it.",
+            "The office holding a case is the office on its latest recorded action.",
+            f"The {OFFICE_TABLE_TOP_N} largest rows are shown; the rest, and any under {MIN_CELL} open cases, are folded into the last row. Cells under {MIN_CELL} are withheld.",
+        ],
+    }
+
+
 # Concept note §6 fields the extract has no column or event for, each with the
 # measure recording it would make possible. Order follows the note.
 UNRECORDED_FIELDS = (
@@ -866,6 +1001,7 @@ def build_release(
                     _closure(con, identity),
                     discards,
                     _recording(con, discards),
+                    _offices(con, scope),
                 ],
             }
         for dashboard in dashboards.values():

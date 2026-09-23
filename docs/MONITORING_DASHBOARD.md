@@ -33,7 +33,7 @@ The catalogue exposes stable IDs, labels, parent scopes, definitions, and
 published periods. The dashboard returns every governed panel, once each:
 aging and escalation; transfers and loops; end-to-end journey; ATR queue
 discipline; demand and duplication; closure and return; discard reasons and
-timing; what the records hold. The list is `MonitoringPanelId` in `janasunani/serving/schemas.py`,
+timing; what the records hold; by district and office. The list is `MonitoringPanelId` in `janasunani/serving/schemas.py`,
 mirrored by `PANEL_IDS` in `frontend/lib/monitoring.ts`. Individual panels or metrics can
 be explicitly unavailable. No proxy value is silently substituted.
 Every recorded metric carries `basis`: `direct` when it counts what the record
@@ -69,3 +69,13 @@ with a reason that starts "Not recorded" and names the measure recording it
 would allow; the frontend keys its "Not recorded" badge on that prefix, so a
 figure withheld for a small cell is never shown as a gap in the record. The
 unrecordable list is `UNRECORDED_FIELDS` in `janasunani/analytics/monitoring.py`.
+
+"By district and office" is published for department scopes only; other
+scopes carry it as unavailable. It holds two `tables` (a recorded-panel field,
+`null` elsewhere): open and FY workload by district, and open cases by the
+office on each case's latest action. Each rate sits beside the count it is a
+rate of. The 12 largest rows are shown and the rest fold into an "Other" row;
+count and rate cells under 10 are withheld per cell. Suppression is per cell
+only, so a withheld "Other" cell can be differenced from the department
+total; add complementary suppression before these tables leave the internal
+dashboard.
