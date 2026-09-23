@@ -40,8 +40,8 @@ Then [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the system overview.
   `ocr-deepseek`, `categorizer`; light `serving`) with incompatible pairs in
   `[tool.uv].conflicts`. Run per-env: `uv run --extra <name> …`; redaction and
   PII evaluation use `--extra pii` separately from `pipeline-core`.
-- Console scripts (`janasunani-*`) are listed in `pyproject.toml`; the root
-  `main.py` is a legacy stub, not the entrypoint.
+- Console scripts (`janasunani-*`) are listed in `pyproject.toml`; they are the
+  entrypoints.
 
 ### Where a new module goes
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the full package table and is
