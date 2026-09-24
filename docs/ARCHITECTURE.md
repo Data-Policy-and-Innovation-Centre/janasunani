@@ -152,7 +152,7 @@ instance roles only (no static keys):
 - **CPU box** (always on, t3.large, Elastic IP 52.66.116.80): Postgres OLTP in
   Docker ([compose](../deploy/README.md)), migration/materialization one-offs,
   nightly `pg_dump` → S3. The compose stack also defines the `api` / `frontend` /
-  `proxy` (Caddy) services with CI → GHCR → box deploy automation
+  `proxy` (Caddy) services with CI → ECR → box deploy automation
   (`.github/workflows/deploy.yml`); the stack is not yet brought up live on the
   box (first live bring-up tracked in #30). MLflow is available to the
   evaluation and pre-deploy release control plane, never the serving process.
@@ -244,9 +244,8 @@ release gates.
 - **Never run pytest on the CPU box against the prod container** — fixtures drop
   tables. See [tests/README](../tests/README.md).
 - Source access uses SSH agent forwarding (no long-lived Git SSH key on the boxes).
-  The CPU box does hold a **read-scoped GHCR PAT** for image pulls (Phase 12 deploy)
-  — rotate/replace it (or move pulls to an instance-role-native registry); it is the
-  one standing credential on the box.
+  Images come from ECR, pulled with the box's instance role, so the box holds no
+  registry credential (`deploy/terraform/ecr.tf`).
 
 ## Roadmap direction (Part III — planned)
 

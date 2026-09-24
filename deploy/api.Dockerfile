@@ -24,7 +24,11 @@
 # re-resolving: `docker buildx imagetools inspect python:3.13-slim` /
 # `... ghcr.io/astral-sh/uv:0.9`.
 FROM python:3.13-slim@sha256:eb43ff125d8d58d7449dcba7d336c23bcac412f526d861db493b9994d8010280 AS build
-RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client && rm -rf /var/lib/apt/lists/*
+# build-essential: `demo` inherits pipeline-core's numpy<2 pin, and numpy
+# 1.26.4 has no CPython 3.13 wheel, so uv builds it from source here (see the
+# conflicts note in pyproject.toml). Build stage only; the runtime image below
+# carries no compiler.
+RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client build-essential && rm -rf /var/lib/apt/lists/*
 COPY --from=ghcr.io/astral-sh/uv:0.9@sha256:538e0b39736e7feae937a65983e49d2ab75e1559d35041f9878b7b7e51de91e4 /uv /uvx /bin/
 ENV UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
 WORKDIR /app

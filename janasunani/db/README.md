@@ -15,8 +15,9 @@ every feature here must work on **both** engines.
   `OLTP_DB_URL`).
 - `crud.py` — async CRUD used by ingestion (and later the API): conflict-safe
   inserts, document-status updates, API request tracking.
-- `alembic/` — schema migrations. `alembic upgrade head` is part of every
-  deploy; upgrade **and** downgrade are verified on both engines.
+- `alembic/` — schema migrations. On the box it is a manual step
+  after a backup, never part of the api's start (docs/DEPLOY.md,
+  "Migrations"); upgrade **and** downgrade are verified on both engines.
 
 ## The raw→ORM column map lives elsewhere
 

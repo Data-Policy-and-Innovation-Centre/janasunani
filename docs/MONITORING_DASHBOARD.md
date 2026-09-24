@@ -31,7 +31,7 @@ unavailable.
 
 The catalogue exposes stable IDs, labels, parent scopes, definitions, and
 published periods. The dashboard returns every governed panel, once each:
-aging and escalation; transfers and loops; end-to-end journey; ATR queue
+case flow; aging and escalation; transfers and loops; end-to-end journey; ATR queue
 discipline; demand and duplication; closure and return; discard reasons and
 timing; what the records hold; by district and office. The list is `MonitoringPanelId` in `janasunani/serving/schemas.py`,
 mirrored by `PANEL_IDS` in `frontend/lib/monitoring.ts`. Individual panels or metrics can
@@ -102,3 +102,13 @@ count and rate cells under 10 are withheld per cell. Suppression is per cell
 only, so a withheld "Other" cell can be differenced from the department
 total; add complementary suppression before these tables leave the internal
 dashboard.
+
+"Case flow" (panel `flow`, shown first) is the FY cohort as one pipeline:
+filed, not discarded, repeats removed, given a workflow, report submitted,
+reviewed where required, closed. Each stage keeps only what passed the one
+before, so the drop at each step is what left the path there. "Not discarded"
+is officer discards; the record has no automated spam filter. "Repeats
+removed" keeps one filing per validated identity group and is unavailable,
+not skipped silently, until that grouping exists; the later stages then still
+count repeats. Stages after the workflow reuse the ATR panel's per-case table
+(`atr_cases`), so the two cannot disagree.

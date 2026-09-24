@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { fetchMonitoringCatalog, fetchMonitoringDashboard } from "@/lib/api";
 import {
   childChoice,
+  flowDropNote,
+  flowStageGap,
   metricGroups,
   parentScopeFor,
   publishedScopes,
@@ -293,7 +295,186 @@ function OfficesPanel({ panel }: { panel: RecordedMonitoringPanel }) {
   );
 }
 
+/** The band's geometry, in a 1000 x 200 box the SVG stretches to fit. The
+ * band's top edge is level and it loses height from below, so what leaves at
+ * each stage can peel away downwards as its own ribbon. */
+const FLOW_W = 1000;
+const FLOW_H = 200;
+const FLOW_TOP = 12;
+const FLOW_BAND = 112;
+
+function flowGeometry(heights: number[]) {
+  const n = heights.length;
+  const step = FLOW_W / n;
+  const left = (i: number) => step * (i + 0.5) - step * 0.2;
+  const right = (i: number) => step * (i + 0.5) + step * 0.2;
+  const floor = (i: number) => FLOW_TOP + heights[i];
+  const k = (i: number) => (left(i) - right(i - 1)) / 2;
+
+  let band = `M 0 ${FLOW_TOP} L ${FLOW_W} ${FLOW_TOP} L ${FLOW_W} ${floor(n - 1)} L ${left(n - 1)} ${floor(n - 1)}`;
+  for (let i = n - 1; i > 0; i--) {
+    band += ` C ${left(i) - k(i)} ${floor(i)} ${right(i - 1) + k(i)} ${floor(i - 1)} ${right(i - 1)} ${floor(i - 1)} L ${left(i - 1)} ${floor(i - 1)}`;
+  }
+  band += ` L 0 ${floor(0)} Z`;
+
+  // What left between stage i-1 and i, as a ribbon from under the band down
+  // to the bottom of the box beneath stage i, where its label sits.
+  const leak = (i: number) => {
+    const x0 = right(i - 1);
+    const upper = floor(i);
+    const lower = floor(i - 1);
+    const width = Math.max(2, lower - upper);
+    const exit = step * (i + 0.5);
+    // Both edges follow the same curve, one ribbon-width apart, so the
+    // ribbon keeps the width of what was lost all the way down.
+    const bend = (exit - x0) * 0.55;
+    return `M ${x0} ${upper} C ${x0 + bend} ${upper} ${exit + width / 2} ${upper + 40} ${exit + width / 2} ${FLOW_H}`
+      + ` L ${exit - width / 2} ${FLOW_H} C ${exit - width / 2} ${lower + 40} ${x0 + bend - width} ${lower} ${x0} ${lower} Z`;
+  };
+  return { band, leak, step };
+}
+
+/**
+ * The period's grievances as one pipeline. Each stage keeps what passed the
+ * one before, so the band narrows by exactly what left the path there. A stage
+ * the release cannot publish (repeats before dedup is validated, or a small
+ * cell) carries the band through unchanged, hatched, and says why.
+ */
+function FlowPanel({ panel }: { panel: RecordedMonitoringPanel }) {
+  const ids = useId().replace(/:/g, "");
+  const stages = panel.metrics;
+  const counts: number[] = [];
+  stages.forEach((metric, i) => counts.push(metric.state === "recorded" ? metric.value : i ? counts[i - 1] : 0));
+  const total = Math.max(1, counts[0]);
+  // A floor keeps a small positive stage visible; a recorded zero draws as zero.
+  const heights = counts.map((count) => (count > 0 ? Math.max(3, (count / total) * FLOW_BAND) : 0));
+  const { band, leak, step } = flowGeometry(heights);
+  const drop = (i: number) => {
+    const metric = stages[i];
+    if (i === 0) return null;
+    // A stage not computed yet lost nothing; its header already says why.
+    if (metric.state === "unavailable") return flowStageGap(metric) === "not yet" ? null : { text: "Not shown", note: metric.reason };
+    const lost = counts[i - 1] - counts[i];
+    return lost > 0 ? { text: `−${lost.toLocaleString("en-IN")}`, note: flowDropNote(stages, i) } : null;
+  };
+  const share = (i: number) => (i === 0 ? "all filings" : `${((100 * counts[i]) / total).toFixed(0)}% of filed`);
+
+  return (
+    <Reveal as="article" className="border-t-2 border-maroon bg-surface p-6 xl:col-span-2">
+      <h3 className="font-display text-[20px] leading-tight text-text-dark">
+        {panelTitle(panel.id, panel.title)}
+      </h3>
+      <p className="mt-1.5 font-mono text-[9.5px] uppercase tracking-[0.1em] text-text-secondary">
+        {denominatorLabel(panel.denominator.label)} &middot; {panel.denominator.value.toLocaleString("en-IN")}
+      </p>
+
+      {/* Wide screens: one band across the stages. */}
+      <div className="mt-8 hidden lg:block">
+        <ol className="grid" style={{ gridTemplateColumns: `repeat(${stages.length}, minmax(0, 1fr))` }}>
+          {stages.map((metric, i) => (
+            <li key={metric.id} className="px-2 text-center">
+              <p className="font-mono text-[9.5px] uppercase leading-tight tracking-[0.13em] text-text-secondary">
+                {metricLabel(metric.id, metric.label)}
+              </p>
+              {metric.state === "recorded" ? (
+                <CountUp value={metric.value} format={(v) => Math.round(v).toLocaleString("en-IN")} duration={900 + i * 110} className="figure mt-2 block text-[26px]" />
+              ) : (
+                <p className="mt-2 font-display text-[22px] leading-none text-text-secondary">—</p>
+              )}
+              <p className="mt-1 font-mono text-[9.5px] tracking-[0.06em] text-text-secondary">
+                {metric.state === "recorded" ? share(i) : flowStageGap(metric)}
+              </p>
+              {metric.state === "recorded" && metric.basis === "proxy" ? (
+                <div className="mt-1.5"><Badge>Proxy</Badge></div>
+              ) : null}
+            </li>
+          ))}
+        </ol>
+        <svg viewBox={`0 0 ${FLOW_W} ${FLOW_H}`} preserveAspectRatio="none" className="mt-4 block h-[200px] w-full" aria-hidden>
+          <defs>
+            <linearGradient id={`${ids}-band`} x1="0" x2="1" y1="0" y2="0">
+              <stop offset="0" style={{ stopColor: "var(--color-maroon)", stopOpacity: 0.95 }} />
+              <stop offset="1" style={{ stopColor: "var(--color-maroon)", stopOpacity: 0.55 }} />
+            </linearGradient>
+            <pattern id={`${ids}-hatch`} width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+              <rect width="4" height="10" style={{ fill: "var(--color-surface)" }} opacity="0.7" />
+            </pattern>
+          </defs>
+          {stages.map((metric, i) =>
+            i > 0 && metric.state === "recorded" && counts[i] < counts[i - 1] ? (
+              <path key={metric.id} d={leak(i)} style={{ fill: "var(--color-maroon-soft)" }} opacity="0.35" />
+            ) : null,
+          )}
+          <path d={band} fill={`url(#${ids}-band)`} />
+          {stages.map((metric, i) =>
+            metric.state === "unavailable" && i > 0 ? (
+              <rect key={metric.id} x={step * i} width={step} y={FLOW_TOP} height={heights[i]} fill={`url(#${ids}-hatch)`} />
+            ) : null,
+          )}
+        </svg>
+        <ol className="mt-2 grid" style={{ gridTemplateColumns: `repeat(${stages.length}, minmax(0, 1fr))` }}>
+          {stages.map((metric, i) => {
+            const d = drop(i);
+            return (
+              <li key={metric.id} className="px-2 text-center">
+                {d ? (
+                  <>
+                    <p className={`font-mono text-[12px] tabular-nums ${d.text === "Not shown" ? "text-text-secondary" : "text-maroon"}`}>{d.text}</p>
+                    <p className="mt-1 text-[11.5px] leading-snug text-text-secondary">{d.note}</p>
+                  </>
+                ) : null}
+              </li>
+            );
+          })}
+        </ol>
+      </div>
+
+      {/* Narrow screens: the same stages as a column of bars. */}
+      <ol className="mt-6 lg:hidden">
+        {stages.map((metric, i) => {
+          const d = drop(i);
+          return (
+            <li key={metric.id}>
+              {d ? (
+                <p className="py-2 pl-3 text-[11.5px] leading-snug text-text-secondary">
+                  <span className="font-mono text-maroon">{d.text}</span> {d.note}
+                </p>
+              ) : metric.state === "unavailable" ? (
+                <p className="py-2 pl-3 text-[11.5px] leading-snug text-text-secondary">
+                  <span className="font-mono">{flowStageGap(metric)}</span> {metric.reason}
+                </p>
+              ) : null}
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="flex items-center gap-2 text-[13px] text-text-dark">
+                  {metricLabel(metric.id, metric.label)}
+                  {metric.state === "recorded" && metric.basis === "proxy" ? <Badge>Proxy</Badge> : null}
+                </span>
+                <span className="font-mono text-[12px] tabular-nums text-text-dark">
+                  {metric.state === "recorded" ? metric.value.toLocaleString("en-IN") : "—"}
+                </span>
+              </div>
+              <div className="mt-1.5 h-[6px] overflow-hidden bg-card">
+                <div
+                  className={`monitoring-bar h-full ${metric.state === "recorded" ? "bg-maroon" : "bg-hair"}`}
+                  style={{ width: `${counts[i] > 0 ? Math.max(1, (100 * counts[i]) / total) : 0}%` }}
+                />
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+
+      <div className="mt-7">
+        <Note label="How to read this">{panel.caveats.join(" ")}</Note>
+      </div>
+    </Reveal>
+  );
+}
+
 function PanelCard({ panel, index }: { panel: MonitoringPanel; index: number }) {
+  if (panel.id === "flow" && panel.state === "recorded") {
+    return <FlowPanel panel={panel} />;
+  }
   if (panel.id === "recording" && panel.state === "recorded") {
     return <RecordingPanel panel={panel} />;
   }

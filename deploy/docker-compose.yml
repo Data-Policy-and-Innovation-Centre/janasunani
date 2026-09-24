@@ -10,11 +10,11 @@
 # NEVER `docker compose down -v`: the OLTP volume holds the migrated data.
 #
 # `api`/`frontend`/`proxy` are built by CI (.github/workflows/deploy.yml) and
-# published to a private GHCR; the box pulls tagged images, it never builds
+# pushed to ECR (deploy/terraform/ecr.tf); the box pulls tagged images, it never builds
 # them. Bring the stack up/down with `deploy/deploy.sh`, the only sanctioned
 # up-path (see deploy/README.md) — it never runs `down`.
 #
-# IMAGE_TAG/DEMO_PASSWORD_HASH deliberately do NOT use compose's `:?`
+# IMAGE_TAG/ORIGIN_VERIFY_SECRET deliberately do NOT use compose's `:?`
 # required-variable syntax here: compose interpolates the WHOLE file before
 # selecting services, so a `:?` on api/frontend/proxy vars would abort even
 # an oltp-only `docker compose up -d oltp` (the documented first-time
@@ -49,7 +49,7 @@ services:
   # ever pulls. Models/data are host bind-mounts, never baked into the image,
   # so a new IMAGE_TAG deploy doesn't require re-pulling model weights.
   api:
-    image: ${API_IMAGE:-ghcr.io/data-policy-and-innovation-centre/janasunani-api}:${IMAGE_TAG}
+    image: ${API_IMAGE:-966452703664.dkr.ecr.ap-south-1.amazonaws.com/janasunani-api}:${IMAGE_TAG}
     container_name: janasunani-api
     restart: unless-stopped
     environment:
@@ -85,13 +85,13 @@ services:
   # at image build time (frontend/Dockerfile) — relative fetches through the
   # proxy, no CORS, no baked-in host/IP.
   frontend:
-    image: ${FRONTEND_IMAGE:-ghcr.io/data-policy-and-innovation-centre/janasunani-frontend}:${IMAGE_TAG}
+    image: ${FRONTEND_IMAGE:-966452703664.dkr.ecr.ap-south-1.amazonaws.com/janasunani-frontend}:${IMAGE_TAG}
     container_name: janasunani-frontend
     restart: unless-stopped
     healthcheck:
       # The health-gate must catch a dead/mispackaged frontend too, not just
       # a dead api. Hits the app directly inside the container (not through
-      # the proxy, which sits behind basic_auth) — Next standalone serves on
+      # the proxy, which requires CloudFront's header) — Next standalone serves on
       # :3000 with no auth of its own. busybox wget ships in node:22-alpine.
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ >/dev/null 2>&1 || exit 1"]
       interval: 10s
@@ -100,8 +100,9 @@ services:
       start_period: 30s
 
   # Single public entry point: TLS via nip.io + Caddy's automatic Let's
-  # Encrypt, HTTP Basic Auth in front of the whole site (production grievance
-  # data must not be openly public — see deploy/proxy/Caddyfile). Not
+  # Encrypt. Only CloudFront reaches it (the login is at the edge,
+  # deploy/terraform/auth.tf); anything without CloudFront's X-Origin-Verify
+  # header gets a 403 (deploy/proxy/Caddyfile). Not
   # health-gated on `api`/`frontend` so cert issuance/redirects aren't
   # blocked by the API's multi-minute warm start.
   proxy:
@@ -119,11 +120,9 @@ services:
       - "443:443"
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:-:80}
-    # DEMO_USER/DEMO_PASSWORD_HASH live in a SEPARATE env file, not here and
-    # not deploy/.env: compose interpolates `$` in `environment:`/`.env`
-    # values, so a bcrypt hash like `$2a$14$...` pasted into deploy/.env
-    # would get mangled ($2a/$14 parsed as variable references) unless every
-    # `$` were doubled. The long form below is required, not just `- ./proxy.env`:
+    # ORIGIN_VERIFY_SECRET lives in a SEPARATE env file, not here and not
+    # deploy/.env, so it is never interpolated by compose. The long form
+    # below is required, not just `- ./proxy.env`:
     #   - `format: raw` is what actually guarantees no interpolation of `$`
     #     in proxy.env's values — some Compose versions DO interpolate
     #     env_file values by default (unlike the Compose on this dev
@@ -137,7 +136,7 @@ services:
     #   - `required: false` so a bare `docker compose up -d oltp` (the
     #     documented first-time bring-up, before proxy.env exists at all)
     #     doesn't fail just parsing/loading this file. deploy.sh enforces
-    #     (fail closed) that the hash is actually set before bringing the
+    #     (fail closed) that the secret is actually set before bringing the
     #     full stack — including this service — up.
     # See deploy/proxy.env.example.
     env_file:

@@ -708,10 +708,15 @@ class MonitoringBreakdownRow(MonitoringResponseModel):
 # The governed panels, in display order. Every published dashboard carries
 # each of them exactly once, recorded or explicitly unavailable.
 MonitoringPanelId = Literal[
-    "aging", "transfers", "journey", "atr", "demand", "closure", "discards",
+    "flow", "aging", "transfers", "journey", "atr", "demand", "closure", "discards",
     "recording", "offices",
 ]
 MONITORING_PANEL_IDS: tuple[str, ...] = get_args(MonitoringPanelId)
+#: The flow panel's stages, in order: each keeps what passed the one before,
+#: and the renderer subtracts neighbours, so the sequence is the contract.
+MONITORING_FLOW_STAGE_IDS: tuple[str, ...] = (
+    "flow-filed", "flow-kept", "flow-unique", "flow-routed", "flow-atr", "flow-reviewed", "flow-closed",
+)
 
 
 #: The frontend's text(): non-empty and at most 2,000 characters.
@@ -762,6 +767,23 @@ class MonitoringPanel(MonitoringResponseModel):
     #: Drill-down tables, published only where a panel carries them.
     tables: list[MonitoringTable] | None = None
     caveats: list[str]
+
+    @model_validator(mode="after")
+    def _flow_stages_in_order(self) -> "MonitoringPanel":
+        if self.id != "flow":
+            return self
+        if tuple(m.id for m in self.metrics) != MONITORING_FLOW_STAGE_IDS:
+            raise ValueError("the flow panel needs every stage, in order")
+        filed = self.metrics[0]
+        if not isinstance(filed, RecordedMonitoringMetric) or filed.value != self.denominator.value:
+            raise ValueError("the flow panel's filed stage is its recorded baseline")
+        # Each stage is a subset of the one before: whole counts that never grow.
+        shown = [m for m in self.metrics if isinstance(m, RecordedMonitoringMetric)]
+        if any(m.unit != "grievances" or not float(m.value).is_integer() for m in shown):
+            raise ValueError("flow stages are whole grievance counts")
+        if any(later.value > earlier.value for earlier, later in zip(shown, shown[1:])):
+            raise ValueError("a flow stage cannot exceed the one before it")
+        return self
 
 
 class UnavailableMonitoringPanel(MonitoringResponseModel):

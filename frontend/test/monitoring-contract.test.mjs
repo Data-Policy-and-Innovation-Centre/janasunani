@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const { PANEL_IDS, metricGroups, childChoice, sortableColumn, recordingState, parseMonitoringCatalog, parseMonitoringDashboard, parentScopeFor, publishedScopes, quickScopes, scopesForView, subtypesFor } = await import("../lib/monitoring.ts");
+const { PANEL_IDS, FLOW_STAGE_IDS, metricGroups, flowDropNote, flowStageGap, childChoice, sortableColumn, recordingState, parseMonitoringCatalog, parseMonitoringDashboard, parentScopeFor, publishedScopes, quickScopes, scopesForView, subtypesFor } = await import("../lib/monitoring.ts");
 
 const catalog = {
   schemaVersion: 1,
@@ -17,8 +17,10 @@ const catalog = {
 
 const panels = PANEL_IDS.map((id) => ({
   id, title: id, state: "recorded",
-  denominator: { label: "Synthetic denominator", value: 20 },
-  metrics: [{ id: `${id}-metric`, label: "Synthetic", state: "recorded", value: 50, unit: "percent", numerator: 10, denominator: 20, coveragePct: null, note: null, basis: "direct" }],
+  denominator: { label: "Synthetic denominator", value: id === "flow" ? 100 : 20 },
+  metrics: id === "flow"
+    ? FLOW_STAGE_IDS.map((metricId, i) => ({ id: metricId, label: "Synthetic", state: "recorded", value: 100 - 10 * i, unit: "grievances", numerator: null, denominator: null, coveragePct: null, note: null, basis: "direct" }))
+    : [{ id: `${id}-metric`, label: "Synthetic", state: "recorded", value: 50, unit: "percent", numerator: 10, denominator: 20, coveragePct: null, note: null, basis: "direct" }],
   breakdown: null, breakdownUnavailableReason: null, tables: null, caveats: ["Synthetic fixture."],
 }));
 
@@ -158,6 +160,58 @@ test("drill-down tables must have one cell per column", () => {
 test("drill-down tables sort by workload, never by a raw rate", () => {
   assert.equal(sortableColumn({ label: "Open now", unit: "grievances" }), true);
   assert.equal(sortableColumn({ label: "Open 30+ days", unit: "percent" }), false);
+});
+
+test("a flow panel must carry every stage, in order", () => {
+  const flowAt = dashboard.panels.findIndex((panel) => panel.id === "flow");
+  for (const change of [[], (m) => m.slice(0, 3), (m) => [m[1], m[0], ...m.slice(2)],
+    (m) => [{ ...m[0], value: 70.5, unit: "grievances" }, ...m.slice(1)],
+    (m) => m.map((stage, i) => ({ ...stage, unit: "grievances", value: i === 3 ? 900 : 100 - i }))]) {
+    const broken = structuredClone(dashboard);
+    const metrics = broken.panels[flowAt].metrics;
+    broken.panels[flowAt].metrics = Array.isArray(change) ? change : change(metrics);
+    assert.throws(() => parseMonitoringDashboard(broken), /malformed/);
+  }
+  assert.doesNotThrow(() => parseMonitoringDashboard(dashboard));
+});
+
+test("a loss after a withheld stage says it spans that stage too", () => {
+  const stage = (id, extra) => ({ id, label: id, unit: "grievances", numerator: null, denominator: null, coveragePct: null, basis: "direct", ...extra });
+  const recorded = (id, value, note) => stage(id, { state: "recorded", value, note });
+  const stages = [
+    recorded("flow-filed", 70, null), recorded("flow-kept", 60, "Discarded."),
+    stage("flow-unique", { state: "unavailable", reason: "Withheld: fewer than 10 grievances left the path here." }),
+    recorded("flow-routed", 45, "No workflow assigned."),
+  ];
+  assert.match(flowDropNote(stages, 3), /No workflow assigned\. Also includes what left at "flow-unique"/);
+  assert.equal(flowDropNote(stages, 1), "Discarded.");
+  // Two withheld in a row: the loss spans both.
+  const withheld = (id) => stage(id, { state: "unavailable", reason: "Withheld: fewer than 10 grievances left the path here." });
+  const run = [recorded("flow-filed", 100, null), recorded("flow-kept", 100, null), withheld("flow-unique"), withheld("flow-routed"), recorded("flow-atr", 80, "No report.")];
+  assert.equal(flowDropNote(run, 4), 'No report. Also includes what left at "flow-unique" and "flow-routed", which are withheld.');
+  // Repeats not removed yet: nothing is hidden, so the reason stands alone.
+  stages[2] = stage("flow-unique", { state: "unavailable", reason: "Repeats are not removed yet." });
+  assert.equal(flowDropNote(stages, 3), "No workflow assigned.");
+});
+
+test("a withheld repeats stage says not shown, a missing grouping says not yet", () => {
+  assert.equal(flowStageGap({ id: "flow-unique", reason: "Repeats are not removed yet: the groups are being rebuilt." }), "not yet");
+  assert.equal(flowStageGap({ id: "flow-unique", reason: "Withheld: fewer than 10 grievances left the path here." }), "not shown");
+  assert.equal(flowStageGap({ id: "flow-unique", reason: "Withheld because a cell is below 10." }), "not shown");
+  assert.equal(flowStageGap({ id: "flow-atr", reason: "Withheld because a cell is below 10." }), "not shown");
+});
+
+test("an unavailable flow panel is accepted; a flow without its filed baseline is not", () => {
+  const flowAt = dashboard.panels.findIndex((panel) => panel.id === "flow");
+  const withheld = structuredClone(dashboard);
+  withheld.panels[flowAt] = { id: "flow", title: "flow", state: "unavailable", reason: "Fewer than 10 filings.", caveats: ["c"] };
+  assert.doesNotThrow(() => parseMonitoringDashboard(withheld));
+  const noBase = structuredClone(dashboard);
+  noBase.panels[flowAt].metrics[0] = { id: "flow-filed", label: "Filed", state: "unavailable", reason: "Withheld." };
+  assert.throws(() => parseMonitoringDashboard(noBase), /malformed/);
+  const offBase = structuredClone(dashboard);
+  offBase.panels[flowAt].denominator.value = 999;
+  assert.throws(() => parseMonitoringDashboard(offBase), /malformed/);
 });
 
 test("the ATR panel stacks the review chain apart from the ATR figures", () => {

@@ -151,7 +151,7 @@ uv run dvc commit && uv run dvc push    # push the Parquet outs to the DVC remot
 ## 3 · Run the application stack
 
 The Compose stack **grows service-by-service** as phases land: `oltp` (Week 1)
-then `api` / `frontend` / `proxy` (the automated CI→GHCR→box deploy, §4
+then `api` / `frontend` / `proxy` (the automated CI→ECR→box deploy, §4
 below). `mlflow` is not needed for the demo and stays absent — see
 [docs/ROADMAP.md](ROADMAP.md) Phase 12.
 
@@ -166,10 +166,10 @@ up -d`: they're pulled-and-deployed images, and `deploy/deploy.sh` is the only
 sanctioned way to bring them up (it health-gates the rollout instead of
 returning as soon as the containers start) — see §4.
 
-## 4 · Automated demo deploy (CI → GHCR → box)
+## 4 · Automated demo deploy (CI → ECR → box)
 
 The routine way to ship a new build of `api`/`frontend`: GitHub Actions builds
-both images, pushes them to a **private** GHCR, then SSHes into the box and
+both images, pushes them to **ECR**, then SSHes into the box and
 runs `deploy/deploy.sh`. Trigger is `workflow_dispatch` only — **Actions →
 "Deploy demo" → Run workflow** (optionally set `image_tag` to redeploy an
 existing tag instead of rebuilding — a rollback).
@@ -177,7 +177,8 @@ existing tag instead of rebuilding — a rollback).
 ### Architecture
 
 ```
-Browser --443/80--> proxy (Caddy, only public service)
+Browser --443--> CloudFront (login checked at the edge; adds X-Origin-Verify)
+           --443--> proxy (Caddy on the box; 403 without X-Origin-Verify)
                        |-- handle_path /api/* --> api:8000   (prefix stripped)
                        `-- handle          --> frontend:3000
 api --> oltp:5432 (compose network; existing container/volume, untouched)
@@ -188,39 +189,44 @@ api --> oltp:5432 (compose network; existing container/volume, untouched)
   construction), so Caddy obtains a real Let's Encrypt certificate
   automatically — no DNS to manage, no self-signed warning. It's a
   `deploy/.env` var, never hard-coded (`deploy/proxy/Caddyfile`).
-- **Auth**: the whole site sits behind Caddy `basic_auth` (bcrypt hash) —
-  production grievance data (`/history`, `/api/history`,
-  `/api/grievance/{id}`) must not be openly public. One exemption:
-  `/api/health` bypasses `basic_auth` (leaks nothing but
-  `{"status":"ok","processor":"pipeline"}`) so `deploy/deploy.sh`'s own
-  end-to-end check — and any external uptime monitor — can probe it
-  unauthenticated. The credentials live in `deploy/proxy.env` (a *separate*
-  file from `deploy/.env` — Compose interpolates `$` in `deploy/.env`
-  values, which would mangle a bcrypt hash like `$2a$14$...`). The `proxy`
-  service loads it via the long-form `env_file:` with `format: raw` (no
-  interpolation of `$`, version-independent — the `format` key on env_file
-  entries needs **Compose >= 2.30.0** specifically (not 2.24 — that's only
-  when `required: false` landed); on an older Compose the whole file fails
-  to *parse*, before any service starts. `deploy/terraform/user_data.sh`
-  installs `docker-compose-plugin` from Docker's official apt repo, which
-  tracks current stable releases, so this is satisfied on a
-  freshly-provisioned box — `deploy/deploy.sh` also preflights the
-  installed version and fails with a clear message if it's too old, rather
-  than letting compose's opaque parse error be the first sign) and
-  `required: false` (so a bare `docker compose up -d oltp`, §2, doesn't
-  fail just because `proxy.env` doesn't exist yet). `deploy/deploy.sh`
-  fails closed if the hash isn't set to a real-looking value before
-  bringing the full stack up — compose itself has no default and,
-  deliberately, no required-var gate on it either (see
-  docker-compose.yml's header comment).
+- **Auth**: one shared login, checked at the CloudFront edge
+  (`deploy/terraform/cdn.tf`, `auth.tf`; the same pattern as
+  ai-for-panchayats). The CloudFront Function runs before the cache and
+  before the box, so a request without the login never reaches the
+  application. The site is used only by the DPIC team and the Director
+  Grievance, GAPG, all of whom may see raw complaints, so `/history` and
+  `/api/grievance/{id}` stay on it. One shared credential is not identity:
+  it cannot say who looked at what, or be withdrawn from one person. If the
+  audience widens, this needs per-person sign-in.
+- **Origin lock**: port 443 on the box admits only CloudFront's address
+  ranges (the `cloudfront.origin-facing` prefix list), and Caddy returns 403
+  to any request without our distribution's `X-Origin-Verify` value, since
+  other accounts' distributions share those addresses. The value is
+  `ORIGIN_VERIFY_SECRET` in `deploy/proxy.env`, loaded with `env_file`
+  `format: raw` (needs **Compose >= 2.30.0**; `deploy/deploy.sh` preflights
+  it) and `required: false` (so a bare `docker compose up -d oltp`, §2,
+  works before `proxy.env` exists). `deploy/deploy.sh` fails closed unless
+  it is 32+ letters and digits. Port 80 stays open to the world: Let's
+  Encrypt renews Caddy's certificate by connecting to the box directly.
+- **Health**: `/api/health` skips the origin check (it returns only
+  `{"status":"ok","processor":"pipeline"}`), so `deploy/deploy.sh` can
+  smoke-check it from the box itself.
 - **Models/data**: host bind-mounts (`../models`, `../data/interim`,
   `../data/raw/janasunani-mappings`, all `:ro`) — never baked into the `api`
   image. A new deploy doesn't re-pull model weights. Approved releases are
   materialized separately into `models/releases` and activated atomically;
   legacy DVC mirrors remain the final local fallback. Serving never resolves an
   MLflow alias or downloads public model weights.
-- **GHCR is private**: the box authenticates with a `read:packages`-scoped
-  PAT (§"One-time box setup" below), not a public pull.
+- **Images live in ECR** (`deploy/terraform/ecr.tf`, the same pattern as
+  ai-for-panchayats). Nobody holds a registry password:
+  - the build jobs push through an OIDC role (`CI_IMAGE_PUSH_ROLE_ARN`, a
+    repo-level variable) that trusts only `refs/heads/main`;
+  - the box pulls with its instance role: `deploy.sh` runs
+    `aws ecr get-login-password` before every pull;
+  - tags are immutable, so the build jobs skip a commit that is already pushed,
+    and the deploy job refuses a tag missing from ECR before it opens SSH;
+  - the api's BuildKit cache lives in a separate mutable repository,
+    `janasunani-build-cache`, which the box cannot read.
 - **Reproducibility**: `api`/`frontend` are pinned to the full 40-char
   `IMAGE_TAG` (never `latest`); every OTHER base image (`caddy:2-alpine` in
   `docker-compose.yml`, `python:3.13-slim` and `ghcr.io/astral-sh/uv:0.9` in
@@ -238,12 +244,18 @@ cd ~/janasunani && git fetch && git checkout deploy/cpu-box   # or whatever bran
 cd ~/janasunani
 # Scoped pull — do NOT run a bare `dvc pull` (see docs/DEMO.md §1):
 uv run dvc pull models/categorizer.dvc models/page_type_classifier/vit_type_classifier.dvc data/raw/janasunani-mappings.dvc
+# The summarizer has no DVC mirror and the api never downloads a model, so put
+# the pinned BART revision in models/summarizer (or activate a release that
+# carries it). Public model; check model.safetensors' sha256 against the blob id.
+REV=37f520fa929c961707657b28798b30c003dd100b
+for f in config.json generation_config.json merges.txt model.safetensors tokenizer.json vocab.json; do
+  curl -sfL -o "models/summarizer/$f" "https://huggingface.co/facebook/bart-large-cnn/resolve/$REV/$f"
+done
+sha256sum models/summarizer/model.safetensors   # 40041830399afb5348525ef8354b007ecec4286fdf3524f7e6b54377e17096cb
 ls data/interim/*.parquet   # already on the box from §"Materialize" above; if missing, `uv run dvc pull data/interim`
 
-# GHCR is private — authenticate with a read:packages PAT (GitHub → Settings
-# → Developer settings → Personal access tokens; classic or fine-grained,
-# read:packages only):
-echo "<PAT>" | docker login ghcr.io -u <github-username> --password-stdin
+# No registry login to set up: deploy.sh logs in to ECR with the box's
+# instance role on every deploy.
 
 cd ~/janasunani/deploy
 cp .env.example .env && chmod 600 .env
@@ -252,10 +264,9 @@ cp .env.example .env && chmod 600 .env
 #          IMAGE_TAG can stay blank (deploy.sh writes it on every deploy)
 
 cp proxy.env.example proxy.env && chmod 600 proxy.env
-# fill in DEMO_PASSWORD_HASH in proxy.env (NOT deploy/.env — Compose would
-# mangle the '$' in a bcrypt hash pasted into deploy/.env; deploy.sh refuses
-# to bring the full stack up without a real-looking hash here):
-docker run --rm caddy:2-alpine caddy hash-password --plaintext '<a real password>'
+# fill in ORIGIN_VERIFY_SECRET from your machine (deploy.sh refuses to bring
+# the full stack up without it):
+#   terraform -chdir=deploy/terraform output -raw origin_verify_secret
 ```
 
 **Materialize the reviewed model release before the first strict deploy.** Copy
@@ -364,11 +375,43 @@ secrets/vars — **run each of these yourself; nothing here does it for you:**
 | `BOX_HOST` | **`box-deploy` environment** var | `52.66.116.80` |
 | `CI_DEPLOY_ROLE_ARN` | **`box-deploy` environment** var | `terraform output -raw ci_deploy_role_arn` |
 | `BOX_SG_ID` | **`box-deploy` environment** var | `terraform output -raw cpu_box_security_group_id` |
+| `CI_IMAGE_PUSH_ROLE_ARN` | **repo** var (the build jobs don't use the environment; the role trusts only `main`) | `terraform output -raw ci_image_push_role_arn` |
+| `SITE_URL` | **`box-deploy` environment** var | `terraform output -raw site_url` (the link on each deploy run) |
 
 The `deploy` job already declares `environment: box-deploy` (added for the
 OIDC trust narrowing — see ci.tf's comment), which is exactly what makes it
 able to read environment-scoped secrets/vars; `build-api`/`build-frontend`
 deliberately do *not* declare it, so they can't.
+
+### CloudFront and the shared login
+
+`cdn.tf` and `auth.tf` in `deploy/terraform/` put CloudFront in front of the
+box. Apply them before the first deploy that ships the origin-checking
+Caddyfile, or the site will answer 403 to everyone:
+
+```bash
+cd deploy/terraform
+# SSH is pinned to admin_cidr, and the apply removes every other SSH rule.
+# Set it to where you are now first:   echo "$(curl -4 -s ifconfig.me)/32"
+terraform plan    # expect: 4 to add, 1 to change (the security group), 0 to destroy
+terraform apply
+terraform output site_url basic_auth_username
+terraform output -raw basic_auth_password     # share only with the site's users
+terraform output -raw origin_verify_secret    # into deploy/proxy.env on the box
+```
+
+- **Security group quota.** The CloudFront prefix list counts as 55 of the
+  group's 60 rules. SSH (one CIDR), HTTP and the one rule CI adds during a
+  deploy fit. A second SSH CIDR added by hand does not.
+- **Rotate the password:** `terraform apply -replace=random_password.basic_auth`.
+  It takes effect at the edge in a few minutes; nothing on the box changes.
+- **Rotate the origin secret:** `terraform apply
+  -replace=random_password.origin_verify`, then put the new value in
+  `deploy/proxy.env` and redeploy. The site answers 403 in between.
+- **Timeout.** CloudFront waits 60 s for the box. `POST /grievance` runs OCR
+  and every model in one request, so a long document can pass that and show
+  a 504 while the box finishes. Measure; raise the quota (up to 180 s) or
+  make submission asynchronous.
 
 ### Routine flow
 
@@ -376,7 +419,7 @@ deliberately do *not* declare it, so they can't.
 from the current default branch, or set it to redeploy/roll back to an
 existing SHA). The workflow: builds `api`+`frontend` for `linux/amd64` (the
 box's arch — this can't be validated on an arm64 dev machine, see
-"Known gaps" below), pushes both to GHCR, opens port 22 to the runner's own
+"Known gaps" below), pushes both to ECR, opens port 22 to the runner's own
 IP on `aws_security_group.cpu_box` (via the OIDC-assumed `ci_deploy` role),
 ships `docker-compose.yml` / `deploy.sh` / `proxy/Caddyfile` to
 `~/janasunani/deploy/` over SCP, runs `deploy/deploy.sh` over SSH (which pulls
@@ -385,7 +428,7 @@ images, brings the stack up, and blocks until `/health` reports
 port-22 rule, success or failure.
 
 **Rollback**: run the workflow again with `image_tag` set to a prior
-`github.sha` that was previously deployed (GHCR keeps every pushed tag) — or
+`github.sha` that was previously deployed (ECR keeps every tagged image; only untagged ones expire) — or
 by hand on the box: `IMAGE_TAG=<sha> bash deploy/deploy.sh`. In the common
 case you don't have to do this yourself: `deploy.sh` rolls back
 **automatically** when a deploy fails after it's already started replacing
@@ -434,13 +477,33 @@ code has to still be able to boot and run correctly against the NEW schema.
   while), then a separate **contract** deploy later, once rolling back past
   the expand step is no longer a realistic need.
 
-Violate this and a rollback can't un-migrate — the "rolled back" api
-container's `alembic upgrade head` (`deploy/api-entrypoint.sh`) either
-errors immediately (`Can't locate revision`, if the old image predates a
-revision the DB is already at) or runs but then crash-loops on a query the
-old code can't form against the new shape. `deploy.sh`'s rollback health
-re-check (above) will catch this and say so loudly — but only the migration
-policy itself prevents it.
+Violate this and a rollback can't un-migrate: the old image starts (its
+entrypoint accepts a schema newer than itself) and then fails on a query it
+can't form against the new shape. `deploy.sh`'s rollback health re-check
+(above) catches this and says so loudly, but only the migration policy
+prevents it.
+
+### Migrations
+
+The api **never migrates on start**. `deploy/api-entrypoint.sh` compares the
+database's alembic revision with the image's head and:
+
+- starts at head;
+- refuses when the database is behind or empty, printing the steps below;
+- starts on a revision it doesn't know (a rollback to an older image);
+- refuses when it can't read the revision at all.
+
+`deploy.sh` runs the same check (`api-entrypoint.sh --check-only`) after the
+pull and before swapping containers, so a pending migration stops the deploy
+with the running stack untouched. To ship a migration, on the box:
+
+```bash
+~/bin/backup-oltp.sh                       # fresh backup first; confirm it landed in S3
+cd ~/janasunani/deploy
+IMAGE_TAG=<sha> docker compose pull api
+IMAGE_TAG=<sha> docker compose run --rm --no-deps --entrypoint alembic api upgrade head
+IMAGE_TAG=<sha> bash deploy.sh             # or re-run the Deploy demo workflow
+```
 
 ### Hard rules specific to this path
 
@@ -474,7 +537,7 @@ policy itself prevents it.
 
 - **The `linux/amd64` `api` build itself** — it can only be built for real on
   an amd64 runner (GitHub Actions), never on an arm64 dev Mac. Review the
-  Dockerfile carefully; the first real signal is the CI build log / GHCR push.
+  Dockerfile carefully; the first real signal is the CI build log / ECR push.
   This is also where the CPU-torch switch (#48) gets confirmed: on darwin the
   `demo` extra still resolves the ordinary PyPI wheel, so the image-size drop
   is not observable locally. In the build log, expect
@@ -484,8 +547,8 @@ policy itself prevents it.
   or `cuda-*` wheel means the CPU source did not take effect and the image is
   still carrying the CUDA runtime.
 - **On-box browser E2E** — submit a grievance → real pipeline output renders
-  and persists to `live_grievances` → `/history` shows it → `basic_auth`
-  actually gates access. Do this once after the first automated deploy.
+  and persists to `live_grievances` → `/history` shows it → the CloudFront
+  login actually gates access, and the nip.io name answers 403. Do this once after the first automated deploy.
 
 ### Known operational follow-ups
 
