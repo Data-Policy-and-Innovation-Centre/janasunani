@@ -38,3 +38,15 @@ output "cpu_box_security_group_id" {
   description = "CPU box security group ID (BOX_SG_ID -- set on the 'box-deploy' GitHub Actions environment, not as a repo-level var; see docs/DEPLOY.md) — deploy.yml temporarily authorizes/revokes port 22 for the runner's IP here."
   value       = aws_security_group.cpu_box.id
 }
+
+# --- Container registry (ecr.tf) ----------------------------------------------
+
+output "ecr_registry" {
+  description = "Registry host the box logs in to and the images live under."
+  value       = split("/", aws_ecr_repository.app["janasunani-api"].repository_url)[0]
+}
+
+output "ci_image_push_role_arn" {
+  description = "CI_IMAGE_PUSH_ROLE_ARN, a repo-level Actions variable: the build jobs assume it to push to ECR."
+  value       = aws_iam_role.ci_image_push.arn
+}

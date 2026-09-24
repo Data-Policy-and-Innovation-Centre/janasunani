@@ -10,7 +10,7 @@
 # NEVER `docker compose down -v`: the OLTP volume holds the migrated data.
 #
 # `api`/`frontend`/`proxy` are built by CI (.github/workflows/deploy.yml) and
-# published to a private GHCR; the box pulls tagged images, it never builds
+# pushed to ECR (deploy/terraform/ecr.tf); the box pulls tagged images, it never builds
 # them. Bring the stack up/down with `deploy/deploy.sh`, the only sanctioned
 # up-path (see deploy/README.md) — it never runs `down`.
 #
@@ -49,7 +49,7 @@ services:
   # ever pulls. Models/data are host bind-mounts, never baked into the image,
   # so a new IMAGE_TAG deploy doesn't require re-pulling model weights.
   api:
-    image: ${API_IMAGE:-ghcr.io/data-policy-and-innovation-centre/janasunani-api}:${IMAGE_TAG}
+    image: ${API_IMAGE:-966452703664.dkr.ecr.ap-south-1.amazonaws.com/janasunani-api}:${IMAGE_TAG}
     container_name: janasunani-api
     restart: unless-stopped
     environment:
@@ -85,7 +85,7 @@ services:
   # at image build time (frontend/Dockerfile) — relative fetches through the
   # proxy, no CORS, no baked-in host/IP.
   frontend:
-    image: ${FRONTEND_IMAGE:-ghcr.io/data-policy-and-innovation-centre/janasunani-frontend}:${IMAGE_TAG}
+    image: ${FRONTEND_IMAGE:-966452703664.dkr.ecr.ap-south-1.amazonaws.com/janasunani-frontend}:${IMAGE_TAG}
     container_name: janasunani-frontend
     restart: unless-stopped
     healthcheck:

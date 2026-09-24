@@ -838,6 +838,10 @@ case "$args" in
   "compose version --short")
     echo "2.35.0"; exit 0 ;;
   "compose pull api frontend proxy")
+    echo pulled > "$state/pulled"
+    exit 0 ;;
+  "login --username AWS --password-stdin 966452703664.dkr.ecr.ap-south-1.amazonaws.com")
+    [[ "$(cat)" == "ecr-token" ]] || exit 1
     exit 0 ;;
   "compose up -d")
     count_file="$state/up_count"
@@ -899,6 +903,14 @@ exit 99
 
 _STUB_FLOCK = "#!/bin/sh\nexit 0\n"
 
+# `aws ecr get-login-password` with the box's instance role; STUB_ECR_LOGIN_EXIT
+# simulates a missing permission.
+_STUB_AWS = """#!/bin/sh
+[ "$*" = "ecr get-login-password --region ap-south-1" ] || { echo "UNSTUBBED aws: $*" >&2; exit 99; }
+[ "${STUB_ECR_LOGIN_EXIT:-0}" = 0 ] || exit "$STUB_ECR_LOGIN_EXIT"
+printf ecr-token
+"""
+
 
 def _write_executable(path, content):
     path.write_text(content)
@@ -913,6 +925,7 @@ def _make_stub_deploy_dir(tmp_path, caddyfile_diverged=False, **docker_env):
     bin_dir.mkdir()
     _write_executable(bin_dir / "docker", _STUB_DOCKER)
     _write_executable(bin_dir / "flock", _STUB_FLOCK)
+    _write_executable(bin_dir / "aws", _STUB_AWS)
 
     deploy_dir = tmp_path / "deploy"
     deploy_dir.mkdir()
@@ -1015,6 +1028,68 @@ def test_up_d_failure_routes_through_rollback_not_bare_exit(tmp_path):
     assert result.returncode == 1, combined
     assert "Rolling back to last known-good IMAGE_TAG=prev-good-tag" in combined
     assert "rolled back to prev-good-tag and verified healthy" in combined
+
+
+def test_ecr_login_failure_stops_the_deploy_before_anything_changes(tmp_path):
+    """The box pulls from ECR with its instance role. If that login fails,
+    nothing is pulled or started and .env keeps the last good tag."""
+    deploy_dir, env, _ = _make_stub_deploy_dir(tmp_path, STUB_ECR_LOGIN_EXIT="255")
+    result = _run_deploy_sh(deploy_dir, env)
+    combined = result.stdout + result.stderr
+
+    assert result.returncode == 1, combined
+    assert "Could not log in to ECR" in combined
+    assert not (tmp_path / "state" / "pulled").exists()
+    assert not (tmp_path / "state" / "up_count").exists()
+    assert "IMAGE_TAG=prev-good-tag" in (deploy_dir / ".env").read_text()
+
+
+def test_images_come_from_ecr_with_no_registry_password():
+    """Compose, deploy.sh and the workflow agree on the ECR repositories; the
+    build jobs push with an OIDC role, and no job logs in with a token."""
+    ecr = "966452703664.dkr.ecr.ap-south-1.amazonaws.com/janasunani-"
+    compose = _compose()
+    assert compose["services"]["api"]["image"].startswith(f"${{API_IMAGE:-{ecr}api}}")
+    assert compose["services"]["frontend"]["image"].startswith(f"${{FRONTEND_IMAGE:-{ecr}frontend}}")
+    assert f"{ecr}api" in DEPLOY_SH_PATH.read_text()
+
+    with open(DEPLOY_WORKFLOW_PATH) as f:
+        workflow = yaml.safe_load(f)
+    assert workflow["env"]["API_IMAGE"] == f"{ecr}api"
+    assert workflow["env"]["FRONTEND_IMAGE"] == f"{ecr}frontend"
+    text = DEPLOY_WORKFLOW_PATH.read_text()
+    assert "ghcr.io" not in text
+    assert "GITHUB_TOKEN" not in text
+    for job in ("build-api", "build-frontend"):
+        perms = workflow["jobs"][job]["permissions"]
+        assert perms.get("id-token") == "write"
+        assert "packages" not in perms
+        steps = workflow["jobs"][job]["steps"]
+        roles = [s["with"]["role-to-assume"] for s in steps if "configure-aws-credentials" in s.get("uses", "")]
+        assert roles == ["${{ vars.CI_IMAGE_PUSH_ROLE_ARN }}"]
+        # Immutable tags: the build is skipped when the commit is already pushed.
+        build = next(s for s in steps if "build-push-action" in s.get("uses", ""))
+        assert build["if"] == "steps.exists.outputs.exists == 'false'"
+
+
+def test_deploy_refuses_a_tag_missing_from_ecr_before_touching_the_box():
+    with open(DEPLOY_WORKFLOW_PATH) as f:
+        steps = yaml.safe_load(f)["jobs"]["deploy"]["steps"]
+    names = [s.get("name") for s in steps]
+    check = names.index("Refuse a tag that is not in ECR")
+    assert check < names.index("Open port 22 to this runner")
+    assert "describe-images" in steps[check]["run"]
+
+
+def test_ecr_push_role_only_trusts_main_and_tags_are_immutable():
+    ecr_tf = (DEPLOY_DIR / "terraform" / "ecr.tf").read_text()
+    assert '"repo:${local.github_repo}:ref:refs/heads/main"' in ecr_tf
+    app_repo = ecr_tf[ecr_tf.index('resource "aws_ecr_repository" "app"'):]
+    app_repo = app_repo[: app_repo.index("\n}\n")]
+    assert 'image_tag_mutability = "IMMUTABLE"' in app_repo
+    # The box may pull, never push.
+    box = ecr_tf[ecr_tf.index('resource "aws_iam_role_policy" "cpu_box_ecr_pull"'):]
+    assert "ecr:PutImage" not in box and "ecr:InitiateLayerUpload" not in box
 
 
 def test_rollback_restores_a_diverged_caddyfile(tmp_path):

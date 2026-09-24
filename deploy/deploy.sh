@@ -224,6 +224,20 @@ rollback_and_fail() {
   exit 1
 }
 
+# Images live in ECR (deploy/terraform/ecr.tf). The box logs in with its own
+# instance role, so there is no registry password to keep here; the token
+# `get-login-password` returns lasts 12 hours. Same defaults as
+# docker-compose.yml; `|| true` for the same pipefail reason as prev_tag.
+api_image="$(grep -E '^API_IMAGE=' .env | cut -d= -f2- || true)"
+api_image="${api_image:-966452703664.dkr.ecr.ap-south-1.amazonaws.com/janasunani-api}"
+frontend_image="$(grep -E '^FRONTEND_IMAGE=' .env | cut -d= -f2- || true)"
+frontend_image="${frontend_image:-966452703664.dkr.ecr.ap-south-1.amazonaws.com/janasunani-frontend}"
+if ! aws ecr get-login-password --region ap-south-1 \
+    | docker login --username AWS --password-stdin "${api_image%%/*}"; then
+  echo "Could not log in to ECR (${api_image%%/*}) with the box's instance role. Nothing was changed." >&2
+  exit 1
+fi
+
 docker compose pull api frontend proxy
 docker compose up -d || rollback_and_fail
 
@@ -275,10 +289,6 @@ cp proxy/Caddyfile proxy/Caddyfile.deployed
 # holds prod Postgres + models + lake + HF cache + nightly pg_dump, so
 # unbounded accumulation across many deploys is a real disk-full risk, not
 # just tidiness.
-api_image="$(grep -E '^API_IMAGE=' .env | cut -d= -f2- || true)"
-api_image="${api_image:-ghcr.io/data-policy-and-innovation-centre/janasunani-api}"
-frontend_image="$(grep -E '^FRONTEND_IMAGE=' .env | cut -d= -f2- || true)"
-frontend_image="${frontend_image:-ghcr.io/data-policy-and-innovation-centre/janasunani-frontend}"
 for repo in "$api_image" "$frontend_image"; do
   docker images "$repo" --format '{{.Tag}}' | while read -r tag; do
     if [[ "$tag" != "$new_tag" && "$tag" != "$prev_tag" ]]; then
