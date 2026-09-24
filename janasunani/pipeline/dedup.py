@@ -832,7 +832,7 @@ def identity_key(value: str, salt: str) -> str | None:
 
 #: Marker for the identity-key derivation, stamped into the index version so
 #: a change here is visible as staleness rather than as silently mixed keys.
-IDENTITY_ALGORITHM = "mobile-tail4-fullname-block-v2"
+IDENTITY_ALGORITHM = "mobile-tail4-fullname-block-email-name-v3"
 
 #: Digits kept from a masked mobile. The portal masks `petitioner_mobile` as
 #: a `******`-style prefix plus the last four digits, and those four are
@@ -930,22 +930,24 @@ def mobile_identity_key(
     )
 
 
-def email_identity_key(email: str | None, salt: str) -> str | None:
-    """Same-citizen key for the email column.
+def email_identity_key(email: str | None, name: str | None, salt: str) -> str | None:
+    """Same-citizen key for the email column: the address plus the full name.
 
-    Unlike the mobile column, this one is healthy: 261,161 of 262,159
-    identity-keyed signatures carry an email-shaped value, across 4,580
-    distinct addresses. So the derivation is unchanged from
-    :func:`identity_key` -- trim and lowercase, which is the right
-    canonicalisation for an address.
+    An address alone is not a citizen here. 261,161 keyed signatures shared
+    only 4,580 addresses, and groups linked by a single address spanned
+    hundreds of petitioner names: an office or an intermediary filing for
+    many people. The name carries the discrimination, as it does in
+    :func:`mobile_identity_key`, and a record without a usable name abstains.
 
-    The only addition is a shape requirement. 56 distinct non-address values
-    covering 998 signatures were being keyed as identities by the same
-    fallback that broke the mobile column. An address needs a non-empty local
-    part and a dotted domain; anything else abstains.
+    The address is trimmed and lowercased, and must have a non-empty local
+    part and a dotted domain; anything else abstains. The key is namespaced,
+    so it never collides with the bare-address key earlier versions stored.
     """
-    value = (email or "").strip()
+    value = (email or "").strip().lower()
     local, _, domain = value.partition("@")
     if not local or "." not in domain:
         return None
-    return identity_key(value, salt)
+    name_token = _name_token(name)
+    if name_token is None:
+        return None
+    return identity_key(f"email:{value}:{name_token}", salt)
