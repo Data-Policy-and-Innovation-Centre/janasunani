@@ -28,6 +28,7 @@ from janasunani.config import ROOT_DIR
 DEPLOY_DIR = ROOT_DIR / "deploy"
 COMPOSE_PATH = DEPLOY_DIR / "docker-compose.yml"
 CADDYFILE_PATH = DEPLOY_DIR / "proxy" / "Caddyfile"
+TERRAFORM_DIR = DEPLOY_DIR / "terraform"
 DEPLOY_SH_PATH = DEPLOY_DIR / "deploy.sh"
 ENTRYPOINT_PATH = DEPLOY_DIR / "api-entrypoint.sh"
 DEPLOY_WORKFLOW_PATH = ROOT_DIR / ".github" / "workflows" / "deploy.yml"
@@ -130,7 +131,7 @@ def test_app_images_are_pinned_to_image_tag_not_latest():
 
 def test_compose_does_not_use_required_var_syntax_for_app_vars():
     """compose interpolates the WHOLE file before selecting services, so a
-    `:?` (required-variable) on IMAGE_TAG or DEMO_PASSWORD_HASH would abort
+    `:?` (required-variable) on IMAGE_TAG or ORIGIN_VERIFY_SECRET would abort
     even an oltp-only `docker compose up -d oltp` (Codex PR #29 finding) --
     the documented first-time bring-up that only ever sets
     POSTGRES_PASSWORD. deploy.sh enforces both being set to a real value
@@ -163,54 +164,27 @@ def test_frontend_has_a_healthcheck():
     assert frontend["healthcheck"]["test"]
 
 
-def test_proxy_credentials_come_from_a_dedicated_env_file_not_interpolated():
-    """Compose interpolates `$` in `environment:`/the main `.env` file, which
-    would mangle a bcrypt hash like `$2a$14$...` (Codex PR #29 finding).
-    DEMO_USER/DEMO_PASSWORD_HASH must come from a separate `env_file` (no
-    compose interpolation applied to its contents), not `environment:` and
-    not the main deploy/.env. Live-verified: a real `$2a$14$...` hash placed
-    in the env_file reaches Caddy byte-for-byte intact and authenticates the
-    matching plaintext password.
-
-    Must be the LONG form with `format: raw` and `required: false` (round-3
-    finding): a bare `- ./proxy.env` is required-by-default, so Compose
-    fails to load the whole project -- including an oltp-only
-    `docker compose up -d oltp` -- when proxy.env doesn't exist yet; and
-    some Compose versions interpolate `$` in env_file values by default
-    unless `format: raw` says otherwise (this repo's dev-machine Compose
-    happens not to, which is exactly why this needs an explicit assertion,
-    not just a "seems to work locally" check)."""
+def test_origin_secret_comes_from_a_dedicated_env_file_not_interpolated():
+    """ORIGIN_VERIFY_SECRET comes from deploy/proxy.env through the long-form
+    env_file: `required: false` so an oltp-only `docker compose up -d oltp`
+    works before proxy.env exists, and `format: raw` so no Compose version
+    interpolates it. It is never a compose `environment:` entry."""
     compose = _compose()
 
     proxy = compose["services"]["proxy"]
     proxy_env = proxy.get("environment") or {}
-    assert "DEMO_PASSWORD_HASH" not in proxy_env, (
-        "DEMO_PASSWORD_HASH must not be a compose `environment:` entry -- "
-        "compose interpolates '$' in these values and would mangle a bcrypt "
-        "hash; use env_file instead"
-    )
-    assert "DEMO_USER" not in proxy_env
+    assert "ORIGIN_VERIFY_SECRET" not in proxy_env
 
     env_files = proxy.get("env_file")
-    assert env_files, "proxy service must load DEMO_USER/DEMO_PASSWORD_HASH via env_file"
     assert isinstance(env_files, list) and isinstance(env_files[0], dict), (
         "proxy's env_file must use the long form (a list of path/required/"
         f"format mappings), not a bare list of path strings: {env_files!r}"
     )
     proxy_env_entry = next(e for e in env_files if "proxy.env" in e.get("path", ""))
-    assert proxy_env_entry.get("required") is False, (
-        "proxy.env's env_file entry must set required: false so an "
-        "oltp-only `docker compose up -d oltp` still works before "
-        "proxy.env exists"
-    )
-    assert proxy_env_entry.get("format") == "raw", (
-        "proxy.env's env_file entry must set format: raw so '$' in the "
-        "bcrypt hash is never interpolated, regardless of Compose version"
-    )
+    assert proxy_env_entry.get("required") is False
+    assert proxy_env_entry.get("format") == "raw"
 
-    # The main deploy/.env.example must not carry the hash either.
-    env_example = (DEPLOY_DIR / ".env.example").read_text()
-    assert "DEMO_PASSWORD_HASH=" not in env_example
+    assert "ORIGIN_VERIFY_SECRET=" not in (DEPLOY_DIR / ".env.example").read_text()
 
     # deploy/proxy.env (the real, filled-in file) must never be committed;
     # only the .example template is tracked.
@@ -220,63 +194,67 @@ def test_proxy_credentials_come_from_a_dedicated_env_file_not_interpolated():
     assert "deploy/proxy.env" in gitignore
 
 
+def test_origin_secret_has_no_published_default():
+    """A secret in git is a published one: anyone who can read the repo could
+    send the header and skip the login. proxy.env.example ships it empty and
+    deploy.sh fails closed on it."""
+    lines = (DEPLOY_DIR / "proxy.env.example").read_text().splitlines()
+    assert "ORIGIN_VERIFY_SECRET=" in lines
+    assert not [
+        line for line in lines
+        if line.startswith("ORIGIN_VERIFY_SECRET=") and line != "ORIGIN_VERIFY_SECRET="
+    ]
+
+
 def test_caddyfile_routes_api_and_frontend():
     text = CADDYFILE_PATH.read_text()
 
     assert "handle_path /api/*" in text
     assert "reverse_proxy api:8000" in text
     assert "reverse_proxy frontend:3000" in text
-    # basic_auth in front of the whole site (production grievance data must
-    # not be openly public) — Decision 8.
-    assert "basic_auth" in text
+    # The login moved to the CloudFront edge (deploy/terraform/auth.tf).
+    assert "basic_auth" not in text
 
 
-def test_caddyfile_exempts_health_from_basic_auth():
-    """deploy.sh's own end-to-end check curls /api/health unauthenticated —
-    without an exemption, basic_auth would 401 every single deploy's health
-    check (Codex PR #29 finding). Verified live against a real caddy:2-alpine
-    container: unauthenticated /api/health -> 200 (routed to the api's
-    /health, prefix stripped); unauthenticated / and /api/other -> 401."""
+def test_caddyfile_forwards_only_requests_from_our_cloudfront():
+    """Port 443 admits every CloudFront distribution, so Caddy forwards only
+    requests carrying our X-Origin-Verify value; /api/health stays open for
+    deploy.sh's on-box smoke check.
+
+    The 403 must sit in a `route` block ahead of the handles: in Caddy's
+    default directive order `handle` runs before `respond`, and the 403 would
+    never fire. Verified against the pinned caddy:2-alpine: without the header
+    / and /api/history -> 403, /api/health -> 200, /api/health/../history ->
+    403; with the right header both routes -> 200; a wrong or extended value
+    -> 403."""
     text = CADDYFILE_PATH.read_text()
 
     assert "not path /api/health" in text
-    # The matcher must actually be attached to the basic_auth directive
-    # (not just declared and unused).
-    matcher_name = text.split("not path /api/health")[0].splitlines()[-1].split()[0]
-    assert matcher_name.startswith("@")
-    assert f"basic_auth {matcher_name}" in text
+    assert "not header X-Origin-Verify {$ORIGIN_VERIFY_SECRET}" in text
+    matcher = re.search(r"(@\w+) \{\s*not path /api/health", text).group(1)
+
+    route = text[text.index("route {"):]
+    respond_at = route.index(f"respond {matcher}")
+    assert respond_at < route.index("handle_path /api/*")
+    assert respond_at < route.index("handle {")
 
 
-def test_proxy_password_hash_has_no_published_default():
-    """A default bcrypt hash baked into a file that's in git is a published,
-    already-compromised credential — anyone who can read this repo could
-    authenticate to production /history and /api (Codex PR #29 finding).
-    No compose file or example env file may ship a real-looking (full-shape)
-    bcrypt hash; deploy/proxy.env.example must ship it empty, and deploy.sh
-    (not compose) fails closed on it being unset. Matches on the full bcrypt
-    shape ($2a$<cost>$<53 more chars>), not just the "$2a$" prefix, so an
-    explanatory code comment illustrating the shape (e.g. "$2a$14$...") isn't
-    a false positive."""
-    bcrypt_shape = re.compile(r"\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}")
+def test_cloudfront_gates_every_behavior_and_owns_port_443():
+    """The login runs on the default behavior and the cached static one, or
+    the bundle is served without it; and 443 on the box takes only
+    CloudFront, never 0.0.0.0/0."""
+    cdn = (TERRAFORM_DIR / "cdn.tf").read_text()
+    behaviors = cdn.count("_cache_behavior {")
+    assert behaviors == 2
+    assert cdn.count("function_arn = aws_cloudfront_function.basic_auth.arn") == behaviors
+    assert 'origin_protocol_policy = "https-only"' in cdn
+    assert "Managed-AllViewerExceptHostHeader" in cdn
 
-    compose_text = COMPOSE_PATH.read_text()
-    assert not bcrypt_shape.search(compose_text), (
-        "docker-compose.yml must not embed a real/published bcrypt hash "
-        "anywhere"
-    )
-
-    proxy_env_example = (DEPLOY_DIR / "proxy.env.example").read_text()
-    assert not bcrypt_shape.search(proxy_env_example)
-    for line in proxy_env_example.splitlines():
-        if line.startswith("DEMO_PASSWORD_HASH="):
-            assert line == "DEMO_PASSWORD_HASH=", (
-                f"deploy/proxy.env.example must not ship a real hash: {line!r}"
-            )
-
-    # The main deploy/.env.example must not carry it either (see the
-    # env_file test above for *why* it moved).
-    env_example = (DEPLOY_DIR / ".env.example").read_text()
-    assert not bcrypt_shape.search(env_example)
+    main = (TERRAFORM_DIR / "main.tf").read_text()
+    https_rule = main[main.index("from_port       = 443"):]
+    https_rule = https_rule[: https_rule.index("}")]
+    assert "cloudfront_origin_facing" in https_rule
+    assert "0.0.0.0/0" not in https_rule
 
 
 def test_entrypoint_and_deploy_script_are_valid_shell():
@@ -329,28 +307,25 @@ def test_deploy_script_waits_on_both_api_and_frontend_health():
     assert "janasunani-frontend" in text
 
 
-def test_deploy_script_fails_closed_on_the_demo_password_hash():
-    """deploy.sh (not compose -- see the ':?' test above) is where "no real
-    password hash configured" must stop a full-stack deploy instead of
-    silently exposing production /history and /api behind a broken or
-    empty auth (Codex PR #29 finding)."""
-    text = DEPLOY_SH_PATH.read_text()
-
-    assert "proxy.env" in text
-    assert "DEMO_PASSWORD_HASH" in text
-    # Must actually validate the value looks like a bcrypt hash (prefix
-    # $2a$/$2b$/$2y$), not just check that the file/variable exists.
-    assert "2[aby]" in text, (
-        "deploy.sh must validate DEMO_PASSWORD_HASH looks like a real "
-        f"bcrypt hash, not just that it's non-empty: no bcrypt-prefix "
-        f"check found in {DEPLOY_SH_PATH}"
-    )
-    assert "exit 1" in text
+def test_deploy_script_fails_closed_on_the_origin_secret(tmp_path):
+    """With no real ORIGIN_VERIFY_SECRET, deploy.sh stops before pulling or
+    starting anything: the running stack is left as it was."""
+    for bad in ("", "change-me", "short1234", "has space in it but is long enough ok"):
+        case = tmp_path / (bad.replace(" ", "_") or "empty")
+        case.mkdir()
+        deploy_dir, env, _ = _make_stub_deploy_dir(case)
+        (deploy_dir / "proxy.env").write_text(f"ORIGIN_VERIFY_SECRET={bad}\n")
+        result = _run_deploy_sh(deploy_dir, env)
+        combined = result.stdout + result.stderr
+        assert result.returncode == 1, combined
+        assert "ORIGIN_VERIFY_SECRET" in combined
+        # The stub counts `compose up -d`; nothing was started.
+        assert not (case / "state" / "up_count").exists()
 
 
 def test_deploy_script_env_value_reads_survive_a_missing_key():
     """`site="$(grep ... .env | cut -d= -f2-)"` and the equivalent
-    DEMO_PASSWORD_HASH read: under `set -euo pipefail`, if the key is
+    ORIGIN_VERIFY_SECRET read: under `set -euo pipefail`, if the key is
     absent grep exits 1 and the WHOLE pipeline (feeding a command
     substitution assignment) aborts the script right there, before the
     `-z`/empty-value fallback ever runs -- and for SITE_ADDRESS this
@@ -363,7 +338,7 @@ def test_deploy_script_env_value_reads_survive_a_missing_key():
     reaches the fallback logic with an empty value, exit 0."""
     text = DEPLOY_SH_PATH.read_text()
 
-    for var_name, key in (("site", "SITE_ADDRESS"), ("demo_hash", "DEMO_PASSWORD_HASH")):
+    for var_name, key in (("site", "SITE_ADDRESS"), ("origin_secret", "ORIGIN_VERIFY_SECRET")):
         pattern = re.compile(
             re.escape(var_name)
             + r'="\$\(grep -E \'\^'
@@ -543,7 +518,7 @@ def test_deploy_job_is_scoped_to_the_box_deploy_environment():
     with open(DEPLOY_WORKFLOW_PATH) as f:
         workflow = yaml.safe_load(f)
 
-    assert workflow["jobs"]["deploy"].get("environment") == "box-deploy"
+    assert workflow["jobs"]["deploy"]["environment"]["name"] == "box-deploy"
     assert "environment" not in workflow["jobs"]["build-api"]
     assert "environment" not in workflow["jobs"]["build-frontend"]
 
@@ -590,8 +565,8 @@ def test_deploy_workflow_rejects_short_shas():
 
 def test_dockerignore_excludes_proxy_env_but_not_its_example():
     """The api build's context is the repo root (deploy/api.Dockerfile) --
-    without an explicit exclusion, `deploy/proxy.env` (the real Basic Auth
-    bcrypt hash) gets uploaded into the builder even though the Dockerfile
+    without an explicit exclusion, `deploy/proxy.env` (the real origin
+    secret) gets uploaded into the builder even though the Dockerfile
     never COPYs it (round-3 Codex PR #29 finding). Live-verified: built a
     throwaway image COPYing deploy/ with a fake deploy/proxy.env present --
     only .env.example/proxy.env.example ended up in the context, never the
@@ -928,8 +903,7 @@ def _make_stub_deploy_dir(tmp_path, caddyfile_diverged=False, **docker_env):
         "POSTGRES_PASSWORD=testpass\nSITE_ADDRESS=:80\nIMAGE_TAG=prev-good-tag\n"
     )
     (deploy_dir / "proxy.env").write_text(
-        "DEMO_USER=demo\n"
-        "DEMO_PASSWORD_HASH=$2a$14$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXY\n"
+        "ORIGIN_VERIFY_SECRET=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN\n"
     )
 
     state_dir = tmp_path / "state"

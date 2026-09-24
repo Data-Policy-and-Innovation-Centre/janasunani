@@ -60,8 +60,8 @@ new_tag="$IMAGE_TAG"
 # IMAGE_TAG= line yet -- a legitimate first-ever-deploy case, not an error).
 prev_tag="$(grep -E '^IMAGE_TAG=' .env | cut -d= -f2- || true)"
 
-# Preflight: docker-compose.yml's proxy service needs env_file's `format: raw`
-# (deploy/proxy.env) to keep a bcrypt hash's `$` from being interpolated —
+# Preflight: docker-compose.yml's proxy service loads deploy/proxy.env with
+# env_file's `format: raw`, so no `$` in a secret is ever interpolated —
 # that key was only added in Compose 2.30.0. On an older Compose the whole
 # file fails to *parse*, before any service starts, with an opaque error;
 # fail loudly here instead with a clear message.
@@ -79,21 +79,19 @@ if (( compose_major < 2 || (compose_major == 2 && compose_minor < 30) )); then
   exit 1
 fi
 
-# Fail closed on the site-wide Basic Auth credential. docker-compose.yml
-# deliberately does NOT gate on this itself (a compose-level `:?` would abort
-# even an oltp-only `docker compose up -d oltp`) — this script is where "no
-# real password hash configured" must stop a full-stack deploy instead of
-# silently exposing production /history and /api behind a broken or
-# default(ish) auth.
-[[ -f proxy.env ]] || { echo "deploy/proxy.env missing — copy proxy.env.example and set DEMO_PASSWORD_HASH" >&2; exit 1; }
-# `|| true`: same pipefail footgun as prev_tag above -- an empty/missing
-# DEMO_PASSWORD_HASH must fall through to the explicit check below (which
-# prints a clear, actionable error), not abort the script on grep's bare
-# no-match exit code.
-demo_hash="$(grep -E '^DEMO_PASSWORD_HASH=' proxy.env | cut -d= -f2- || true)"
-if [[ -z "$demo_hash" || ! "$demo_hash" =~ ^\$2[aby]\$ ]]; then
-  echo "DEMO_PASSWORD_HASH in deploy/proxy.env is missing or doesn't look like a bcrypt hash. Generate one with:" >&2
-  echo "  docker run --rm caddy:2-alpine caddy hash-password --plaintext '<password>'" >&2
+# Fail closed on the origin secret. The site's login is checked at the
+# CloudFront edge (deploy/terraform/auth.tf); the box only lets through
+# requests carrying X-Origin-Verify, which only our distribution adds
+# (deploy/proxy/Caddyfile). With an empty or placeholder secret, the
+# production /history and /api would be one header away from the internet.
+# docker-compose.yml deliberately does not gate on this itself (a compose-level
+# `:?` would abort even an oltp-only `docker compose up -d oltp`).
+[[ -f proxy.env ]] || { echo "deploy/proxy.env missing — copy proxy.env.example and set ORIGIN_VERIFY_SECRET" >&2; exit 1; }
+# `|| true`: same pipefail footgun as prev_tag above.
+origin_secret="$(grep -E '^ORIGIN_VERIFY_SECRET=' proxy.env | cut -d= -f2- || true)"
+if [[ ! "$origin_secret" =~ ^[A-Za-z0-9]{32,}$ ]]; then
+  echo "ORIGIN_VERIFY_SECRET in deploy/proxy.env is missing or isn't 32+ letters and digits. Set it from:" >&2
+  echo "  terraform -chdir=deploy/terraform output -raw origin_verify_secret" >&2
   exit 1
 fi
 
