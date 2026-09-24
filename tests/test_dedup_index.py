@@ -567,7 +567,8 @@ class TestSignatureContents:
 
 def _dup_oltp(tmp_path, rows):
     """`rows`: (ticket, district, year, created_on, mobile, email, raw_grievance,
-    redacted_text_or_None)."""
+    redacted_text_or_None[, petitioner_name]). An email key needs a name, so
+    a row with an email and no name given is filed as "Ranjan Kumar"."""
     complaints = [
         {
             "ticket_no": t,
@@ -576,13 +577,14 @@ def _dup_oltp(tmp_path, rows):
             "created_on": c,
             "petitioner_mobile": m,
             "petitioner_email": e,
+            "petitioner_name": rest[0] if rest else ("Ranjan Kumar" if e else None),
             "grievance": raw,
         }
-        for t, d, y, c, m, e, raw, _ in rows
+        for t, d, y, c, m, e, raw, _, *rest in rows
     ]
     redactions = [
         {"ticket_no": t, "grievance_redacted": r}
-        for t, _, _, _, _, _, _, r in rows
+        for t, _, _, _, _, _, _, r, *_ in rows
         if r is not None
     ]
     return _make_oltp(tmp_path, complaints, redactions)
@@ -624,6 +626,10 @@ def dup_oltp(tmp_path):
         # --- same citizen (email, case/whitespace-normalized) AND matching
         # text, different window: must group ---
         ("T20R", "Sambalpur", 2024, datetime(2024, 10, 1), None, "citizen@example.com", "raw t20r", UNRELATED_B),
+        # --- the same address under another name, same text, another window:
+        # an office filing for someone else, so the address must not link it ---
+        ("T20O", "Sambalpur", 2024, datetime(2024, 11, 1), None, "citizen@example.com", "raw t20o", UNRELATED_B,
+         "Sita Behera"),
     ]
     return _dup_oltp(tmp_path, rows)
 
@@ -938,6 +944,12 @@ class TestIdentityKeyLinking:
         build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt=_SALT)
         groups = _group_rows(sync_url)
         assert groups["T19"].duplicate_group_id == groups["T20R"].duplicate_group_id
+
+    def test_a_shared_address_under_another_name_does_not_group(self, dup_oltp):
+        async_url, sync_url = dup_oltp
+        build_dedup_index("Sambalpur", 2024, oltp_url=async_url, salt=_SALT)
+        groups = _group_rows(sync_url)
+        assert groups["T20O"].duplicate_group_id != groups["T19"].duplicate_group_id
 
     def test_identity_keys_are_salted_and_not_derived_from_redacted_text(self, dup_oltp):
         async_url, sync_url = dup_oltp

@@ -614,7 +614,7 @@ def _signature_rows_for_source_batch(
                 # columns directly, never from redacted_text (dedup.py module
                 # docstring point 3).
                 "identity_key_mobile": mobile_identity_key(mobile, name, salt, block),
-                "identity_key_email": email_identity_key(email, salt),
+                "identity_key_email": email_identity_key(email, name, salt),
                 "source_record_digest": source_record_digest(source),
                 "index_version": version,
                 "indexed_at": now,

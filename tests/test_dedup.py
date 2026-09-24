@@ -888,25 +888,33 @@ class TestMobileIdentityKeyBlock:
 
 
 class TestEmailIdentityKey:
-    """#341. The email column is healthy -- 261,161 of 262,159 keyed
-    signatures carry an address -- so the derivation is unchanged. Only the
-    56 non-address values covering 998 signatures are now refused.
+    """An address alone is not a citizen: 261,161 keyed signatures shared
+    only 4,580 addresses, and groups linked by one address spanned hundreds
+    of petitioner names (an office or intermediary filing for many people).
+    The key is the address plus the full name, as the mobile key is.
     """
 
     SALT = "a-real-salt"
 
-    def test_an_address_keys_exactly_as_before(self):
-        from janasunani.pipeline.dedup import email_identity_key, identity_key
-
-        assert email_identity_key("citizen@example.com", self.SALT) == identity_key(
-            "citizen@example.com", self.SALT
-        )
-
-    def test_case_and_whitespace_still_normalize(self):
+    def test_one_address_with_different_names_does_not_link(self):
         from janasunani.pipeline.dedup import email_identity_key
 
-        assert email_identity_key(" Citizen@Example.com ", self.SALT) == (
-            email_identity_key("citizen@example.com", self.SALT)
+        assert email_identity_key("office@example.com", "Ramesh Sahu", self.SALT) != (
+            email_identity_key("office@example.com", "Sita Behera", self.SALT)
+        )
+
+    def test_same_address_and_name_links(self):
+        from janasunani.pipeline.dedup import email_identity_key
+
+        assert email_identity_key("citizen@example.com", "Ramesh Sahu", self.SALT) == (
+            email_identity_key(" Citizen@Example.com ", "ramesh  sahu", self.SALT)
+        )
+
+    def test_it_never_collides_with_the_bare_address_key(self):
+        from janasunani.pipeline.dedup import email_identity_key, identity_key
+
+        assert email_identity_key("citizen@example.com", "Ramesh Sahu", self.SALT) != identity_key(
+            "citizen@example.com", self.SALT
         )
 
     def test_a_non_address_abstains(self):
@@ -915,12 +923,18 @@ class TestEmailIdentityKey:
         from janasunani.pipeline.dedup import email_identity_key
 
         for value in ("751001", "~::~", "not-an-email", "@example.com", "a@b", ""):
-            assert email_identity_key(value, self.SALT) is None, value
+            assert email_identity_key(value, "Ramesh Sahu", self.SALT) is None, value
+
+    def test_no_usable_name_abstains(self):
+        from janasunani.pipeline.dedup import email_identity_key
+
+        for name in (None, "", "Ab", "***"):
+            assert email_identity_key("citizen@example.com", name, self.SALT) is None, name
 
     def test_none_abstains(self):
         from janasunani.pipeline.dedup import email_identity_key
 
-        assert email_identity_key(None, self.SALT) is None
+        assert email_identity_key(None, "Ramesh Sahu", self.SALT) is None
 
 
 class TestSourceDigestCoversTheIdentityInputs:
@@ -972,7 +986,7 @@ class TestSourceDigestCoversTheIdentityInputs:
         as current, so the full-name-and-block keys would never be built."""
         from janasunani.pipeline.dedup import IDENTITY_ALGORITHM
 
-        assert IDENTITY_ALGORITHM != "mobile-tail4-name-v1"
+        assert IDENTITY_ALGORITHM not in {"mobile-tail4-name-v1", "mobile-tail4-fullname-block-v2"}
 
     def test_a_changed_name_changes_the_digest(self):
         from janasunani.pipeline.dedup import source_record_digest
