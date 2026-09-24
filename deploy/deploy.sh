@@ -29,9 +29,9 @@
 # must be expand-only / backward-compatible: the OLD code must still be
 # able to boot and run against the NEW schema (no rename/drop/narrow a
 # column in the same deploy that adds it). Violate that and a rollback
-# can't un-migrate — the "rolled back" api container just crash-loops on
-# `alembic upgrade head` hitting a revision chain it can satisfy but a
-# schema its queries can't, or vice versa. This script only detects that
+# can't un-migrate — the "rolled back" api starts (its entrypoint accepts a
+# schema newer than itself) and then fails on queries the old code can't run
+# against the new shape. This script only detects that
 # and refuses to lie about it (see rollback_and_fail's health re-check);
 # it can't fix it.
 set -euo pipefail
@@ -219,7 +219,7 @@ rollback_and_fail() {
   if wait_healthy janasunani-api && wait_healthy janasunani-frontend; then
     echo "Deploy of ${new_tag} failed; rolled back to ${prev_tag} and verified healthy." >&2
   else
-    echo "ROLLBACK FAILED -- manual intervention required on the box. Deploy of ${new_tag} failed, and the rollback to ${prev_tag} did not come back healthy either (this can happen if ${new_tag} shipped a migration ${prev_tag} can't satisfy -- see the migration policy note at the top of this file and in docs/DEPLOY.md). The demo is DOWN." >&2
+    echo "ROLLBACK FAILED -- manual intervention required on the box. Deploy of ${new_tag} failed, and the rollback to ${prev_tag} did not come back healthy either (this can happen if a migration run for ${new_tag} changed the schema in a way ${prev_tag}'s code can't run against -- see the migration policy note at the top of this file and in docs/DEPLOY.md). The demo is DOWN." >&2
   fi
   exit 1
 }
