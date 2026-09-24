@@ -170,8 +170,11 @@ jobs:
     # ci_deploy far more than "any ref in this repo", and leaves room for a
     # required-reviewer gate on the environment later. Maintainer must create
     # the "box-deploy" environment once (Settings -> Environments) — see
-    # docs/DEPLOY.md.
-    environment: box-deploy
+    # docs/DEPLOY.md. `url` is the CloudFront address (SITE_URL, from
+    # `terraform output site_url`), linked from the run and the deployments page.
+    environment:
+      name: box-deploy
+      url: ${{ vars.SITE_URL }}
     permissions:
       contents: read
       id-token: write

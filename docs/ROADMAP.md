@@ -388,8 +388,8 @@ format/OCR under `pipeline-core`, PII under `pii`, page type/summary under
   temporary OIDC-scoped CI IAM role (`deploy/terraform/ci.tf`) that opens port 22
   only for the run. `deploy/deploy.sh` is the sole sanctioned box-side path,
   health-gating on `/health` and auto-rolling-back to the prior digest-pinned
-  images. Compose runs `oltp` + `api` + `frontend` + `proxy` (Caddy with site-wide
-  `basic_auth`, so production data is not openly public).
+  images. Compose runs `oltp` + `api` + `frontend` + `proxy` (Caddy, reachable only
+  through CloudFront, which checks one shared login at the edge).
   `tests/test_deploy_stack.py` (~1k lines) covers it. Local live bring-up is
   validated ([DEMO.md](DEMO.md)).
 

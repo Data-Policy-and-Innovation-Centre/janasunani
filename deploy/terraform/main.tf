@@ -17,6 +17,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 6.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
   }
 }
 
@@ -45,7 +49,9 @@ data "aws_subnets" "default" {
 }
 
 resource "aws_security_group" "cpu_box" {
-  name        = "janasunani-cpu-box"
+  name = "janasunani-cpu-box"
+  # The description is kept although 443 is now CloudFront-only: changing a
+  # security group's description forces its replacement.
   description = "Janasunani demo CPU box: SSH from the maintainer, HTTP/S from the world"
   vpc_id      = data.aws_vpc.default.id
 
@@ -57,6 +63,9 @@ resource "aws_security_group" "cpu_box" {
     cidr_blocks = [var.admin_cidr]
   }
 
+  # Stays open to the world: Let's Encrypt renews Caddy's nip.io certificate
+  # with an HTTP-01 challenge sent straight to the box, not through
+  # CloudFront. Caddy answers it and redirects everything else to 443.
   ingress {
     description = "HTTP (proxy)"
     from_port   = 80
@@ -65,12 +74,16 @@ resource "aws_security_group" "cpu_box" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # CloudFront only (cdn.tf). Any distribution can use these addresses, so
+  # Caddy also requires the X-Origin-Verify header only ours adds. The
+  # prefix list counts as 55 rules against the 60-rule group quota: keep
+  # SSH to one CIDR, plus the one CI adds for the length of a deploy.
   ingress {
-    description = "HTTPS (proxy)"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    description     = "HTTPS from CloudFront only"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    prefix_list_ids = [data.aws_ec2_managed_prefix_list.cloudfront_origin_facing.id]
   }
 
   egress {

@@ -39,6 +39,29 @@ output "cpu_box_security_group_id" {
   value       = aws_security_group.cpu_box.id
 }
 
+# --- CloudFront and the shared login (cdn.tf, auth.tf) ------------------------
+
+output "site_url" {
+  description = "The site's address (SITE_URL on the 'box-deploy' GitHub Actions environment)."
+  value       = "https://${aws_cloudfront_distribution.app.domain_name}"
+}
+
+output "basic_auth_username" {
+  value = var.basic_auth_username
+}
+
+output "basic_auth_password" {
+  description = "The site's shared password. Share it only with the DPIC team and the Director Grievance, GAPG."
+  value       = random_password.basic_auth.result
+  sensitive   = true
+}
+
+output "origin_verify_secret" {
+  description = "ORIGIN_VERIFY_SECRET for deploy/proxy.env on the box."
+  value       = random_password.origin_verify.result
+  sensitive   = true
+}
+
 # --- Container registry (ecr.tf) ----------------------------------------------
 
 output "ecr_registry" {
