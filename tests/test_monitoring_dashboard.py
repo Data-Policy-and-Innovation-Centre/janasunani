@@ -561,3 +561,19 @@ def test_a_rate_over_a_small_denominator_is_withheld_even_at_zero():
     assert _drilldown_rows([("Puri", 5, 0, 0)], [(0, None), (1, 0), (2, 0)], "Other") == [
         {"label": "Other", "values": [None, None, None]},
     ]
+
+
+@pytest.mark.parametrize("where", ["title", "column", "row"])
+def test_table_text_must_be_non_empty_as_the_frontend_requires(where):
+    from pydantic import ValidationError
+    from janasunani.serving.schemas import MonitoringTable
+    table = {"title": "t", "columns": [{"label": "c", "unit": "grievances"}], "rows": [{"label": "r", "values": [10]}]}
+    MonitoringTable.model_validate(table)
+    if where == "title":
+        table["title"] = ""
+    elif where == "column":
+        table["columns"][0]["label"] = ""
+    else:
+        table["rows"][0]["label"] = ""
+    with pytest.raises(ValidationError):
+        MonitoringTable.model_validate(table)
