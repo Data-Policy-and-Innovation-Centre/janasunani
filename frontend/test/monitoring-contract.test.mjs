@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const { PANEL_IDS, childChoice, sortableColumn, recordingState, parseMonitoringCatalog, parseMonitoringDashboard, parentScopeFor, publishedScopes, quickScopes, scopesForView, subtypesFor } = await import("../lib/monitoring.ts");
+const { PANEL_IDS, metricGroups, childChoice, sortableColumn, recordingState, parseMonitoringCatalog, parseMonitoringDashboard, parentScopeFor, publishedScopes, quickScopes, scopesForView, subtypesFor } = await import("../lib/monitoring.ts");
 
 const catalog = {
   schemaVersion: 1,
@@ -158,4 +158,16 @@ test("drill-down tables must have one cell per column", () => {
 test("drill-down tables sort by workload, never by a raw rate", () => {
   assert.equal(sortableColumn({ label: "Open now", unit: "grievances" }), true);
   assert.equal(sortableColumn({ label: "Open 30+ days", unit: "percent" }), false);
+});
+
+test("the ATR panel stacks the review chain apart from the ATR figures", () => {
+  const m = (id) => ({ id, label: id, state: "recorded", value: 10, unit: "percent", numerator: 1, denominator: 10, coveragePct: null, note: null, basis: "direct" });
+  const ids = ["atr-replied", "review-required", "required-closed", "review-done", "closed-without-review", "atr-sent-back", "atr-waiting"];
+  const groups = metricGroups({ id: "atr", metrics: ids.map(m) });
+  assert.deepEqual(groups.map((g) => [g.title, g.stacked, g.metrics.map((x) => x.id)]), [
+    ["Review", true, ["review-required", "required-closed", "review-done", "closed-without-review"]],
+    ["ATRs", false, ["atr-replied", "atr-sent-back", "atr-waiting"]],
+  ]);
+  // Any other panel is one ungrouped grid.
+  assert.deepEqual(metricGroups({ id: "aging", metrics: [m("inactive-7")] }).map((g) => g.title), [null]);
 });
