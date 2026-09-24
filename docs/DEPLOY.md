@@ -177,7 +177,8 @@ existing tag instead of rebuilding — a rollback).
 ### Architecture
 
 ```
-Browser --443/80--> proxy (Caddy, only public service)
+Browser --443--> CloudFront (login checked at the edge; adds X-Origin-Verify)
+           --443--> proxy (Caddy on the box; 403 without X-Origin-Verify)
                        |-- handle_path /api/* --> api:8000   (prefix stripped)
                        `-- handle          --> frontend:3000
 api --> oltp:5432 (compose network; existing container/volume, untouched)
@@ -188,31 +189,28 @@ api --> oltp:5432 (compose network; existing container/volume, untouched)
   construction), so Caddy obtains a real Let's Encrypt certificate
   automatically — no DNS to manage, no self-signed warning. It's a
   `deploy/.env` var, never hard-coded (`deploy/proxy/Caddyfile`).
-- **Auth**: the whole site sits behind Caddy `basic_auth` (bcrypt hash) —
-  production grievance data (`/history`, `/api/history`,
-  `/api/grievance/{id}`) must not be openly public. One exemption:
-  `/api/health` bypasses `basic_auth` (leaks nothing but
-  `{"status":"ok","processor":"pipeline"}`) so `deploy/deploy.sh`'s own
-  end-to-end check — and any external uptime monitor — can probe it
-  unauthenticated. The credentials live in `deploy/proxy.env` (a *separate*
-  file from `deploy/.env` — Compose interpolates `$` in `deploy/.env`
-  values, which would mangle a bcrypt hash like `$2a$14$...`). The `proxy`
-  service loads it via the long-form `env_file:` with `format: raw` (no
-  interpolation of `$`, version-independent — the `format` key on env_file
-  entries needs **Compose >= 2.30.0** specifically (not 2.24 — that's only
-  when `required: false` landed); on an older Compose the whole file fails
-  to *parse*, before any service starts. `deploy/terraform/user_data.sh`
-  installs `docker-compose-plugin` from Docker's official apt repo, which
-  tracks current stable releases, so this is satisfied on a
-  freshly-provisioned box — `deploy/deploy.sh` also preflights the
-  installed version and fails with a clear message if it's too old, rather
-  than letting compose's opaque parse error be the first sign) and
-  `required: false` (so a bare `docker compose up -d oltp`, §2, doesn't
-  fail just because `proxy.env` doesn't exist yet). `deploy/deploy.sh`
-  fails closed if the hash isn't set to a real-looking value before
-  bringing the full stack up — compose itself has no default and,
-  deliberately, no required-var gate on it either (see
-  docker-compose.yml's header comment).
+- **Auth**: one shared login, checked at the CloudFront edge
+  (`deploy/terraform/cdn.tf`, `auth.tf`; the same pattern as
+  ai-for-panchayats). The CloudFront Function runs before the cache and
+  before the box, so a request without the login never reaches the
+  application. The site is used only by the DPIC team and the Director
+  Grievance, GAPG, all of whom may see raw complaints, so `/history` and
+  `/api/grievance/{id}` stay on it. One shared credential is not identity:
+  it cannot say who looked at what, or be withdrawn from one person. If the
+  audience widens, this needs per-person sign-in.
+- **Origin lock**: port 443 on the box admits only CloudFront's address
+  ranges (the `cloudfront.origin-facing` prefix list), and Caddy returns 403
+  to any request without our distribution's `X-Origin-Verify` value, since
+  other accounts' distributions share those addresses. The value is
+  `ORIGIN_VERIFY_SECRET` in `deploy/proxy.env`, loaded with `env_file`
+  `format: raw` (needs **Compose >= 2.30.0**; `deploy/deploy.sh` preflights
+  it) and `required: false` (so a bare `docker compose up -d oltp`, §2,
+  works before `proxy.env` exists). `deploy/deploy.sh` fails closed unless
+  it is 32+ letters and digits. Port 80 stays open to the world: Let's
+  Encrypt renews Caddy's certificate by connecting to the box directly.
+- **Health**: `/api/health` skips the origin check (it returns only
+  `{"status":"ok","processor":"pipeline"}`), so `deploy/deploy.sh` can
+  smoke-check it from the box itself.
 - **Models/data**: host bind-mounts (`../models`, `../data/interim`,
   `../data/raw/janasunani-mappings`, all `:ro`) — never baked into the `api`
   image. A new deploy doesn't re-pull model weights. Approved releases are
@@ -252,10 +250,9 @@ cp .env.example .env && chmod 600 .env
 #          IMAGE_TAG can stay blank (deploy.sh writes it on every deploy)
 
 cp proxy.env.example proxy.env && chmod 600 proxy.env
-# fill in DEMO_PASSWORD_HASH in proxy.env (NOT deploy/.env — Compose would
-# mangle the '$' in a bcrypt hash pasted into deploy/.env; deploy.sh refuses
-# to bring the full stack up without a real-looking hash here):
-docker run --rm caddy:2-alpine caddy hash-password --plaintext '<a real password>'
+# fill in ORIGIN_VERIFY_SECRET from your machine (deploy.sh refuses to bring
+# the full stack up without it):
+#   terraform -chdir=deploy/terraform output -raw origin_verify_secret
 ```
 
 **Materialize the reviewed model release before the first strict deploy.** Copy
@@ -364,11 +361,42 @@ secrets/vars — **run each of these yourself; nothing here does it for you:**
 | `BOX_HOST` | **`box-deploy` environment** var | `52.66.116.80` |
 | `CI_DEPLOY_ROLE_ARN` | **`box-deploy` environment** var | `terraform output -raw ci_deploy_role_arn` |
 | `BOX_SG_ID` | **`box-deploy` environment** var | `terraform output -raw cpu_box_security_group_id` |
+| `SITE_URL` | **`box-deploy` environment** var | `terraform output -raw site_url` (the link on each deploy run) |
 
 The `deploy` job already declares `environment: box-deploy` (added for the
 OIDC trust narrowing — see ci.tf's comment), which is exactly what makes it
 able to read environment-scoped secrets/vars; `build-api`/`build-frontend`
 deliberately do *not* declare it, so they can't.
+
+### CloudFront and the shared login
+
+`cdn.tf` and `auth.tf` in `deploy/terraform/` put CloudFront in front of the
+box. Apply them before the first deploy that ships the origin-checking
+Caddyfile, or the site will answer 403 to everyone:
+
+```bash
+cd deploy/terraform
+# SSH is pinned to admin_cidr, and the apply removes every other SSH rule.
+# Set it to where you are now first:   echo "$(curl -4 -s ifconfig.me)/32"
+terraform plan    # expect: 4 to add, 1 to change (the security group), 0 to destroy
+terraform apply
+terraform output site_url basic_auth_username
+terraform output -raw basic_auth_password     # share only with the site's users
+terraform output -raw origin_verify_secret    # into deploy/proxy.env on the box
+```
+
+- **Security group quota.** The CloudFront prefix list counts as 55 of the
+  group's 60 rules. SSH (one CIDR), HTTP and the one rule CI adds during a
+  deploy fit. A second SSH CIDR added by hand does not.
+- **Rotate the password:** `terraform apply -replace=random_password.basic_auth`.
+  It takes effect at the edge in a few minutes; nothing on the box changes.
+- **Rotate the origin secret:** `terraform apply
+  -replace=random_password.origin_verify`, then put the new value in
+  `deploy/proxy.env` and redeploy. The site answers 403 in between.
+- **Timeout.** CloudFront waits 60 s for the box. `POST /grievance` runs OCR
+  and every model in one request, so a long document can pass that and show
+  a 504 while the box finishes. Measure; raise the quota (up to 180 s) or
+  make submission asynchronous.
 
 ### Routine flow
 
@@ -504,8 +532,8 @@ IMAGE_TAG=<sha> bash deploy.sh             # or re-run the Deploy demo workflow
   or `cuda-*` wheel means the CPU source did not take effect and the image is
   still carrying the CUDA runtime.
 - **On-box browser E2E** — submit a grievance → real pipeline output renders
-  and persists to `live_grievances` → `/history` shows it → `basic_auth`
-  actually gates access. Do this once after the first automated deploy.
+  and persists to `live_grievances` → `/history` shows it → the CloudFront
+  login actually gates access, and the nip.io name answers 403. Do this once after the first automated deploy.
 
 ### Known operational follow-ups
 

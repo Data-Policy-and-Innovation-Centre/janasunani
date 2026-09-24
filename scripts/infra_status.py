@@ -474,7 +474,7 @@ def evaluate_backup(last_modified: Optional[str], size_bytes: Optional[int]) -> 
 
 
 def evaluate_health(payload: Optional[dict], error: Optional[str]) -> Finding:
-    """`GET /api/health`, which the Caddyfile exempts from basic_auth.
+    """`GET /api/health`, which the Caddyfile exempts from the origin check.
 
     Only `processor="pipeline"` (`PipelineGrievanceProcessor.name`) is OK --
     matching `deploy.sh`'s own smoke gate, which greps for that exact string
