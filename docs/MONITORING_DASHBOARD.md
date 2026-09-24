@@ -61,10 +61,12 @@ that matter under other names (checked against the CM Grievance Cell screens,
   before it goes on. `BDO --> Collector` needs no review;
   `BDO --> Collector --> CMO` does, at the Collector. There is no review flag.
 - **`Replied`** is the ATR moving up to the next node.
-- **`Reopen` after a `Replied`** is a reviewer sending the ATR back, usually
-  with one of the portal's fixed revert remarks ("Please furnish the final
-  ATR", "Required more clarification", ...). It is not a citizen reopening
-  the case, and the closure panel's `reopened` metric is labelled accordingly.
+- **`Reopen` after a `Replied`, before any disposal,** is a reviewer sending
+  the ATR back, usually with one of the portal's fixed revert remarks ("Please
+  furnish the final ATR", "Required more clarification", ...). After a
+  disposal, only a Reopen with one of those remarks counts as a send-back;
+  other wording is the case being reopened, often by the citizen. The closure
+  panel's `reopened` metric counts both kinds; the ATR panel separates them.
 
 "Required review happened" and "Closed without the required review" are
 inferred from the order of events (a second office replied, or a reviewer
