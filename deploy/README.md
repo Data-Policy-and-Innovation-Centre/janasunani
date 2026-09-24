@@ -27,7 +27,7 @@ Two halves: [`terraform/`](terraform/README.md) creates the EC2 boxes;
 ## docker-compose.yml (CPU box)
 
 Four services today: `oltp` (Postgres, since Week 1) plus `api` / `frontend` /
-`proxy`, which landed with the automated CI→GHCR→box deploy. `mlflow` is not
+`proxy`, which landed with the automated CI→ECR→box deploy. `mlflow` is not
 needed for the demo and is intentionally still absent (see
 [docs/ROADMAP.md](../docs/ROADMAP.md) Phase 12). Config from `deploy/.env`
 (gitignored — holds `POSTGRES_PASSWORD`, `IMAGE_TAG`, `SITE_ADDRESS`; the
@@ -65,7 +65,7 @@ changed one into an already-running container), and blocks until **both**
 Caddy reload, and the disk/version preflights. If anything fails after the
 stack starts changing, it **automatically rolls back** (image *and*
 Caddyfile) and re-verifies the rollback is actually healthy before saying
-so — see [docs/DEPLOY.md §4](../docs/DEPLOY.md#4--automated-demo-deploy-ci--ghcr--box)
+so — see [docs/DEPLOY.md §4](../docs/DEPLOY.md#4--automated-demo-deploy-ci--ecr--box)
 ("Automatic rollback" and "Migration policy" — a rollback can't undo a
 non-backward-compatible schema migration, only detect and report that it
 can't).

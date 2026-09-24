@@ -384,7 +384,7 @@ format/OCR under `pipeline-core`, PII under `pii`, page type/summary under
 - **12 Demo integration & deploy.** The deploy pipeline is **built and heavily
   reviewed** (Codex rounds 2–5, PRs #27/#29, plus a Fable pass) on branch
   `deploy/cpu-box` (PR #29 open, 24 commits ahead of `main`). A
-  `workflow_dispatch` job builds both images to GHCR and deploys over SSH using a
+  `workflow_dispatch` job builds both images to ECR and deploys over SSH using a
   temporary OIDC-scoped CI IAM role (`deploy/terraform/ci.tf`) that opens port 22
   only for the run. `deploy/deploy.sh` is the sole sanctioned box-side path,
   health-gating on `/health` and auto-rolling-back to the prior digest-pinned
@@ -393,8 +393,8 @@ format/OCR under `pipeline-core`, PII under `pii`, page type/summary under
   `tests/test_deploy_stack.py` (~1k lines) covers it. Local live bring-up is
   validated ([DEMO.md](DEMO.md)).
 
-  Remaining: `terraform apply` of `ci.tf`, one-time box setup (GHCR login,
-  `deploy/.env`), first real amd64 build + a live `workflow_dispatch` run, on-box
+  Remaining: `terraform apply` of `ci.tf`, one-time box setup
+  (`deploy/.env`, `deploy/proxy.env`), first real amd64 build + a live `workflow_dispatch` run, on-box
   browser E2E (issue #30).
 
   ✅ **CPU-only Torch image** (issue #48). The `demo` extra now resolves torch
@@ -1619,8 +1619,8 @@ to every other task, and closes the operational gaps.
   box-only. Codify the timer, retention, encryption, and a restore test from code
   (issue #31). The single-instance Postgres is a known prototype limit.
 
-  The **GHCR PAT** on the box is the one standing credential; rotate or replace it,
-  and activate a reviewed checksum-valid release for every runtime model (BART
+  Images come from ECR through the box's instance role (no registry credential on
+  the box). Activate a reviewed checksum-valid release for every runtime model (BART
   is now local-only by default).
 
 ### Phase 19 — Model & pipeline platform

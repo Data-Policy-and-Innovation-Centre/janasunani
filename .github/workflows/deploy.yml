@@ -1,6 +1,6 @@
 name: Deploy demo
 
-# Hand-triggered only — this workflow builds and pushes private GHCR images
+# Hand-triggered only — this workflow builds and pushes images to ECR
 # and then SSHes into the always-on CPU box, so it never runs on a PR/push
 # trigger. Optional `image_tag` re-deploys an existing image without
 # rebuilding (e.g. a rollback to a prior commit SHA).

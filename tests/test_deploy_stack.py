@@ -3,7 +3,7 @@ them): parses the actual `deploy/docker-compose.yml` and
 `deploy/proxy/Caddyfile` on disk, and shells out to `sh -n` / `bash -n` on the
 actual scripts — the same files CI ships and the box runs.
 
-Guards the CI -> GHCR -> box deploy stack (see docs/DEPLOY.md "Automated demo
+Guards the CI -> ECR -> box deploy stack (see docs/DEPLOY.md "Automated demo
 deploy") against the specific footguns called out in deploy/README.md and
 docs/DEPLOY.md: the `oltp` service/volume must stay byte-identical to the
 Week-1 bring-up (external volume, localhost-only port), the app services must
@@ -414,7 +414,7 @@ def test_deploy_script_persists_image_tag_only_after_success():
     """deploy.sh must write the IMAGE_TAG= line into .env AFTER pull/up/
     reload/both health waits/the final smoke check all pass -- not before
     (round-4 Codex PR #29 finding). Writing it first meant a failed pull
-    (unpublished/rolled-back SHA, transient GHCR error) still left .env
+    (unpublished/rolled-back SHA, transient ECR error) still left .env
     pointing at a tag that never actually deployed, so a later bare
     `docker compose up -d` would use the bad tag instead of the last
     known-good one. Live-verified: a deploy with a nonexistent image tag
