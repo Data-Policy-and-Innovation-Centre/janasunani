@@ -71,7 +71,11 @@ that matter under other names (checked against the CM Grievance Cell screens,
 "Required review happened" and "Closed without the required review" are
 inferred from the order of events (a second office replied, or a reviewer
 sent it back, before closure) and are tagged proxy. The chain is the current
-one; an earlier workflow is not kept.
+one; an earlier workflow is not kept. Both are shares of the required cases
+that were disposed by 30 July. The panel's "Where the cases that require
+review stand" table splits every required case into reviewed then closed,
+closed without the review, still open and discarded, which add up to the
+required count.
 
 Discard timing is only "before any transfer" or "after a transfer". The
 extract has no event for when an officer started work or when an earlier

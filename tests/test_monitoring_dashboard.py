@@ -509,7 +509,7 @@ def test_atr_reads_review_from_the_assigned_workflow():
     assert metrics["atr-waiting"]["value"] == 20  # waiting and waiting_late
     assert metrics["atr-wait"]["value"] == 20.0            # 30 July less 10 July
     # One row per grievance: the rows sum to the send-back count.
-    assert panel["tables"][0]["rows"] == [{"label": "More clarification required", "values": [20]}]
+    assert _reasons(panel)["rows"] == [{"label": "More clarification required", "values": [20]}]
     assert {metrics[m]["basis"] for m in ("review-done", "closed-without-review")} == {"proxy"}
 
 
@@ -519,7 +519,7 @@ def test_atr_withholds_the_reason_table_when_any_reason_is_small():
     few = ("few", "1,2,3", "Disposed", [("BDO", "Replied", None, 2), ("Collector", "Reopen", "Please furnish the final ATR", 3),
                                         ("BDO", "Replied", None, 4), ("CMO", "Disposed", None, 6)])
     panel = _atr(_atr_lake(ATR_CASES + [few], sizes={"few": 5}))
-    assert panel["tables"] is None
+    assert _reasons(panel) is None
     assert any("sent back" in caveat and "fewer than 10" in caveat for caveat in panel["caveats"])
 
 
@@ -690,7 +690,7 @@ def test_a_send_back_after_the_snapshot_does_not_count():
     con.execute("INSERT INTO acting_office VALUES (9999, 'later-0', TIMESTAMP '2025-08-05', 'Reopen', 'Collector')")
     panel = _atr(con)
     assert con.execute("SELECT COUNT(*) FROM atr_backs").fetchone()[0] == 0
-    assert panel["tables"] is None
+    assert _reasons(panel) is None
 
 
 def test_closure_reopens_count_resolved_cases_before_the_snapshot():
@@ -746,3 +746,35 @@ def test_a_one_office_workflow_has_no_next_office_to_wait_for():
     assert _atr_case("solo", "Pending", [("BDO", "Replied", None, 2)], chain="1")[2] is False
     # The same reply in a two-office workflow is waiting.
     assert _atr_case("pair", "Pending", [("BDO", "Replied", None, 2)], chain="1,2")[2] is True
+
+
+def _reasons(panel):
+    return next((t for t in panel["tables"] if t["title"] == "Why ATRs were sent back"), None)
+
+
+def _standing(panel):
+    table = next(t for t in panel["tables"] if t["title"].startswith("Where the cases that require review stand"))
+    return {row["label"]: row["values"] for row in table["rows"]}
+
+
+def test_the_required_review_cases_split_into_parts_that_add_up():
+    panel = _atr(_atr_lake(ATR_CASES))
+    required = next(m for m in panel["metrics"] if m["id"] == "review-required")["numerator"]
+    standing = _standing(panel)
+    assert standing == {
+        "Reviewed, then closed": [40, 44.4],
+        "Closed without the review": [30, 33.3],
+        "Still open: review may still happen": [20, 22.2],
+        "Discarded": [0, 0.0],
+    }
+    assert sum(v[0] for v in standing.values()) == required
+    # The rates say which base they use.
+    labels = {m["id"]: m["label"] for m in panel["metrics"]}
+    assert labels["review-done"].endswith("of those closed")
+
+
+def test_a_discarded_required_case_is_its_own_part():
+    disc = ("disc", "1,2,3", "Discard", [("BDO", "Replied", None, 2)])
+    standing = _standing(_atr(_atr_lake(ATR_CASES + [disc])))
+    assert standing["Discarded"][0] == 10
+    assert standing["Still open: review may still happen"][0] == 20
