@@ -645,8 +645,8 @@ def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
         "id": "atr", "title": "ATRs and review", "state": "recorded",
         "denominator": {"label": "Grievances created in FY 2024-25", "value": row["filings"]},
         "metrics": [
-            _metric("review-required", "Workflow requires review", _pct(row["required"], row["with_workflow"]), unit="percent", numerator=row["required"], denominator=row["with_workflow"], note="Three or more offices in the assigned workflow."),
             _metric("atr-replied", "ATR submitted", _pct(row["replied"], row["filings"]), unit="percent", numerator=row["replied"], denominator=row["filings"]),
+            _metric("review-required", "Workflow requires review", _pct(row["required"], row["with_workflow"]), unit="percent", numerator=row["required"], denominator=row["with_workflow"], note="Three or more offices in the assigned workflow."),
             # The base of the two rates below, so the chain reads through.
             _metric("required-closed", "Closed, of those that require review", _pct(row["required_closed"], row["required"]), unit="percent", numerator=row["required_closed"], denominator=row["required"], note="Disposed by 30 July. The rest are still open or were discarded."),
             _metric("review-done", "Required review happened, of those closed", _pct(row["required_closed_reviewed"], row["required_closed"]), unit="percent", numerator=row["required_closed_reviewed"], denominator=row["required_closed"]),

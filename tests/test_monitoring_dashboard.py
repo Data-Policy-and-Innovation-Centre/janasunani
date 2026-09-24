@@ -784,7 +784,9 @@ def test_the_closed_required_cases_are_shown_between_required_and_the_rates():
     panel = _atr(_atr_lake(ATR_CASES))
     metrics = {m["id"]: m for m in panel["metrics"]}
     ids = [m["id"] for m in panel["metrics"]]
-    assert ids.index("review-required") < ids.index("required-closed") < ids.index("review-done")
+    # Adjacent, so the chain reads through on the page.
+    assert ids.index("required-closed") == ids.index("review-required") + 1
+    assert ids.index("review-done") == ids.index("required-closed") + 1
     closed = metrics["required-closed"]
     # Of the required cases, the closed ones: the base both rates use.
     assert (closed["numerator"], closed["denominator"]) == (70, 90)
