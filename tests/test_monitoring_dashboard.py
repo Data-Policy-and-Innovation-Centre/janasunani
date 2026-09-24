@@ -876,3 +876,9 @@ def test_a_flow_panel_needs_filed_as_its_recorded_baseline(change):
         panel["denominator"]["value"] += 1
     with pytest.raises(ValidationError):
         MonitoringPanel.model_validate(panel)
+
+
+def test_a_one_office_workflow_has_no_next_office_to_wait_for():
+    assert _atr_case("solo", "Pending", [("BDO", "Replied", None, 2)], chain="1")[2] is False
+    # The same reply in a two-office workflow is waiting.
+    assert _atr_case("pair", "Pending", [("BDO", "Replied", None, 2)], chain="1,2")[2] is True

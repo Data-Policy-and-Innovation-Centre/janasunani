@@ -569,7 +569,9 @@ def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
           -- Open on the snapshot, as in _aging: a later status is not the
           -- status on the snapshot.
           ((c.resolved_on IS NULL AND COALESCE(c.status, '') NOT IN ('Disposed','Discard'))
-            OR CAST(c.resolved_on AS DATE)>DATE '2025-07-30') AND p.last_status='Replied' atr_waiting,
+            OR CAST(c.resolved_on AS DATE)>DATE '2025-07-30') AND p.last_status='Replied'
+            -- A one-office workflow has no next office to wait for.
+            AND c.nodes >= 2 atr_waiting,
           DATE '2025-07-30'-CAST(p.last_action AS DATE) wait_days
         FROM cohort c LEFT JOIN first_reply f USING(ticket_no) LEFT JOIN first_close x USING(ticket_no)
         LEFT JOIN per_case p USING(ticket_no)
