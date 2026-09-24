@@ -1006,10 +1006,15 @@ def _flow(con: duckdb.DuckDBPyConnection, identity_path: Path | None) -> dict[st
     the later stages still include repeat filings.
     """
     deduped = bool(identity_path and _load_groups(con, identity_path, "flow_groups"))
+    # The earliest filing stands for its group, ranked over every filing in
+    # scope, not only the FY cohort, as in analytics/bottlenecks.py: a repeat
+    # of an earlier year's filing is still a repeat.
     reps = """
-        SELECT k.* FROM kept k LEFT JOIN flow_groups g USING(ticket_no)
-        -- The earliest filing stands for its group, as in analytics/bottlenecks.py.
-        QUALIFY ROW_NUMBER() OVER(PARTITION BY COALESCE(g.duplicate_group_id, k.ticket_no) ORDER BY k.created_on, k.ticket_no) = 1
+        SELECT k.* FROM kept k JOIN (
+          SELECT s.ticket_no, ROW_NUMBER() OVER(
+            PARTITION BY COALESCE(g.duplicate_group_id, s.ticket_no) ORDER BY s.created_on, s.ticket_no) rn
+          FROM scope_tickets s LEFT JOIN flow_groups g USING(ticket_no)) r USING(ticket_no)
+        WHERE r.rn = 1
     """ if deduped else "SELECT * FROM kept"
     row = _one(con, f"""
         WITH base AS (SELECT a.*, c.status, c.created_on FROM atr_cases a JOIN complaints c USING(ticket_no)),

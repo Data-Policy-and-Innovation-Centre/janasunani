@@ -629,6 +629,10 @@ def _flow_lake() -> duckdb.DuckDBPyConnection:
         CREATE TABLE complaints AS SELECT kind || '-' || i AS ticket_no, status,
             CASE WHEN kind = 'open' THEN TIMESTAMP '2024-08-01' ELSE TIMESTAMP '2024-09-01' END AS created_on
           FROM shapes, range(10) r(i);
+        -- Ten earlier filings in scope, from before the FY: outside the flow
+        -- cohort, but a repeat of one of them is still a repeat.
+        INSERT INTO complaints SELECT 'early-' || i, 'Disposed', TIMESTAMP '2023-11-01' FROM range(10) r(i);
+        CREATE TABLE scope_tickets AS SELECT ticket_no, created_on FROM complaints;
     """)
     return con
 
@@ -882,3 +886,13 @@ def test_a_one_office_workflow_has_no_next_office_to_wait_for():
     assert _atr_case("solo", "Pending", [("BDO", "Replied", None, 2)], chain="1")[2] is False
     # The same reply in a two-office workflow is waiting.
     assert _atr_case("pair", "Pending", [("BDO", "Replied", None, 2)], chain="1,2")[2] is True
+
+
+def test_a_repeat_of_a_filing_from_an_earlier_year_is_removed(tmp_path):
+    # Each closed FY filing repeats a 2023 filing that is outside the cohort.
+    groups = tmp_path / "groups.csv"
+    groups.write_text("ticket_no,duplicate_group_id,group_size\n" + "".join(
+        f"{kind}-{i},g{i},2\n" for i in range(10) for kind in ("early", "closed")))
+    stages = {m["id"]: m for m in _flow(_flow_lake(), groups)["metrics"]}
+    assert (stages["flow-unique"]["value"], stages["flow-unique"]["denominator"]) == (60, 70)
+    assert stages["flow-closed"]["value"] == 10  # direct only
