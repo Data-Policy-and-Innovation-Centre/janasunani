@@ -61,3 +61,15 @@ output "origin_verify_secret" {
   value       = random_password.origin_verify.result
   sensitive   = true
 }
+
+# --- Container registry (ecr.tf) ----------------------------------------------
+
+output "ecr_registry" {
+  description = "Registry host the box logs in to and the images live under."
+  value       = split("/", aws_ecr_repository.app["janasunani-api"].repository_url)[0]
+}
+
+output "ci_image_push_role_arn" {
+  description = "CI_IMAGE_PUSH_ROLE_ARN, a repo-level Actions variable: the build jobs assume it to push to ECR."
+  value       = aws_iam_role.ci_image_push.arn
+}

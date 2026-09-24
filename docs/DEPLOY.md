@@ -151,7 +151,7 @@ uv run dvc commit && uv run dvc push    # push the Parquet outs to the DVC remot
 ## 3 · Run the application stack
 
 The Compose stack **grows service-by-service** as phases land: `oltp` (Week 1)
-then `api` / `frontend` / `proxy` (the automated CI→GHCR→box deploy, §4
+then `api` / `frontend` / `proxy` (the automated CI→ECR→box deploy, §4
 below). `mlflow` is not needed for the demo and stays absent — see
 [docs/ROADMAP.md](ROADMAP.md) Phase 12.
 
@@ -166,10 +166,10 @@ up -d`: they're pulled-and-deployed images, and `deploy/deploy.sh` is the only
 sanctioned way to bring them up (it health-gates the rollout instead of
 returning as soon as the containers start) — see §4.
 
-## 4 · Automated demo deploy (CI → GHCR → box)
+## 4 · Automated demo deploy (CI → ECR → box)
 
 The routine way to ship a new build of `api`/`frontend`: GitHub Actions builds
-both images, pushes them to a **private** GHCR, then SSHes into the box and
+both images, pushes them to **ECR**, then SSHes into the box and
 runs `deploy/deploy.sh`. Trigger is `workflow_dispatch` only — **Actions →
 "Deploy demo" → Run workflow** (optionally set `image_tag` to redeploy an
 existing tag instead of rebuilding — a rollback).
@@ -217,8 +217,16 @@ api --> oltp:5432 (compose network; existing container/volume, untouched)
   materialized separately into `models/releases` and activated atomically;
   legacy DVC mirrors remain the final local fallback. Serving never resolves an
   MLflow alias or downloads public model weights.
-- **GHCR is private**: the box authenticates with a `read:packages`-scoped
-  PAT (§"One-time box setup" below), not a public pull.
+- **Images live in ECR** (`deploy/terraform/ecr.tf`, the same pattern as
+  ai-for-panchayats). Nobody holds a registry password:
+  - the build jobs push through an OIDC role (`CI_IMAGE_PUSH_ROLE_ARN`, a
+    repo-level variable) that trusts only `refs/heads/main`;
+  - the box pulls with its instance role: `deploy.sh` runs
+    `aws ecr get-login-password` before every pull;
+  - tags are immutable, so the build jobs skip a commit that is already pushed,
+    and the deploy job refuses a tag missing from ECR before it opens SSH;
+  - the api's BuildKit cache lives in a separate mutable repository,
+    `janasunani-build-cache`, which the box cannot read.
 - **Reproducibility**: `api`/`frontend` are pinned to the full 40-char
   `IMAGE_TAG` (never `latest`); every OTHER base image (`caddy:2-alpine` in
   `docker-compose.yml`, `python:3.13-slim` and `ghcr.io/astral-sh/uv:0.9` in
@@ -238,10 +246,8 @@ cd ~/janasunani
 uv run dvc pull models/categorizer.dvc models/page_type_classifier/vit_type_classifier.dvc data/raw/janasunani-mappings.dvc
 ls data/interim/*.parquet   # already on the box from §"Materialize" above; if missing, `uv run dvc pull data/interim`
 
-# GHCR is private — authenticate with a read:packages PAT (GitHub → Settings
-# → Developer settings → Personal access tokens; classic or fine-grained,
-# read:packages only):
-echo "<PAT>" | docker login ghcr.io -u <github-username> --password-stdin
+# No registry login to set up: deploy.sh logs in to ECR with the box's
+# instance role on every deploy.
 
 cd ~/janasunani/deploy
 cp .env.example .env && chmod 600 .env
@@ -361,6 +367,7 @@ secrets/vars — **run each of these yourself; nothing here does it for you:**
 | `BOX_HOST` | **`box-deploy` environment** var | `52.66.116.80` |
 | `CI_DEPLOY_ROLE_ARN` | **`box-deploy` environment** var | `terraform output -raw ci_deploy_role_arn` |
 | `BOX_SG_ID` | **`box-deploy` environment** var | `terraform output -raw cpu_box_security_group_id` |
+| `CI_IMAGE_PUSH_ROLE_ARN` | **repo** var (the build jobs don't use the environment; the role trusts only `main`) | `terraform output -raw ci_image_push_role_arn` |
 | `SITE_URL` | **`box-deploy` environment** var | `terraform output -raw site_url` (the link on each deploy run) |
 
 The `deploy` job already declares `environment: box-deploy` (added for the
@@ -404,7 +411,7 @@ terraform output -raw origin_verify_secret    # into deploy/proxy.env on the box
 from the current default branch, or set it to redeploy/roll back to an
 existing SHA). The workflow: builds `api`+`frontend` for `linux/amd64` (the
 box's arch — this can't be validated on an arm64 dev machine, see
-"Known gaps" below), pushes both to GHCR, opens port 22 to the runner's own
+"Known gaps" below), pushes both to ECR, opens port 22 to the runner's own
 IP on `aws_security_group.cpu_box` (via the OIDC-assumed `ci_deploy` role),
 ships `docker-compose.yml` / `deploy.sh` / `proxy/Caddyfile` to
 `~/janasunani/deploy/` over SCP, runs `deploy/deploy.sh` over SSH (which pulls
@@ -413,7 +420,7 @@ images, brings the stack up, and blocks until `/health` reports
 port-22 rule, success or failure.
 
 **Rollback**: run the workflow again with `image_tag` set to a prior
-`github.sha` that was previously deployed (GHCR keeps every pushed tag) — or
+`github.sha` that was previously deployed (ECR keeps every tagged image; only untagged ones expire) — or
 by hand on the box: `IMAGE_TAG=<sha> bash deploy/deploy.sh`. In the common
 case you don't have to do this yourself: `deploy.sh` rolls back
 **automatically** when a deploy fails after it's already started replacing
@@ -522,7 +529,7 @@ IMAGE_TAG=<sha> bash deploy.sh             # or re-run the Deploy demo workflow
 
 - **The `linux/amd64` `api` build itself** — it can only be built for real on
   an amd64 runner (GitHub Actions), never on an arm64 dev Mac. Review the
-  Dockerfile carefully; the first real signal is the CI build log / GHCR push.
+  Dockerfile carefully; the first real signal is the CI build log / ECR push.
   This is also where the CPU-torch switch (#48) gets confirmed: on darwin the
   `demo` extra still resolves the ordinary PyPI wheel, so the image-size drop
   is not observable locally. In the build log, expect

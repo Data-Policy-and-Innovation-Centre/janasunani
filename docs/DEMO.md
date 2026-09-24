@@ -10,8 +10,8 @@ the opt-in real one.
 For the full **cloud** deployment (CPU box + compose + backups) see
 [DEPLOY.md](DEPLOY.md). This document is the **integration bring-up** — proven
 locally first, then repeated on the box. For the automated build →
-GHCR → box rollout of this same API (Docker images, CI, one-time box setup),
-see [DEPLOY.md §4 "Automated demo deploy"](DEPLOY.md#4--automated-demo-deploy-ci--ghcr--box).
+ECR → box rollout of this same API (Docker images, CI, one-time box setup),
+see [DEPLOY.md §4 "Automated demo deploy"](DEPLOY.md#4--automated-demo-deploy-ci--ecr--box).
 
 > **Fast path — `make`.** The `Makefile` wraps every step below:
 > `make models` (legacy category/page-type mirrors only) · materialize an

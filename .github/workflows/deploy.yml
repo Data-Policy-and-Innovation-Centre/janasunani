@@ -1,6 +1,6 @@
 name: Deploy demo
 
-# Hand-triggered only — this workflow builds and pushes private GHCR images
+# Hand-triggered only — this workflow builds and pushes images to ECR
 # and then SSHes into the always-on CPU box, so it never runs on a PR/push
 # trigger. Optional `image_tag` re-deploys an existing image without
 # rebuilding (e.g. a rollback to a prior commit SHA).
@@ -17,8 +17,12 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  API_IMAGE: ghcr.io/data-policy-and-innovation-centre/janasunani-api
-  FRONTEND_IMAGE: ghcr.io/data-policy-and-innovation-centre/janasunani-frontend
+  # ECR in the project's AWS account (deploy/terraform/ecr.tf). The box pulls
+  # with its instance role; CI pushes with an OIDC role. No registry password
+  # exists anywhere.
+  API_IMAGE: 966452703664.dkr.ecr.ap-south-1.amazonaws.com/janasunani-api
+  FRONTEND_IMAGE: 966452703664.dkr.ecr.ap-south-1.amazonaws.com/janasunani-frontend
+  BUILD_CACHE: 966452703664.dkr.ecr.ap-south-1.amazonaws.com/janasunani-build-cache
 
 jobs:
   build-api:
@@ -27,7 +31,7 @@ jobs:
     timeout-minutes: 90
     permissions:
       contents: read
-      packages: write
+      id-token: write
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -45,14 +49,32 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
+      # Trust is pinned to refs/heads/main (deploy/terraform/ecr.tf), so a
+      # run dispatched from any other branch cannot push.
+      - name: Assume the ECR push role
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          role-to-assume: ${{ vars.CI_IMAGE_PUSH_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Log Docker in to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Tags are immutable in ECR: re-running a deploy of the same commit
+      # reuses the image instead of failing on the push.
+      - name: Is this commit already pushed?
+        id: exists
+        run: |
+          if aws ecr describe-images --repository-name "${API_IMAGE##*/}" \
+               --image-ids imageTag="${{ github.sha }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Already pushed::${{ github.sha }} is already in ECR; not rebuilding."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build and push api image
+        if: steps.exists.outputs.exists == 'false'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -69,10 +91,11 @@ jobs:
           tags: ${{ env.API_IMAGE }}:${{ github.sha }}
           # Registry cache, not GHA cache: even on CPU-only torch the `demo`
           # extra's layers run past the GHA cache size budget.
-          # (This `buildcache` tag is BuildKit's layer cache, unrelated to
-          # image tagging above — it's never pulled/deployed.)
-          cache-from: type=registry,ref=${{ env.API_IMAGE }}:buildcache
-          cache-to: type=registry,ref=${{ env.API_IMAGE }}:buildcache,mode=max
+          # The cache lives in its own mutable repository: it rewrites one tag
+          # on every build, which the immutable api repository would refuse.
+          # ECR needs image-manifest=true to store a BuildKit cache.
+          cache-from: type=registry,ref=${{ env.BUILD_CACHE }}:api
+          cache-to: type=registry,ref=${{ env.BUILD_CACHE }}:api,mode=max,image-manifest=true,oci-mediatypes=true
 
   build-frontend:
     if: ${{ inputs.image_tag == '' }}
@@ -80,7 +103,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      packages: write
+      id-token: write
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -90,14 +113,32 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
+      # Trust is pinned to refs/heads/main (deploy/terraform/ecr.tf), so a
+      # run dispatched from any other branch cannot push.
+      - name: Assume the ECR push role
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          role-to-assume: ${{ vars.CI_IMAGE_PUSH_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Log Docker in to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Tags are immutable in ECR: re-running a deploy of the same commit
+      # reuses the image instead of failing on the push.
+      - name: Is this commit already pushed?
+        id: exists
+        run: |
+          if aws ecr describe-images --repository-name "${FRONTEND_IMAGE##*/}" \
+               --image-ids imageTag="${{ github.sha }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Already pushed::${{ github.sha }} is already in ECR; not rebuilding."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build and push frontend image
+        if: steps.exists.outputs.exists == 'false'
         uses: docker/build-push-action@v6
         with:
           context: frontend
@@ -173,6 +214,20 @@ jobs:
         with:
           role-to-assume: ${{ vars.CI_DEPLOY_ROLE_ARN }}
           aws-region: ap-south-1
+
+      # Before any AWS or box change: a rollback to a tag that was never pushed
+      # (or has been deleted) must fail here, not halfway through deploy.sh.
+      - name: Refuse a tag that is not in ECR
+        env:
+          TAG: ${{ steps.tag.outputs.value }}
+        run: |
+          for image in "$API_IMAGE" "$FRONTEND_IMAGE"; do
+            if ! aws ecr describe-images --repository-name "${image##*/}" \
+                 --image-ids imageTag="$TAG" >/dev/null 2>&1; then
+              echo "::error title=No such image::${image##*/}:$TAG is not in ECR. Nothing has been changed."
+              exit 1
+            fi
+          done
 
       - name: Open port 22 to this runner
         run: |
