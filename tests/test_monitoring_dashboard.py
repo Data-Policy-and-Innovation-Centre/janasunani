@@ -740,3 +740,9 @@ def test_table_text_must_be_non_empty_as_the_frontend_requires(where):
         table["rows"][0]["label"] = ""
     with pytest.raises(ValidationError):
         MonitoringTable.model_validate(table)
+
+
+def test_a_one_office_workflow_has_no_next_office_to_wait_for():
+    assert _atr_case("solo", "Pending", [("BDO", "Replied", None, 2)], chain="1")[2] is False
+    # The same reply in a two-office workflow is waiting.
+    assert _atr_case("pair", "Pending", [("BDO", "Replied", None, 2)], chain="1,2")[2] is True
