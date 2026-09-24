@@ -1894,3 +1894,17 @@ def test_phase_c_fails_when_findings_dir_unset_even_with_complete_aggregates(tmp
     assert "FAILURES=1" in result.stdout
     # The old vacuous-pass line must not appear.
     assert "aggregates: " + str(aggregates) not in result.stdout
+
+
+def test_api_image_compiles_numpy_in_the_build_stage_only():
+    """numpy 1.26.4 (pipeline-core's numpy<2) has no CPython 3.13 wheel, so the
+    build stage needs a compiler; the runtime stage must not ship one. The
+    first real CI build failed on exactly this ("Unknown compiler(s)")."""
+    build, runtime = API_DOCKERFILE_PATH.read_text().split("\nFROM ", 2)[1:]
+
+    def installed(stage):
+        return " ".join(line for line in stage.splitlines() if "apt-get install" in line).split()
+
+    assert "build-essential" in installed(build)
+    assert "build-essential" not in installed(runtime)
+
