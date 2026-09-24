@@ -1908,3 +1908,15 @@ def test_api_image_compiles_numpy_in_the_build_stage_only():
     assert "build-essential" in installed(build)
     assert "build-essential" not in installed(runtime)
 
+
+def test_deploy_ssh_sends_keepalives():
+    """The first live deploy lost its SSH session during the ~25 minute health
+    wait ("client_loop: send disconnect: Broken pipe"), killing deploy.sh
+    before it recorded IMAGE_TAG."""
+    with open(DEPLOY_WORKFLOW_PATH) as f:
+        steps = yaml.safe_load(f)["jobs"]["deploy"]["steps"]
+    names = [s.get("name") for s in steps]
+    setup = steps[names.index("Configure SSH for the box")]["run"]
+    assert "ServerAliveInterval" in setup
+    assert names.index("Configure SSH for the box") < names.index("Deploy")
+

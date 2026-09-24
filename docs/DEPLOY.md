@@ -244,6 +244,14 @@ cd ~/janasunani && git fetch && git checkout deploy/cpu-box   # or whatever bran
 cd ~/janasunani
 # Scoped pull — do NOT run a bare `dvc pull` (see docs/DEMO.md §1):
 uv run dvc pull models/categorizer.dvc models/page_type_classifier/vit_type_classifier.dvc data/raw/janasunani-mappings.dvc
+# The summarizer has no DVC mirror and the api never downloads a model, so put
+# the pinned BART revision in models/summarizer (or activate a release that
+# carries it). Public model; check model.safetensors' sha256 against the blob id.
+REV=37f520fa929c961707657b28798b30c003dd100b
+for f in config.json generation_config.json merges.txt model.safetensors tokenizer.json vocab.json; do
+  curl -sfL -o "models/summarizer/$f" "https://huggingface.co/facebook/bart-large-cnn/resolve/$REV/$f"
+done
+sha256sum models/summarizer/model.safetensors   # 40041830399afb5348525ef8354b007ecec4286fdf3524f7e6b54377e17096cb
 ls data/interim/*.parquet   # already on the box from §"Materialize" above; if missing, `uv run dvc pull data/interim`
 
 # No registry login to set up: deploy.sh logs in to ECR with the box's

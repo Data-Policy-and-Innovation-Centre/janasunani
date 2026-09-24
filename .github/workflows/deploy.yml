@@ -244,6 +244,11 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           printf '%s\n' "${{ secrets.BOX_SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
+          # deploy.sh's health wait can run 25 minutes with almost no output.
+          # Without keepalives an idle hop drops the session ("Broken pipe")
+          # and deploy.sh dies mid-wait, before it records IMAGE_TAG.
+          printf 'Host *\n  ServerAliveInterval 30\n  ServerAliveCountMax 10\n' > ~/.ssh/config
+          chmod 600 ~/.ssh/config
 
       - name: Ship deploy artifacts to the box
         run: |
