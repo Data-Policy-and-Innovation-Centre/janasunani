@@ -21,6 +21,7 @@ from typing import Optional, Protocol
 from janasunani.serving.schemas import (
     ClassificationResult,
     DuplicateReview,
+    DuplicateEvidence,
     DuplicateSignal,
     ExtractionResult,
     GrievanceResult,
@@ -157,6 +158,18 @@ def _mock_summary(redacted_text: str, max_chars: int = 180) -> str:
     return flat[: max_chars - 1].rsplit(" ", 1)[0] + "…"
 
 
+def _mock_labelled(signal: DuplicateSignal, evidence: DuplicateEvidence) -> DuplicateSignal:
+    """Attach the real rule labeller's output, re-validating the result."""
+    from janasunani.serving.triage import RELATIONSHIP_RULE_VERSION, candidate_relationship
+
+    return DuplicateSignal(
+        **signal.model_dump(exclude_none=True, exclude={"relationship", "evidence", "rule_version"}),
+        relationship=candidate_relationship(evidence, signal.duplicate_kind),
+        evidence=evidence,
+        rule_version=RELATIONSHIP_RULE_VERSION,
+    )
+
+
 def _mock_triage(text: str) -> TriageResult:
     """Deterministic illustrative triage states for frontend contract work only."""
     bucket = hashlib.sha256(text.encode()).digest()[1] % 4
@@ -167,17 +180,26 @@ def _mock_triage(text: str) -> TriageResult:
     )
     if bucket == 0:
         return TriageResult(
-            duplicate=DuplicateSignal(
-                duplicate_kind="resubmission",
-                duplicate_group_id=group_id,
-                duplicate_ticket_no="CMO202400042",
+            duplicate=_mock_labelled(
+                DuplicateSignal(
+                    duplicate_kind="resubmission",
+                    duplicate_group_id=group_id,
+                    duplicate_ticket_no="CMO202400042",
+                ),
+                # Same filer, near-identical text, and a status request: the
+                # case the note most wants kept apart from a pure duplicate.
+                DuplicateEvidence(
+                    identity_match=True, text_similarity="near",
+                    days_since_earlier=21, earlier_status="open",
+                    follow_up_cue=True, new_information=False,
+                ),
             ),
             duplicate_review=DuplicateReview(decision="matched"),
             spam=mock_low_signal,
         )
     if bucket == 1:
         return TriageResult(
-            duplicate=DuplicateSignal(
+            duplicate=_mock_labelled(DuplicateSignal(
                 duplicate_kind="campaign",
                 duplicate_group_id=group_id,
                 related_filings=18,
@@ -186,7 +208,11 @@ def _mock_triage(text: str) -> TriageResult:
                 # that omitted this would be modelling a state the contract no
                 # longer permits.
                 distinct_signatories=16,
-            ),
+            ), DuplicateEvidence(
+                identity_match=False, text_similarity="identical",
+                explicit_reference=False,
+                days_since_earlier=3, earlier_status="open",
+            )),
             duplicate_review=DuplicateReview(decision="matched"),
             spam=mock_low_signal,
         )

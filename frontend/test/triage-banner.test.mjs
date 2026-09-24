@@ -203,3 +203,63 @@ test("the legacy disabled-review state is not treated as scored", () => {
     false,
   );
 });
+
+// -- Candidate relationship labels (concept note §2.3) --
+
+const { RELATIONSHIP_COPY, candidateEvidenceRows } = await import("../lib/types.ts");
+
+test("a labelled resubmission carries its candidate; an unlabelled one does not", () => {
+  const evidence = { identity_match: true, text_similarity: "near", follow_up_cue: true, new_information: false };
+  const labelled = classifyDuplicateDisplay({
+    duplicate_kind: "resubmission", duplicate_group_id: "G", duplicate_ticket_no: "CMO1",
+    relationship: "follow_up", evidence, rule_version: "relationship-rules-v1",
+  });
+  assert.deepEqual(labelled.candidate, { relationship: "follow_up", evidence, ruleVersion: "relationship-rules-v1" });
+  // Half a label is not a label.
+  const partial = classifyDuplicateDisplay({
+    duplicate_kind: "resubmission", duplicate_group_id: "G", duplicate_ticket_no: "CMO1", relationship: "follow_up",
+  });
+  assert.equal("candidate" in partial, false);
+});
+
+test("a label this frontend does not know is dropped, not rendered", () => {
+  const display = classifyDuplicateDisplay({
+    duplicate_kind: "resubmission", duplicate_group_id: "G", duplicate_ticket_no: "CMO1",
+    relationship: "sibling_case", evidence: {}, rule_version: "relationship-rules-v9",
+  });
+  assert.equal(display.kind, "resubmission");
+  assert.equal("candidate" in display, false);
+});
+
+test("the campaign signatory gate still decides, whatever the label says", () => {
+  const display = classifyDuplicateDisplay({
+    duplicate_kind: "campaign", duplicate_group_id: "GOV2024999640", related_filings: 26203, distinct_signatories: 1,
+    relationship: "campaign", evidence: { identity_match: false, text_similarity: "identical" }, rule_version: "v",
+  });
+  assert.deepEqual(display, { kind: "withheld" });
+});
+
+test("every label has officer-facing copy that calls it a candidate", () => {
+  for (const relationship of ["pure_duplicate", "follow_up", "related", "campaign", "uncertain"]) {
+    assert.match(RELATIONSHIP_COPY[relationship].badge, /^candidate/);
+  }
+});
+
+test("unassessed evidence reads as not assessed, never as no", () => {
+  const rows = Object.fromEntries(candidateEvidenceRows({}));
+  assert.equal(rows["Same identity key"], "Not available");
+  assert.equal(rows["Text"], "Not assessed");
+  assert.equal(rows["New information"], "Not assessed");
+  // Unchecked follow-up signals must not read as a checked "No".
+  assert.equal(rows["Names an earlier ticket"], "Not assessed");
+  assert.equal(rows["Asks for status or says it continues"], "Not assessed");
+  assert.equal(Object.fromEntries(candidateEvidenceRows({ follow_up_cue: false }))["Asks for status or says it continues"], "No");
+  const checked = Object.fromEntries(candidateEvidenceRows({ identity_match: false, new_information: false, days_since_earlier: 1200 }));
+  assert.equal(checked["Same identity key"], "No");
+  assert.equal(checked["New information"], "None found");
+  assert.equal(checked["Days since earlier filing"], "1,200");
+});
+
+test("the officer copy stays at identity-key level, never verified filers", () => {
+  for (const copy of Object.values(RELATIONSHIP_COPY)) assert.doesNotMatch(copy.explanation, /filer/i);
+});
