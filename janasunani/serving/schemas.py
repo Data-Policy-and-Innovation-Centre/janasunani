@@ -774,6 +774,9 @@ class MonitoringPanel(MonitoringResponseModel):
             return self
         if tuple(m.id for m in self.metrics) != MONITORING_FLOW_STAGE_IDS:
             raise ValueError("the flow panel needs every stage, in order")
+        filed = self.metrics[0]
+        if not isinstance(filed, RecordedMonitoringMetric) or filed.value != self.denominator.value:
+            raise ValueError("the flow panel's filed stage is its recorded baseline")
         # Each stage is a subset of the one before: whole counts that never grow.
         shown = [m for m in self.metrics if isinstance(m, RecordedMonitoringMetric)]
         if any(m.unit != "grievances" or not float(m.value).is_integer() for m in shown):

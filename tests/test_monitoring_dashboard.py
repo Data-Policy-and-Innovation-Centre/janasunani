@@ -41,7 +41,7 @@ def _release() -> dict:
             "id": panel_id,
             "title": panel_id.title(),
             "state": "recorded",
-            "denominator": {"label": "Synthetic denominator", "value": 20},
+            "denominator": {"label": "Synthetic denominator", "value": 10 if panel_id == "flow" else 20},
             # The flow panel's contract is its full stage sequence.
             "metrics": [_metric(m) for m in MONITORING_FLOW_STAGE_IDS] if panel_id == "flow" else [_metric(panel_id)],
             "breakdown": None,
@@ -862,3 +862,17 @@ def test_table_text_must_be_non_empty_as_the_frontend_requires(where):
         table["rows"][0]["label"] = ""
     with pytest.raises(ValidationError):
         MonitoringTable.model_validate(table)
+
+
+@pytest.mark.parametrize("change", ["filed_withheld", "denominator_differs"])
+def test_a_flow_panel_needs_filed_as_its_recorded_baseline(change):
+    from pydantic import ValidationError
+    from janasunani.serving.schemas import MonitoringPanel
+    panel = _flow(_flow_lake(), None)
+    MonitoringPanel.model_validate(panel)
+    if change == "filed_withheld":
+        panel["metrics"][0] = {"id": "flow-filed", "label": "Filed", "state": "unavailable", "reason": "Withheld."}
+    else:
+        panel["denominator"]["value"] += 1
+    with pytest.raises(ValidationError):
+        MonitoringPanel.model_validate(panel)

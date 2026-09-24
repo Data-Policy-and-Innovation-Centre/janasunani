@@ -433,6 +433,10 @@ function FlowPanel({ panel }: { panel: RecordedMonitoringPanel }) {
                 <p className="py-2 pl-3 text-[11.5px] leading-snug text-text-secondary">
                   <span className="font-mono text-maroon">{d.text}</span> {d.note}
                 </p>
+              ) : metric.state === "unavailable" ? (
+                <p className="py-2 pl-3 text-[11.5px] leading-snug text-text-secondary">
+                  <span className="font-mono">{flowStageGap(metric)}</span> {metric.reason}
+                </p>
               ) : null}
               <div className="flex items-baseline justify-between gap-3">
                 <span className="flex items-center gap-2 text-[13px] text-text-dark">

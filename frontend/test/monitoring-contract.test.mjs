@@ -17,7 +17,7 @@ const catalog = {
 
 const panels = PANEL_IDS.map((id) => ({
   id, title: id, state: "recorded",
-  denominator: { label: "Synthetic denominator", value: 20 },
+  denominator: { label: "Synthetic denominator", value: id === "flow" ? 100 : 20 },
   metrics: id === "flow"
     ? FLOW_STAGE_IDS.map((metricId, i) => ({ id: metricId, label: "Synthetic", state: "recorded", value: 100 - 10 * i, unit: "grievances", numerator: null, denominator: null, coveragePct: null, note: null, basis: "direct" }))
     : [{ id: `${id}-metric`, label: "Synthetic", state: "recorded", value: 50, unit: "percent", numerator: 10, denominator: 20, coveragePct: null, note: null, basis: "direct" }],
@@ -199,4 +199,17 @@ test("a withheld repeats stage says not shown, a missing grouping says not yet",
   assert.equal(flowStageGap({ id: "flow-unique", reason: "Withheld: fewer than 10 grievances left the path here." }), "not shown");
   assert.equal(flowStageGap({ id: "flow-unique", reason: "Withheld because a cell is below 10." }), "not shown");
   assert.equal(flowStageGap({ id: "flow-atr", reason: "Withheld because a cell is below 10." }), "not shown");
+});
+
+test("an unavailable flow panel is accepted; a flow without its filed baseline is not", () => {
+  const flowAt = dashboard.panels.findIndex((panel) => panel.id === "flow");
+  const withheld = structuredClone(dashboard);
+  withheld.panels[flowAt] = { id: "flow", title: "flow", state: "unavailable", reason: "Fewer than 10 filings.", caveats: ["c"] };
+  assert.doesNotThrow(() => parseMonitoringDashboard(withheld));
+  const noBase = structuredClone(dashboard);
+  noBase.panels[flowAt].metrics[0] = { id: "flow-filed", label: "Filed", state: "unavailable", reason: "Withheld." };
+  assert.throws(() => parseMonitoringDashboard(noBase), /malformed/);
+  const offBase = structuredClone(dashboard);
+  offBase.panels[flowAt].denominator.value = 999;
+  assert.throws(() => parseMonitoringDashboard(offBase), /malformed/);
 });
