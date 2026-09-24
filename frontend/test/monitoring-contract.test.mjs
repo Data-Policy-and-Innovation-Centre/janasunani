@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const { PANEL_IDS, FLOW_STAGE_IDS, flowDropNote, flowStageGap, childChoice, sortableColumn, recordingState, parseMonitoringCatalog, parseMonitoringDashboard, parentScopeFor, publishedScopes, quickScopes, scopesForView, subtypesFor } = await import("../lib/monitoring.ts");
+const { PANEL_IDS, FLOW_STAGE_IDS, metricGroups, flowDropNote, flowStageGap, childChoice, sortableColumn, recordingState, parseMonitoringCatalog, parseMonitoringDashboard, parentScopeFor, publishedScopes, quickScopes, scopesForView, subtypesFor } = await import("../lib/monitoring.ts");
 
 const catalog = {
   schemaVersion: 1,
@@ -212,4 +212,16 @@ test("an unavailable flow panel is accepted; a flow without its filed baseline i
   const offBase = structuredClone(dashboard);
   offBase.panels[flowAt].denominator.value = 999;
   assert.throws(() => parseMonitoringDashboard(offBase), /malformed/);
+});
+
+test("the ATR panel stacks the review chain apart from the ATR figures", () => {
+  const m = (id) => ({ id, label: id, state: "recorded", value: 10, unit: "percent", numerator: 1, denominator: 10, coveragePct: null, note: null, basis: "direct" });
+  const ids = ["atr-replied", "review-required", "required-closed", "review-done", "closed-without-review", "atr-sent-back", "atr-waiting"];
+  const groups = metricGroups({ id: "atr", metrics: ids.map(m) });
+  assert.deepEqual(groups.map((g) => [g.title, g.stacked, g.metrics.map((x) => x.id)]), [
+    ["Review", true, ["review-required", "required-closed", "review-done", "closed-without-review"]],
+    ["ATRs", false, ["atr-replied", "atr-sent-back", "atr-waiting"]],
+  ]);
+  // Any other panel is one ungrouped grid.
+  assert.deepEqual(metricGroups({ id: "aging", metrics: [m("inactive-7")] }).map((g) => g.title), [null]);
 });

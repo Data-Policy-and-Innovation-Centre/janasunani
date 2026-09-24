@@ -6,6 +6,7 @@ import {
   childChoice,
   flowDropNote,
   flowStageGap,
+  metricGroups,
   parentScopeFor,
   publishedScopes,
   quickScopes,
@@ -68,12 +69,17 @@ const labelClass =
 function MetricCell({
   metric,
   index,
+  stacked = false,
 }: {
   metric: MonitoringMetric;
   index: number;
+  /** One column: each cell ruled off from the one above, never beside it. */
+  stacked?: boolean;
 }) {
   return (
-    <div className="border-t border-hair-soft pt-3.5 first:border-t-0 sm:border-t-0 sm:border-l sm:pl-5 sm:odd:border-l-0 sm:odd:pl-0">
+    <div className={stacked
+      ? "border-t border-hair-soft pt-3.5 first:border-t-0 first:pt-0"
+      : "border-t border-hair-soft pt-3.5 first:border-t-0 sm:border-t-0 sm:border-l sm:pl-5 sm:odd:border-l-0 sm:odd:pl-0"}>
       <p className="font-mono text-[9.5px] uppercase leading-tight tracking-[0.13em] text-text-secondary">
         {metricLabel(metric.id, metric.label)}
       </p>
@@ -508,11 +514,16 @@ function PanelCard({ panel, index }: { panel: MonitoringPanel; index: number }) 
         {panel.denominator.value.toLocaleString("en-IN")}
       </p>
 
-      <div className="mt-6 grid gap-4 sm:grid-cols-2">
-        {panel.metrics.map((metric, position) => (
-          <MetricCell key={metric.id} metric={metric} index={position} />
-        ))}
-      </div>
+      {metricGroups(panel).map((group) => (
+        <div key={group.title ?? "metrics"} className="mt-6">
+          {group.title ? <p className="kicker mb-3">{group.title}</p> : null}
+          <div className={group.stacked ? "grid gap-4" : "grid gap-4 sm:grid-cols-2"}>
+            {group.metrics.map((metric, position) => (
+              <MetricCell key={metric.id} metric={metric} index={position} stacked={group.stacked} />
+            ))}
+          </div>
+        </div>
+      ))}
 
       {panel.breakdown ? (
         <div

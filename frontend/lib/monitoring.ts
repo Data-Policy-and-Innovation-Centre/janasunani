@@ -159,6 +159,28 @@ export function sortableColumn(column: MonitoringTable["columns"][number]): bool
   return column.unit === "grievances";
 }
 
+/** The review figures, in the order each one's base is the one before. */
+export const REVIEW_CHAIN = ["review-required", "required-closed", "review-done", "closed-without-review"] as const;
+
+export type MetricGroup = { title: string | null; stacked: boolean; metrics: MonitoringMetric[] };
+
+/**
+ * How a panel's metrics are laid out. The ATR panel mixes two families with
+ * different bases, so the review chain is pulled out and stacked in one
+ * column, each figure under the one it is a share of, and the ATR figures
+ * follow as their own group. Every other panel is one ungrouped grid.
+ */
+export function metricGroups(panel: { id: string; metrics: MonitoringMetric[] }): MetricGroup[] {
+  if (panel.id !== "atr") return [{ title: null, stacked: false, metrics: panel.metrics }];
+  const chain = new Set<string>(REVIEW_CHAIN);
+  const review = REVIEW_CHAIN.flatMap((id) => panel.metrics.filter((m) => m.id === id));
+  const rest = panel.metrics.filter((m) => !chain.has(m.id));
+  return [
+    { title: "Review", stacked: true, metrics: review },
+    { title: "ATRs", stacked: false, metrics: rest },
+  ].filter((group) => group.metrics.length > 0);
+}
+
 export function scopesForView(catalog: MonitoringCatalog, kind: string): MonitoringScope[] {
   return catalog.scopes.filter((scope) => scope.kind === kind);
 }

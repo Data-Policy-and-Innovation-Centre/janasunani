@@ -566,6 +566,7 @@ def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
           COALESCE(p.sent_back, FALSE) sent_back,
           f.fr IS NOT NULL AND (p.repliers >= 2 OR COALESCE(p.sent_back, FALSE)) reviewed,
           c.status='Disposed' AND CAST(c.resolved_on AS DATE)<=DATE '2025-07-30' closed,
+          c.status='Discard' AND (c.resolved_on IS NULL OR CAST(c.resolved_on AS DATE)<=DATE '2025-07-30') discarded,
           -- Open on the snapshot, as in _aging: a later status is not the
           -- status on the snapshot.
           ((c.resolved_on IS NULL AND COALESCE(c.status, '') NOT IN ('Disposed','Discard'))
@@ -584,6 +585,7 @@ def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
           COUNT(*) FILTER(WHERE required AND closed) required_closed,
           COUNT(*) FILTER(WHERE required AND closed AND reviewed) required_closed_reviewed,
           COUNT(*) FILTER(WHERE required AND closed AND NOT reviewed) closed_without_review,
+          COUNT(*) FILTER(WHERE required AND discarded AND NOT closed) required_discarded,
           COUNT(*) FILTER(WHERE replied AND sent_back) sent_back,
           COUNT(*) FILTER(WHERE atr_waiting) waiting,
           MEDIAN(wait_days) FILTER(WHERE atr_waiting) median_wait
@@ -619,12 +621,25 @@ def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
         FROM atr_backs
     """)
     buckets = suppress_breakdown([{"label": a, "value": b} for a, b in ages])
-    tables = None
+    # Where every case that requires review stands, in parts that add up to
+    # the required count: the rates below are of the closed part only.
+    required_open = row["required"] - row["required_closed"] - row["required_discarded"]
+    standing = [
+        ("Reviewed, then closed", row["required_closed_reviewed"]),
+        ("Closed without the review", row["closed_without_review"]),
+        ("Still open: review may still happen", required_open),
+        ("Discarded", row["required_discarded"]),
+    ]
+    tables = [{
+        "title": "Where the cases that require review stand at 30 July",
+        "columns": [{"label": "Grievances", "unit": "grievances"}, {"label": "Share of required", "unit": "percent"}],
+        "rows": [{"label": label, "values": [_cell(n), _rate_cell(n, row["required"])]} for label, n in standing],
+    }]
     # Any small reason row is withheld with the whole table: the others and
     # the send-back total would give it away.
     reasons_withheld = any(0 < n < MIN_CELL for _label, n in reasons)
     if reasons and not reasons_withheld:
-        tables = [{
+        tables += [{
             "title": "Why ATRs were sent back",
             "columns": [{"label": "Grievances", "unit": "grievances"}],
             "rows": [{"label": label, "values": [n]} for label, n in reasons],
@@ -633,10 +648,12 @@ def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
         "id": "atr", "title": "ATRs and review", "state": "recorded",
         "denominator": {"label": "Grievances created in FY 2024-25", "value": row["filings"]},
         "metrics": [
-            _metric("review-required", "Workflow requires review", _pct(row["required"], row["with_workflow"]), unit="percent", numerator=row["required"], denominator=row["with_workflow"], note="Three or more offices in the assigned workflow."),
             _metric("atr-replied", "ATR submitted", _pct(row["replied"], row["filings"]), unit="percent", numerator=row["replied"], denominator=row["filings"]),
-            _metric("review-done", "Required review happened", _pct(row["required_closed_reviewed"], row["required_closed"]), unit="percent", numerator=row["required_closed_reviewed"], denominator=row["required_closed"]),
-            _metric("closed-without-review", "Closed without the required review", _pct(row["closed_without_review"], row["required_closed"]), unit="percent", numerator=row["closed_without_review"], denominator=row["required_closed"]),
+            _metric("review-required", "Workflow requires review", _pct(row["required"], row["with_workflow"]), unit="percent", numerator=row["required"], denominator=row["with_workflow"], note="Three or more offices in the assigned workflow."),
+            # The base of the two rates below, so the chain reads through.
+            _metric("required-closed", "Closed, of those that require review", _pct(row["required_closed"], row["required"]), unit="percent", numerator=row["required_closed"], denominator=row["required"], note="Disposed by 30 July. The rest are still open or were discarded."),
+            _metric("review-done", "Required review happened, of those closed", _pct(row["required_closed_reviewed"], row["required_closed"]), unit="percent", numerator=row["required_closed_reviewed"], denominator=row["required_closed"]),
+            _metric("closed-without-review", "Closed without the required review, of those closed", _pct(row["closed_without_review"], row["required_closed"]), unit="percent", numerator=row["closed_without_review"], denominator=row["required_closed"]),
             _metric("atr-sent-back", "ATR sent back by a reviewer", _pct(row["sent_back"], row["replied"]), unit="percent", numerator=row["sent_back"], denominator=row["replied"]),
             _metric("atr-standard-reason", "Send-backs with a standard reason", _pct(standard["standard"], standard["sent_back"]), unit="percent", numerator=standard["standard"], denominator=standard["sent_back"]),
             _metric("atr-waiting", "ATRs waiting for the next office", row["waiting"], unit="grievances", denominator=row["filings"]),
