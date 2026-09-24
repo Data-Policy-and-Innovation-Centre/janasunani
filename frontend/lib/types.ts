@@ -110,7 +110,7 @@ export const RELATIONSHIP_COPY: Record<
   related: {
     badge: "candidate · related",
     headline: "Possibly related to ticket",
-    explanation: "A similar subject, but not linked by identity key or a named ticket. It may be a separate grievance.",
+    explanation: "A similar subject, with evidence of a different event, period, entitlement or request. It may be a separate grievance.",
   },
   campaign: {
     badge: "candidate · campaign",
@@ -121,7 +121,7 @@ export const RELATIONSHIP_COPY: Record<
     badge: "candidate · uncertain",
     headline: "Possible link to ticket",
     explanation:
-      "The evidence does not separate a repeat from a follow-up or a related grievance.",
+      "The evidence does not separate a repeat, a follow-up, a related grievance or a campaign filing.",
   },
 };
 
