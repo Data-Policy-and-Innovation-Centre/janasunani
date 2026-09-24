@@ -778,3 +778,15 @@ def test_a_discarded_required_case_is_its_own_part():
     standing = _standing(_atr(_atr_lake(ATR_CASES + [disc])))
     assert standing["Discarded"][0] == 10
     assert standing["Still open: review may still happen"][0] == 20
+
+
+def test_the_closed_required_cases_are_shown_between_required_and_the_rates():
+    panel = _atr(_atr_lake(ATR_CASES))
+    metrics = {m["id"]: m for m in panel["metrics"]}
+    ids = [m["id"] for m in panel["metrics"]]
+    assert ids.index("review-required") < ids.index("required-closed") < ids.index("review-done")
+    closed = metrics["required-closed"]
+    # Of the required cases, the closed ones: the base both rates use.
+    assert (closed["numerator"], closed["denominator"]) == (70, 90)
+    assert closed["numerator"] == metrics["review-done"]["denominator"]
+    assert closed["denominator"] == metrics["review-required"]["numerator"]

@@ -76,6 +76,7 @@ const EN: Dictionary = {
     // Action taken reports and review
     "review-required": "Workflow requires review",
     "atr-replied": "Report submitted",
+    "required-closed": "Closed, of those that require review",
     "review-done": "Required review happened, of those closed",
     "closed-without-review": "Closed without the required review, of those closed",
     "atr-sent-back": "Report sent back",
