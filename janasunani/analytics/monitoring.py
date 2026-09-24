@@ -39,16 +39,18 @@ MIN_CELL = 10
 COUNT_UNITS = frozenset({"grievances", "groups", "closures", "citizens"})
 # Metrics that stand in for the thing a reader cares about rather than
 # measuring it. Wording is not closure quality, a dedup group is not a proven
-# problem, an identity key is not a verified person, and the loop, follow-up
-# and FIFO measures are the proxies their labels already say they are.
+# problem, an identity key is not a verified person, and the loop and follow-up
+# measures are the proxies their labels already say they are.
 # Everything else counts what the record directly contains.
 PROXY_METRICS = frozenset({
-    "loop-rate", "followup-proxy", "fifo-exception",
+    "loop-rate", "followup-proxy",
     "problems", "citizens", "duplicate-adjustment", "repeat-groups", "campaigns",
     "bare-ladder", "bare-resolved", "action-recorded", "benefit-recorded",
     "refiling-30", "refiling-90",
-    # Coverage of a stand-in field: review authority for review required,
-    # subcategory for scheme or service.
+    # Inferred from the order of recorded events, not recorded as a review.
+    "review-done", "closed-without-review",
+    # Coverage of a stand-in field: the assigned workflow for whether review
+    # is required, subcategory for scheme or service.
     "rec-review-required", "rec-scheme",
 })
 # Subcategory scopes are built per published department, largest first. Each
@@ -488,61 +490,165 @@ def _journey(con: duckdb.DuckDBPyConnection, coverage: dict[str, int]) -> dict[s
     }
 
 
+# The portal's own "Take action" list for a reviewer returning an ATR, as the
+# CM Grievance Cell screen shows it (photo 20, 11 Aug 2026). Matched exactly
+# after the same normalisation as the discard templates; other wording is
+# counted as "Other wording", never guessed at.
+REVERT_TEMPLATES = {
+    "required more clarification": "More clarification required",
+    "please furnish the final atr": "Final ATR requested",
+    "further action need to be taken": "Further action needed",
+    "please enclose a legible copy of the atr": "Legible ATR copy requested",
+    "please submit the atr on the grievance petition": "ATR on the petition requested",
+    "no action has been taken in the meantime": "No action taken meanwhile",
+    "please re-enquire and take appropriate action early": "Re-enquiry requested",
+    "please cause a factual enquiry to the issue raised": "Factual enquiry requested",
+}
+
+
 def _atr(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
-    if not con.execute(
-        "SELECT EXISTS(SELECT 1 FROM action_history WHERE action_status='ATR Received')"
-    ).fetchone()[0]:
-        return {
-            "id": "atr", "title": "ATR queue discipline", "state": "unavailable",
-            "reason": "The extract has no recorded 'ATR Received' event. 'Replied' remarks are not silently substituted.",
-            "caveats": ["Notification, download, priority, and acknowledgement fields are also absent."],
-        }
-    con.execute("""
-        CREATE OR REPLACE TEMP TABLE atr_latest AS
-        WITH eligible AS (
-          SELECT a.ticket_no, a.action_taken_date atr_date, s.role_name office,
-                 c.resolved_on,
-                 ROW_NUMBER() OVER(PARTITION BY a.ticket_no ORDER BY a.action_taken_date DESC,a.id DESC) rn
-          FROM action_history a JOIN scope_tickets c USING(ticket_no)
-          LEFT JOIN acting_office_named s ON s.id=a.id
-          WHERE a.action_status='ATR Received' AND a.action_taken_date < TIMESTAMP '2025-07-31'
-            AND (c.resolved_on IS NULL OR a.action_taken_date <= c.resolved_on))
-        SELECT *, DATE '2025-07-30'-CAST(atr_date AS DATE) age_days FROM eligible WHERE rn=1
+    """ATR submission and the review the assigned workflow requires (note §1.1-1.3).
+
+    The workflow is the case's ``all_esc_user`` chain, stored field office
+    first, as the portal's "Define Workflow" list shows it (``BDO --> Collector
+    --> CMO``). The first node acts and "Replies"; each later node receives the
+    ATR in turn and the last is the office that defined the workflow. A chain
+    of three or more nodes therefore puts at least one office between them,
+    which reviews before the ATR goes on: that is de jure review. ``Replied``
+    is the ATR moving up; ``Reopen`` after it is a reviewer sending it back.
+    """
+    revert_values = ", ".join(f"('{k}', {_sql_str(v)})" for k, v in REVERT_TEMPLATES.items())
+    revert_keys = ", ".join(f"'{k}'" for k in REVERT_TEMPLATES)
+    con.execute(f"""
+        CREATE OR REPLACE TEMP TABLE atr_cases AS
+        WITH cohort AS (
+          SELECT s.ticket_no, c.status, c.resolved_on,
+            len(list_filter(string_split(COALESCE(c.all_esc_user, ''), ','), x -> trim(x) <> '')) nodes
+          FROM scope_tickets s JOIN complaints c USING(ticket_no)
+          WHERE s.created_on>=DATE '2024-07-01' AND s.created_on<DATE '2025-07-01'),
+        acts AS (
+          SELECT o.ticket_no, o.id, o.action_taken_date d, o.action_status st, o.code office,
+            -- One of the portal's fixed send-back reasons: a reviewer's act
+            -- wherever it falls, where other Reopen wording after a disposal
+            -- is the case being reopened, often by the citizen.
+            {_NORMALIZED_REMARK} IN ({revert_keys}) standard_reason
+          FROM acting_office o JOIN cohort c USING(ticket_no)
+          LEFT JOIN action_history h ON h.id = o.id
+          WHERE o.action_taken_date < TIMESTAMP '2025-07-31'
+            -- Review happens before closure: a closed case's later actions
+            -- are not evidence that its ATR was reviewed.
+            -- By calendar date, as in sql/closure.sql: resolved_on and the
+            -- actions are written by different code paths on the same day.
+            AND (c.resolved_on IS NULL OR CAST(o.action_taken_date AS DATE) <= CAST(c.resolved_on AS DATE))),
+        -- Same-day rows order by id, as everywhere events are sequenced.
+        first_reply AS (SELECT ticket_no, MIN(d) fr, arg_min(id, (d, id)) fr_id FROM acts WHERE st='Replied' GROUP BY 1),
+        -- The first disposal after that reply. A Reopen after it is the case
+        -- being reopened (often by the citizen), not a reviewer sending the
+        -- ATR back.
+        first_close AS (
+          SELECT a.ticket_no, MIN(a.d) fc, arg_min(a.id, (a.d, a.id)) fc_id
+          FROM acts a JOIN first_reply f USING(ticket_no)
+          WHERE a.st='Disposed' AND (a.d, a.id) > (f.fr, f.fr_id) GROUP BY 1),
+        per_case AS (
+          SELECT a.ticket_no,
+            COUNT(DISTINCT a.office) FILTER(WHERE a.st='Replied') repliers,
+            BOOL_OR(a.st='Reopen' AND (a.d, a.id) > (f.fr, f.fr_id)
+                    AND (x.fc IS NULL OR (a.d, a.id) < (x.fc, x.fc_id) OR a.standard_reason)) sent_back,
+            arg_max(a.st, (a.d, a.id)) last_status,
+            MAX(a.d) last_action
+          FROM acts a LEFT JOIN first_reply f USING(ticket_no) LEFT JOIN first_close x USING(ticket_no)
+          GROUP BY a.ticket_no)
+        SELECT c.ticket_no, c.resolved_on, c.nodes, c.nodes >= 3 required,
+          f.fr IS NOT NULL replied, f.fr, f.fr_id, x.fc, x.fc_id,
+          COALESCE(p.sent_back, FALSE) sent_back,
+          f.fr IS NOT NULL AND (p.repliers >= 2 OR COALESCE(p.sent_back, FALSE)) reviewed,
+          c.status='Disposed' AND CAST(c.resolved_on AS DATE)<=DATE '2025-07-30' closed,
+          -- Open on the snapshot, as in _aging: a later status is not the
+          -- status on the snapshot.
+          ((c.resolved_on IS NULL AND COALESCE(c.status, '') NOT IN ('Disposed','Discard'))
+            OR CAST(c.resolved_on AS DATE)>DATE '2025-07-30') AND p.last_status='Replied'
+            -- A one-office workflow has no next office to wait for.
+            AND c.nodes >= 2 atr_waiting,
+          DATE '2025-07-30'-CAST(p.last_action AS DATE) wait_days
+        FROM cohort c LEFT JOIN first_reply f USING(ticket_no) LEFT JOIN first_close x USING(ticket_no)
+        LEFT JOIN per_case p USING(ticket_no)
     """)
-    summary = _one(con, """
-        SELECT COUNT(*) FILTER (WHERE resolved_on IS NULL OR CAST(resolved_on AS DATE)>DATE '2025-07-30') outstanding,
-          MAX(age_days) FILTER (WHERE resolved_on IS NULL OR CAST(resolved_on AS DATE)>DATE '2025-07-30') oldest,
-          MEDIAN(CAST(resolved_on AS DATE)-CAST(atr_date AS DATE)) FILTER (WHERE resolved_on IS NOT NULL AND resolved_on>=atr_date) median_disposal
-        FROM atr_latest
+    row = _one(con, """
+        SELECT COUNT(*) filings,
+          COUNT(*) FILTER(WHERE nodes>0) with_workflow,
+          COUNT(*) FILTER(WHERE required) required,
+          COUNT(*) FILTER(WHERE replied) replied,
+          COUNT(*) FILTER(WHERE required AND closed) required_closed,
+          COUNT(*) FILTER(WHERE required AND closed AND reviewed) required_closed_reviewed,
+          COUNT(*) FILTER(WHERE required AND closed AND NOT reviewed) closed_without_review,
+          COUNT(*) FILTER(WHERE replied AND sent_back) sent_back,
+          COUNT(*) FILTER(WHERE atr_waiting) waiting,
+          MEDIAN(wait_days) FILTER(WHERE atr_waiting) median_wait
+        FROM atr_cases
     """)
-    rows = con.execute("""
-        SELECT CASE WHEN age_days<=6 THEN '0-6 days' WHEN age_days<=14 THEN '7-14 days'
-          WHEN age_days<=29 THEN '15-29 days' WHEN age_days<=59 THEN '30-59 days' ELSE '60+ days' END bucket,
+    ages = con.execute("""
+        SELECT CASE WHEN wait_days<=6 THEN '0-6 days' WHEN wait_days<=14 THEN '7-14 days'
+          WHEN wait_days<=29 THEN '15-29 days' WHEN wait_days<=59 THEN '30-59 days' ELSE '60+ days' END bucket,
           COUNT(*) AS count_value
-        FROM atr_latest WHERE resolved_on IS NULL OR CAST(resolved_on AS DATE)>DATE '2025-07-30'
-        GROUP BY bucket ORDER BY MIN(age_days)
+        FROM atr_cases WHERE atr_waiting GROUP BY bucket ORDER BY MIN(wait_days)
     """).fetchall()
-    fifo = _one(con, """
-        SELECT COUNT(*) older_outstanding,
-          COUNT(*) FILTER (WHERE EXISTS(
-            SELECT 1 FROM atr_latest later WHERE later.office=older.office
-              AND later.atr_date>older.atr_date AND later.resolved_on IS NOT NULL
-              AND CAST(later.resolved_on AS DATE)<=DATE '2025-07-30')) fifo_exceptions
-        FROM atr_latest older
-        WHERE older.office IS NOT NULL AND (older.resolved_on IS NULL OR CAST(older.resolved_on AS DATE)>DATE '2025-07-30')
+    con.execute(f"""
+        CREATE OR REPLACE TEMP TABLE atr_backs AS
+        WITH revert(template, label) AS (VALUES {revert_values})
+        -- One reason per grievance, the first send-back's, so the rows add
+        -- up to the grievances sent back.
+        SELECT a.ticket_no, arg_min(COALESCE(r.label, 'Other wording'), (a.action_taken_date, a.id)) AS reason
+        FROM action_history a JOIN atr_cases c USING(ticket_no)
+        LEFT JOIN revert r ON r.template = {_NORMALIZED_REMARK}
+        WHERE c.replied AND a.action_status='Reopen' AND (a.action_taken_date, a.id) > (c.fr, c.fr_id)
+          AND (c.fc IS NULL OR (a.action_taken_date, a.id) < (c.fc, c.fc_id) OR r.template IS NOT NULL)
+          AND a.action_taken_date < TIMESTAMP '2025-07-31'
+          AND (c.resolved_on IS NULL OR CAST(a.action_taken_date AS DATE) <= CAST(c.resolved_on AS DATE))
+        GROUP BY a.ticket_no
     """)
-    buckets = suppress_breakdown([{"label": a, "value": b} for a, b in rows])
+    reasons = con.execute(
+        "SELECT reason, COUNT(*) n FROM atr_backs GROUP BY reason "
+        "ORDER BY reason='Other wording', n DESC, reason"
+    ).fetchall()
+    standard = _one(con, """
+        SELECT COUNT(DISTINCT ticket_no) sent_back,
+          COUNT(DISTINCT ticket_no) FILTER(WHERE reason<>'Other wording') standard
+        FROM atr_backs
+    """)
+    buckets = suppress_breakdown([{"label": a, "value": b} for a, b in ages])
+    tables = None
+    # Any small reason row is withheld with the whole table: the others and
+    # the send-back total would give it away.
+    reasons_withheld = any(0 < n < MIN_CELL for _label, n in reasons)
+    if reasons and not reasons_withheld:
+        tables = [{
+            "title": "Why ATRs were sent back",
+            "columns": [{"label": "Grievances", "unit": "grievances"}],
+            "rows": [{"label": label, "values": [n]} for label, n in reasons],
+        }]
     return {
-        "id": "atr", "title": "ATR queue discipline", "state": "recorded",
-        "denominator": {"label": "Outstanding latest ATRs", "value": summary["outstanding"]},
+        "id": "atr", "title": "ATRs and review", "state": "recorded",
+        "denominator": {"label": "Grievances created in FY 2024-25", "value": row["filings"]},
         "metrics": [
-            _metric("oldest-atr", "Oldest outstanding ATR", summary["oldest"], unit="days"),
-            _metric("atr-to-disposal", "Median ATR-to-disposal", float(summary["median_disposal"]) if summary["median_disposal"] is not None else None, unit="days"),
-            _metric("fifo-exception", "Older ATR bypassed proxy", _pct(fifo["fifo_exceptions"], fifo["older_outstanding"]), unit="percent", numerator=fifo["fifo_exceptions"], denominator=fifo["older_outstanding"]),
+            _metric("review-required", "Workflow requires review", _pct(row["required"], row["with_workflow"]), unit="percent", numerator=row["required"], denominator=row["with_workflow"], note="Three or more offices in the assigned workflow."),
+            _metric("atr-replied", "ATR submitted", _pct(row["replied"], row["filings"]), unit="percent", numerator=row["replied"], denominator=row["filings"]),
+            _metric("review-done", "Required review happened", _pct(row["required_closed_reviewed"], row["required_closed"]), unit="percent", numerator=row["required_closed_reviewed"], denominator=row["required_closed"]),
+            _metric("closed-without-review", "Closed without the required review", _pct(row["closed_without_review"], row["required_closed"]), unit="percent", numerator=row["closed_without_review"], denominator=row["required_closed"]),
+            _metric("atr-sent-back", "ATR sent back by a reviewer", _pct(row["sent_back"], row["replied"]), unit="percent", numerator=row["sent_back"], denominator=row["replied"]),
+            _metric("atr-standard-reason", "Send-backs with a standard reason", _pct(standard["standard"], standard["sent_back"]), unit="percent", numerator=standard["standard"], denominator=standard["sent_back"]),
+            _metric("atr-waiting", "ATRs waiting for the next office", row["waiting"], unit="grievances", denominator=row["filings"]),
+            _metric("atr-wait", "Median wait of those ATRs", float(row["median_wait"]) if row["median_wait"] is not None else None, unit="days", denominator=row["waiting"], note=None if row["median_wait"] is not None else "No ATR is waiting."),
         ],
         "breakdown": buckets,
-        "breakdownUnavailableReason": None if buckets is not None else "Withheld because a positive ATR-age cell is below 10.",
-        "caveats": ["Uses the latest recorded ATR before snapshot or resolution.", "The FIFO proxy does not prove notification, download, priority, or acknowledgement."],
+        "breakdownUnavailableReason": None if buckets is not None else "Withheld because a positive waiting-ATR cell is below 10.",
+        "tables": tables,
+        "caveats": [
+            "Review is required when the assigned workflow has three or more offices: the ones between the field office and the office that assigned it review the ATR. The workflow is the current one; an earlier workflow is not kept.",
+            "An ATR is 'submitted' when the case records Replied. Review happened when a second office replied or a reviewer sent it back before closure.",
+            "A 'Reopen' after an ATR and before the case is disposed is a reviewer sending it back. After a disposal, only a Reopen with one of the standard send-back reasons counts; other wording is the case being reopened, often by the citizen.",
+            "The breakdown is how long waiting ATRs have waited since the last action.",
+            *(["The reasons ATRs were sent back are withheld: at least one reason covers fewer than 10 grievances."] if reasons_withheld else []),
+        ],
     }
 
 
@@ -642,8 +748,9 @@ def _closure(con: duckdb.DuckDBPyConnection, full_path: Path | None) -> dict[str
     row = _one(con, """
         WITH cohort AS (SELECT ticket_no FROM scope_tickets WHERE created_on>=DATE '2024-07-01' AND created_on<DATE '2025-07-01'),
         r AS (SELECT c.* FROM closure_rung c JOIN cohort USING(ticket_no)),
-        reopened AS (SELECT COUNT(DISTINCT a.ticket_no) n FROM action_history a JOIN cohort USING(ticket_no)
-                     WHERE LOWER(a.action_status) LIKE '%reopen%')
+        -- Of the resolved cases the metric is shown against, as of the snapshot.
+        reopened AS (SELECT COUNT(DISTINCT a.ticket_no) n FROM action_history a JOIN r USING(ticket_no)
+                     WHERE LOWER(a.action_status) LIKE '%reopen%' AND a.action_taken_date < TIMESTAMP '2025-07-31')
         SELECT COUNT(*) resolved, SUM(on_ladder) ladder,
           COUNT(*) FILTER(WHERE rung='bare') bare,
           COUNT(*) FILTER(WHERE rung='with_action') action_recorded,
@@ -668,7 +775,7 @@ def _closure(con: duckdb.DuckDBPyConnection, full_path: Path | None) -> dict[str
             _metric("bare-resolved", "Bare disposal / all resolved", _pct(row["bare"], row["resolved"]), unit="percent", numerator=row["bare"], denominator=row["resolved"]),
             _metric("action-recorded", "Action recorded", row["action_recorded"], unit="closures", denominator=row["ladder"]),
             _metric("benefit-recorded", "Benefit recorded", row["benefit_recorded"], unit="closures", denominator=row["ladder"]),
-            _metric("reopened", "Recorded reopen events", row["reopened"], unit="grievances", denominator=row["resolved"]),
+            _metric("reopened", "Resolved cases with a Reopen", row["reopened"], unit="grievances", numerator=row["reopened"], denominator=row["resolved"], note="Any Reopen before 30 July: a reviewer sending an ATR back or the case being reopened. The ATR panel separates the send-backs."),
             *refiling_metrics,
         ],
         "breakdown": None, "breakdownUnavailableReason": None,
@@ -895,7 +1002,6 @@ UNRECORDED_FIELDS = (
     ("rec-confidence", "Confidence score and model or rule version", "label error rates by version"),
     ("rec-reviewed-relationship", "Reviewed relationship label and reason", "precision of the candidate labels"),
     ("rec-operational-action", "Operational action chosen, apart from the label", "what happens to each label"),
-    ("rec-review-event", "Review date, reviewer role, decision and reason", "review rate and post-review outcomes"),
     ("rec-closure-reason", "Fixed closure reason", "closure quality without reading wording"),
     ("rec-closure-evidence", "Supporting evidence at closure", "which closures are evidenced"),
     ("rec-route-change-reason", "Reason for changing a category or route", "routing override analysis"),
@@ -904,7 +1010,7 @@ UNRECORDED_FIELDS = (
 )
 
 
-def _recording(con: duckdb.DuckDBPyConnection, discards: dict[str, Any]) -> dict[str, Any]:
+def _recording(con: duckdb.DuckDBPyConnection, discards: dict[str, Any], atr: dict[str, Any]) -> dict[str, Any]:
     """Which note §6 fields the source records, and how completely (§6).
 
     A field the extract holds is published as the share of FY filings that
@@ -926,14 +1032,12 @@ def _recording(con: duckdb.DuckDBPyConnection, discards: dict[str, Any]) -> dict
                                 AND created_on IS NOT NULL) entry,
           COUNT(*) FILTER(WHERE NULLIF(category_id, 0) IS NOT NULL OR NULLIF(trim(category), '') IS NOT NULL) category,
           COUNT(*) FILTER(WHERE NULLIF(trim(subcategory), '') IS NOT NULL OR NULLIF(subcategory_id, 0) IS NOT NULL) subcategory,
-          COUNT(*) FILTER(WHERE NULLIF(trim(review_authority), '') IS NOT NULL
-                                OR NULLIF(review_authority_id, 0) IS NOT NULL) review_authority,
+          COUNT(*) FILTER(WHERE trim(COALESCE(all_esc_user, '')) <> '') workflow,
           -- Assignment is dated on the complaint as well as in the history.
           (SELECT COUNT(*) FROM cohort c WHERE
              c.assigned_on < TIMESTAMP '2025-07-31' OR c.tagged_date < TIMESTAMP '2025-07-31'
              OR c.ticket_no IN (SELECT ticket_no FROM acted WHERE action_status IN
-               ('Forwarded To Subordinate', 'Forward', 'Forwarded', 'Complaint Transfer'))) dated_action,
-          (SELECT COUNT(DISTINCT ticket_no) FROM acted WHERE action_status='ATR Received') atr
+               ('Forwarded To Subordinate', 'Forward', 'Forwarded', 'Complaint Transfer'))) dated_action
         FROM cohort
     """)
     n = row["filings"]
@@ -941,12 +1045,13 @@ def _recording(con: duckdb.DuckDBPyConnection, discards: dict[str, Any]) -> dict
     def share(metric_id: str, label: str, count: int, note: str | None = None, denominator: int = n) -> dict[str, Any]:
         return _metric(metric_id, label, _pct(count, denominator), unit="percent", numerator=count, denominator=denominator, note=note)
 
-    discard = next((m for m in discards.get("metrics", []) if m["id"] == "discard-reason-recognised"), None)
-    atr = (
-        share("rec-atr", "ATR request, receipt and closure events", row["atr"], "Only receipt exists as a status; request, return and acceptance are not separate events.")
-        if row["atr"] else
-        _metric("rec-atr", "ATR request, receipt and closure events", None, unit="percent", note="Not recorded: the extract has no 'ATR Received' event. Would make the ATR queue measurable.")
-    )
+    def reuse(panel: dict[str, Any], source_id: str, metric_id: str, label: str, note: str, missing: str) -> dict[str, Any]:
+        """A figure another panel already publishes, relabelled for this list."""
+        metric = next((m for m in panel.get("metrics", []) if m["id"] == source_id), None)
+        if metric and metric["state"] == "recorded":
+            return {**metric, "id": metric_id, "label": label, "note": note}
+        return _metric(metric_id, label, None, unit="percent", note=(metric or {}).get("reason") or missing)
+
     return {
         "id": "recording", "title": "What the source records", "state": "recorded",
         "denominator": {"label": "Grievances created in FY 2024-25", "value": n},
@@ -954,13 +1059,17 @@ def _recording(con: duckdb.DuckDBPyConnection, discards: dict[str, Any]) -> dict
             share("rec-entry", "Entry channel and date", row["entry"]),
             share("rec-classification", "Classification", row["category"], "Only the current category; later changes are not recorded as events."),
             share("rec-events", "Dated assignment and transfer events", row["dated_action"], "Assignment dates on the complaint or in the action history. Returns are inferred from the office sequence, not recorded as events."),
-            (
-                {**discard, "id": "rec-discard-reason", "label": "Discard reason", "note": "Share of discards with one of the eight standard reasons. Timing is known only relative to transfers."}
-                if discard and discard["state"] == "recorded" else
-                _metric("rec-discard-reason", "Discard reason", None, unit="percent", note=(discard or {}).get("reason") or "No discards in this scope.")
-            ),
-            atr,
-            share("rec-review-required", "Whether review is required", row["review_authority"], "A review authority is named; whether review was required is not recorded."),
+            reuse(discards, "discard-reason-recognised", "rec-discard-reason", "Discard reason",
+                  "Share of discards with one of the eight standard reasons. Timing is known only relative to transfers.",
+                  "No discards in this scope."),
+            reuse(atr, "atr-replied", "rec-atr", "ATR request, receipt and closure events",
+                  "Submission is recorded as Replied; request, receipt and acceptance are not separate dated events.",
+                  "No ATR was submitted in this scope."),
+            share("rec-review-required", "Whether review is required", row["workflow"],
+                  "Read from the assigned workflow (three or more offices); the portal holds no review flag."),
+            reuse(atr, "atr-standard-reason", "rec-review-event", "Review date, reviewer role, decision and reason",
+                  "Of ATRs sent back (not of all filings): the share whose reason is a standard one. A send-back is dated and by an office; acceptance is not recorded as a decision.",
+                  "No ATR was sent back in this scope."),
             share("rec-scheme", "Scheme or service", row["subcategory"], "Subcategory often names the scheme; there is no scheme or service field."),
             *(
                 _metric(metric_id, label, None, unit="percent", note=f"Not recorded. Would make possible: {unlocks}.")
@@ -969,7 +1078,7 @@ def _recording(con: duckdb.DuckDBPyConnection, discards: dict[str, Any]) -> dict
         ],
         "breakdown": None, "breakdownUnavailableReason": None,
         "caveats": [
-            "Shares are of FY 2024-25 filings in this scope, except discard reason, which is of discards.",
+            "Shares are of FY 2024-25 filings in this scope, except discard reason (of discards) and the review decision (of ATRs sent back).",
             "A field that is present can still be recorded inconsistently; presence is not quality.",
         ],
     }
@@ -1006,6 +1115,7 @@ def build_release(
             identity = dedup_dir / f"{base}_dedup_groups.csv" if base else None
             full = dedup_dir / f"{base}_dedup_full_groups.csv" if base else None
             discards = _discards(con)
+            atr = _atr(con)
             dashboards[f"{scope.id}:{PERIOD_ID}"] = {
                 "scopeId": scope.id,
                 "scopeLabel": scope.label,
@@ -1015,11 +1125,11 @@ def build_release(
                 "periodLabel": PERIOD_LABEL,
                 "snapshotDate": SNAPSHOT_DATE.isoformat(),
                 "panels": [
-                    _aging(con), _transfers(con), _journey(con, coverage), _atr(con),
+                    _aging(con), _transfers(con), _journey(con, coverage), atr,
                     _demand(con, identity, full, citizens.get(scope.id)),
                     _closure(con, identity),
                     discards,
-                    _recording(con, discards),
+                    _recording(con, discards, atr),
                     _offices(con, scope),
                 ],
             }

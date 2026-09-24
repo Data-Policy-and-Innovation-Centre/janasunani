@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 import duckdb
 
-from janasunani.analytics.monitoring import _aging, _flat_rows, CORE_SCOPES, OFFICE_TABLE_TOP_N, PROXY_METRICS, UNRECORDED_FIELDS, _discards, _offices, _recording, _metric as published_metric, _pct, withhold_small_panel, refiling_summary, suppress_breakdown
+from janasunani.analytics.monitoring import _aging, _atr, _flat_rows, CORE_SCOPES, OFFICE_TABLE_TOP_N, PROXY_METRICS, UNRECORDED_FIELDS, _discards, _offices, _recording, _metric as published_metric, _pct, withhold_small_panel, refiling_summary, suppress_breakdown
 from janasunani.serving.api import create_app
 from janasunani.serving.schemas import MONITORING_PANEL_IDS
 from janasunani.serving.monitoring import (
@@ -324,8 +324,7 @@ def test_recording_reports_coverage_and_names_what_is_missing():
           NULL::VARCHAR AS category,
           CASE WHEN i < 10 THEN 'Scheme' END AS subcategory,
           CASE WHEN i = 10 THEN 4 END AS subcategory_id,
-          NULL::VARCHAR AS review_authority,
-          CASE WHEN i = 0 THEN 0 END AS review_authority_id,
+          CASE WHEN i < 25 THEN '11,22,33' END AS all_esc_user,
           -- Assignment recorded on the complaint itself: two before the
           -- snapshot, one after it.
           CASE WHEN i = 33 THEN TIMESTAMP '2024-08-03' END AS assigned_on,
@@ -346,23 +345,27 @@ def test_recording_reports_coverage_and_names_what_is_missing():
     discards = {"metrics": [published_metric(
         "discard-reason-recognised", "Discards with a recognised reason", 50.0,
         unit="percent", numerator=10, denominator=20)]}
-    metrics = {m["id"]: m for m in _recording(con, discards)["metrics"]}
+    atr = {"metrics": [
+        published_metric("atr-replied", "ATR submitted", 75.0, unit="percent", numerator=30, denominator=40),
+        published_metric("atr-standard-reason", "Send-backs with a standard reason", None, unit="percent", note="No ATR was sent back."),
+    ]}
+    metrics = {m["id"]: m for m in _recording(con, discards, atr)["metrics"]}
 
     assert (metrics["rec-entry"]["numerator"], metrics["rec-entry"]["denominator"]) == (22, 40)
     assert metrics["rec-classification"]["value"] == 100.0
     assert metrics["rec-classification"]["note"]  # only the current category
     assert metrics["rec-events"]["numerator"] == 35
     assert metrics["rec-scheme"]["numerator"] == 11
-    # Both count a stand-in field, not the one the row names.
+    # Whether review is required is read from the workflow chain.
+    assert metrics["rec-review-required"]["numerator"] == 25
+    # Both count a stand-in, not the field the row names.
     assert metrics["rec-scheme"]["basis"] == metrics["rec-review-required"]["basis"] == "proxy"
     assert metrics["rec-entry"]["basis"] == "direct"
-    # Zero is published, not withheld: nothing names a review authority.
-    assert metrics["rec-review-required"]["value"] == 0.0
+    assert (metrics["rec-atr"]["numerator"], metrics["rec-atr"]["label"]) == (30, "ATR request, receipt and closure events")
+    # Another panel's unavailable figure stays unavailable, with its reason.
+    assert metrics["rec-review-event"]["state"] == "unavailable"
     # The discard row is the discards panel's own figure, relabelled.
     assert (metrics["rec-discard-reason"]["numerator"], metrics["rec-discard-reason"]["label"]) == (10, "Discard reason")
-    # No ATR event in the extract: explicit, and says what it would unlock.
-    assert metrics["rec-atr"]["state"] == "unavailable"
-    assert "ATR queue" in metrics["rec-atr"]["reason"]
     for metric_id, _label, unlocks in UNRECORDED_FIELDS:
         assert metrics[metric_id]["state"] == "unavailable"
         assert unlocks in metrics[metric_id]["reason"]
@@ -428,6 +431,96 @@ def test_a_small_rate_cell_is_withheld_but_its_row_stays():
     assert _drilldown_rows(rows, [(0, None), (1, 0), (2, 0)], "Other") == [
         {"label": "Puri", "values": [50, None, 0.0]},
     ]
+
+
+def _atr_lake(cases, sizes=None) -> duckdb.DuckDBPyConnection:
+    """Ten tickets per case kind unless ``sizes`` says otherwise."""
+    sizes = sizes or {}
+    con = duckdb.connect()
+    con.execute("CREATE TABLE complaints(ticket_no VARCHAR, created_on TIMESTAMP, status VARCHAR, resolved_on TIMESTAMP, all_esc_user VARCHAR)")
+    con.execute("CREATE TABLE action_history(id INTEGER, ticket_no VARCHAR, action_taken_date TIMESTAMP, action_status VARCHAR, action_taken_remark VARCHAR)")
+    con.execute("CREATE TABLE acting_office(id INTEGER, ticket_no VARCHAR, action_taken_date TIMESTAMP, action_status VARCHAR, code VARCHAR)")
+    next_id = 0
+    for kind, chain, spec, steps in cases:
+        # "Disposed@<date>" closes on that date; plain "Disposed" on 10 July.
+        status, _, resolved = spec.partition("@")
+        resolved = resolved or ("2025-07-10" if status == "Disposed" else None)
+        for i in range(sizes.get(kind, 10)):
+            ticket = f"{kind}-{i}"
+            con.execute("INSERT INTO complaints VALUES (?, TIMESTAMP '2025-07-01' - INTERVAL 30 DAY, ?, ?, ?)", [ticket, status, resolved, chain])
+            for office, action, remark, day in steps:
+                next_id += 1
+                # A day number, or "DD HH:MM" for a time on that day.
+                when = f"2025-07-{day:02d}" if isinstance(day, int) else f"2025-07-{day}"
+                con.execute("INSERT INTO action_history VALUES (?, ?, ?, ?, ?)", [next_id, ticket, when, action, remark])
+                con.execute("INSERT INTO acting_office VALUES (?, ?, ?, ?, ?)", [next_id, ticket, when, action, office])
+    con.execute("CREATE TABLE scope_tickets AS SELECT ticket_no, created_on FROM complaints")
+    return con
+
+
+# (kind, workflow chain, final status, [(office, status, remark, day)])
+ATR_CASES = [
+        # Three offices: the Collector reviews and passes the ATR on.
+        ("reviewed", "1,2,3", "Disposed", [("BDO", "Replied", None, 2), ("Collector", "Replied", None, 4), ("CMO", "Disposed", None, 6)]),
+        # Three offices, but closed straight after the field office's reply.
+        ("skipped", "1,2,3", "Disposed", [("BDO", "Replied", None, 2), ("CMO", "Disposed", None, 3)]),
+        # The reviewer's only act is sending it back: that is still review.
+        ("sent_back", "1,2,3", "Disposed", [("BDO", "Replied", None, 2), ("Collector", "Reopen", "Required  more clarification.", 3),
+                                             ("BDO", "Replied", None, 5), ("CMO", "Disposed", None, 7)]),
+        # Collector -> BDO: no review required.
+        ("direct", "1,2", "Disposed", [("BDO", "Replied", None, 2), ("Collector", "Disposed", None, 3)]),
+        # Closed on 10 July after the field reply; the Collector's reply and
+        # send-back on 12 July come after closure and are not its review.
+        ("late", "1,2,3", "Disposed", [("BDO", "Replied", None, 2), ("CMO", "Disposed", None, 3),
+                                       ("Collector", "Reopen", "Please furnish the final ATR", 12), ("Collector", "Replied", None, 12)]),
+        # An ATR waiting at the Collector at the snapshot.
+        ("waiting", "1,2,3", "Pending", [("BDO", "Replied", None, 10)]),
+        # No workflow recorded.
+        ("none", "", "Pending", []),
+        # Reviewed on the afternoon of the day it closed (resolved_on is
+        # midnight): same-day actions come before closure.
+        ("sameday", "1,2,3", "Disposed", [("BDO", "Replied", None, 2), ("Collector", "Replied", None, "10 14:00"),
+                                          ("CMO", "Disposed", None, "10 15:00")]),
+        # Waiting at the snapshot, disposed a week later: still in the queue.
+        ("waiting_late", "1,2,3", "Disposed@2025-08-05", [("BDO", "Replied", None, 10)]),
+        # A Reopen on the day of the first reply but recorded before it, by
+        # id: it precedes the ATR, so it is not a send-back.
+        ("tied", "1,2,3", "Disposed", [("Collector", "Reopen", "Required more clarification.", 2), ("BDO", "Replied", None, 2),
+                                       ("CMO", "Disposed", None, 3)]),
+        # Sent back twice for different reasons: counted once, under the first.
+        ("twice", "1,2,3", "Disposed", [("BDO", "Replied", None, 2), ("Collector", "Reopen", "Required more clarification.", 3),
+                                        ("BDO", "Replied", None, 4), ("Collector", "Reopen", "Please furnish the final ATR", 5),
+                                        ("BDO", "Replied", None, 6), ("CMO", "Disposed", None, 8)]),
+]
+
+
+def test_atr_reads_review_from_the_assigned_workflow():
+    panel = _atr(_atr_lake(ATR_CASES))
+    metrics = {m["id"]: m for m in panel["metrics"]}
+    def fraction(metric_id):
+        return metrics[metric_id]["numerator"], metrics[metric_id]["denominator"]
+
+    assert fraction("review-required") == (90, 100)      # nine three-office kinds of ten with a workflow
+    assert fraction("atr-replied") == (100, 110)
+    assert fraction("review-done") == (40, 70)            # reviewed, sent_back, twice and sameday, of the closed required cases
+    assert fraction("closed-without-review") == (30, 70)  # skipped, late and tied
+    assert fraction("atr-sent-back") == (20, 100)
+    assert fraction("atr-standard-reason") == (20, 20)
+    assert metrics["atr-waiting"]["value"] == 20  # waiting and waiting_late
+    assert metrics["atr-wait"]["value"] == 20.0            # 30 July less 10 July
+    # One row per grievance: the rows sum to the send-back count.
+    assert panel["tables"][0]["rows"] == [{"label": "More clarification required", "values": [20]}]
+    assert {metrics[m]["basis"] for m in ("review-done", "closed-without-review")} == {"proxy"}
+
+
+def test_atr_withholds_the_reason_table_when_any_reason_is_small():
+    # Five sent back for a second reason: showing the 20-row and the total
+    # would give the five away, so the whole table is withheld.
+    few = ("few", "1,2,3", "Disposed", [("BDO", "Replied", None, 2), ("Collector", "Reopen", "Please furnish the final ATR", 3),
+                                        ("BDO", "Replied", None, 4), ("CMO", "Disposed", None, 6)])
+    panel = _atr(_atr_lake(ATR_CASES + [few], sizes={"few": 5}))
+    assert panel["tables"] is None
+    assert any("sent back" in caveat and "fewer than 10" in caveat for caveat in panel["caveats"])
 
 
 def _edge_lake() -> duckdb.DuckDBPyConnection:
@@ -563,6 +656,76 @@ def test_a_rate_over_a_small_denominator_is_withheld_even_at_zero():
     ]
 
 
+def _atr_case(kind, spec, steps, chain="1,2,3"):
+    con = _atr_lake([(kind, chain, spec, steps)])
+    _atr(con)
+    return con.execute("SELECT sent_back, reviewed, atr_waiting FROM atr_cases LIMIT 1").fetchone()
+
+
+def test_a_reopen_after_disposal_is_a_citizen_reopen_not_a_send_back():
+    # Closed on the 3rd without review; the citizen reopens it on the 5th.
+    con = _atr_lake([("citizen", "1,2,3", "Disposed", [
+        ("BDO", "Replied", None, 2), ("CMO", "Disposed", None, 3),
+        ("Citizen", "Reopen", "reopened on request of petitioner", 5),
+        ("BDO", "Replied", None, 6), ("CMO", "Disposed", None, 8)])])
+    _atr(con)
+    assert con.execute("SELECT DISTINCT sent_back, reviewed FROM atr_cases").fetchall() == [(False, False)]
+    # Nor does its remark land in the send-back reasons.
+    assert con.execute("SELECT COUNT(*) FROM atr_backs").fetchone()[0] == 0
+
+
+def test_a_same_day_reopen_after_the_reply_is_a_send_back():
+    # Replied then Reopen on the same date, the Reopen recorded second.
+    assert _atr_case("sameday_back", "Pending", [
+        ("BDO", "Replied", None, 2), ("Collector", "Reopen", "Required more clarification.", 2)])[0] is True
+
+
+def test_a_closed_case_whose_last_action_is_a_reply_is_not_waiting():
+    assert _atr_case("closed_reply", "Disposed", [("BDO", "Replied", None, 2), ("CMO", "Replied", None, 4)])[2] is False
+
+
+def test_a_send_back_after_the_snapshot_does_not_count():
+    con = _atr_lake([("later", "1,2,3", "Pending", [("BDO", "Replied", None, 2)])])
+    con.execute("INSERT INTO action_history VALUES (9999, 'later-0', TIMESTAMP '2025-08-05', 'Reopen', 'Required more clarification.')")
+    con.execute("INSERT INTO acting_office VALUES (9999, 'later-0', TIMESTAMP '2025-08-05', 'Reopen', 'Collector')")
+    panel = _atr(con)
+    assert con.execute("SELECT COUNT(*) FROM atr_backs").fetchone()[0] == 0
+    assert panel["tables"] is None
+
+
+def test_closure_reopens_count_resolved_cases_before_the_snapshot():
+    from janasunani.analytics.monitoring import _closure
+    con = duckdb.connect()
+    con.execute("""
+        CREATE TABLE scope_tickets AS SELECT 'T' || i AS ticket_no, TIMESTAMP '2025-01-01' AS created_on FROM range(30) r(i);
+        -- T0-T19 are resolved; T20-T29 are open.
+        CREATE TABLE closure_rung AS SELECT 'T' || i AS ticket_no, 1 AS on_ladder, 'bare' AS rung FROM range(20) r(i);
+        -- Reopened: T0-T9 before the snapshot, T10-T19 after it, T20-T29 while open.
+        CREATE TABLE action_history AS SELECT i AS id, 'T' || i AS ticket_no,
+            CASE WHEN i BETWEEN 10 AND 19 THEN TIMESTAMP '2025-08-05' ELSE TIMESTAMP '2025-03-01' END AS action_taken_date,
+            'Reopen' AS action_status
+          FROM range(30) r(i);
+    """)
+    reopened = next(m for m in _closure(con, None)["metrics"] if m["id"] == "reopened")
+    assert (reopened["value"], reopened["denominator"]) == (10, 20)
+
+
+@pytest.mark.parametrize("steps", [
+    # An interim disposal the reviewer reopens with a standard send-back reason.
+    [("BDO", "Replied", None, 2), ("CMO", "Disposed", None, 3),
+     ("Collector", "Reopen", "Required more clarification.", 4), ("BDO", "Replied", None, 5), ("CMO", "Disposed", None, 7)],
+    # A citizen reopen, then a reviewer sends the new ATR back.
+    [("BDO", "Replied", None, 2), ("CMO", "Disposed", None, 3),
+     ("Citizen", "Reopen", "reopened on request of petitioner", 5), ("BDO", "Replied", None, 6),
+     ("Collector", "Reopen", "Required more clarification.", 7), ("BDO", "Replied", None, 8), ("CMO", "Disposed", None, 9)],
+])
+def test_a_standard_send_back_after_a_disposal_is_still_review(steps):
+    con = _atr_lake([("k", "1,2,3", "Disposed@2025-07-09", steps)])
+    _atr(con)
+    assert con.execute("SELECT DISTINCT sent_back, reviewed FROM atr_cases").fetchall() == [(True, True)]
+    assert con.execute("SELECT DISTINCT reason FROM atr_backs").fetchall() == [("More clarification required",)]
+
+
 @pytest.mark.parametrize("where", ["title", "column", "row"])
 def test_table_text_must_be_non_empty_as_the_frontend_requires(where):
     from pydantic import ValidationError
@@ -577,3 +740,9 @@ def test_table_text_must_be_non_empty_as_the_frontend_requires(where):
         table["rows"][0]["label"] = ""
     with pytest.raises(ValidationError):
         MonitoringTable.model_validate(table)
+
+
+def test_a_one_office_workflow_has_no_next_office_to_wait_for():
+    assert _atr_case("solo", "Pending", [("BDO", "Replied", None, 2)], chain="1")[2] is False
+    # The same reply in a two-office workflow is waiting.
+    assert _atr_case("pair", "Pending", [("BDO", "Replied", None, 2)], chain="1,2")[2] is True
