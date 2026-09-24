@@ -57,6 +57,119 @@ export interface DuplicateSignal {
   // Without it, "campaign" cannot be trusted (Sambalpur GOV2024999640 is
   // 26,203 filings behind a single identity key) and display is withheld.
   distinct_signatories?: number | null;
+  // A candidate relationship label and what it was read from (concept note
+  // §2.3). All three arrive together or not at all; results stored before
+  // labelling carry none of them.
+  relationship?: DuplicateRelationship | null;
+  evidence?: DuplicateEvidence | null;
+  rule_version?: string | null;
+}
+
+export type DuplicateRelationship =
+  | "pure_duplicate"
+  | "follow_up"
+  | "related"
+  | "campaign"
+  | "uncertain";
+
+/** Mirrors DuplicateEvidence in janasunani/serving/schemas.py. null means
+ * "not assessed", never "no". */
+export interface DuplicateEvidence {
+  identity_match?: boolean | null;
+  text_similarity?: "identical" | "near" | "similar" | "different" | null;
+  days_since_earlier?: number | null;
+  earlier_status?: "open" | "closed" | null;
+  explicit_reference?: boolean | null;
+  follow_up_cue?: boolean | null;
+  new_information?: boolean | null;
+}
+
+export interface DuplicateCandidate {
+  relationship: DuplicateRelationship;
+  evidence: DuplicateEvidence;
+  ruleVersion: string;
+}
+
+/** How each candidate label reads to an officer. A candidate names what the
+ * evidence resembles; the action that follows is the officer's decision. */
+export const RELATIONSHIP_COPY: Record<
+  DuplicateRelationship,
+  { badge: string; headline: string; explanation: string }
+> = {
+  pure_duplicate: {
+    badge: "candidate · repeat",
+    headline: "Possible repeat of ticket",
+    explanation: "The same identity key and the same problem, and nothing new was found in this filing.",
+  },
+  follow_up: {
+    badge: "candidate · follow-up",
+    headline: "Possible follow-up to ticket",
+    explanation:
+      "Linked to an earlier filing about the same problem, by identity key or a named ticket, and it asks for status, says the problem continues, or adds something new. Treat it as live, not as a copy.",
+  },
+  related: {
+    badge: "candidate · related",
+    headline: "Possibly related to ticket",
+    explanation: "A similar subject, with evidence of a different event, period, entitlement or request. It may be a separate grievance.",
+  },
+  campaign: {
+    badge: "candidate · campaign",
+    headline: "Possibly part of a campaign",
+    explanation: "Very similar text under different identity keys.",
+  },
+  uncertain: {
+    badge: "candidate · uncertain",
+    headline: "Possible link to ticket",
+    explanation:
+      "The evidence does not separate a repeat, a follow-up, a related grievance or a campaign filing.",
+  },
+};
+
+const SIMILARITY_TEXT = {
+  identical: "Identical",
+  near: "Near-identical",
+  similar: "Similar subject",
+  different: "Different",
+} as const;
+
+const yesNo = (value: boolean | null | undefined) => (value == null ? "Not assessed" : value ? "Yes" : "No");
+
+/** The evidence behind a candidate label as [label, value] rows. Unassessed
+ * fields say so rather than disappearing, so absence never reads as "no". */
+export function candidateEvidenceRows(evidence: DuplicateEvidence): [string, string][] {
+  const assessed = (value: string | null | undefined) => value ?? "Not assessed";
+  const rows: [string, string][] = [
+    [
+      "Same identity key",
+      evidence.identity_match == null
+        ? "Not available"
+        : evidence.identity_match
+          ? "Yes (a protected key, not a verified person)"
+          : "No",
+    ],
+    ["Text", assessed(evidence.text_similarity && SIMILARITY_TEXT[evidence.text_similarity])],
+    [
+      "Days since earlier filing",
+      assessed(evidence.days_since_earlier == null ? null : evidence.days_since_earlier.toLocaleString("en-IN")),
+    ],
+    ["Earlier ticket", assessed(evidence.earlier_status && (evidence.earlier_status === "open" ? "Open" : "Closed"))],
+    ["Names an earlier ticket", yesNo(evidence.explicit_reference)],
+    ["Asks for status or says it continues", yesNo(evidence.follow_up_cue)],
+    [
+      "New information",
+      evidence.new_information == null ? "Not assessed" : evidence.new_information ? "Yes" : "None found",
+    ],
+  ];
+  return rows;
+}
+
+function candidateOf(duplicate: DuplicateSignal): DuplicateCandidate | undefined {
+  // A label this frontend has no copy for (a newer backend) is shown as no
+  // label rather than breaking the banner.
+  return duplicate.relationship && Object.hasOwn(RELATIONSHIP_COPY, duplicate.relationship)
+    && duplicate.evidence && duplicate.rule_version
+    ? { relationship: duplicate.relationship, evidence: duplicate.evidence, ruleVersion: duplicate.rule_version }
+    : undefined;
 }
 
 /** Officer-facing, UI-computed classification of a DuplicateSignal. Not a
@@ -65,8 +178,13 @@ export interface DuplicateSignal {
  * signatory evidence actually supports it. */
 export type DuplicateDisplayState =
   | { kind: "none" }
-  | { kind: "resubmission"; ticketNo: string }
-  | { kind: "campaign"; relatedFilings: number; distinctSignatories: number }
+  | { kind: "resubmission"; ticketNo: string; candidate?: DuplicateCandidate }
+  | {
+      kind: "campaign";
+      relatedFilings: number;
+      distinctSignatories: number;
+      candidate?: DuplicateCandidate;
+    }
   // Group size alone cannot support the campaign claim: no signatory count
   // was supplied, or the one supplied fails the threshold below. This is
   // the safe default, not a considered UI state — what (if anything) should
@@ -110,8 +228,9 @@ export function classifyDuplicateDisplay(
   if (!duplicate) return { kind: "none" };
 
   if (duplicate.duplicate_kind === "resubmission") {
+    const candidate = candidateOf(duplicate);
     return duplicate.duplicate_ticket_no
-      ? { kind: "resubmission", ticketNo: duplicate.duplicate_ticket_no }
+      ? { kind: "resubmission", ticketNo: duplicate.duplicate_ticket_no, ...(candidate && { candidate }) }
       : { kind: "none" };
   }
 
@@ -124,7 +243,8 @@ export function classifyDuplicateDisplay(
     distinctSignatories >= CAMPAIGN_MIN_SIGNATORIES &&
     distinctSignatories / relatedFilings >= CAMPAIGN_SIGNATORY_RATIO
   ) {
-    return { kind: "campaign", relatedFilings, distinctSignatories };
+    const candidate = candidateOf(duplicate);
+    return { kind: "campaign", relatedFilings, distinctSignatories, ...(candidate && { candidate }) };
   }
 
   return { kind: "withheld" };

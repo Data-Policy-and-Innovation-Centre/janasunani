@@ -1,11 +1,37 @@
 import Link from "next/link";
 import {
+  RELATIONSHIP_COPY,
   SPAM_REASON_MESSAGES,
+  candidateEvidenceRows,
   classifyDuplicateDisplay,
   wasActuallyScored,
+  type DuplicateCandidate,
   type TriageResult,
 } from "@/lib/types";
 import { Badge } from "./ui";
+
+/** The evidence behind a candidate label, and what the label is not. */
+function CandidateEvidence({ candidate }: { candidate: DuplicateCandidate }) {
+  return (
+    <div className="mt-3 border-l-2 border-hair py-1 pl-4">
+      <dl className="grid gap-x-6 gap-y-1.5 sm:grid-cols-2">
+        {candidateEvidenceRows(candidate.evidence).map(([term, value]) => (
+          <div key={term} className="flex items-baseline justify-between gap-3 sm:justify-start">
+            <dt className="font-mono text-[9.5px] uppercase tracking-[0.13em] text-text-secondary">
+              {term}
+            </dt>
+            <dd className="text-right text-[12.5px] text-text-dark sm:text-left">{value}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="mt-2 text-[12px] leading-relaxed text-text-secondary">
+        A candidate label from rules <code>{candidate.ruleVersion}</code>, not
+        yet checked against a reviewed sample. What follows is an officer
+        decision.
+      </p>
+    </div>
+  );
+}
 
 /**
  * Review context only. These states deliberately have no dismiss/accept/reject
@@ -93,25 +119,48 @@ export function TriageBanner({ triage }: { triage: TriageResult }) {
           </article>
         )}
 
-        {duplicateDisplay.kind === "resubmission" && (
-          <article className="border-l-2 border-hair bg-surface px-4 py-3">
-            <Badge tone="neutral">possible duplicate</Badge>
-            <p className="mt-1.5 text-[13.5px] leading-relaxed text-text-body">
-              Possible duplicate of ticket{" "}
-              <Link
-                href={`/history?q=${encodeURIComponent(duplicateDisplay.ticketNo)}`}
-                className="font-mono font-semibold text-maroon underline underline-offset-2"
-              >
-                {duplicateDisplay.ticketNo}
-              </Link>
-              . Review both filings before taking any action.
-            </p>
-          </article>
-        )}
+        {duplicateDisplay.kind === "resubmission" && (() => {
+          const { candidate, ticketNo } = duplicateDisplay;
+          const copy = candidate && RELATIONSHIP_COPY[candidate.relationship];
+          const ticket = (
+            <Link
+              href={`/history?q=${encodeURIComponent(ticketNo)}`}
+              className="font-mono font-semibold text-maroon underline underline-offset-2"
+            >
+              {ticketNo}
+            </Link>
+          );
+          return (
+            <article className="border-l-2 border-maroon bg-surface px-4 py-3">
+              <Badge tone="neutral">{copy ? copy.badge : "possible duplicate"}</Badge>
+              {candidate && copy ? (
+                <>
+                  <h3 className="mt-1.5 text-[14px] font-semibold text-text-dark">
+                    {copy.headline} {ticket}
+                  </h3>
+                  <p className="mt-1 text-[13.5px] leading-relaxed text-text-body">
+                    {copy.explanation} Review both filings before taking any action.
+                  </p>
+                  <CandidateEvidence candidate={candidate} />
+                </>
+              ) : (
+                <p className="mt-1.5 text-[13.5px] leading-relaxed text-text-body">
+                  Possible duplicate of ticket {ticket}. Review both filings
+                  before taking any action.
+                </p>
+              )}
+            </article>
+          );
+        })()}
 
         {duplicateDisplay.kind === "campaign" && (
           <article className="border-l-2 border-positive bg-positive-soft/50 px-4 py-3">
-            <Badge tone="positive">collective grievance</Badge>
+            <div className="flex flex-wrap gap-2">
+              <Badge tone="positive">collective grievance</Badge>
+              {duplicateDisplay.candidate && (
+                <Badge tone="neutral">{RELATIONSHIP_COPY[duplicateDisplay.candidate.relationship].badge}</Badge>
+              )}
+            </div>
             <h3 className="mt-1.5 text-[14px] font-semibold text-text-dark">
               Part of a campaign
             </h3>
@@ -121,6 +170,14 @@ export function TriageBanner({ triage }: { triage: TriageResult }) {
               were found. This is a collective grievance, not spam; each
               filing remains visible for review.
             </p>
+            {duplicateDisplay.candidate && duplicateDisplay.candidate.relationship !== "campaign" && (
+              <p className="mt-1.5 text-[12.5px] leading-relaxed text-text-secondary">
+                {RELATIONSHIP_COPY[duplicateDisplay.candidate.relationship].explanation}
+              </p>
+            )}
+            {duplicateDisplay.candidate && (
+              <CandidateEvidence candidate={duplicateDisplay.candidate} />
+            )}
           </article>
         )}
 

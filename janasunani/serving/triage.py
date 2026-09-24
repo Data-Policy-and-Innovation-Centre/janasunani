@@ -23,6 +23,8 @@ from loguru import logger
 from janasunani.pipeline.ocr_quality import is_repetition_collapsed
 from janasunani.serving.schemas import (
     ActionabilityReview,
+    DuplicateEvidence,
+    DuplicateRelationship,
     DuplicateReview,
     OcrQualityEvidence,
     SpamReview,
@@ -88,6 +90,77 @@ class TriageProvider(Protocol):
         district: Optional[str],
         submitted_on: datetime,
     ) -> TriageResult: ...
+
+
+#: Bump when a rule below changes, so a stored label names the rules behind it.
+RELATIONSHIP_RULE_VERSION = "relationship-rules-v1"
+
+
+#: Labels each kind of match can carry, as DuplicateSignal enforces them: one
+#: earlier ticket is never a campaign, and a campaign group is never a
+#: single filer's repeat or follow-up.
+_KIND_LABELS: dict[str, frozenset[str]] = {
+    "resubmission": frozenset({"pure_duplicate", "follow_up", "related", "uncertain"}),
+    "campaign": frozenset({"campaign", "uncertain"}),
+}
+
+
+def candidate_relationship(
+    evidence: DuplicateEvidence, kind: Optional[str] = None,
+) -> DuplicateRelationship:
+    """The evidence's label, or ``uncertain`` when it conflicts with the kind
+    of match the search found: the evidence and the match then disagree, and
+    a label must never make a signal fail to build."""
+    label = _evidence_label(evidence)
+    return label if kind is None or label in _KIND_LABELS[kind] else "uncertain"
+
+
+def _evidence_label(evidence: DuplicateEvidence) -> DuplicateRelationship:
+    """Assign a candidate label from the evidence (concept note §2.3).
+
+    A candidate, not a decision: what follows each label is for government to
+    decide, and the thresholds are unvalidated until a reviewed sample exists.
+    The order matters. A follow-up is checked before a pure duplicate, and a
+    pure duplicate needs new information checked and absent, because the
+    costly error is a follow-up closed as a repeat.
+    """
+    same_text = evidence.text_similarity in {"identical", "near"}
+    # An identity key alone says the same filer key, not the same problem:
+    # the identity path needs affirmative text evidence as well.
+    same_problem = evidence.explicit_reference is True or (
+        evidence.identity_match is True
+        and evidence.text_similarity in {"identical", "near", "similar"}
+    )
+    # A different key that names the earlier ticket is the same filer
+    # following up from elsewhere, so the reference must be checked and
+    # absent before a text match across keys reads as a campaign.
+    if (
+        same_text
+        and evidence.identity_match is False
+        and evidence.explicit_reference is False
+    ):
+        return "campaign"
+    if (
+        same_problem
+        and evidence.text_similarity != "different"
+        and (evidence.follow_up_cue is True or evidence.new_information is True)
+    ):
+        return "follow_up"
+    # Both follow-up signals must have been checked and found absent;
+    # unchecked is not absent. A reference to the earlier ticket links the
+    # two but, without a cue or new facts, does not make a follow-up (note §2.3).
+    if (
+        evidence.identity_match is True
+        and same_text
+        and evidence.new_information is False
+        and evidence.follow_up_cue is False
+    ):
+        return "pure_duplicate"
+    # "related" (a similar subject but a distinct problem) needs evidence of
+    # a different event, period, entitlement or request, which the evidence
+    # cannot yet carry. Not being linked is not that evidence, so the rules
+    # never assign it; the label stays in the contract for rules that can.
+    return "uncertain"
 
 
 def unavailable_triage() -> TriageResult:
