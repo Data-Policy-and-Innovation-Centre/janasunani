@@ -434,13 +434,33 @@ code has to still be able to boot and run correctly against the NEW schema.
   while), then a separate **contract** deploy later, once rolling back past
   the expand step is no longer a realistic need.
 
-Violate this and a rollback can't un-migrate — the "rolled back" api
-container's `alembic upgrade head` (`deploy/api-entrypoint.sh`) either
-errors immediately (`Can't locate revision`, if the old image predates a
-revision the DB is already at) or runs but then crash-loops on a query the
-old code can't form against the new shape. `deploy.sh`'s rollback health
-re-check (above) will catch this and say so loudly — but only the migration
-policy itself prevents it.
+Violate this and a rollback can't un-migrate: the old image starts (its
+entrypoint accepts a schema newer than itself) and then fails on a query it
+can't form against the new shape. `deploy.sh`'s rollback health re-check
+(above) catches this and says so loudly, but only the migration policy
+prevents it.
+
+### Migrations
+
+The api **never migrates on start**. `deploy/api-entrypoint.sh` compares the
+database's alembic revision with the image's head and:
+
+- starts at head;
+- refuses when the database is behind or empty, printing the steps below;
+- starts on a revision it doesn't know (a rollback to an older image);
+- refuses when it can't read the revision at all.
+
+`deploy.sh` runs the same check (`api-entrypoint.sh --check-only`) after the
+pull and before swapping containers, so a pending migration stops the deploy
+with the running stack untouched. To ship a migration, on the box:
+
+```bash
+~/bin/backup-oltp.sh                       # fresh backup first; confirm it landed in S3
+cd ~/janasunani/deploy
+IMAGE_TAG=<sha> docker compose pull api
+IMAGE_TAG=<sha> docker compose run --rm --no-deps --entrypoint alembic api upgrade head
+IMAGE_TAG=<sha> bash deploy.sh             # or re-run the Deploy demo workflow
+```
 
 ### Hard rules specific to this path
 

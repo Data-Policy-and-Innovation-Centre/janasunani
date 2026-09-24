@@ -225,6 +225,16 @@ rollback_and_fail() {
 }
 
 docker compose pull api frontend proxy
+
+# The api never migrates on start (deploy/api-entrypoint.sh). Check the new
+# image against the live schema BEFORE swapping anything: a pending migration
+# stops here with the running stack untouched, instead of a crash-looping api
+# that only fails after the whole health wait and a rollback.
+if ! docker compose run --rm --no-deps api --check-only; then
+  echo "The new api image needs a migration first (see above). Nothing was changed." >&2
+  exit 1
+fi
+
 docker compose up -d || rollback_and_fail
 
 if [[ "$proxy_was_running" == "true" ]]; then

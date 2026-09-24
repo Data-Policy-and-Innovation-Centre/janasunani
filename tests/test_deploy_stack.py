@@ -19,6 +19,8 @@ import shutil
 import stat
 import subprocess
 
+from pathlib import Path
+
 import pytest
 import yaml
 from packaging.markers import Marker
@@ -790,6 +792,77 @@ def test_migration_policy_is_documented():
     assert "expand-only" in doc_text or "backward-compat" in doc_text
 
 
+def _run_entrypoint(tmp_path, db_url, *args):
+    """The real api-entrypoint.sh against real alembic, with the live API
+    stubbed to print "started"."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    _write_executable(bin_dir / "janasunani-api-live", "#!/bin/sh\necho started\n")
+    venv_bin = Path(shutil.which("alembic")).parent
+    env = dict(os.environ, APP_DIR=str(ROOT_DIR), OLTP_DB_URL=db_url)
+    env["PATH"] = f"{bin_dir}:{venv_bin}:{env['PATH']}"
+    return subprocess.run(
+        ["sh", str(ENTRYPOINT_PATH), *args],
+        env=env, capture_output=True, text=True, timeout=120,
+    )
+
+
+def _alembic(db_url, *args):
+    env = dict(os.environ, OLTP_DB_URL=db_url)
+    subprocess.run(["alembic", *args], cwd=ROOT_DIR, env=env, check=True, capture_output=True)
+
+
+def test_entrypoint_never_migrates_and_refuses_a_pending_migration(tmp_path):
+    """The api must not migrate production on start. An empty or older schema
+    stops it with the manual steps; the schema is left as it was."""
+    import sqlite3
+
+    db = tmp_path / "oltp.db"
+    url = f"sqlite+aiosqlite:///{db}"
+
+    result = _run_entrypoint(tmp_path, url)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "started" not in result.stdout
+    assert "upgrade head" in result.stderr
+    # Not migrated: no revision was written.
+    with sqlite3.connect(db) as conn:
+        tables = {r[0] for r in conn.execute("select name from sqlite_master")}
+        rows = conn.execute("select * from alembic_version").fetchall() if "alembic_version" in tables else []
+    assert rows == []
+
+
+def test_entrypoint_starts_at_head_and_on_a_newer_schema(tmp_path):
+    """At head it starts; `--check-only` checks and exits without starting.
+    A revision this image doesn't know is a rollback to an older image, which
+    the expand-only policy makes safe, so it starts."""
+    import sqlite3
+
+    db = tmp_path / "oltp.db"
+    url = f"sqlite+aiosqlite:///{db}"
+    _alembic(url, "upgrade", "head")
+
+    started = _run_entrypoint(tmp_path, url)
+    assert started.returncode == 0, started.stderr
+    assert started.stdout.strip() == "started"
+
+    checked = _run_entrypoint(tmp_path, url, "--check-only")
+    assert checked.returncode == 0, checked.stderr
+    assert "started" not in checked.stdout
+
+    with sqlite3.connect(db) as conn:
+        conn.execute("update alembic_version set version_num = 'fffffffffff0'")
+    newer = _run_entrypoint(tmp_path, url)
+    assert newer.returncode == 0, newer.stderr
+    assert "newer than this image" in newer.stderr
+
+
+def test_entrypoint_refuses_when_the_database_is_unreachable(tmp_path):
+    result = _run_entrypoint(tmp_path, "postgresql+asyncpg://u:p@127.0.0.1:1/none")
+    assert result.returncode == 1
+    assert "started" not in result.stdout
+    assert "Could not read the database schema revision" in result.stderr
+
+
 def test_rollback_reverifies_health_before_claiming_success():
     """The core H1 regression: re-deploying the previous image does NOT
     guarantee it comes up healthy (e.g. a migration the old image can't
@@ -853,6 +926,8 @@ case "$args" in
     ;;
   "compose exec -T proxy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile")
     exit "${STUB_RELOAD_EXIT:-0}" ;;
+  "compose run --rm --no-deps api --check-only")
+    exit "${STUB_SCHEMA_CHECK_EXIT:-0}" ;;
 esac
 
 if [[ "${1:-}" == "inspect" ]]; then
@@ -1015,6 +1090,21 @@ def test_up_d_failure_routes_through_rollback_not_bare_exit(tmp_path):
     assert result.returncode == 1, combined
     assert "Rolling back to last known-good IMAGE_TAG=prev-good-tag" in combined
     assert "rolled back to prev-good-tag and verified healthy" in combined
+
+
+def test_pending_migration_stops_the_deploy_before_anything_changes(tmp_path):
+    """The schema check runs after the pull and before `up -d`: a pending
+    migration fails the deploy with the stack and .env untouched, and no
+    rollback is needed."""
+    deploy_dir, env, _ = _make_stub_deploy_dir(tmp_path, STUB_SCHEMA_CHECK_EXIT="1")
+    result = _run_deploy_sh(deploy_dir, env)
+    combined = result.stdout + result.stderr
+
+    assert result.returncode == 1, combined
+    assert "needs a migration first" in combined
+    assert not (tmp_path / "state" / "up_count").exists()
+    assert "Rolling back" not in combined
+    assert "IMAGE_TAG=prev-good-tag" in (deploy_dir / ".env").read_text()
 
 
 def test_rollback_restores_a_diverged_caddyfile(tmp_path):
