@@ -50,8 +50,43 @@ export type MonitoringMetric =
 
 /** The governed panels, in display order. Mirrors MonitoringPanelId in
  * janasunani/serving/schemas.py; a dashboard carries each exactly once. */
-export const PANEL_IDS = ["aging", "transfers", "journey", "atr", "demand", "closure", "discards", "recording", "offices"] as const;
+export const PANEL_IDS = ["flow", "aging", "transfers", "journey", "atr", "demand", "closure", "discards", "recording", "offices"] as const;
 export type PanelId = (typeof PANEL_IDS)[number];
+/** The flow panel's stages, in order; mirrors MONITORING_FLOW_STAGE_IDS. */
+export const FLOW_STAGE_IDS = ["flow-filed", "flow-kept", "flow-unique", "flow-routed", "flow-atr", "flow-reviewed", "flow-closed"] as const;
+
+/** Every stage, in order, as whole grievance counts that never grow: each
+ * stage is a subset of the one before. */
+function validFlowStages(stages: MonitoringMetric[], filed: number): boolean {
+  if (stages.length !== FLOW_STAGE_IDS.length || FLOW_STAGE_IDS.some((id, i) => stages[i].id !== id)) return false;
+  // Filed is the baseline every share and loss is drawn against.
+  if (stages[0].state !== "recorded" || stages[0].value !== filed) return false;
+  const shown = stages.filter((stage) => stage.state === "recorded");
+  return shown.every((stage, i) => stage.unit === "grievances" && Number.isInteger(stage.value) && (i === 0 || stage.value <= shown[i - 1].value));
+}
+
+/** The note under a flow stage's loss. When the stage before it is withheld,
+ * the loss shown also covers that stage, so the note says so rather than
+ * putting the whole loss down to this stage's reason. */
+export function flowDropNote(stages: MonitoringMetric[], i: number): string | null {
+  const metric = stages[i];
+  if (metric.state !== "recorded") return metric.reason;
+  // Every withheld stage back to the last one shown; a stage not computed
+  // yet hides nothing and is passed over.
+  const hidden: string[] = [];
+  for (let j = i - 1; j > 0 && stages[j].state === "unavailable"; j--) {
+    const stage = stages[j];
+    if (stage.state === "unavailable" && flowStageGap(stage) === "not shown") hidden.unshift(`"${stage.label}"`);
+  }
+  if (!hidden.length) return metric.note;
+  return `${metric.note ?? ""} Also includes what left at ${hidden.join(" and ")}, which ${hidden.length > 1 ? "are" : "is"} withheld.`.trim();
+}
+
+/** What a flow stage without a figure says: withheld for privacy, or (the
+ * repeats stage only) not computed yet because no grouping is validated. */
+export function flowStageGap(metric: { id: string; reason: string }): "not shown" | "not yet" {
+  return metric.id === "flow-unique" && !metric.reason.startsWith("Withheld") ? "not yet" : "not shown";
+}
 
 export type MonitoringPanel = RecordedMonitoringPanel | UnavailableMonitoringPanel;
 
@@ -246,6 +281,8 @@ export function parseMonitoringDashboard(value: unknown): MonitoringDashboard {
     if (panel.state === "unavailable") {
       if (!keys(panel, ["id", "title", "state", "reason", "caveats"]) || !text(panel.reason)) throw new Error("Monitoring dashboard response is malformed.");
     } else if (panel.state !== "recorded" || !keys(panel, ["id", "title", "state", "denominator", "metrics", "breakdown", "breakdownUnavailableReason", "tables", "caveats"]) || !isRecord(panel.denominator) || !keys(panel.denominator, ["label", "value"]) || !text(panel.denominator.label) || !wholeCount(panel.denominator.value) || !Array.isArray(panel.metrics) || !panel.metrics.every(validMetric) || (panel.breakdown !== null && (!Array.isArray(panel.breakdown) || !panel.breakdown.every((row) => isRecord(row) && keys(row, ["label", "value"]) && text(row.label) && count(row.value)))) || (panel.breakdownUnavailableReason !== null && !text(panel.breakdownUnavailableReason)) || (panel.tables !== null && (!Array.isArray(panel.tables) || !panel.tables.every(validTable)))) throw new Error("Monitoring dashboard response is malformed.");
+    // Checked after the metrics themselves, so each one has an id.
+    if (panel.id === "flow" && panel.state === "recorded" && !validFlowStages(panel.metrics as MonitoringMetric[], (panel.denominator as { value: number }).value)) throw new Error("Monitoring dashboard response is malformed.");
     ids.add(panel.id);
   }
   if (PANEL_IDS.some((id) => !ids.has(id))) throw new Error("Monitoring dashboard response is malformed.");

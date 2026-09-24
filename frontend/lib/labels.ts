@@ -37,6 +37,7 @@ interface Dictionary {
 
 const EN: Dictionary = {
   panels: {
+    flow: "From filing to closure",
     aging: "Cases waiting",
     transfers: "Cases moved between offices",
     journey: "How long a case takes",

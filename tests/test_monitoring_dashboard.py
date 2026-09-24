@@ -11,9 +11,9 @@ from fastapi.testclient import TestClient
 
 import duckdb
 
-from janasunani.analytics.monitoring import _aging, _atr, _flat_rows, CORE_SCOPES, OFFICE_TABLE_TOP_N, PROXY_METRICS, UNRECORDED_FIELDS, _discards, _offices, _recording, _metric as published_metric, _pct, withhold_small_panel, refiling_summary, suppress_breakdown
+from janasunani.analytics.monitoring import _aging, _atr, _flat_rows, _flow, CORE_SCOPES, OFFICE_TABLE_TOP_N, PROXY_METRICS, UNRECORDED_FIELDS, _discards, _offices, _recording, _metric as published_metric, _pct, withhold_small_panel, refiling_summary, suppress_breakdown
 from janasunani.serving.api import create_app
-from janasunani.serving.schemas import MONITORING_PANEL_IDS
+from janasunani.serving.schemas import MONITORING_FLOW_STAGE_IDS, MONITORING_PANEL_IDS
 from janasunani.serving.monitoring import (
     ArtifactMonitoringProvider,
     MonitoringArtifactError,
@@ -41,8 +41,9 @@ def _release() -> dict:
             "id": panel_id,
             "title": panel_id.title(),
             "state": "recorded",
-            "denominator": {"label": "Synthetic denominator", "value": 20},
-            "metrics": [_metric(panel_id)],
+            "denominator": {"label": "Synthetic denominator", "value": 10 if panel_id == "flow" else 20},
+            # The flow panel's contract is its full stage sequence.
+            "metrics": [_metric(m) for m in MONITORING_FLOW_STAGE_IDS] if panel_id == "flow" else [_metric(panel_id)],
             "breakdown": None,
             "breakdownUnavailableReason": None,
             "caveats": ["Synthetic fixture."],
@@ -181,7 +182,8 @@ def test_each_recorded_metric_says_whether_it_is_direct_or_a_proxy():
 def test_every_proxy_id_is_a_metric_the_publisher_emits():
     # A typo in PROXY_METRICS would silently publish a proxy as direct.
     source = Path("janasunani/analytics/monitoring.py").read_text()
-    emitted = set(re.findall(r'(?:_metric|share)\(\s*"([a-z0-9-]+)"', source))
+    # The metric helpers inside panel builders (stage, share) emit ids too.
+    emitted = set(re.findall(r'(?:_metric|stage|share)\(\s*"([a-z0-9-]+)"', source))
     emitted |= {key for key, _label in re.findall(r'\("([a-z-]+)", "([^"]+)"\)', source)}
     assert PROXY_METRICS <= emitted, PROXY_METRICS - emitted
 
@@ -604,6 +606,98 @@ def test_table_cells_are_checked_against_their_unit(unit, value):
         MonitoringTable.model_validate({"title": "t", "columns": [{"label": "c", "unit": unit}], "rows": [{"label": "r", "values": [value]}]})
 
 
+def _flow_lake() -> duckdb.DuckDBPyConnection:
+    """Ten of each path: discarded, no workflow, no ATR, skipped review,
+    reviewed but open, and two that close (one needing no review)."""
+    con = duckdb.connect()
+    con.execute("""
+        CREATE TABLE shapes(kind VARCHAR, status VARCHAR, nodes INT, replied BOOL, required BOOL, reviewed BOOL, closed BOOL,
+                            resolved_on TIMESTAMP DEFAULT NULL);
+        INSERT INTO shapes VALUES
+          ('discarded', 'Discard',  3, FALSE, TRUE,  FALSE, FALSE, TIMESTAMP '2025-06-01'),
+          -- discarded after the snapshot: still on the path at 30 July
+          ('discarded_later', 'Discard', 3, FALSE, TRUE, FALSE, FALSE, TIMESTAMP '2025-08-10'),
+          ('no_flow',   'Pending',  0, FALSE, FALSE, FALSE, FALSE, NULL),
+          ('no_atr',    'Pending',  3, FALSE, TRUE,  FALSE, FALSE, NULL),
+          ('skipped',   'Disposed', 3, TRUE,  TRUE,  FALSE, TRUE,  NULL),
+          ('open',      'Pending',  3, TRUE,  TRUE,  TRUE,  FALSE, NULL),
+          ('closed',    'Disposed', 3, TRUE,  TRUE,  TRUE,  TRUE,  NULL),
+          ('direct',    'Disposed', 2, TRUE,  FALSE, FALSE, TRUE,  NULL);
+        CREATE TABLE atr_cases AS SELECT kind || '-' || i AS ticket_no, resolved_on, nodes, required, replied, reviewed, closed
+          FROM shapes, range(10) r(i);
+        -- The open cases were filed first.
+        CREATE TABLE complaints AS SELECT kind || '-' || i AS ticket_no, status,
+            CASE WHEN kind = 'open' THEN TIMESTAMP '2024-08-01' ELSE TIMESTAMP '2024-09-01' END AS created_on
+          FROM shapes, range(10) r(i);
+        -- Ten earlier filings in scope, from before the FY: outside the flow
+        -- cohort, but a repeat of one of them is still a repeat.
+        INSERT INTO complaints SELECT 'early-' || i, 'Disposed', TIMESTAMP '2023-11-01' FROM range(10) r(i);
+        CREATE TABLE scope_tickets AS SELECT ticket_no, created_on FROM complaints;
+    """)
+    return con
+
+
+def test_flow_stages_nest_and_say_when_repeats_are_not_removed():
+    panel = _flow(_flow_lake(), None)
+    stages = {m["id"]: m for m in panel["metrics"]}
+    from janasunani.serving.schemas import MONITORING_FLOW_STAGE_IDS, MonitoringPanel
+    assert tuple(m["id"] for m in panel["metrics"]) == MONITORING_FLOW_STAGE_IDS
+    MonitoringPanel.model_validate(panel)
+    assert stages["flow-unique"]["state"] == "unavailable"
+    # Each stage is (count, the stage before): without dedup, routing follows "kept".
+    got = {k: (m["numerator"], m["denominator"]) for k, m in stages.items() if m["state"] == "recorded"}
+    assert got == {
+        "flow-filed": (80, None), "flow-kept": (70, 80), "flow-routed": (60, 70),
+        "flow-atr": (40, 60), "flow-reviewed": (30, 40), "flow-closed": (20, 30),
+    }
+
+
+def test_flow_keeps_the_earliest_filing_per_duplicate_group(tmp_path):
+    # Each closed filing repeats an open one filed a month earlier. The
+    # earlier, open filing stands for the group, although 'closed-' sorts first.
+    groups = tmp_path / "groups.csv"
+    groups.write_text("ticket_no,duplicate_group_id,group_size\n" + "".join(
+        f"{kind}-{i},g{i},2\n" for i in range(10) for kind in ("open", "closed")))
+    stages = {m["id"]: m for m in _flow(_flow_lake(), groups)["metrics"]}
+    assert (stages["flow-unique"]["numerator"], stages["flow-unique"]["denominator"]) == (60, 70)
+    assert stages["flow-unique"]["basis"] == "proxy"
+    assert stages["flow-closed"]["numerator"] == 10  # direct only
+
+
+def test_flow_withholds_a_stage_whose_loss_is_below_ten(tmp_path):
+    # Five repeats: 70 kept and 65 unique would show a loss of five.
+    groups = tmp_path / "groups.csv"
+    groups.write_text("ticket_no,duplicate_group_id,group_size\n" + "".join(
+        f"closed-{i},g{i // 2},2\n" for i in range(10)))
+    stages = {m["id"]: m for m in _flow(_flow_lake(), groups)["metrics"]}
+    assert stages["flow-unique"]["state"] == "unavailable"
+    # The next stage is measured from the last one shown, not the withheld one.
+    assert (stages["flow-routed"]["numerator"], stages["flow-routed"]["denominator"]) == (55, 70)
+    assert stages["flow-closed"]["numerator"] == 15
+
+
+def _widen(metrics):
+    metrics[3] = {**metrics[3], "value": metrics[1]["value"] + 1}
+    return metrics
+
+
+@pytest.mark.parametrize("change", ["empty", "partial", "reordered", "fractional", "percent", "widening"])
+def test_a_flow_panel_without_every_stage_in_order_is_rejected(change):
+    from pydantic import ValidationError
+    from janasunani.serving.schemas import MonitoringPanel
+    panel = _flow(_flow_lake(), None)
+    metrics = panel["metrics"]
+    panel["metrics"] = {
+        "empty": lambda: [], "partial": lambda: metrics[:3],
+        "reordered": lambda: [metrics[1], metrics[0], *metrics[2:]],
+        "fractional": lambda: [{**metrics[0], "value": 70.5}, *metrics[1:]],
+        "percent": lambda: [{**metrics[0], "unit": "percent", "value": 70.0}, *metrics[1:]],
+        "widening": lambda: _widen(list(metrics)),
+    }[change]()
+    with pytest.raises(ValidationError):
+        MonitoringPanel.model_validate(panel)
+
+
 def test_transfers_count_only_actions_before_the_snapshot():
     from janasunani.analytics.monitoring import _transfers
     con = duckdb.connect()
@@ -710,6 +804,38 @@ def test_closure_reopens_count_resolved_cases_before_the_snapshot():
     assert (reopened["value"], reopened["denominator"]) == (10, 20)
 
 
+def test_flow_reads_the_real_atr_cases():
+    # _atr builds the table _flow reads; this pins the column contract between them.
+    con = _atr_lake(ATR_CASES)
+    _atr(con)
+    stages = {m["id"]: m for m in _flow(con, None)["metrics"]}
+    got = {k: m.get("value") for k, m in stages.items()}
+    # Every kind but "none" has a workflow and a reply; five pass review
+    # (four reviewed, one needing none) and all five closed on 10 July.
+    assert got == {"flow-filed": 110, "flow-kept": 110, "flow-unique": None, "flow-routed": 100,
+                   "flow-atr": 100, "flow-reviewed": 50, "flow-closed": 50}
+
+
+def test_a_small_stage_is_not_used_as_the_next_stage_base():
+    con = duckdb.connect()
+    con.execute("""
+        -- 60 filed, 50 routed, 5 with a report, none reviewed.
+        CREATE TABLE atr_cases AS SELECT 'T' || i AS ticket_no, NULL::TIMESTAMP AS resolved_on,
+            CASE WHEN i < 50 THEN 3 ELSE 0 END AS nodes, TRUE AS required,
+            i < 5 AS replied, FALSE AS reviewed, FALSE AS closed
+          FROM range(60) r(i);
+        CREATE TABLE complaints AS SELECT ticket_no, 'Pending' AS status, TIMESTAMP '2025-01-01' AS created_on FROM atr_cases;
+    """)
+    stages = {m["id"]: m for m in _flow(con, None)["metrics"]}
+    assert stages["flow-atr"]["state"] == "unavailable"  # five is itself withheld
+    # The next loss is measured from the last stage shown, not from the five.
+    assert (stages["flow-reviewed"]["value"], stages["flow-reviewed"]["denominator"]) == (0, 50)
+
+
+def test_the_closed_stage_inherits_the_review_proxy():
+    assert "flow-closed" in PROXY_METRICS
+
+
 @pytest.mark.parametrize("steps", [
     # An interim disposal the reviewer reopens with a standard send-back reason.
     [("BDO", "Replied", None, 2), ("CMO", "Disposed", None, 3),
@@ -742,7 +868,31 @@ def test_table_text_must_be_non_empty_as_the_frontend_requires(where):
         MonitoringTable.model_validate(table)
 
 
+@pytest.mark.parametrize("change", ["filed_withheld", "denominator_differs"])
+def test_a_flow_panel_needs_filed_as_its_recorded_baseline(change):
+    from pydantic import ValidationError
+    from janasunani.serving.schemas import MonitoringPanel
+    panel = _flow(_flow_lake(), None)
+    MonitoringPanel.model_validate(panel)
+    if change == "filed_withheld":
+        panel["metrics"][0] = {"id": "flow-filed", "label": "Filed", "state": "unavailable", "reason": "Withheld."}
+    else:
+        panel["denominator"]["value"] += 1
+    with pytest.raises(ValidationError):
+        MonitoringPanel.model_validate(panel)
+
+
 def test_a_one_office_workflow_has_no_next_office_to_wait_for():
     assert _atr_case("solo", "Pending", [("BDO", "Replied", None, 2)], chain="1")[2] is False
     # The same reply in a two-office workflow is waiting.
     assert _atr_case("pair", "Pending", [("BDO", "Replied", None, 2)], chain="1,2")[2] is True
+
+
+def test_a_repeat_of_a_filing_from_an_earlier_year_is_removed(tmp_path):
+    # Each closed FY filing repeats a 2023 filing that is outside the cohort.
+    groups = tmp_path / "groups.csv"
+    groups.write_text("ticket_no,duplicate_group_id,group_size\n" + "".join(
+        f"{kind}-{i},g{i},2\n" for i in range(10) for kind in ("early", "closed")))
+    stages = {m["id"]: m for m in _flow(_flow_lake(), groups)["metrics"]}
+    assert (stages["flow-unique"]["value"], stages["flow-unique"]["denominator"]) == (60, 70)
+    assert stages["flow-closed"]["value"] == 10  # direct only

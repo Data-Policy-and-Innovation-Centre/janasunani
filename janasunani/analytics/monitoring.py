@@ -49,6 +49,9 @@ PROXY_METRICS = frozenset({
     "refiling-30", "refiling-90",
     # Inferred from the order of recorded events, not recorded as a review.
     "review-done", "closed-without-review",
+    "flow-unique", "flow-reviewed",
+    # Only cases that passed the inferred review stage reach it.
+    "flow-closed",
     # Coverage of a stand-in field: the assigned workflow for whether review
     # is required, subcategory for scheme or service.
     "rec-review-required", "rec-scheme",
@@ -993,6 +996,81 @@ def _offices(con: duckdb.DuckDBPyConnection, scope: ScopeSpec) -> dict[str, Any]
     }
 
 
+def _flow(con: duckdb.DuckDBPyConnection, identity_path: Path | None) -> dict[str, Any]:
+    """The FY cohort as one pipeline, each stage a subset of the one before.
+
+    Reads ``atr_cases``, which ``_atr`` builds for the same scope, so the
+    stages use exactly the ATR panel's definitions and must run after it.
+    Repeats are removed by keeping one filing per validated duplicate group;
+    without a validated grouping that stage is explicitly unavailable and
+    the later stages still include repeat filings.
+    """
+    deduped = bool(identity_path and _load_groups(con, identity_path, "flow_groups"))
+    # The earliest filing stands for its group, ranked over every filing in
+    # scope, not only the FY cohort, as in analytics/bottlenecks.py: a repeat
+    # of an earlier year's filing is still a repeat.
+    reps = """
+        SELECT k.* FROM kept k JOIN (
+          SELECT s.ticket_no, ROW_NUMBER() OVER(
+            PARTITION BY COALESCE(g.duplicate_group_id, s.ticket_no) ORDER BY s.created_on, s.ticket_no) rn
+          FROM scope_tickets s LEFT JOIN flow_groups g USING(ticket_no)) r USING(ticket_no)
+        WHERE r.rn = 1
+    """ if deduped else "SELECT * FROM kept"
+    row = _one(con, f"""
+        WITH base AS (SELECT a.*, c.status, c.created_on FROM atr_cases a JOIN complaints c USING(ticket_no)),
+        -- Discarded by the snapshot; a later discard was still on the path.
+        kept AS (SELECT * FROM base WHERE NOT (status IS NOT DISTINCT FROM 'Discard'
+                 AND (resolved_on IS NULL OR CAST(resolved_on AS DATE) <= DATE '2025-07-30'))),
+        reps AS ({reps})
+        SELECT (SELECT COUNT(*) FROM base) filed, (SELECT COUNT(*) FROM kept) kept,
+          COUNT(*) unique_n,
+          COUNT(*) FILTER(WHERE nodes>0) routed,
+          COUNT(*) FILTER(WHERE nodes>0 AND replied) atr,
+          COUNT(*) FILTER(WHERE nodes>0 AND replied AND (NOT required OR reviewed)) reviewed,
+          COUNT(*) FILTER(WHERE nodes>0 AND replied AND (NOT required OR reviewed) AND closed) closed
+        FROM reps
+    """)
+
+    # Complementary suppression: the viewer subtracts adjacent stages, so a
+    # stage whose loss from the last shown stage is 1-9 is withheld, and the
+    # next loss is measured from the last stage still shown.
+    shown = [row["filed"]]
+
+    def stage(metric_id: str, label: str, count: int, note: str) -> dict[str, Any]:
+        previous = shown[-1] if metric_id != "flow-filed" else None
+        if previous is not None and 0 < previous - count < MIN_CELL:
+            return _metric(metric_id, label, None, unit="grievances",
+                           note="Withheld: fewer than 10 grievances left the path here.")
+        metric = _metric(metric_id, label, count, unit="grievances", numerator=count, denominator=previous, note=note)
+        if metric["state"] == "recorded":  # a stage of 1-9 is itself withheld
+            shown.append(count)
+        return metric
+
+    unique = row["unique_n"] if deduped else None
+    return {
+        "id": "flow", "title": "Case flow", "state": "recorded",
+        "denominator": {"label": "Grievances created in FY 2024-25", "value": row["filed"]},
+        "metrics": [
+            stage("flow-filed", "Filed", row["filed"], "Every grievance filed in the period."),
+            stage("flow-kept", "Not discarded", row["kept"], "Discarded by an officer: spam, non-grievances, missing details. There is no automated filter in the record."),
+            stage("flow-unique", "Repeats removed", unique, "One filing kept per group of the same person filing the same problem.")
+            if deduped else
+            _metric("flow-unique", "Repeats removed", None, unit="grievances", note="Repeats are not removed yet: the validated duplicate groups are being rebuilt. Later stages still count repeat filings."),
+            stage("flow-routed", "Given a workflow", row["routed"], "No workflow assigned."),
+            stage("flow-atr", "Report submitted", row["atr"], "No action taken report recorded."),
+            stage("flow-reviewed", "Reviewed where required", row["reviewed"], "Closed or waiting without the review its workflow requires."),
+            stage("flow-closed", "Closed", row["closed"], "Still open at 30 July 2025."),
+        ],
+        "breakdown": None, "breakdownUnavailableReason": None,
+        "caveats": [
+            "Each stage keeps only the grievances that passed the one before, so the drop at each step is what left the path there, not every case with that outcome.",
+            "Stages after 'Given a workflow' use the ATR panel's definitions.",
+            "A stage after a proxy stage depends on it: with repeats removed, every later count depends on the duplicate grouping.",
+            "A case discarded after 30 July is still on the path here; the discards panel counts every discard.",
+        ],
+    }
+
+
 # Concept note §6 fields the extract has no column or event for, each with the
 # measure recording it would make possible. Order follows the note.
 UNRECORDED_FIELDS = (
@@ -1125,6 +1203,7 @@ def build_release(
                 "periodLabel": PERIOD_LABEL,
                 "snapshotDate": SNAPSHOT_DATE.isoformat(),
                 "panels": [
+                    _flow(con, identity),
                     _aging(con), _transfers(con), _journey(con, coverage), atr,
                     _demand(con, identity, full, citizens.get(scope.id)),
                     _closure(con, identity),
