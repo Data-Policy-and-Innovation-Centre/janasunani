@@ -846,3 +846,19 @@ def test_a_standard_send_back_after_a_disposal_is_still_review(steps):
     _atr(con)
     assert con.execute("SELECT DISTINCT sent_back, reviewed FROM atr_cases").fetchall() == [(True, True)]
     assert con.execute("SELECT DISTINCT reason FROM atr_backs").fetchall() == [("More clarification required",)]
+
+
+@pytest.mark.parametrize("where", ["title", "column", "row"])
+def test_table_text_must_be_non_empty_as_the_frontend_requires(where):
+    from pydantic import ValidationError
+    from janasunani.serving.schemas import MonitoringTable
+    table = {"title": "t", "columns": [{"label": "c", "unit": "grievances"}], "rows": [{"label": "r", "values": [10]}]}
+    MonitoringTable.model_validate(table)
+    if where == "title":
+        table["title"] = ""
+    elif where == "column":
+        table["columns"][0]["label"] = ""
+    else:
+        table["rows"][0]["label"] = ""
+    with pytest.raises(ValidationError):
+        MonitoringTable.model_validate(table)

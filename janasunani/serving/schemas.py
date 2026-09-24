@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 import math
-from typing import Literal, Optional, get_args
+from typing import Annotated, Literal, Optional, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -670,19 +670,23 @@ MONITORING_FLOW_STAGE_IDS: tuple[str, ...] = (
 )
 
 
+#: The frontend's text(): non-empty and at most 2,000 characters.
+MonitoringText = Annotated[str, Field(min_length=1, max_length=2_000)]
+
+
 class MonitoringTableColumn(MonitoringResponseModel):
-    label: str
+    label: MonitoringText
     unit: Literal["grievances", "percent"]
 
 
 class MonitoringTableRow(MonitoringResponseModel):
-    label: str
+    label: MonitoringText
     #: One per column; ``None`` is a cell withheld under the minimum cell.
     values: list[float | None]
 
 
 class MonitoringTable(MonitoringResponseModel):
-    title: str
+    title: MonitoringText
     columns: list[MonitoringTableColumn] = Field(min_length=1)
     rows: list[MonitoringTableRow]
 
