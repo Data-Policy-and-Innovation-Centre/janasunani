@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 import duckdb
 
-from janasunani.analytics.monitoring import PROXY_METRICS, UNRECORDED_FIELDS, _discards, _recording, _metric as published_metric, _pct, withhold_small_panel, refiling_summary, suppress_breakdown
+from janasunani.analytics.monitoring import _aging, _flat_rows, CORE_SCOPES, OFFICE_TABLE_TOP_N, PROXY_METRICS, UNRECORDED_FIELDS, _discards, _offices, _recording, _metric as published_metric, _pct, withhold_small_panel, refiling_summary, suppress_breakdown
 from janasunani.serving.api import create_app
 from janasunani.serving.schemas import MONITORING_PANEL_IDS
 from janasunani.serving.monitoring import (
@@ -214,6 +214,9 @@ def test_catalog_and_dashboard_are_allowlisted(tmp_path):
     )
     assert response.status_code == 200
     assert [p["id"] for p in response.json()["panels"]] == list(MONITORING_PANEL_IDS)
+    # The frontend parser requires the key on every recorded panel, including
+    # releases published before tables existed.
+    assert all("tables" in p for p in response.json()["panels"])
     assert "inputDigests" not in response.json()
 
 
@@ -363,3 +366,214 @@ def test_recording_reports_coverage_and_names_what_is_missing():
     for metric_id, _label, unlocks in UNRECORDED_FIELDS:
         assert metrics[metric_id]["state"] == "unavailable"
         assert unlocks in metrics[metric_id]["reason"]
+
+
+def _office_lake(districts: dict[str, int]) -> duckdb.DuckDBPyConnection:
+    """One open, 40-day-old, transferred case per unit of each district's count."""
+    con = duckdb.connect()
+    con.execute("CREATE TABLE spec(district VARCHAR, n INTEGER)")
+    con.executemany("INSERT INTO spec VALUES (?, ?)", list(districts.items()))
+    con.execute("""
+        CREATE TABLE complaints AS
+          SELECT district || '-' || i AS ticket_no, district,
+                 TIMESTAMP '2025-06-20' AS created_on, NULL::TIMESTAMP AS resolved_on,
+                 'Pending' AS status, TIMESTAMP '2025-06-20' AS last_updated_on
+          FROM spec, range(n) r(i);
+        CREATE TABLE scope_tickets AS SELECT ticket_no, created_on FROM complaints;
+        CREATE TABLE action_history AS
+          SELECT row_number() OVER () AS id, * FROM (
+            SELECT ticket_no, TIMESTAMP '2025-06-21' AS action_taken_date, 'Complaint Transfer' AS action_status FROM complaints
+            UNION ALL
+            -- the later action names the office now holding the case
+            SELECT ticket_no, TIMESTAMP '2025-06-25', 'Forwarded' FROM complaints);
+        CREATE TABLE acting_office_named AS
+          SELECT id, CASE WHEN action_status='Forwarded' THEN 'Block Development Officer' ELSE 'District Collector' END AS role_name
+          FROM action_history;
+    """)
+    return con
+
+
+def test_offices_is_for_department_views_only():
+    statewide = next(s for s in CORE_SCOPES if s.kind == "statewide")
+    panel = _offices(_office_lake({"Puri": 12}), statewide)
+    assert panel["state"] == "unavailable"
+
+
+def test_offices_orders_by_workload_folds_small_rows_and_withholds_small_cells():
+    department = next(s for s in CORE_SCOPES if s.kind == "department")
+    # Twelve districts large enough to keep, one more beyond the top N, and
+    # one under the minimum cell: both fold into "Other districts".
+    districts = {f"D{k:02d}": 40 - k for k in range(OFFICE_TABLE_TOP_N + 1)} | {"Tiny": 4}
+    panel = _offices(_office_lake(districts), department)
+    by_district, by_office = panel["tables"]
+
+    assert panel["denominator"]["value"] == sum(districts.values())
+    labels = [row["label"] for row in by_district["rows"]]
+    assert labels == [f"D{k:02d}" for k in range(OFFICE_TABLE_TOP_N)] + ["Other districts"]
+    first = by_district["rows"][0]["values"]
+    # Open, open 30+ days, no action 7+ days, filed in FY, transferred.
+    assert first == [40, 100.0, 100.0, 40, 100.0]
+    folded = by_district["rows"][-1]["values"]
+    extra = 40 - OFFICE_TABLE_TOP_N
+    assert folded[0] == extra + 4
+    # The office holding the case is the one on its latest action.
+    assert [row["label"] for row in by_office["rows"]] == ["Block Development Officer"]
+    # Grouped by role, not by individual office, and titled as such.
+    assert "role" in by_office["title"]
+
+
+def test_a_small_rate_cell_is_withheld_but_its_row_stays():
+    rows = [("Puri", 50, 5, 0)]
+    from janasunani.analytics.monitoring import _drilldown_rows
+    assert _drilldown_rows(rows, [(0, None), (1, 0), (2, 0)], "Other") == [
+        {"label": "Puri", "values": [50, None, 0.0]},
+    ]
+
+
+def _edge_lake() -> duckdb.DuckDBPyConnection:
+    """Ten each of six open cases the queries used to get wrong."""
+    con = duckdb.connect()
+    con.execute("""
+        CREATE TABLE shapes(kind VARCHAR, district VARCHAR, status VARCHAR, last_updated TIMESTAMP, later_action BOOL,
+                            resolved TIMESTAMP DEFAULT NULL);
+        INSERT INTO shapes VALUES
+          -- a blank district must not become a blank (frontend-fatal) label
+          ('blank', '  ', 'Pending', TIMESTAMP '2025-07-29', FALSE, NULL),
+          -- no status and no resolution is open, as grievance_base.outcome says
+          ('nostatus', 'Puri', NULL, TIMESTAMP '2025-07-29', FALSE, NULL),
+          -- never updated and no action: inactive since filing
+          ('silent', 'Puri', 'Pending', NULL, FALSE, NULL),
+          -- active only after the snapshot: inactive at the snapshot
+          ('later', 'Puri', 'Pending', NULL, TRUE, NULL),
+          -- disposed after the snapshot: open on it, whatever the status now
+          ('closedlater', 'Puri', 'Disposed', TIMESTAMP '2025-07-29', FALSE, TIMESTAMP '2025-08-05'),
+          -- updated only after the snapshot: inactive at the snapshot
+          ('updatedlater', 'Puri', 'Pending', TIMESTAMP '2025-08-12', FALSE, NULL);
+        CREATE TABLE complaints AS SELECT kind || '-' || i AS ticket_no, district, status,
+            TIMESTAMP '2025-05-01' AS created_on, resolved AS resolved_on,
+            last_updated AS last_updated_on, NULL::TIMESTAMP AS escalation_date
+          FROM shapes, range(10) r(i);
+        CREATE TABLE scope_tickets AS SELECT ticket_no, created_on FROM complaints;
+        CREATE TABLE action_history AS
+          SELECT row_number() OVER () AS id, ticket_no, TIMESTAMP '2025-08-10' AS action_taken_date,
+                 'Complaint Transfer' AS action_status
+          FROM complaints JOIN shapes ON ticket_no LIKE kind || '-%' WHERE later_action;
+        CREATE TABLE acting_office_named AS SELECT id, 'Block Development Officer' AS role_name FROM action_history;
+    """)
+    return con
+
+
+def test_offices_handles_blank_districts_missing_status_and_the_snapshot():
+    department = next(s for s in CORE_SCOPES if s.kind == "department")
+    by_district, by_office = _offices(_edge_lake(), department)["tables"]
+    rows = {row["label"]: row["values"] for row in by_district["rows"]}
+    assert "" not in rows and "  " not in rows
+    assert rows["District not recorded"][0] == 10
+    # Puri: no-status, silent, later-only, closed-later and updated-later
+    # cases, all open on the snapshot. The no-status and closed-later cases
+    # were updated on 29 July; the other 30 had no activity by the snapshot,
+    # so they are inactive.
+    open_now, _, inactive, _, transferred = rows["Puri"]
+    assert open_now == 50
+    assert inactive == 60.0
+    # The post-snapshot transfer neither moves the case nor counts as a transfer.
+    assert transferred == 0.0
+    assert [row["label"] for row in by_office["rows"]] == ["Unnamed role"]
+
+
+def test_aging_counts_missing_status_and_never_updated_cases():
+    con = _edge_lake()
+    summary = {m["id"]: m for m in _aging(con)["metrics"]}
+    assert summary["inactive-7"]["denominator"] == 60
+    # silent, later and updated-later; the rest were updated 29 July
+    assert summary["inactive-7"]["numerator"] == 30
+
+
+def test_review_csv_carries_drilldown_cells():
+    release = {"dashboards": {"d": {
+        "scopeId": "department-21", "scopeLabel": "PR", "periodLabel": "FY", "snapshotDate": "2025-07-30",
+        "panels": [{"id": "offices", "title": "By district and office", "state": "recorded", "metrics": [],
+                    "tables": [{"title": "By district", "columns": [{"label": "Open now", "unit": "grievances"}, {"label": "Open 30+ days", "unit": "percent"}],
+                                "rows": [{"label": "Puri", "values": [120, None]}]}]}],
+    }}}
+    rows = _flat_rows(release)
+    assert [(r["metric"], r["value"], r["state"]) for r in rows] == [
+        ("By district · Puri · Open now", 120, "recorded"),
+        ("By district · Puri · Open 30+ days", None, "unavailable"),
+    ]
+
+
+@pytest.mark.parametrize(("unit", "value"), [("percent", 150.0), ("grievances", 1.5), ("percent", float("nan")), ("grievances", float("inf"))])
+def test_table_cells_are_checked_against_their_unit(unit, value):
+    from pydantic import ValidationError
+    from janasunani.serving.schemas import MonitoringTable
+    with pytest.raises(ValidationError):
+        MonitoringTable.model_validate({"title": "t", "columns": [{"label": "c", "unit": unit}], "rows": [{"label": "r", "values": [value]}]})
+
+
+def test_transfers_count_only_actions_before_the_snapshot():
+    from janasunani.analytics.monitoring import _transfers
+    con = duckdb.connect()
+    con.execute("""
+        CREATE TABLE scope_tickets AS SELECT 'T' || i AS ticket_no, TIMESTAMP '2025-05-01' AS created_on FROM range(30) r(i);
+        -- Ten transferred before the snapshot, ten only after it, ten never.
+        CREATE TABLE action_history AS
+          SELECT i AS id, 'T' || i AS ticket_no,
+                 CASE WHEN i < 10 THEN TIMESTAMP '2025-07-01' ELSE TIMESTAMP '2025-08-10' END AS action_taken_date,
+                 'Complaint Transfer' AS action_status
+          FROM range(20) r(i);
+        CREATE TABLE returns(ticket_no VARCHAR, arrivals INTEGER);
+    """)
+    metrics = {m["id"]: m for m in _transfers(con)["metrics"]}
+    assert (metrics["transfer-rate"]["numerator"], metrics["transfer-rate"]["denominator"]) == (10, 30)
+
+
+def test_follow_up_counts_only_transfers_whose_week_ended_by_the_snapshot():
+    from janasunani.analytics.monitoring import _transfers
+    con = duckdb.connect()
+    con.execute("""
+        CREATE TABLE scope_tickets AS SELECT 'T' || i AS ticket_no, TIMESTAMP '2025-05-01' AS created_on FROM range(20) r(i);
+        -- Ten transfers on 1 July with no follow-up; ten on 28 July whose
+        -- next action (1 August) is after the snapshot, week unfinished.
+        CREATE TABLE action_history AS
+          SELECT i AS id, 'T' || i AS ticket_no,
+                 CASE WHEN i < 10 THEN TIMESTAMP '2025-07-01' ELSE TIMESTAMP '2025-07-28' END AS action_taken_date,
+                 'Complaint Transfer' AS action_status FROM range(20) r(i)
+          UNION ALL SELECT 100 + i, 'T' || i, TIMESTAMP '2025-08-01', 'Forwarded' FROM range(10, 20) r(i);
+        CREATE TABLE returns(ticket_no VARCHAR, arrivals INTEGER);
+    """)
+    metrics = {m["id"]: m for m in _transfers(con)["metrics"]}
+    assert (metrics["followup-proxy"]["numerator"], metrics["followup-proxy"]["denominator"]) == (10, 10)
+
+
+def test_a_small_district_inside_the_top_rows_is_folded_and_its_cells_withheld():
+    department = next(s for s in CORE_SCOPES if s.kind == "department")
+    # "Small" ranks second, inside the top rows, but has only five open cases.
+    by_district, _ = _offices(_office_lake({"Big": 40, "Small": 5}), department)["tables"]
+    rows = {row["label"]: row["values"] for row in by_district["rows"]}
+    assert "Small" not in rows
+    # The fold holds only those five: every cell in it is withheld.
+    assert rows["Other districts"] == [None] * len(by_district["columns"])
+
+
+def test_a_rate_over_a_small_denominator_is_withheld_even_at_zero():
+    from janasunani.analytics.monitoring import _drilldown_rows
+    assert _drilldown_rows([("Puri", 5, 0, 0)], [(0, None), (1, 0), (2, 0)], "Other") == [
+        {"label": "Other", "values": [None, None, None]},
+    ]
+
+
+@pytest.mark.parametrize("where", ["title", "column", "row"])
+def test_table_text_must_be_non_empty_as_the_frontend_requires(where):
+    from pydantic import ValidationError
+    from janasunani.serving.schemas import MonitoringTable
+    table = {"title": "t", "columns": [{"label": "c", "unit": "grievances"}], "rows": [{"label": "r", "values": [10]}]}
+    MonitoringTable.model_validate(table)
+    if where == "title":
+        table["title"] = ""
+    elif where == "column":
+        table["columns"][0]["label"] = ""
+    else:
+        table["rows"][0]["label"] = ""
+    with pytest.raises(ValidationError):
+        MonitoringTable.model_validate(table)

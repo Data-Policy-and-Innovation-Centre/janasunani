@@ -50,7 +50,7 @@ export type MonitoringMetric =
 
 /** The governed panels, in display order. Mirrors MonitoringPanelId in
  * janasunani/serving/schemas.py; a dashboard carries each exactly once. */
-export const PANEL_IDS = ["aging", "transfers", "journey", "atr", "demand", "closure", "discards", "recording"] as const;
+export const PANEL_IDS = ["aging", "transfers", "journey", "atr", "demand", "closure", "discards", "recording", "offices"] as const;
 export type PanelId = (typeof PANEL_IDS)[number];
 
 export type MonitoringPanel = RecordedMonitoringPanel | UnavailableMonitoringPanel;
@@ -63,7 +63,15 @@ export interface RecordedMonitoringPanel {
   metrics: MonitoringMetric[];
   breakdown: { label: string; value: number }[] | null;
   breakdownUnavailableReason: string | null;
+  tables: MonitoringTable[] | null;
   caveats: string[];
+}
+
+/** A drill-down table. A null cell was withheld under the minimum cell. */
+export interface MonitoringTable {
+  title: string;
+  columns: { label: string; unit: "grievances" | "percent" }[];
+  rows: { label: string; values: (number | null)[] }[];
 }
 
 export interface UnavailableMonitoringPanel {
@@ -108,6 +116,12 @@ export function recordingState(metric: MonitoringMetric): RecordingState {
     ? (metric.numerator / metric.denominator) * 100
     : metric.value;
   return pct >= 99.5 && metric.note === null ? "recorded" : "partial";
+}
+
+/** Drill-down columns a viewer may sort by: workload, never a raw rate, which
+ * would rank offices before case-mix adjustment (ROADMAP, office comparison). */
+export function sortableColumn(column: MonitoringTable["columns"][number]): boolean {
+  return column.unit === "grievances";
 }
 
 export function scopesForView(catalog: MonitoringCatalog, kind: string): MonitoringScope[] {
@@ -206,6 +220,16 @@ export function parseMonitoringCatalog(value: unknown): MonitoringCatalog {
   return value as unknown as MonitoringCatalog;
 }
 
+function validTable(value: unknown): boolean {
+  if (!isRecord(value) || !keys(value, ["title", "columns", "rows"]) || !text(value.title) || !Array.isArray(value.columns) || value.columns.length === 0 || !Array.isArray(value.rows)) return false;
+  if (!value.columns.every((column) => isRecord(column) && keys(column, ["label", "unit"]) && text(column.label) && (column.unit === "grievances" || column.unit === "percent"))) return false;
+  // Each cell is checked against its own column: a percent is at most 100, a
+  // grievance count is whole. null is a withheld or undefined cell.
+  const units = (value.columns as { unit: string }[]).map((column) => column.unit);
+  return value.rows.every((row) => isRecord(row) && keys(row, ["label", "values"]) && text(row.label) && Array.isArray(row.values) && row.values.length === units.length
+    && row.values.every((cell, i) => cell === null || (units[i] === "percent" ? count(cell) && cell <= 100 : wholeCount(cell))));
+}
+
 function validMetric(value: unknown): boolean {
   if (!isRecord(value) || !text(value.id) || !text(value.label) || !text(value.state)) return false;
   if (value.state === "unavailable") return keys(value, ["id", "label", "state", "reason"]) && text(value.reason);
@@ -221,7 +245,7 @@ export function parseMonitoringDashboard(value: unknown): MonitoringDashboard {
     if (!isRecord(panel) || !text(panel.id) || !text(panel.title) || !text(panel.state) || !Array.isArray(panel.caveats) || !panel.caveats.every(text)) throw new Error("Monitoring dashboard response is malformed.");
     if (panel.state === "unavailable") {
       if (!keys(panel, ["id", "title", "state", "reason", "caveats"]) || !text(panel.reason)) throw new Error("Monitoring dashboard response is malformed.");
-    } else if (panel.state !== "recorded" || !keys(panel, ["id", "title", "state", "denominator", "metrics", "breakdown", "breakdownUnavailableReason", "caveats"]) || !isRecord(panel.denominator) || !keys(panel.denominator, ["label", "value"]) || !text(panel.denominator.label) || !wholeCount(panel.denominator.value) || !Array.isArray(panel.metrics) || !panel.metrics.every(validMetric) || (panel.breakdown !== null && (!Array.isArray(panel.breakdown) || !panel.breakdown.every((row) => isRecord(row) && keys(row, ["label", "value"]) && text(row.label) && count(row.value)))) || (panel.breakdownUnavailableReason !== null && !text(panel.breakdownUnavailableReason))) throw new Error("Monitoring dashboard response is malformed.");
+    } else if (panel.state !== "recorded" || !keys(panel, ["id", "title", "state", "denominator", "metrics", "breakdown", "breakdownUnavailableReason", "tables", "caveats"]) || !isRecord(panel.denominator) || !keys(panel.denominator, ["label", "value"]) || !text(panel.denominator.label) || !wholeCount(panel.denominator.value) || !Array.isArray(panel.metrics) || !panel.metrics.every(validMetric) || (panel.breakdown !== null && (!Array.isArray(panel.breakdown) || !panel.breakdown.every((row) => isRecord(row) && keys(row, ["label", "value"]) && text(row.label) && count(row.value)))) || (panel.breakdownUnavailableReason !== null && !text(panel.breakdownUnavailableReason)) || (panel.tables !== null && (!Array.isArray(panel.tables) || !panel.tables.every(validTable)))) throw new Error("Monitoring dashboard response is malformed.");
     ids.add(panel.id);
   }
   if (PANEL_IDS.some((id) => !ids.has(id))) throw new Error("Monitoring dashboard response is malformed.");

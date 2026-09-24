@@ -368,17 +368,19 @@ def _aging(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     rows = con.execute("""
         WITH latest AS (
           SELECT ticket_no, MAX(action_taken_date) latest_action
-          FROM action_history GROUP BY ticket_no
+          FROM action_history WHERE action_taken_date < TIMESTAMP '2025-07-31' GROUP BY ticket_no
         ), open AS (
           SELECT g.ticket_no,
             DATE '2025-07-30' - CAST(g.created_on AS DATE) age_days,
-            DATE '2025-07-30' - CAST(GREATEST(g.last_updated_on, l.latest_action) AS DATE) inactive_days,
+            DATE '2025-07-30' - CAST(COALESCE(GREATEST(CASE WHEN g.last_updated_on < TIMESTAMP '2025-07-31' THEN g.last_updated_on END, l.latest_action), g.created_on) AS DATE) inactive_days,
             g.escalation_date
           FROM complaints g JOIN scope_tickets s USING (ticket_no)
           LEFT JOIN latest l USING (ticket_no)
           WHERE g.created_on < DATE '2025-07-31'
-            AND (g.resolved_on IS NULL OR CAST(g.resolved_on AS DATE) > DATE '2025-07-30')
-            AND g.status NOT IN ('Disposed', 'Discard')
+            -- Open on the snapshot: resolved after it, or not closed at all. A
+            -- later status is not the status on the snapshot.
+            AND ((g.resolved_on IS NULL AND COALESCE(g.status, '') NOT IN ('Disposed', 'Discard'))
+                 OR CAST(g.resolved_on AS DATE) > DATE '2025-07-30')
         )
         SELECT CASE WHEN age_days <= 6 THEN '0-6 days'
                     WHEN age_days <= 14 THEN '7-14 days'
@@ -390,13 +392,13 @@ def _aging(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
                  WHEN '15-29 days' THEN 3 WHEN '30-59 days' THEN 4 ELSE 5 END
     """).fetchall()
     summary = _one(con, """
-        WITH latest AS (SELECT ticket_no, MAX(action_taken_date) latest_action FROM action_history GROUP BY ticket_no),
+        WITH latest AS (SELECT ticket_no, MAX(action_taken_date) latest_action FROM action_history WHERE action_taken_date < TIMESTAMP '2025-07-31' GROUP BY ticket_no),
         open AS (
-          SELECT DATE '2025-07-30' - CAST(GREATEST(g.last_updated_on, l.latest_action) AS DATE) inactive_days,
+          SELECT DATE '2025-07-30' - CAST(COALESCE(GREATEST(CASE WHEN g.last_updated_on < TIMESTAMP '2025-07-31' THEN g.last_updated_on END, l.latest_action), g.created_on) AS DATE) inactive_days,
                  g.escalation_date
           FROM complaints g JOIN scope_tickets s USING(ticket_no) LEFT JOIN latest l USING(ticket_no)
-          WHERE g.created_on < DATE '2025-07-31' AND (g.resolved_on IS NULL OR CAST(g.resolved_on AS DATE)>DATE '2025-07-30')
-            AND g.status NOT IN ('Disposed','Discard'))
+          WHERE g.created_on < DATE '2025-07-31' AND ((g.resolved_on IS NULL AND COALESCE(g.status, '') NOT IN ('Disposed', 'Discard'))
+                 OR CAST(g.resolved_on AS DATE) > DATE '2025-07-30'))
         SELECT COUNT(*) denominator,
           COUNT(*) FILTER (WHERE inactive_days >= 7) inactive,
           COUNT(*) FILTER (WHERE escalation_date < TIMESTAMP '2025-07-31') escalation_passed
@@ -422,13 +424,18 @@ def _transfers(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
           SELECT ticket_no FROM scope_tickets WHERE created_on >= DATE '2024-07-01' AND created_on < DATE '2025-07-01'),
         transfer AS (
           SELECT a.*, LEAD(action_taken_date) OVER(PARTITION BY a.ticket_no ORDER BY action_taken_date,id) later
-          FROM action_history a JOIN cohort USING(ticket_no)),
+          FROM action_history a JOIN cohort USING(ticket_no)
+          -- As of the snapshot, like every other panel.
+          WHERE a.action_taken_date < TIMESTAMP '2025-07-31'),
         t AS (SELECT * FROM transfer WHERE action_status='Complaint Transfer'),
         r AS (SELECT r.* FROM returns r JOIN cohort USING(ticket_no))
         SELECT (SELECT COUNT(*) FROM cohort) filings,
           (SELECT COUNT(DISTINCT ticket_no) FROM t) transferred,
-          (SELECT COUNT(*) FROM t) transfer_events,
-          (SELECT COUNT(*) FROM t WHERE later IS NULL OR later > action_taken_date + INTERVAL 7 DAY) no_followup_7d,
+          -- Only transfers whose seven days ended by the snapshot: a later
+          -- one's week is unfinished, and its next action may fall after it.
+          (SELECT COUNT(*) FROM t WHERE action_taken_date < TIMESTAMP '2025-07-24') transfer_events,
+          (SELECT COUNT(*) FROM t WHERE action_taken_date < TIMESTAMP '2025-07-24'
+             AND (later IS NULL OR later > action_taken_date + INTERVAL 7 DAY)) no_followup_7d,
           (SELECT COUNT(*) FROM r) ranked,
           (SELECT COUNT(*) FROM r WHERE arrivals > 1) loops
     """)
@@ -743,6 +750,142 @@ def _discards(con: duckdb.DuckDBPyConnection) -> dict[str, Any]:
     }
 
 
+OFFICE_TABLE_TOP_N = 12
+
+
+def _cell(value: int) -> int | None:
+    """A count cell, withheld at 1-9 like every other published count."""
+    return None if 0 < value < MIN_CELL else value
+
+
+def _rate_cell(numerator: int, denominator: int) -> float | None:
+    if any(0 < cell < MIN_CELL for cell in (numerator, denominator)):
+        return None
+    return _pct(numerator, denominator)
+
+
+def _drilldown_rows(
+    rows: list[tuple[Any, ...]],
+    columns: Sequence[tuple[int, int | None]],
+    other_label: str,
+) -> list[dict[str, Any]]:
+    """Top rows by the first count, the rest folded into one "other" row.
+
+    ``rows`` are ``(label, count, count, ...)`` ordered by workload; each
+    column is ``(count index)`` for a count or ``(numerator, denominator)``
+    for a rate. A row whose first count is under the minimum cell folds into
+    "other" rather than printing a wall of withheld cells.
+    """
+    # ponytail: per-cell suppression only; a department total elsewhere on the
+    # page can difference out a withheld "other" cell. Add complementary
+    # suppression if these tables leave the internal dashboard.
+    kept = [r for r in rows[:OFFICE_TABLE_TOP_N] if r[1] >= MIN_CELL]
+    folded = [r for r in rows if r not in kept]
+    if folded:
+        width = len(rows[0])
+        kept.append((other_label, *(sum(r[i] for r in folded) for i in range(1, width))))
+    out = []
+    for label, *counts in kept:
+        values: list[int | float | None] = []
+        for numerator, denominator in columns:
+            values.append(
+                _cell(counts[numerator]) if denominator is None
+                else _rate_cell(counts[numerator], counts[denominator])
+            )
+        out.append({"label": label, "values": values})
+    return out
+
+
+def _offices(con: duckdb.DuckDBPyConnection, scope: ScopeSpec) -> dict[str, Any]:
+    """A department's workload by district and by the office holding it (§3.3).
+
+    Rates sit beside the counts they are rates of, so a small district's
+    high share is read against its size. The tables are not a ranking: they
+    are ordered by workload, and an office's rate reflects its caseload mix
+    as much as its conduct.
+    """
+    if scope.kind != "department":
+        return {
+            "id": "offices", "title": "By district and office", "state": "unavailable",
+            "reason": "Published for department views only.",
+            "caveats": ["A department is where district and office comparisons are like for like."],
+        }
+    con.execute("""
+        CREATE OR REPLACE TEMP TABLE office_base AS
+        WITH latest AS (
+          SELECT ticket_no, MAX(action_taken_date) latest_action,
+                 arg_max(id, (action_taken_date, id)) last_id
+          FROM action_history WHERE action_taken_date < TIMESTAMP '2025-07-31' GROUP BY ticket_no),
+        transferred AS (
+          SELECT DISTINCT ticket_no FROM action_history
+          WHERE action_status='Complaint Transfer' AND action_taken_date < TIMESTAMP '2025-07-31')
+        SELECT COALESCE(NULLIF(trim(g.district), ''), 'District not recorded') district,
+          COALESCE(n.role_name, 'Unnamed role') office,
+          (g.created_on>=DATE '2024-07-01' AND g.created_on<DATE '2025-07-01') in_fy,
+          t.ticket_no IS NOT NULL is_transferred,
+          (g.created_on<DATE '2025-07-31'
+            AND ((g.resolved_on IS NULL AND COALESCE(g.status, '') NOT IN ('Disposed', 'Discard'))
+                 OR CAST(g.resolved_on AS DATE) > DATE '2025-07-30')) is_open,
+          DATE '2025-07-30'-CAST(g.created_on AS DATE) age_days,
+          DATE '2025-07-30'-CAST(COALESCE(GREATEST(CASE WHEN g.last_updated_on < TIMESTAMP '2025-07-31' THEN g.last_updated_on END, l.latest_action), g.created_on) AS DATE) inactive_days
+        FROM complaints g JOIN scope_tickets s USING(ticket_no)
+        LEFT JOIN latest l USING(ticket_no)
+        LEFT JOIN acting_office_named n ON n.id=l.last_id
+        LEFT JOIN transferred t USING(ticket_no)
+    """)
+    district = con.execute("""
+        SELECT district,
+          COUNT(*) FILTER(WHERE is_open) open,
+          COUNT(*) FILTER(WHERE is_open AND age_days>=30) open30,
+          COUNT(*) FILTER(WHERE is_open AND inactive_days>=7) inactive7,
+          COUNT(*) FILTER(WHERE in_fy) filed,
+          COUNT(*) FILTER(WHERE in_fy AND is_transferred) transferred
+        FROM office_base GROUP BY district
+        ORDER BY open DESC, filed DESC, district
+    """).fetchall()
+    office = con.execute("""
+        SELECT office,
+          COUNT(*) open,
+          COUNT(*) FILTER(WHERE age_days>=30) open30,
+          COUNT(*) FILTER(WHERE inactive_days>=7) inactive7
+        FROM office_base WHERE is_open GROUP BY office
+        ORDER BY open DESC, office
+    """).fetchall()
+    open_columns = [
+        {"label": "Open now", "unit": "grievances"},
+        {"label": "Open 30+ days", "unit": "percent"},
+        {"label": "No action 7+ days", "unit": "percent"},
+    ]
+    tables = []
+    if district:
+        tables.append({
+            "title": "By district",
+            "columns": [*open_columns,
+                        {"label": "Filed in FY", "unit": "grievances"},
+                        {"label": "Transferred", "unit": "percent"}],
+            "rows": _drilldown_rows(district, [(0, None), (1, 0), (2, 0), (3, None), (4, 3)], "Other districts"),
+        })
+    if office:
+        tables.append({
+            "title": "Open cases by the role that acted last",
+            "columns": open_columns,
+            "rows": _drilldown_rows(office, [(0, None), (1, 0), (2, 0)], "Other roles"),
+        })
+    total_open = sum(r[1] for r in district)
+    return {
+        "id": "offices", "title": "By district and office", "state": "recorded",
+        "denominator": {"label": "Open at 30 July 2025", "value": total_open},
+        "metrics": [],
+        "breakdown": None, "breakdownUnavailableReason": None,
+        "tables": tables,
+        "caveats": [
+            "Ordered by workload, not ranked. A rate reflects the caseload an office receives as well as how it handles it.",
+            "The role shown is the one on the latest recorded action, which may be the office that forwarded the case rather than the one now holding it. Offices are grouped by role across the department: every Block Development Officer is one row.",
+            f"The {OFFICE_TABLE_TOP_N} largest rows are shown; the rest, and any under {MIN_CELL} open cases, are folded into the last row. Cells under {MIN_CELL} are withheld.",
+        ],
+    }
+
+
 # Concept note §6 fields the extract has no column or event for, each with the
 # measure recording it would make possible. Order follows the note.
 UNRECORDED_FIELDS = (
@@ -877,6 +1020,7 @@ def build_release(
                     _closure(con, identity),
                     discards,
                     _recording(con, discards),
+                    _offices(con, scope),
                 ],
             }
         for dashboard in dashboards.values():
@@ -924,6 +1068,22 @@ def _flat_rows(release: dict[str, Any]) -> list[dict[str, Any]]:
                     "coverage_pct": metric.get("coveragePct"), "basis": metric.get("basis"),
                     "caveat": metric.get("note") or metric.get("reason"),
                 })
+            # Drill-down cells, one row per cell, so the review CSV carries
+            # every published figure and not only the headline metrics.
+            for table in panel.get("tables") or []:
+                for table_row in table["rows"]:
+                    for column, value in zip(table["columns"], table_row["values"], strict=True):
+                        rows.append({
+                            "scope_id": dashboard["scopeId"], "scope_label": dashboard["scopeLabel"],
+                            "period": dashboard["periodLabel"], "snapshot_date": dashboard["snapshotDate"],
+                            "panel": panel["title"],
+                            "metric": f"{table['title']} · {table_row['label']} · {column['label']}",
+                            "state": "recorded" if value is not None else "unavailable",
+                            "value": value, "unit": column["unit"],
+                            "numerator": None, "denominator": None, "coverage_pct": None,
+                            "basis": "direct",
+                            "caveat": None if value is not None else f"Withheld (under {MIN_CELL}) or nothing to divide by.",
+                        })
     return rows
 
 

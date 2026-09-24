@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 import math
-from typing import Literal, Optional, get_args
+from typing import Annotated, Literal, Optional, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -637,6 +637,8 @@ class MonitoringResponseModel(BaseModel):
         alias_generator=_camel_case,
         populate_by_name=True,
         extra="forbid",
+        # A NaN passes every range check and then breaks serialization.
+        allow_inf_nan=False,
     )
 
 
@@ -707,9 +709,46 @@ class MonitoringBreakdownRow(MonitoringResponseModel):
 # each of them exactly once, recorded or explicitly unavailable.
 MonitoringPanelId = Literal[
     "aging", "transfers", "journey", "atr", "demand", "closure", "discards",
-    "recording",
+    "recording", "offices",
 ]
 MONITORING_PANEL_IDS: tuple[str, ...] = get_args(MonitoringPanelId)
+
+
+#: The frontend's text(): non-empty and at most 2,000 characters.
+MonitoringText = Annotated[str, Field(min_length=1, max_length=2_000)]
+
+
+class MonitoringTableColumn(MonitoringResponseModel):
+    label: MonitoringText
+    unit: Literal["grievances", "percent"]
+
+
+class MonitoringTableRow(MonitoringResponseModel):
+    label: MonitoringText
+    #: One per column; ``None`` is a cell withheld under the minimum cell.
+    values: list[float | None]
+
+
+class MonitoringTable(MonitoringResponseModel):
+    title: MonitoringText
+    columns: list[MonitoringTableColumn] = Field(min_length=1)
+    rows: list[MonitoringTableRow]
+
+    @model_validator(mode="after")
+    def _rows_fit_columns(self) -> "MonitoringTable":
+        if any(len(row.values) != len(self.columns) for row in self.rows):
+            raise ValueError("every table row needs one value per column")
+        for row in self.rows:
+            for column, value in zip(self.columns, row.values):
+                if value is None:
+                    continue
+                if value < 0:
+                    raise ValueError("table values cannot be negative")
+                if column.unit == "percent" and value > 100:
+                    raise ValueError("a percent cell cannot exceed 100")
+                if column.unit == "grievances" and not float(value).is_integer():
+                    raise ValueError("a grievance count must be whole")
+        return self
 
 
 class MonitoringPanel(MonitoringResponseModel):
@@ -720,6 +759,8 @@ class MonitoringPanel(MonitoringResponseModel):
     metrics: list[RecordedMonitoringMetric | UnavailableMonitoringMetric]
     breakdown: list[MonitoringBreakdownRow] | None = None
     breakdown_unavailable_reason: str | None = None
+    #: Drill-down tables, published only where a panel carries them.
+    tables: list[MonitoringTable] | None = None
     caveats: list[str]
 
 
