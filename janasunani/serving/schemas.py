@@ -554,7 +554,18 @@ class DashboardMeta(DashboardModel):
     generated_at: datetime
     offices: list[DashboardOffice]
     years: list[DashboardYear]
-    default_disposed_year: str
+
+
+class StatusSummary(DashboardModel):
+    """Filings in scope by how they stand. Open, disposed and discarded add up
+    to the total; disposed with benefit is part of disposed."""
+
+    period: str
+    total: int = Field(ge=0)
+    open: int = Field(ge=0)
+    disposed: int = Field(ge=0)
+    disposed_with_benefit: int = Field(ge=0)
+    discarded: int = Field(ge=0)
 
 
 AgeBucket = Literal["0-30", "31-60", "61+"]

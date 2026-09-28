@@ -87,7 +87,9 @@ def _write_lake(path):
         orient="row",
     ).with_columns(
         mode=pl.lit("m"), mode_id=pl.lit(1), dept_id=pl.lit(12), subcategory=pl.lit("s"),
-        district=pl.lit("Puri"), transfer_status=pl.lit("No"), benefitted=pl.lit("No"),
+        district=pl.lit("Puri"), transfer_status=pl.lit("No"),
+        # D2 is the one disposal that reached the citizen.
+        benefitted=pl.when(pl.col("ticket_no") == "D2").then(pl.lit("Yes")).otherwise(pl.lit("No")),
     ).write_parquet(path / "complaints.parquet")
     pl.DataFrame(
         [(i + 1, t, d, s, f"{s} - {o}") for i, (t, d, s, o) in enumerate(_ACTIONS)],
@@ -121,9 +123,28 @@ def test_meta_carries_the_snapshot_date_and_the_entry_offices(client):
     # Newest first; the extract ends 30 July 2025, so 2025-26 is a part year.
     assert [y["id"] for y in meta["years"]] == ["2025-26", "2024-25", "2023-24"]
     assert meta["years"][0]["label"] == "FY 2025-26 (part year)"
-    assert meta["defaultDisposedYear"] == "2024-25"
     ids = [o["id"] for o in meta["offices"]]
     assert {"cm-office", "collector", "not-recorded"} <= set(ids)
+
+
+def test_status_tree_adds_up_and_matches_the_tabs(client):
+    tree = client.get("/dashboard/status").json()
+    # 7 open, 6 disposed (D1-D6), 1 discarded (X1).
+    assert (tree["total"], tree["open"], tree["disposed"], tree["discarded"]) == (14, 7, 6, 1)
+    assert tree["open"] + tree["disposed"] + tree["discarded"] == tree["total"]
+    # D2's benefit is part of the disposed branch, not a fourth outcome.
+    assert tree["disposedWithBenefit"] == 1
+    # The Open branch is exactly what the Live tab counts.
+    assert tree["open"] == client.get("/dashboard/live").json()["open"]
+
+
+def test_status_tree_follows_office_and_year(client):
+    fy25 = client.get("/dashboard/status", params={"year": "2025-26"}).json()
+    # O0 open and X1 discarded, both filed in July 2025.
+    assert (fy25["total"], fy25["open"], fy25["discarded"]) == (2, 1, 1)
+    cm = client.get("/dashboard/status", params={"office": "cm-office", "year": "2024-25"}).json()
+    # O30, O31 open; D1, D2 disposed.
+    assert (cm["total"], cm["open"], cm["disposed"]) == (4, 2, 2)
 
 
 def test_age_buckets_are_inclusive_at_30_and_60(client):

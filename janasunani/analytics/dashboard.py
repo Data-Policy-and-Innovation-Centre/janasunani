@@ -4,6 +4,7 @@ Reads ``complaints`` and ``action_history`` from the lake and writes four files
 to ``outputs/dashboard/`` for ``janasunani/serving/dashboard.py`` to serve:
 
 - ``meta.json``: the snapshot date, the entry offices and the filing years;
+- ``status_counts.parquet``: filings by entry office, year and outcome;
 - ``open_cases.parquet``: one row per open case;
 - ``open_actions.parquet``: every recorded action on those open cases;
 - ``disposed_phases.parquet``: one row per disposed case whose five phase
@@ -45,10 +46,6 @@ ENTRY_OFFICES = {
     "Entry point not recorded": ("not-recorded", "Entry office not recorded"),
 }
 
-# The year the Disposed tab opens on: filed July 2024 to June 2025, the same
-# base as the bottleneck notes and the last complete year in the extract.
-DEFAULT_DISPOSED_FY = 2024
-
 
 def _office_case() -> str:
     return "CASE entry_route " + " ".join(
@@ -78,6 +75,15 @@ def build(con: duckdb.DuckDBPyConnection, out: Path) -> dict:
         "SELECT CAST(MAX(created_on) AS DATE) FROM complaints").fetchone()[0]
     office = _office_case()
 
+    # Every filing by where it entered, when, and how it stands: the tree the
+    # page opens on. The outcome rule is the note's (grievance_base.outcome),
+    # so its Open count is exactly the open_cases table below.
+    con.execute(f"""
+        CREATE OR REPLACE TABLE status_counts AS
+        SELECT {office} AS entry_office, fy_start AS fy, outcome, COUNT(*) AS n
+        FROM grievance_base WHERE created_on IS NOT NULL
+        GROUP BY ALL
+    """)
     con.execute(f"""
         CREATE OR REPLACE TABLE open_base AS
         SELECT ticket_no, fy_start AS fy, {office} AS entry_office, dept, category, subcategory,
@@ -129,14 +135,13 @@ def build(con: duckdb.DuckDBPyConnection, out: Path) -> dict:
         FROM phases_clean p JOIN g USING (ticket_no) JOIN route r USING (ticket_no)
     """)
 
-    for table in ("open_cases", "open_actions", "disposed_phases"):
+    for table in ("status_counts", "open_cases", "open_actions", "disposed_phases"):
         con.execute(f"COPY {table} TO '{(out / table).as_posix()}.parquet' (FORMAT parquet)")
     meta = {
         "as_of": as_of.isoformat(),
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "offices": [{"id": oid, "label": label} for oid, label in ENTRY_OFFICES.values()],
         "years": _years(con, as_of),
-        "default_disposed_year": fy_id(DEFAULT_DISPOSED_FY),
     }
     (out / "meta.json").write_text(json.dumps(meta, indent=2) + "\n")
     return meta

@@ -25,7 +25,7 @@ export function Timeline({ ticketNo }: { ticketNo: string }) {
   if (data.steps.length === 0) {
     return (
       <p className="text-[16px] text-text-secondary">
-        No action recorded since it was filed on {fmtDate(data.createdOn)}: {fmtDays(data.daysOpen)} waiting.
+        No action since filing on {fmtDate(data.createdOn)} · waiting {fmtDays(data.daysOpen)}
       </p>
     );
   }

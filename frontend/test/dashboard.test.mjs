@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-const { ORDERS, PHASES, facetOptions, fmtDate, fmtDays, sharePct, stageSegments, stepWidths } = await import("../lib/dashboard.ts");
+const { ORDERS, PHASES, facetOptions, visibleStages, fmtDate, fmtDays, sharePct, stageSegments, stepWidths } = await import("../lib/dashboard.ts");
 
 const phases = { registration: 1, firstAssignment: 3, fieldAction: 20, review: 0, closure: 5 };
 
@@ -55,4 +55,12 @@ test("shares are whole percents and a sliver never reads as zero", () => {
 test("dates read the way officers write them", () => {
   assert.equal(fmtDate("2025-07-30"), "30 July 2025");
   assert.equal(fmtDate("2025-01-05"), "5 January 2025");
+});
+
+test("the legend drops stages that take under a day in every bar", () => {
+  const statewide = { registration: 0, firstAssignment: 11.8, fieldAction: 44.7, review: 6.2, closure: 0.4 };
+  assert.deepEqual(visibleStages([statewide]).map((p) => p.key), ["firstAssignment", "fieldAction", "review"]);
+  // A drill-down row that does spend time registering brings it back.
+  const slowIntake = { ...statewide, registration: 3 };
+  assert.deepEqual(visibleStages([statewide, slowIntake]).map((p) => p.key)[0], "registration");
 });

@@ -20,7 +20,17 @@ export interface DashboardMeta {
   offices: Office[];
   /** Newest first. */
   years: Year[];
-  defaultDisposedYear: string;
+}
+
+/** Filings in scope by how they stand. Open, disposed and discarded add up to
+ * the total; disposed with benefit is part of disposed. */
+export interface StatusSummary {
+  period: string;
+  total: number;
+  open: number;
+  disposed: number;
+  disposedWithBenefit: number;
+  discarded: number;
 }
 
 export type BucketId = "0-30" | "31-60" | "61+";
@@ -174,4 +184,11 @@ export function fmtDate(iso: string): string {
   const months = ["January", "February", "March", "April", "May", "June", "July",
     "August", "September", "October", "November", "December"];
   return y && m && d ? `${d} ${months[m - 1]} ${y}` : iso;
+}
+
+/** The stages worth a legend entry: those taking at least a day, on average,
+ * in any bar on screen. Statewide, registration and closure average 0 days,
+ * so a legend listing them names colours nobody can find. */
+export function visibleStages(rows: Record<PhaseKey, number>[]): typeof PHASES {
+  return PHASES.filter((p) => rows.some((r) => Math.round(r[p.key]) >= 1));
 }

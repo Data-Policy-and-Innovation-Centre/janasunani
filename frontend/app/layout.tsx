@@ -37,11 +37,11 @@ function Footer() {
   return (
     <footer className="mt-24 bg-maroon-full text-white">
       <div className="mx-auto max-w-[1240px] px-5 py-12 sm:px-7">
-        <p className="font-mono text-[9.5px] uppercase tracking-[0.16em] text-white/55">
+        <p className="text-[18px] text-white/75">
           Data, Policy and Innovation Centre
         </p>
-        <p className="mt-3 font-display text-2xl font-normal">
-          University of Chicago &times; Government of Odisha
+        <p className="mt-2 font-display text-2xl font-normal">
+          Government of Odisha &times; University of Chicago
         </p>
         <div className="mt-8 grid gap-6 border-t border-white/15 pt-6 text-[12.5px] leading-relaxed text-white/65 sm:grid-cols-2">
           <p>
@@ -49,9 +49,8 @@ function Footer() {
             grievance responses.
           </p>
           <p>
-            The monitoring dashboard reads a published snapshot of the
-            grievance record: ticket numbers and offices, never grievance text
-            or contact details.
+            Monitoring shows ticket numbers and offices from a published
+            snapshot. No grievance text or contact details.
           </p>
         </div>
       </div>

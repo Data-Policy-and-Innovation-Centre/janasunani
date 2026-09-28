@@ -10,7 +10,7 @@ export default function SupervisorPage() {
             Monitoring <em>dashboard</em>
           </>
         }
-        lead="What is open now and how long it has waited, and how long disposed cases took and at which stage the time went."
+        lead="Open cases by age. Disposed cases by stage."
       />
       <SupervisorSections />
     </div>

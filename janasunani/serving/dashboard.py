@@ -27,11 +27,12 @@ from janasunani.serving.schemas import (
     QueueItem,
     QueuePage,
     RouteBreakdown,
+    StatusSummary,
     Timeline,
     TimelineStep,
 )
 
-_FILES = ("open_cases", "open_actions", "disposed_phases")
+_FILES = ("status_counts", "open_cases", "open_actions", "disposed_phases")
 
 # Days open, inclusive at both ends.
 BUCKETS = {
@@ -135,6 +136,20 @@ class DashboardProvider:
     def _period(self, year: str | None) -> str:
         return "All years" if year is None else next(
             f"Filed {y.label}" for y in self.meta().years if y.id == year)
+
+    # -- status ---------------------------------------------------------------
+
+    def status(self, office: str | None, year: str | None = None) -> StatusSummary:
+        """Every filing in scope, split by outcome: the tree the page opens on."""
+        where, params = self._scope(office, year)
+        counts = dict(self._cursor().execute(
+            f"SELECT outcome, SUM(n) FROM status_counts WHERE {where} GROUP BY 1",
+            params).fetchall())
+        get = lambda k: int(counts.get(k) or 0)  # noqa: E731
+        return StatusSummary(
+            period=self._period(year), total=sum(int(v) for v in counts.values()),
+            open=get("Open"), disposed=get("Disposed") + get("Disposed with benefit"),
+            disposed_with_benefit=get("Disposed with benefit"), discarded=get("Discarded"))
 
     # -- live ---------------------------------------------------------------
 

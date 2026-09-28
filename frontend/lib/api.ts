@@ -10,6 +10,7 @@ import type {
   QueueFilters,
   QueuePage,
   RouteBreakdown,
+  StatusSummary,
   Timeline,
 } from "@/lib/dashboard";
 
@@ -101,6 +102,9 @@ async function dashboardGet<T>(path: string, params: Record<string, string | num
 }
 
 export const fetchDashboardMeta = () => dashboardGet<DashboardMeta>("/meta");
+
+export const fetchStatus = (office?: string, year?: string) =>
+  dashboardGet<StatusSummary>("/status", { office, year });
 
 export const fetchLive = (office?: string, year?: string) => dashboardGet<LiveSummary>("/live", { office, year });
 

@@ -1,20 +1,33 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { fetchDashboardMeta } from "@/lib/api";
 import { fmtDate, type DashboardMeta } from "@/lib/dashboard";
 import { DisposedPanel } from "./dashboard/DisposedPanel";
 import { LivePanel } from "./dashboard/LivePanel";
+import { Picker } from "./dashboard/Picker";
+import { StatusTree } from "./dashboard/StatusTree";
 
 type TabId = "live" | "disposed";
 
 /**
- * Two tabs, divided by a hairline, the active one marked by a maroon rule
- * underneath. Live carries a blinking dot and the snapshot date it is live
- * as of: the lake is a snapshot, not a feed.
+ * The scope first (entry office and year filed), then every case in it by
+ * status, then the two tabs. The scope carries through all three: the tree,
+ * the open queue and the disposal times always describe the same cases.
  */
 export function SupervisorSections() {
   const [tab, setTab] = useState<TabId>("live");
+  const [office, setOffice] = useState("");
+  const [year, setYear] = useState("");
+  const tabsRef = useRef<HTMLDivElement>(null);
+
+  // Open cases are the Live tab; disposed cases are the Disposed tab.
+  const openBranch = (branch: "open" | "disposed") => {
+    setTab(branch === "open" ? "live" : "disposed");
+    tabsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  // Keyed on the scope, so a new office or year starts each tab afresh.
+  const scopeKey = `${office}|${year}`;
   const [meta, setMeta] = useState<DashboardMeta | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -43,11 +56,18 @@ export function SupervisorSections() {
       {/* The lake is a snapshot, not a feed, so the date every figure below is
           counted to leads the page rather than hiding in a tab label. */}
       {meta && (
-        <p className="mb-6 text-[17px] text-text-secondary">
-          Snapshot of <span className="font-medium text-text-dark">{fmtDate(meta.asOf)}</span>
-        </p>
+        <div className="mb-10 space-y-8">
+          <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
+            <p className="text-[17px] text-text-secondary">
+              Snapshot of <span className="font-medium text-text-dark">{fmtDate(meta.asOf)}</span>
+            </p>
+            <Picker label="Entry office" allLabel="Statewide" options={meta.offices} value={office} onChange={setOffice} />
+            <Picker label="Year filed" allLabel="All years" options={meta.years} value={year} onChange={setYear} />
+          </div>
+          <StatusTree office={office} year={year} onOpen={openBranch} />
+        </div>
       )}
-      <div className="grid grid-cols-2 border-y border-hair" role="tablist" aria-label="Supervisor sections">
+      <div ref={tabsRef} className="grid scroll-mt-24 grid-cols-2 border-y border-hair" role="tablist" aria-label="Supervisor sections">
         {tabs.map(({ id, label }) => {
           const active = tab === id;
           return (
@@ -75,7 +95,7 @@ export function SupervisorSections() {
 
       <div className="pt-10" role="tabpanel">
         {error && <p className="text-[18px] text-negative">{error}</p>}
-        {meta && (tab === "live" ? <LivePanel meta={meta} /> : <DisposedPanel meta={meta} />)}
+        {meta && (tab === "live" ? <LivePanel key={scopeKey} office={office} year={year} /> : <DisposedPanel key={scopeKey} office={office} year={year} />)}
       </div>
     </div>
   );

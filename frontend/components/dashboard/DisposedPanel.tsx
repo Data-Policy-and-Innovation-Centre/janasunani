@@ -7,11 +7,9 @@ import {
   sharePct,
   ORDERS,
   type DisposalRow,
-  type DashboardMeta,
   type Order,
   type RouteBreakdown,
 } from "@/lib/dashboard";
-import { Picker } from "./Picker";
 import { StageBar, StageLegend } from "./StageBar";
 
 /** Where the drill-down stands: all cases, then a department's, then one of
@@ -45,10 +43,9 @@ function Row({ row, onOpen, total }: { row: DisposalRow; onOpen?: () => void; to
   );
 }
 
-export function DisposedPanel({ meta }: { meta: DashboardMeta }) {
-  const [office, setOffice] = useState("");
-  // The last complete year by default, the base the bottleneck notes use.
-  const [year, setYear] = useState(meta.defaultDisposedYear);
+/** Disposal times for one scope. The page remounts it when the entry office
+ * or year changes, so the drill-down starts again from the top. */
+export function DisposedPanel({ office, year }: { office: string; year: string }) {
   const [period, setPeriod] = useState("");
   const [drill, setDrill] = useState<Drill>({ level: "overall" });
   const [order, setOrder] = useState<Order>("slowest");
@@ -98,19 +95,6 @@ export function DisposedPanel({ meta }: { meta: DashboardMeta }) {
     setRoutes(null);
     setDrill(to);
   };
-  // A new office or year can empty any department or category chosen under
-  // the old one, so the drill-down starts again from the top.
-  const changeOffice = (value: string) => {
-    setOverall(null);
-    setOffice(value);
-    go({ level: "overall" });
-  };
-  const changeYear = (value: string) => {
-    setOverall(null);
-    setYear(value);
-    go({ level: "overall" });
-  };
-
   const crumbs: { label: string; to: Drill }[] = [{ label: "All disposed", to: { level: "overall" } }];
   if (drill.level !== "overall") crumbs.push({ label: "Departments", to: { level: "dept" } });
   if (drill.level === "category" || drill.level === "routes") crumbs.push({ label: drill.dept, to: { level: "category", dept: drill.dept } });
@@ -118,10 +102,6 @@ export function DisposedPanel({ meta }: { meta: DashboardMeta }) {
 
   return (
     <div className="space-y-8">
-      <div className="flex flex-wrap gap-x-8 gap-y-3">
-        <Picker label="Entry office" allLabel="Statewide" options={meta.offices} value={office} onChange={changeOffice} />
-        <Picker label="Year filed" allLabel="All years" options={meta.years} value={year} onChange={changeYear} />
-      </div>
       {error && <p className="text-[16px] text-negative">{error}</p>}
 
       {overall && (
@@ -141,9 +121,9 @@ export function DisposedPanel({ meta }: { meta: DashboardMeta }) {
             </span>
           </button>
           <StageBar phases={overall.phases} />
-          <StageLegend />
+          <StageLegend bars={[overall, ...rows, ...(routes?.rows ?? [])].map((r) => r.phases)} />
           <p className="text-[15px] text-text-secondary">
-            The stages add up to the average time to dispose.
+            Stages add up to the average.
           </p>
         </section>
       )}
@@ -205,8 +185,7 @@ export function DisposedPanel({ meta }: { meta: DashboardMeta }) {
           {routes && (
             <>
               <p className="mb-2 text-[15px] text-text-secondary">
-                The largest routes, up to ten, until they cover 95% of cases; a route needs {routes.minRouteN} cases
-                for a row of its own. The rest are grouped as Other, which is always last because it mixes many routes.
+                Top routes, up to 10, covering 95% of cases. Routes under {routes.minRouteN} cases are grouped as Other.
               </p>
               <ul className="divide-y divide-hair-soft border-y border-hair">
                 {routes.rows.map((row) => <Row key={row.label} row={row} total={routes.total} />)}

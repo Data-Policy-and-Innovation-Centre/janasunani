@@ -65,6 +65,7 @@ from janasunani.serving.schemas import (
     LiveSummary,
     QueuePage,
     RouteBreakdown,
+    StatusSummary,
     Timeline,
 )
 from janasunani.serving.store import InMemoryResultStore, ResultStore
@@ -185,6 +186,10 @@ def create_app(
     @app.get("/dashboard/meta", response_model=DashboardMeta, response_model_by_alias=True)
     def dashboard_meta() -> DashboardMeta:
         return _served(dashboard.meta)
+
+    @app.get("/dashboard/status", response_model=StatusSummary, response_model_by_alias=True)
+    def dashboard_status(office: Optional[str] = Office, year: Optional[str] = Year) -> StatusSummary:
+        return _served(lambda: dashboard.status(office, year))
 
     @app.get("/dashboard/live", response_model=LiveSummary, response_model_by_alias=True)
     def dashboard_live(office: Optional[str] = Office, year: Optional[str] = Year) -> LiveSummary:

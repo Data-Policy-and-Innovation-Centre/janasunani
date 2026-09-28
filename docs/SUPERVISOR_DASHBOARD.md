@@ -17,11 +17,12 @@ uv run janasunani-publish-dashboard            # reads data/interim/, writes out
 ```
 
 The publisher (`janasunani/analytics/dashboard.py`) reads only `complaints.parquet`
-and `action_history.parquet`. It writes four files:
+and `action_history.parquet`. It writes five files:
 
 | File | What it holds |
 |---|---|
-| `meta.json` | the snapshot date, the entry offices, the disposed base |
+| `meta.json` | the snapshot date, the entry offices, the filing years |
+| `status_counts.parquet` | filings by entry office, year and status |
 | `open_cases.parquet` | one row per open case |
 | `open_actions.parquet` | every recorded action on those cases |
 | `disposed_phases.parquet` | one row per disposed case whose five stages tile its time to close |
@@ -52,11 +53,18 @@ endpoint answers 503 and the page says so.
   record names who acted, not who a case was forwarded to. So the last step
   ("waiting here") is the office that acted last, which may be the one that
   forwarded it.
+- **Scope.** The entry office and the year filed sit at the top of the page and
+  carry through everything below it: the status tree, both tabs and every
+  drill-down describe the same cases. The page opens statewide on all years.
 - **Year filed** is the July-June year a case was filed in, or all years. A
-  year the extract does not cover end to end is marked "part year". Live cases
-  opens on all years, because an old case still open is the one that matters
-  most. Disposed cases opens on FY 2024-25, the last complete year and the base
-  the bottleneck notes use.
+  year the extract does not cover end to end is marked "part year".
+- **Cases by status** is every case filed in scope, split into open, disposed
+  and discarded (the CA&GR note's rule, `grievance_base.outcome`), which add up
+  to the total. Disposed shows how many were disposed with benefit, the one
+  outcome recording that something reached the citizen. Open opens the Live
+  tab, and its count is exactly the Live total. Disposed opens the Disposed tab,
+  which covers only the disposed cases whose stages tile, so its count is
+  smaller.
 - **Disposed** covers cases disposed by the snapshot date. A recent year looks
   faster than an older one partly because its slow cases are still open: FY
   2021-22 averages 210 days and FY 2024-25 63, but most of the difference is
@@ -83,6 +91,7 @@ endpoint answers 503 and the page says so.
 | Endpoint | Returns |
 |---|---|
 | `GET /dashboard/meta` | snapshot date, offices, filing years |
+| `GET /dashboard/status?office=&year=` | cases filed, and open, disposed (with benefit) and discarded |
 | `GET /dashboard/live?office=` | open total and counts for 0-30, 31-60 and 61+ days |
 | `GET /dashboard/live/queue?bucket=&office=&awaiting=all\|only\|hide&category=&dept=&limit=&offset=` | the queue for one age band, with filter counts |
 | `GET /dashboard/ticket/{ticket_no}/timeline` | an open case's actions, the current one flagged |

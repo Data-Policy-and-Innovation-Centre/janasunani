@@ -8,12 +8,10 @@ import {
   type AwaitingFilter,
   type BucketId,
   type LiveSummary,
-  type DashboardMeta,
   type QueueFilters,
   type QueueItem,
   type QueuePage,
 } from "@/lib/dashboard";
-import { Picker } from "./Picker";
 import { Timeline } from "./Timeline";
 
 const PAGE = 50;
@@ -69,11 +67,9 @@ const AWAITING: { id: AwaitingFilter; label: string }[] = [
   { id: "hide", label: "Hide awaiting" },
 ];
 
-export function LivePanel({ meta }: { meta: DashboardMeta }) {
-  const [office, setOffice] = useState("");
-  // Open cases from every year by default: a case filed in 2023 and still
-  // open is the one a supervisor most needs to see.
-  const [year, setYear] = useState("");
+/** The open queue for one scope. The page remounts it when the entry office
+ * or year changes, so every band, filter and open ticket starts fresh. */
+export function LivePanel({ office, year }: { office: string; year: string }) {
   const [summary, setSummary] = useState<LiveSummary | null>(null);
   const [bucket, setBucket] = useState<BucketId | null>(null);
   const [items, setItems] = useState<QueueItem[]>([]);
@@ -116,18 +112,8 @@ export function LivePanel({ meta }: { meta: DashboardMeta }) {
     setTotal(0);
     setOpen(null);
   };
-  // A category or department chosen for one office or band may not exist in
-  // the next, so those clear; the awaiting choice carries over.
-  const chooseOffice = (value: string) => {
-    reset();
-    setFilters((f) => ({ awaiting: f.awaiting }));
-    setOffice(value);
-  };
-  const chooseYear = (value: string) => {
-    reset();
-    setFilters((f) => ({ awaiting: f.awaiting }));
-    setYear(value);
-  };
+  // A category or department chosen for one band may not exist in the next,
+  // so those clear; the awaiting choice carries over.
   const chooseBucket = (value: BucketId | null) => {
     reset();
     setFilters((f) => ({ awaiting: f.awaiting }));
@@ -146,20 +132,101 @@ export function LivePanel({ meta }: { meta: DashboardMeta }) {
       .catch((e: Error) => setError(e.message));
   };
 
+  // The chosen band's cases. Rendered inside that band's row, so it is plain
+  // which band is open.
+  const queue = (
+    <section className="mb-4 ml-3 border-l-2 border-maroon/30 pb-2 pl-5 pt-3">
+      <p className="mb-3 text-[16px] text-text-secondary">
+        {total.toLocaleString("en-IN")} {filtered ? "matching cases" : "cases"}. Awaiting assignment first, then oldest.
+        Click a label to filter.
+      </p>
+      {/* The legend is the filter bar: each control is in the colour of the
+          label it filters. Counts come from the server, so they cover the
+          whole band, not only the tickets loaded so far. */}
+      <div className="mb-3 flex flex-wrap items-center gap-2" aria-label="Filter the queue">
+        <div className="inline-flex overflow-hidden rounded-full border border-maroon/40 text-[15px]" role="group" aria-label="Awaiting assignment">
+          {AWAITING.map((o) => {
+            const active = filters.awaiting === o.id;
+            const n = o.id === "only" ? facets?.awaiting : o.id === "hide" ? facets?.notAwaiting : undefined;
+            return (
+              <button
+                key={o.id}
+                type="button"
+                aria-pressed={active}
+                onClick={() => filter({ awaiting: o.id })}
+                className={`px-3 py-1 ${active ? "bg-maroon text-white" : "text-maroon hover:bg-maroon-wash"}`}
+              >
+                {o.label}
+                {n !== undefined && <span className="ml-1 opacity-70">{n.toLocaleString("en-IN")}</span>}
+              </button>
+            );
+          })}
+        </div>
+        <FacetSelect kind="category" label="Category" value={filters.category}
+          options={facetOptions(facets?.categories ?? [], filters.category)}
+          onChange={(category) => filter({ category })} />
+        <FacetSelect kind="dept" label="Department" value={filters.dept}
+          options={facetOptions(facets?.depts ?? [], filters.dept)}
+          onChange={(dept) => filter({ dept })} />
+        {filtered && (
+          <button type="button" onClick={() => filter({ awaiting: "all", category: undefined, dept: undefined })}
+            className="text-[15px] text-text-secondary underline">
+            Clear filters
+          </button>
+        )}
+      </div>
+      <ul className="divide-y divide-hair-soft border-y border-hair">
+        {items.map((item) => (
+          <li key={item.ticketNo} className="py-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="mr-2 font-mono text-[16px] text-text-dark">{item.ticketNo}</span>
+              {item.awaitingAssignment && (
+                <span className="rounded-full bg-maroon px-3 py-[3px] text-[14px] text-white">
+                  Awaiting assignment
+                </span>
+              )}
+              <Chip kind="category" onPick={() => filter({ category: item.category ?? "Not recorded" })}>
+                {item.category ?? "Category not recorded"}
+              </Chip>
+              <Chip kind="dept" onPick={() => filter({ dept: item.dept ?? "Not recorded" })}>
+                {item.dept ?? "Department not recorded"}
+              </Chip>
+              <button
+                type="button"
+                onClick={() => setOpen(open === item.ticketNo ? null : item.ticketNo)}
+                aria-expanded={open === item.ticketNo}
+                className="ml-auto rounded-full border border-maroon/40 px-3 py-[3px] text-[15px] tabular-nums text-maroon hover:bg-maroon-wash"
+              >
+                {fmtDays(item.daysOpen)} {open === item.ticketNo ? "▴" : "▾"}
+              </button>
+            </div>
+            {open === item.ticketNo && (
+              <div className="mt-4 rounded bg-panel px-4 py-4">
+                <Timeline ticketNo={item.ticketNo} />
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+      {items.length < total && (
+        <button type="button" onClick={loadMore} className="mt-4 text-[16px] text-maroon underline">
+          Show {Math.min(PAGE, total - items.length)} more
+        </button>
+      )}
+    </section>
+  );
+
   return (
     <div className="space-y-8">
-      <div className="flex flex-wrap gap-x-8 gap-y-3">
-        <Picker label="Entry office" allLabel="Statewide" options={meta.offices} value={office} onChange={chooseOffice} />
-        <Picker label="Year filed" allLabel="All years" options={meta.years} value={year} onChange={chooseYear} />
-      </div>
       {error && <p className="text-[16px] text-negative">{error}</p>}
 
       {summary && (
         <>
-          <div>
-            <p className="text-[15px] text-text-secondary">Open cases</p>
-            <p className="figure mt-1 text-[54px]">{summary.open.toLocaleString("en-IN")}</p>
-          </div>
+          {/* The open total is the tree's Open branch above; the bands split it
+              by how long each case has waited. */}
+          <p className="text-[17px] text-text-secondary">
+            {summary.open.toLocaleString("en-IN")} open cases, sorted by age
+          </p>
           {/* One row per age band, as the old aging breakdown drew it: the
               count over a bar scaled to the largest band. */}
           <div className="border-t border-hair-soft pt-2" aria-label="Open cases by days open">
@@ -167,116 +234,37 @@ export function LivePanel({ meta }: { meta: DashboardMeta }) {
               const active = bucket === b.id;
               const largest = Math.max(1, ...summary.buckets.map((x) => x.count));
               return (
-                <button
-                  key={b.id}
-                  type="button"
-                  onClick={() => chooseBucket(active ? null : b.id)}
-                  aria-pressed={active}
-                  className={`block w-full rounded px-3 py-3 text-left transition-colors focus-visible:outline-2 focus-visible:outline-maroon ${
-                    active ? "bg-maroon-wash" : "hover:bg-maroon-wash/40"
-                  }`}
-                >
-                  <span className="flex items-baseline justify-between gap-3 text-[17px]">
-                    <span className={active ? "text-maroon" : "text-text-body"}>
-                      {b.label} <span className="text-maroon-soft">{active ? "▴" : "▾"}</span>
+                <div key={b.id}>
+                  <button
+                    type="button"
+                    onClick={() => chooseBucket(active ? null : b.id)}
+                    aria-pressed={active}
+                    aria-expanded={active}
+                    className={`block w-full rounded px-3 py-3 text-left transition-colors focus-visible:outline-2 focus-visible:outline-maroon ${
+                      active ? "bg-maroon-wash" : "hover:bg-maroon-wash/40"
+                    }`}
+                  >
+                    <span className="flex items-baseline justify-between gap-3 text-[17px]">
+                      <span className={active ? "text-maroon" : "text-text-body"}>
+                        {b.label} <span className="text-maroon-soft">{active ? "▴" : "▾"}</span>
+                      </span>
+                      <strong className="text-[17px] font-medium tabular-nums text-text-dark">
+                        {b.count.toLocaleString("en-IN")}
+                      </strong>
                     </span>
-                    <strong className="text-[17px] font-medium tabular-nums text-text-dark">
-                      {b.count.toLocaleString("en-IN")}
-                    </strong>
-                  </span>
-                  <span className="mt-2 block h-[10px] overflow-hidden rounded-full bg-card">
-                    <span
-                      className="block h-full rounded-full bg-maroon transition-[width] duration-500"
-                      style={{ width: `${b.count === 0 ? 0 : Math.max(2, (100 * b.count) / largest)}%` }}
-                    />
-                  </span>
-                </button>
+                    <span className="mt-2 block h-[10px] overflow-hidden rounded-full bg-card">
+                      <span
+                        className="block h-full rounded-full bg-maroon transition-[width] duration-500"
+                        style={{ width: `${b.count === 0 ? 0 : Math.max(2, (100 * b.count) / largest)}%` }}
+                      />
+                    </span>
+                  </button>
+                  {active && queue}
+                </div>
               );
             })}
           </div>
         </>
-      )}
-
-      {bucket && (
-        <section>
-          <p className="mb-3 text-[16px] text-text-secondary">
-            {total.toLocaleString("en-IN")} {filtered ? "cases match these filters" : "cases"}. Cases still with the office
-            they entered at come first, then the longest open. Click a label on a case to filter by it.
-          </p>
-          {/* The legend is the filter bar: each control is in the colour of
-              the label it filters. Counts come from the server, so they cover
-              the whole band, not only the tickets loaded so far. */}
-          <div className="mb-3 flex flex-wrap items-center gap-2" aria-label="Filter the queue">
-            <div className="inline-flex overflow-hidden rounded-full border border-maroon/40 text-[15px]" role="group" aria-label="Awaiting assignment">
-              {AWAITING.map((o) => {
-                const active = filters.awaiting === o.id;
-                const n = o.id === "only" ? facets?.awaiting : o.id === "hide" ? facets?.notAwaiting : undefined;
-                return (
-                  <button
-                    key={o.id}
-                    type="button"
-                    aria-pressed={active}
-                    onClick={() => filter({ awaiting: o.id })}
-                    className={`px-3 py-1 ${active ? "bg-maroon text-white" : "text-maroon hover:bg-maroon-wash"}`}
-                  >
-                    {o.label}
-                    {n !== undefined && <span className="ml-1 opacity-70">{n.toLocaleString("en-IN")}</span>}
-                  </button>
-                );
-              })}
-            </div>
-            <FacetSelect kind="category" label="Category" value={filters.category}
-              options={facetOptions(facets?.categories ?? [], filters.category)}
-              onChange={(category) => filter({ category })} />
-            <FacetSelect kind="dept" label="Department" value={filters.dept}
-              options={facetOptions(facets?.depts ?? [], filters.dept)}
-              onChange={(dept) => filter({ dept })} />
-            {filtered && (
-              <button type="button" onClick={() => filter({ awaiting: "all", category: undefined, dept: undefined })}
-                className="text-[15px] text-text-secondary underline">
-                Clear filters
-              </button>
-            )}
-          </div>
-          <ul className="divide-y divide-hair-soft border-y border-hair">
-            {items.map((item) => (
-              <li key={item.ticketNo} className="py-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="mr-2 font-mono text-[16px] text-text-dark">{item.ticketNo}</span>
-                  {item.awaitingAssignment && (
-                    <span className="rounded-full bg-maroon px-3 py-[3px] text-[14px] text-white">
-                      Awaiting assignment
-                    </span>
-                  )}
-                  <Chip kind="category" onPick={() => filter({ category: item.category ?? "Not recorded" })}>
-                    {item.category ?? "Category not recorded"}
-                  </Chip>
-                  <Chip kind="dept" onPick={() => filter({ dept: item.dept ?? "Not recorded" })}>
-                    {item.dept ?? "Department not recorded"}
-                  </Chip>
-                  <button
-                    type="button"
-                    onClick={() => setOpen(open === item.ticketNo ? null : item.ticketNo)}
-                    aria-expanded={open === item.ticketNo}
-                    className="ml-auto rounded-full border border-maroon/40 px-3 py-[3px] text-[15px] tabular-nums text-maroon hover:bg-maroon-wash"
-                  >
-                    {fmtDays(item.daysOpen)} {open === item.ticketNo ? "▴" : "▾"}
-                  </button>
-                </div>
-                {open === item.ticketNo && (
-                  <div className="mt-4 rounded bg-panel px-4 py-4">
-                    <Timeline ticketNo={item.ticketNo} />
-                  </div>
-                )}
-              </li>
-            ))}
-          </ul>
-          {items.length < total && (
-            <button type="button" onClick={loadMore} className="mt-4 text-[16px] text-maroon underline">
-              Show {Math.min(PAGE, total - items.length)} more
-            </button>
-          )}
-        </section>
       )}
     </div>
   );

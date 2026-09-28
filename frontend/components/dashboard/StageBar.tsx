@@ -1,4 +1,4 @@
-import { PHASES, fmtDays, stageSegments, type PhaseKey } from "@/lib/dashboard";
+import { fmtDays, stageSegments, visibleStages, type PhaseKey } from "@/lib/dashboard";
 
 /** One bar split into the five phases, as in the bottleneck notes. The
  * segments are means, so they add up to the average. */
@@ -25,10 +25,11 @@ export function StageBar({ phases, compact = false }: { phases: Record<PhaseKey,
   );
 }
 
-export function StageLegend() {
+/** A key to the stage colours, listing only stages that show in `bars`. */
+export function StageLegend({ bars }: { bars: Record<PhaseKey, number>[] }) {
   return (
     <ul className="flex flex-wrap gap-x-4 gap-y-1.5">
-      {PHASES.map((p) => (
+      {visibleStages(bars).map((p) => (
         <li key={p.key} className="flex items-center gap-1.5 text-[15px] text-text-secondary">
           <span className="h-3.5 w-3.5 rounded-[2px]" style={{ background: p.color }} />
           {p.label}
