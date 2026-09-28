@@ -84,12 +84,11 @@ class DashboardProvider:
         self.release_dir = Path(release_dir)
         self._con: duckdb.DuckDBPyConnection | None = None
         self._meta: DashboardMeta | None = None
+        self._stamp: int | None = None
 
     def _load(self) -> duckdb.DuckDBPyConnection:
         # Loaded on first use, not at startup, so the API still starts (and
         # says why) when nothing has been published yet.
-        if self._con is not None:
-            return self._con
         paths = [self.release_dir / f"{name}.parquet" for name in _FILES]
         meta_path = self.release_dir / "meta.json"
         missing = [p.name for p in [meta_path, *paths] if not p.is_file()]
@@ -97,13 +96,24 @@ class DashboardProvider:
             raise DashboardUnavailable(
                 "No dashboard release is published (missing "
                 + ", ".join(missing) + "). Run janasunani-publish-dashboard.")
-        meta = DashboardMeta.model_validate(json.loads(meta_path.read_text()))
+        # The publisher writes meta.json last, so a new stamp on it means a
+        # new release: reload it without restarting the API.
+        stamp = meta_path.stat().st_mtime_ns
+        if self._con is not None and stamp == self._stamp:
+            return self._con
         con = duckdb.connect()
-        for name, path in zip(_FILES, paths):
-            con.execute(
-                f"CREATE TABLE {name} AS SELECT * FROM read_parquet(?)",
-                [path.as_posix()])
-        self._con, self._meta = con, meta
+        try:
+            meta = DashboardMeta.model_validate(json.loads(meta_path.read_text()))
+            for name, path in zip(_FILES, paths):
+                con.execute(
+                    f"CREATE TABLE {name} AS SELECT * FROM read_parquet(?)",
+                    [path.as_posix()])
+        except Exception as exc:
+            con.close()
+            raise DashboardUnavailable(
+                f"The dashboard release is unreadable ({exc}). "
+                "Run janasunani-publish-dashboard.") from exc
+        self._con, self._meta, self._stamp = con, meta, stamp
         return con
 
     def _cursor(self) -> duckdb.DuckDBPyConnection:

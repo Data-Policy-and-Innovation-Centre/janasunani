@@ -209,7 +209,9 @@ def create_app(
         return _served(lambda: dashboard.queue(
             office, bucket, limit, offset, awaiting, category, dept, year))
 
-    @app.get("/dashboard/ticket/{ticket_no}/timeline", response_model=Timeline,
+    # Ticket numbers can hold slashes (OR159/P/2021/00535), so the
+    # parameter takes the whole path, not one segment.
+    @app.get("/dashboard/ticket/{ticket_no:path}/timeline", response_model=Timeline,
              response_model_by_alias=True)
     def dashboard_timeline(
         ticket_no: str = Path(..., min_length=1, max_length=64, pattern=r"^[A-Za-z0-9/_-]+$"),

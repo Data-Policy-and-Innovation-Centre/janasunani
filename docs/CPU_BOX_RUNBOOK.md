@@ -148,5 +148,6 @@ call**, auditing `reason="SarvamGovernanceError"`. This holds with
 the API as `JANASUNANI_DASHBOARD_DIR`. Publish it on the box with
 `uv run janasunani-publish-dashboard`; until then every `/dashboard/*` endpoint
 answers 503 and the page says nothing is published. Re-publish after each
-re-materialisation, or the Live tab stays on the old snapshot date. Details in
+re-materialisation, or the Live tab stays on the old snapshot date; the API
+picks up a new release on its next request, no restart needed. Details in
 [SUPERVISOR_DASHBOARD.md](SUPERVISOR_DASHBOARD.md).

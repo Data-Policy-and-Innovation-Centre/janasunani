@@ -1495,7 +1495,7 @@ def test_demo_rehearsal_script_covers_required_phases():
     assert "FRONTEND_URL" in text or "127.0.0.1:3000" in text
     # Phase C — artifacts
     assert "routing_crosswalk.json" in text
-    assert "outputs/dashboard/meta.json" in text
+    assert "outputs/dashboard/$f" in text and "disposed_phases.parquet" in text
     assert "outputs/sarvam" in text or "sarvam" in text.lower()
     # Phase D — optional model smoke
     assert "JANASUNANI_RUN_MODEL_SMOKE" in text
@@ -1651,12 +1651,16 @@ def test_makefile_has_rehearsal_target():
 # dashboard release is served, a missing one is a 503 the screen explains.
 
 
-def _run_phase_c(tmp_path, *, env_extra=None, release=False):
+_RELEASE = ("meta.json", "status_counts.parquet", "open_cases.parquet",
+            "open_actions.parquet", "disposed_phases.parquet")
+
+
+def _run_phase_c(tmp_path, *, env_extra=None, release=()):
     """Execute the real phase_c_artifacts body against a scratch tree."""
     workdir = tmp_path / "repo"
     (workdir / "outputs" / "dashboard").mkdir(parents=True)
-    if release:
-        (workdir / "outputs" / "dashboard" / "meta.json").write_text("{}\n")
+    for name in release:
+        (workdir / "outputs" / "dashboard" / name).write_text("{}\n")
     # Item 1 (routing crosswalk) always fails when the file is absent,
     # regardless of strict mode. Stub it present so these tests measure only
     # the dashboard-release behaviour under test, not an unrelated failure.
@@ -1707,8 +1711,16 @@ echo "WARNINGS=$WARNINGS FAILURES=$FAILURES"
 
 
 def test_phase_c_accepts_a_published_dashboard_release(tmp_path):
-    result = _run_phase_c(tmp_path, release=True)
+    result = _run_phase_c(tmp_path, release=_RELEASE)
     assert "[ OK ] supervisor dashboard release: outputs/dashboard/meta.json" in result.stdout
+    strict = _run_phase_c(tmp_path / "strict", release=_RELEASE, env_extra={"REHEARSAL_STRICT": "1"})
+    assert "supervisor dashboard release missing" not in strict.stdout
+
+
+def test_phase_c_strict_fails_a_release_missing_its_tables(tmp_path):
+    # meta.json alone is a 503 at the API, so strict rehearsal must not pass it.
+    strict = _run_phase_c(tmp_path, release=("meta.json",), env_extra={"REHEARSAL_STRICT": "1"})
+    assert "[FAIL] supervisor dashboard release missing: outputs/dashboard/status_counts.parquet (strict)" in strict.stdout
 
 
 def test_phase_c_warns_without_a_release_and_fails_under_strict(tmp_path):

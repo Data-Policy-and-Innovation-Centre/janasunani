@@ -5,6 +5,8 @@ answer: the age-bucket edges, "awaiting assignment", the entry-office filter,
 the queue order, the ticket timeline, and phase means that add up to the mean.
 """
 
+import os
+import shutil
 from datetime import date, datetime
 
 import polars as pl
@@ -25,7 +27,8 @@ _COMPLAINTS = [
     # Open. The latest filing sets the snapshot date: 0 days, no action yet.
     ("O0", datetime(2025, 7, 30), None, "Pending", CM, "Revenue", "Land"),
     ("O30", datetime(2025, 6, 30), None, "Pending", CM, "Revenue", "Land"),
-    ("O31", datetime(2025, 6, 29), None, "Pending", CM, "Revenue", "Land"),
+    # A slash, as in real ticket numbers like OR159/P/2021/00535.
+    ("OR/31", datetime(2025, 6, 29), None, "Pending", CM, "Revenue", "Land"),
     ("O45", datetime(2025, 6, 15), None, "Pending", COLLECTOR, "Health", "Hospital"),
     # Awaiting assignment but younger than O45, so the two sort keys disagree.
     ("O40", datetime(2025, 6, 20), None, "Pending", COLLECTOR, "Health", "Hospital"),
@@ -49,8 +52,8 @@ _CELL, _COLL, _BDO = "CM Grievance Cell, Bhubaneswar", "Collector, Puri", "BDO, 
 # ticket, date, status, office
 _ACTIONS = [
     ("O30", datetime(2025, 6, 30), "Complaint Register", _CELL),
-    ("O31", datetime(2025, 6, 29), "Complaint Register", _CELL),
-    ("O31", datetime(2025, 7, 10), "Forwarded", _COLL),
+    ("OR/31", datetime(2025, 6, 29), "Complaint Register", _CELL),
+    ("OR/31", datetime(2025, 7, 10), "Forwarded", _COLL),
     ("O45", datetime(2025, 6, 16), "Forwarded", _COLL),
     ("O45", datetime(2025, 6, 20), "Forwarded", _BDO),
     ("O40", datetime(2025, 6, 21), "Forwarded", _COLL),
@@ -77,7 +80,7 @@ _ACTIONS = [
 ]
 
 
-def _write_lake(path):
+def _write_lake(path, actions=_ACTIONS):
     path.mkdir(parents=True, exist_ok=True)
     pl.DataFrame(
         _COMPLAINTS,
@@ -92,7 +95,7 @@ def _write_lake(path):
         benefitted=pl.when(pl.col("ticket_no") == "D2").then(pl.lit("Yes")).otherwise(pl.lit("No")),
     ).write_parquet(path / "complaints.parquet")
     pl.DataFrame(
-        [(i + 1, t, d, s, f"{s} - {o}") for i, (t, d, s, o) in enumerate(_ACTIONS)],
+        [(i + 1, t, d, s, f"{s} - {o}") for i, (t, d, s, o) in enumerate(actions)],
         schema=[("id", pl.Int64), ("ticket_no", pl.Utf8), ("action_taken_date", pl.Datetime),
                 ("action_status", pl.Utf8), ("complaint_status_with_authority", pl.Utf8)],
         orient="row",
@@ -143,7 +146,7 @@ def test_status_tree_follows_office_and_year(client):
     # O0 open and X1 discarded, both filed in July 2025.
     assert (fy25["total"], fy25["open"], fy25["discarded"]) == (2, 1, 1)
     cm = client.get("/dashboard/status", params={"office": "cm-office", "year": "2024-25"}).json()
-    # O30, O31 open; D1, D2 disposed.
+    # O30, OR/31 open; D1, D2 disposed.
     assert (cm["total"], cm["open"], cm["disposed"]) == (4, 2, 2)
 
 
@@ -151,7 +154,7 @@ def test_age_buckets_are_inclusive_at_30_and_60(client):
     live = client.get("/dashboard/live").json()
     assert live["open"] == 7
     counts = {b["id"]: b["count"] for b in live["buckets"]}
-    # O0, O30 | O31, O40, O45, O60 | O61
+    # O0, O30 | OR/31, O40, O45, O60 | O61
     assert counts == {"0-30": 2, "31-60": 4, "61+": 1}
 
 
@@ -165,10 +168,10 @@ def test_office_filter_narrows_to_the_entry_office(client):
 def test_queue_puts_awaiting_assignment_first_then_the_oldest(client):
     page = client.get("/dashboard/live/queue", params={"bucket": "31-60"}).json()
     got = [(i["ticketNo"], i["awaitingAssignment"], i["daysOpen"]) for i in page["items"]]
-    # O60 and O40 have only ever been with the Collector; O45 and O31 have
+    # O60 and O40 have only ever been with the Collector; O45 and OR/31 have
     # moved on. Awaiting comes first even when it is the younger case.
     assert got == [("O60", True, 60), ("O40", True, 40), ("O45", False, 45),
-                   ("O31", False, 31)]
+                   ("OR/31", False, 31)]
     assert page["total"] == 4
     item = page["items"][0]
     assert (item["category"], item["dept"]) == ("Hospital", "Health")
@@ -179,7 +182,7 @@ def _queue(client, **params):
 
 
 def test_awaiting_filter_hides_or_keeps_only_the_awaiting(client):
-    assert [i["ticketNo"] for i in _queue(client, awaiting="hide")["items"]] == ["O45", "O31"]
+    assert [i["ticketNo"] for i in _queue(client, awaiting="hide")["items"]] == ["O45", "OR/31"]
     only = _queue(client, awaiting="only")
     assert [i["ticketNo"] for i in only["items"]] == ["O60", "O40"]
     assert only["total"] == 2
@@ -187,7 +190,7 @@ def test_awaiting_filter_hides_or_keeps_only_the_awaiting(client):
 
 def test_label_filters_narrow_the_queue_and_facets_cross_filter(client):
     page = _queue(client, category="Land")
-    assert [i["ticketNo"] for i in page["items"]] == ["O31"]
+    assert [i["ticketNo"] for i in page["items"]] == ["OR/31"]
     facets = page["facets"]
     # A facet ignores its own choice, so every category stays pickable...
     assert facets["categories"] == [{"label": "Hospital", "count": 3},
@@ -211,7 +214,8 @@ def test_a_case_with_no_action_is_awaiting_assignment(client):
 
 
 def test_timeline_marks_the_current_step_and_counts_to_the_snapshot(client):
-    tl = client.get("/dashboard/ticket/O31/timeline").json()
+    # Encoded as the frontend sends it; the slash must not split the route.
+    tl = client.get("/dashboard/ticket/OR%2F31/timeline").json()
     assert tl["daysOpen"] == 31
     steps = [(s["office"], s["days"], s["current"]) for s in tl["steps"]]
     assert steps == [(_CELL, 11, False), (_COLL, 20, True)]
@@ -313,6 +317,42 @@ def test_unknown_office_is_404_and_a_bad_ticket_is_422(client):
     assert client.get("/dashboard/live/queue", params={"bucket": "90+"}).status_code == 422
     assert client.get("/dashboard/live/queue",
                       params={"bucket": "0-30", "awaiting": "maybe"}).status_code == 422
+
+
+def test_snapshot_date_is_the_last_filing_or_action(tmp_path):
+    # An action after the last filing is still inside the extract.
+    _write_lake(tmp_path / "lake", _ACTIONS + [("OR/31", datetime(2025, 8, 2), "Forwarded", _BDO)])
+    con = publisher.open_lake(tmp_path / "lake")
+    try:
+        meta = publisher.build(con, tmp_path / "release")
+    finally:
+        con.close()
+    assert meta["as_of"] == "2025-08-02"
+
+
+def _copy(release, dest):
+    shutil.copytree(release, dest)
+    return dest
+
+
+def test_a_republished_release_is_served_without_a_restart(release, tmp_path):
+    rel = _copy(release, tmp_path / "rel")
+    client = TestClient(create_app(dashboard=DashboardProvider(rel)))
+    assert client.get("/dashboard/meta").json()["asOf"] == "2025-07-30"
+    meta = rel / "meta.json"
+    meta.write_text(meta.read_text().replace("2025-07-30", "2025-07-31", 1))
+    st = meta.stat()
+    os.utime(meta, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+    assert client.get("/dashboard/meta").json()["asOf"] == "2025-07-31"
+
+
+def test_an_unreadable_release_is_503_not_500(release, tmp_path):
+    rel = _copy(release, tmp_path / "rel")
+    (rel / "open_cases.parquet").write_text("not parquet")
+    client = TestClient(create_app(dashboard=DashboardProvider(rel)))
+    resp = client.get("/dashboard/live")
+    assert resp.status_code == 503
+    assert "unreadable" in resp.json()["detail"]
 
 
 def test_missing_release_is_503_not_made_up_values(tmp_path):

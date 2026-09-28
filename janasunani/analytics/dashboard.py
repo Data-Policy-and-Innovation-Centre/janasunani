@@ -70,9 +70,12 @@ def open_lake(lake_dir: Path | None = None) -> duckdb.DuckDBPyConnection:
 def build(con: duckdb.DuckDBPyConnection, out: Path) -> dict:
     """Write the release into ``out`` and return its metadata."""
     out.mkdir(parents=True, exist_ok=True)
-    # The extract cannot hold a filing later than the day it was taken.
-    as_of = con.execute(
-        "SELECT CAST(MAX(created_on) AS DATE) FROM complaints").fetchone()[0]
+    # The extract cannot hold a filing or an action later than the day it
+    # was taken; either may be the last thing it recorded.
+    as_of = con.execute("""
+        SELECT CAST(GREATEST((SELECT MAX(created_on) FROM complaints),
+                             (SELECT MAX(action_taken_date) FROM action_history))
+                    AS DATE)""").fetchone()[0]
     office = _office_case()
 
     # Every filing by where it entered, when, and how it stands: the tree the

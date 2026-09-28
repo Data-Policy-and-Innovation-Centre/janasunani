@@ -375,11 +375,15 @@ phase_c_artifacts() {
     info "  hint: run 'uv run janasunani-build-crosswalk' and commit the artifact to restore method:learned"
   fi
 
-  # 2. Supervisor dashboard release — what GET /dashboard/* serves. Without
-  #    it the screen says nothing is published; warn, or fail under --strict.
-  if ! check_artifact "outputs/dashboard/meta.json" "supervisor dashboard release" 0; then
-    info "  hint: run 'uv run janasunani-publish-dashboard' to publish it"
-  fi
+  # 2. Supervisor dashboard release — what GET /dashboard/* serves. The API
+  #    needs every file, so each is checked. Without them the screen says
+  #    nothing is published; warn, or fail under --strict.
+  for f in meta.json status_counts.parquet open_cases.parquet open_actions.parquet disposed_phases.parquet; do
+    if ! check_artifact "outputs/dashboard/$f" "supervisor dashboard release" 0; then
+      info "  hint: run 'uv run janasunani-publish-dashboard' to publish it"
+      break
+    fi
+  done
 
   # 3. Sarvam scorecard (if Unit 5 landed) — warn only
   if [ -d "outputs/sarvam" ]; then
