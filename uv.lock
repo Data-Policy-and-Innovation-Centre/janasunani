@@ -1199,7 +1199,7 @@ wheels = [
 [[package]]
 name = "dpic"
 version = "0.1.0"
-source = { git = "ssh://git@github.com/Data-Policy-and-Innovation-Centre/dpic-org.git?rev=main#d5b6fb20ae4e6b80523e74683fa55c1830a1ddcc" }
+source = { git = "ssh://git@github.com/Data-Policy-and-Innovation-Centre/dpic-org.git?rev=main#11370861fc26e096eef5ac5e7be5f1784776b7c7" }
 dependencies = [
     { name = "matplotlib" },
     { name = "python-docx" },

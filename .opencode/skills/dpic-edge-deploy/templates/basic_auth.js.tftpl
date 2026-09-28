@@ -1,0 +1,35 @@
+// Viewer-request function: the site's shared login (auth.tf). Copied from
+// ai-for-panchayats infra/terraform/app/basic_auth.js.tftpl.
+//
+// Runs at the CloudFront edge before the cache lookup and before the box, so
+// a request without the login never reaches the application.
+//
+// cloudfront-js-2.0 has no Buffer, no crypto and a 1 ms budget, so the whole
+// Authorization header is compared as one string. There is no constant-time
+// compare here; with a 32-character random password, timing through internet
+// jitter is not a practical attack.
+function handler(event) {
+    var request = event.request;
+    var headers = request.headers;
+
+    // Header names arrive lowercased, whatever the client sent.
+    if (headers.authorization && headers.authorization.value === "${expected}") {
+        // The box has no use for the credential; don't send it further.
+        delete headers.authorization;
+        return request;
+    }
+
+    return {
+        statusCode: 401,
+        statusDescription: "Unauthorized",
+        headers: {
+            // Without this the browser shows a bare error, not a login prompt.
+            "www-authenticate": {
+                value: 'Basic realm="${realm}", charset="UTF-8"'
+            },
+            // A browser or proxy that keeps this 401 would not re-prompt after
+            // the password is rotated.
+            "cache-control": { value: "no-store" }
+        }
+    };
+}

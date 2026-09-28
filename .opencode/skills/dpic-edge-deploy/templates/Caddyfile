@@ -1,0 +1,44 @@
+# Single-origin reverse proxy (docker-compose service `proxy`). SITE_ADDRESS comes from deploy/.env, ORIGIN_VERIFY_SECRET
+# from deploy/proxy.env. Never hard-code either here.
+#
+# TLS: SITE_ADDRESS is the box's nip.io name (local.origin_domain in locals.tf), so Caddy
+# gets a Let's Encrypt certificate on its own. CloudFront connects to that
+# name over HTTPS (deploy/terraform/cdn.tf).
+#
+# The login is checked at the CloudFront edge (deploy/terraform/auth.tf), not
+# here. This file only makes sure a request came through our distribution:
+# port 443 admits every CloudFront distribution, and only ours adds
+# X-Origin-Verify. Anything else gets a 403.
+#
+# /api/health is exempt. deploy/deploy.sh smoke-checks it from the box itself,
+# where no CloudFront header exists. It returns only
+# `{"status":"ok","processor":"pipeline"}`.
+#
+# `route` keeps the directives in the order written. Without it, Caddy's
+# default order runs `handle` before `respond`, and the 403 would never fire.
+{$SITE_ADDRESS}
+
+# Keep {$ORIGIN_VERIFY_SECRET} unquoted. Empty or unset, it leaves the header
+# matcher without a value, the file fails to parse, and Caddy refuses to start
+# rather than admit any request. Quoted, an empty value parses, and a request
+# sending an empty X-Origin-Verify header gets through.
+@not_from_cloudfront {
+	not path /api/health
+	not header X-Origin-Verify {$ORIGIN_VERIFY_SECRET}
+}
+
+route {
+	respond @not_from_cloudfront "Forbidden" 403
+
+	# The apps never need the origin secret; drop it so neither can log it.
+	handle_path /api/* {
+		reverse_proxy api:8000 {
+			header_up -X-Origin-Verify
+		}
+	}
+	handle {
+		reverse_proxy frontend:3000 {
+			header_up -X-Origin-Verify
+		}
+	}
+}
