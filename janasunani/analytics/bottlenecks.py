@@ -34,6 +34,7 @@ import polars as pl
 from IPython.display import Markdown, display
 
 from janasunani.analytics import journey
+from janasunani.analytics.journey import ROLE_CASE, _sql_str
 from janasunani.analytics.figures import (
     BLUE, INK, MAROON, ORANGE, RAMP, Report, barh, bars, bottleneck_dumbbell,
     density, thousands, time_stats, use_dpic_style,
@@ -89,23 +90,6 @@ DEPARTMENTS = {
                ("DRDA Project Director", "district", 30)],
     ),
 }
-
-
-def _sql_str(x: str) -> str:
-    """A SQL string literal. Doubled quotes, not raw interpolation.
-
-    "Chief Minister's Grievance Cell" ends the literal otherwise, and the
-    failure surfaces as a parser error partway through a generated CASE rather
-    than as anything that names the role responsible.
-    """
-    return "'" + x.replace("'", "''") + "'"
-
-
-# Roles shortened for a route string only. A table about one role keeps the
-# mart's full name; a sequence of five of them does not fit.
-ROLE_CASE = "CASE " + " ".join(
-    f"WHEN x = {_sql_str(k)} THEN {_sql_str(v)}"
-    for k, v in journey.SHORT_ROLE.items()) + " ELSE x END"
 
 
 def open_lake(memory_limit: str = "8GB"):

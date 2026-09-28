@@ -23,7 +23,7 @@ import duckdb
 __all__ = [
     "install_steps", "install_phase_bounds", "install_phases", "install_returns",
     "install_route", "install_office_wait", "install_transferred",
-    "PHASES", "PHASE_LABEL", "RUNG_NAME", "SHORT_LEVEL", "SHORT_ROLE",
+    "PHASES", "PHASE_LABEL", "ROLE_CASE", "RUNG_NAME", "SHORT_LEVEL", "SHORT_ROLE",
     "UNNAMED_ROLE",
 ]
 
@@ -69,6 +69,23 @@ UNNAMED_ROLE = {
     3: "Other district office", 4: "Other sub-district office",
     5: "Other block or field office",
 }
+
+
+def _sql_str(x: str) -> str:
+    """A SQL string literal. Doubled quotes, not raw interpolation.
+
+    "Chief Minister's Grievance Cell" ends the literal otherwise, and the
+    failure surfaces as a parser error partway through a generated CASE rather
+    than as anything that names the role responsible.
+    """
+    return "'" + x.replace("'", "''") + "'"
+
+
+# Roles shortened for a route string only. A table about one role keeps the
+# mart's full name; a sequence of five of them does not fit.
+ROLE_CASE = "CASE " + " ".join(
+    f"WHEN x = {_sql_str(k)} THEN {_sql_str(v)}"
+    for k, v in SHORT_ROLE.items()) + " ELSE x END"
 
 
 def install_steps(con: duckdb.DuckDBPyConnection, scope: str = "TRUE") -> None:
