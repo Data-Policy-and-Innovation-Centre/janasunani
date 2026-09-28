@@ -56,11 +56,16 @@ services:
       OLTP_DB_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@oltp:5432/janasunani
       # The release /supervisor reads (docs/SUPERVISOR_DASHBOARD.md).
       JANASUNANI_DASHBOARD_DIR: /app/outputs/dashboard
+      # Rollback only: images before the dashboard (tag stable/2026-09-28)
+      # read the old monitoring release. deploy.sh runs a rolled-back image
+      # with this file, so keep this and its mount until that tag is retired.
+      JANASUNANI_MONITORING_ARTIFACT: /app/outputs/monitoring/monitoring_dashboard_v1.json
     volumes:
       - ../models:/app/models:ro
       - ../data/interim:/app/data/interim:ro
       - ../data/raw/janasunani-mappings:/app/data/raw/janasunani-mappings:ro
       - ../outputs/dashboard:/app/outputs/dashboard:ro
+      - ../outputs/monitoring:/app/outputs/monitoring:ro  # rollback only, see above
       - hf-cache:/hf-cache
     depends_on:
       oltp:

@@ -120,6 +120,14 @@ def test_api_can_read_the_dashboard_release():
     assert api["environment"]["JANASUNANI_DASHBOARD_DIR"] == "/app/outputs/dashboard"
 
 
+def test_compose_keeps_the_monitoring_release_for_a_rollback():
+    # deploy.sh runs a rolled-back image (stable/2026-09-28 and earlier) with
+    # the current compose file, and those images read the monitoring release.
+    api = _compose()["services"]["api"]
+    assert "../outputs/monitoring:/app/outputs/monitoring:ro" in [v.split("  #")[0].strip() for v in api["volumes"]]
+    assert api["environment"]["JANASUNANI_MONITORING_ARTIFACT"] == "/app/outputs/monitoring/monitoring_dashboard_v1.json"
+
+
 def test_deploy_makes_the_dashboard_dir_as_ubuntu_before_compose():
     # A bind source compose has to create is owned by root, and the
     # publisher runs as ubuntu, so it could never write the release.
