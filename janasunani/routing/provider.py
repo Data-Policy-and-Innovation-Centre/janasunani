@@ -10,9 +10,8 @@ The Protocol is deliberately the one that already existed as the private
 ``MappingRouter`` and ``RuleRouter`` already satisfy it structurally, so this
 declares an existing contract rather than imposing a new one.
 
-The factory follows ``supervisor_provider_from_env``
-(``janasunani/serving/intelligence.py``): read one environment variable,
-return a working provider for every input including nonsense, and never raise.
+The factory reads one environment variable and returns a working provider
+for every input including nonsense, and never raises.
 A routing failure on demo day must degrade to a worse route, never to a 500.
 
 Why ``router_status`` exists separately: ``PERFORMANCE.md`` recorded a live

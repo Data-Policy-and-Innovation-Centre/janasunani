@@ -60,19 +60,17 @@ chain.
 ## Structure
 
 - `app/` — routes: `/` (submit a grievance), `/history` (browse/search), and
-  `/supervisor` (aggregate-only Phase 15 briefing).
+  `/supervisor` (the supervisor dashboard: Live and Disposed tabs).
 - `components/` — `SubmitForm`, `ResultView` (the five-step result cards),
-  `TriageBanner`, `HistoryView`, `SupervisorDashboard`, `SupervisorView`, and
-  `ui.tsx` (Card/Field/Badge primitives).
+  `TriageBanner`, `HistoryView`, `SupervisorSections` with its panels in
+  `components/dashboard/`, and `ui.tsx` (Card/Field/Badge primitives).
 - `lib/api.ts` — the fetch client (`submitGrievance`, `fetchHistory`,
-  `fetchSupervisorDashboard`).
+  and the `/dashboard/*` fetchers).
 - `lib/types.ts` — TypeScript mirror of `janasunani/serving/schemas.py`. Do
   not rename these fields without a matching backend contract change.
-- `lib/supervisor.ts` — typed, aggregate-only supervisor response contract.
-  The browser accepts only the backend's narrow DTO and rejects row-level
-  fields. Until a validated artifact exists, each panel fails closed with its
-  own requirement; it never turns a manual duplicate baseline into the dedup
-  capability or a placeholder into a worked spike.
+- `lib/dashboard.ts` — the supervisor dashboard contract and its pure helpers
+  (stage-bar segments, sort toggle), tested in `test/dashboard.test.mjs`.
+  See `docs/SUPERVISOR_DASHBOARD.md`.
 
 ## Gate
 

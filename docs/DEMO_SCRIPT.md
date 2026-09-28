@@ -157,6 +157,11 @@ State the timing honestly: first document after boot is slower (~9–10 s) than 
 
 ## Scene 4 — Supervisor intelligence (10 min)
 
+> **Superseded.** This scene is the 14 August 2026 demo as given. Since
+> September 2026 `/supervisor` shows the two-tab dashboard in
+> [SUPERVISOR_DASHBOARD.md](SUPERVISOR_DASHBOARD.md); the old page is at tag
+> `stable/2026-09-28`.
+
 **Goal:** the one place the demo earns its keep — three facts no SQL dashboard produces, plus the one that needs no ML at all.
 
 Open `/supervisor` (or `GET /supervisor` — the API route; the frontend page is also `/supervisor` on port 3000). The page reads **published aggregates** from `DATA_DIR/aggregates/` or `JANASUNANI_SUPERVISOR_FINDINGS_DIR` (small CSVs), with strict schema allowlist + reconciliation. An `Unavailable*` panel means the aggregate is missing or stale, not that the number is zero.

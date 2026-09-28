@@ -109,16 +109,15 @@ def test_api_data_mounts_are_read_only():
     assert expected <= ro_mounts
 
 
-def test_api_can_read_the_monitoring_release():
-    """/supervisor opens on Monitoring, which reads a published release.
-    `outputs` is in .dockerignore, so the release has to be a read-only
-    bind-mount, and the provider has to be pointed at it; without both,
-    the deployed screen always gets a 503."""
+def test_api_can_read_the_dashboard_release():
+    """/supervisor reads a published dashboard release. `outputs` is in
+    .dockerignore, so the release has to be a read-only bind-mount, and the
+    provider has to be pointed at it; without both, the deployed screen
+    always gets a 503."""
     api = _compose()["services"]["api"]
 
-    assert "../outputs/monitoring:/app/outputs/monitoring:ro" in api["volumes"]
-    artifact = api["environment"]["JANASUNANI_MONITORING_ARTIFACT"]
-    assert artifact.startswith("/app/outputs/monitoring/")
+    assert "../outputs/dashboard:/app/outputs/dashboard:ro" in api["volumes"]
+    assert api["environment"]["JANASUNANI_DASHBOARD_DIR"] == "/app/outputs/dashboard"
 
 
 def test_app_images_are_pinned_to_image_tag_not_latest():
@@ -1481,22 +1480,22 @@ def test_demo_rehearsal_empty_arrays_are_length_guarded():
 
 def test_demo_rehearsal_script_covers_required_phases():
     """Static content check: the rehearsal script must implement Phases A-D
-    from the plan (ruff+pytest, health curl, supervisor/history, frontend,
+    from the plan (ruff+pytest, health curl, dashboard/history, frontend,
     artifact presence, optional model smoke) and warn vs fail handling."""
     text = REHEARSAL_SH_PATH.read_text()
     # Phase A
     assert "ruff check" in text, "Phase A must run ruff check"
     assert "janasunani-demo-preflight" in text
-    # Phase B — health + submission + round-trip + supervisor/history/frontend
+    # Phase B — health + submission + round-trip + dashboard/history/frontend
     assert "/health" in text
     assert "processor" in text and "pipeline" in text
     assert "/grievance" in text
-    assert "/supervisor" in text
+    assert "/dashboard/meta" in text
     assert "/history" in text
     assert "FRONTEND_URL" in text or "127.0.0.1:3000" in text
     # Phase C — artifacts
     assert "routing_crosswalk.json" in text
-    assert "outputs/findings" in text
+    assert "outputs/dashboard/meta.json" in text
     assert "outputs/sarvam" in text or "sarvam" in text.lower()
     # Phase D — optional model smoke
     assert "JANASUNANI_RUN_MODEL_SMOKE" in text
@@ -1632,34 +1631,6 @@ def test_e2e_pipeline_script_allows_reuse_with_explicit_opt_in(tmp_path):
     assert stale_db.read_bytes() == marker
 
 
-def test_demo_rehearsal_script_checks_specific_closure_artifact_names():
-    """#216: the closure gate must check for the exact filenames
-    janasunani/serving/intelligence.py's closure reader accepts
-    (_CLOSURE_ARTIFACT_NAMES), not "any file present in outputs/findings/".
-    A PII/discard finding sitting in that directory must not make the gate
-    report closure artifacts as available."""
-    text = REHEARSAL_SH_PATH.read_text()
-    assert "closure_finding_summary.csv" in text
-    assert "closure_recording_no_action.csv" in text
-    # The old bug: gating success on "any file in outputs/findings/ exists"
-    # rather than one of the two specific names above.
-    assert 'find outputs/findings -type f | wc -l' not in text
-
-
-def test_demo_rehearsal_script_honors_the_aggregates_dir_env_var():
-    """#218: JANASUNANI_SUPERVISOR_AGGREGATES_DIR (workload/spike) must not
-    be silently overwritten with JANASUNANI_SUPERVISOR_FINDINGS_DIR
-    (closure) -- the two are configured separately in
-    janasunani/serving/intelligence.py's supervisor_provider_from_env /
-    ArtifactSupervisorProvider, and the rehearsal's AGG_DIR must mirror that
-    same fallback (aggregates dir first, findings dir only as a fallback)."""
-    text = REHEARSAL_SH_PATH.read_text()
-    assert (
-        'AGG_DIR="${JANASUNANI_SUPERVISOR_AGGREGATES_DIR:-${JANASUNANI_SUPERVISOR_FINDINGS_DIR:-}}"'
-        in text
-    )
-
-
 def test_makefile_has_rehearsal_target():
     """`make rehearsal` must exist and delegate to scripts/demo_rehearsal.sh."""
     text = MAKEFILE_PATH.read_text()
@@ -1676,21 +1647,19 @@ def test_makefile_has_rehearsal_target():
 
 # --- Phase C behaviour, run against real directories -----------------------
 #
-# Codex findings on #231. Both were cases where the rehearsal's verdict and
-# ArtifactSupervisorProvider's behaviour disagreed, which is the one thing a
-# rehearsal gate must not do: it either passes a demo that will not work, or
-# fails a demo that would have.
+# The rehearsal's verdict must agree with what the API will do: a published
+# dashboard release is served, a missing one is a 503 the screen explains.
 
 
-def _run_phase_c(tmp_path, *, env_extra=None, findings=()):
+def _run_phase_c(tmp_path, *, env_extra=None, release=False):
     """Execute the real phase_c_artifacts body against a scratch tree."""
     workdir = tmp_path / "repo"
-    (workdir / "outputs" / "findings").mkdir(parents=True)
-    for name in findings:
-        (workdir / "outputs" / "findings" / name).write_text("a,b\n1,2\n")
+    (workdir / "outputs" / "dashboard").mkdir(parents=True)
+    if release:
+        (workdir / "outputs" / "dashboard" / "meta.json").write_text("{}\n")
     # Item 1 (routing crosswalk) always fails when the file is absent,
     # regardless of strict mode. Stub it present so these tests measure only
-    # the closure/aggregates behaviour under test, not an unrelated failure.
+    # the dashboard-release behaviour under test, not an unrelated failure.
     crosswalk = workdir / "janasunani" / "routing" / "reference" / "routing_crosswalk.json"
     crosswalk.parent.mkdir(parents=True)
     crosswalk.write_text("{}\n")
@@ -1727,8 +1696,6 @@ phase_c_artifacts || true
 echo "WARNINGS=$WARNINGS FAILURES=$FAILURES"
 """
     env = dict(os.environ)
-    env.pop("JANASUNANI_SUPERVISOR_AGGREGATES_DIR", None)
-    env.pop("JANASUNANI_SUPERVISOR_FINDINGS_DIR", None)
     env.update(env_extra or {})
     return subprocess.run(
         ["bash", "-c", harness],
@@ -1739,161 +1706,17 @@ echo "WARNINGS=$WARNINGS FAILURES=$FAILURES"
     )
 
 
-def test_phase_c_accepts_exactly_one_closure_artifact(tmp_path):
-    result = _run_phase_c(tmp_path, findings=["closure_finding_summary.csv"])
-    assert "closure: outputs/findings/closure_finding_summary.csv" in result.stdout
+def test_phase_c_accepts_a_published_dashboard_release(tmp_path):
+    result = _run_phase_c(tmp_path, release=True)
+    assert "[ OK ] supervisor dashboard release: outputs/dashboard/meta.json" in result.stdout
+
+
+def test_phase_c_warns_without_a_release_and_fails_under_strict(tmp_path):
+    result = _run_phase_c(tmp_path)
+    assert "[WARN] supervisor dashboard release missing" in result.stdout
     assert "FAILURES=0" in result.stdout
-
-
-def test_phase_c_rejects_two_closure_artifacts(tmp_path):
-    """The provider reports unavailable unless exactly one candidate exists.
-
-    Stopping at the first match let a strict rehearsal pass while the live
-    closure panel was unavailable, which is the transition state between the
-    two filenames. A duplicate is a deterministic break (the provider will
-    unconditionally refuse to serve it), not a "not published yet" state, so
-    this must fail the run outright rather than only when --strict is set --
-    the failure count must actually move, not just the logged message.
-    """
-    result = _run_phase_c(
-        tmp_path,
-        findings=["closure_finding_summary.csv", "closure_recording_no_action.csv"],
-    )
-    assert "2 candidates present" in result.stdout
-    assert "FAILURES=1" in result.stdout
-
-
-def test_phase_c_falls_back_to_findings_when_aggregates_is_empty(tmp_path):
-    """ArtifactSupervisorProvider searches both dirs, so the gate must too.
-
-    An aggregates dir that is set but empty does not make the panels
-    unavailable when the findings dir still holds both named artifacts.
-    """
-    empty = tmp_path / "aggregates-empty"
-    empty.mkdir()
-    findings = tmp_path / "findings"
-    findings.mkdir()
-    (findings / "workload.csv").write_text("a\n1\n")
-    (findings / "spike.csv").write_text("a\n1\n")
-
-    result = _run_phase_c(
-        tmp_path,
-        env_extra={
-            "JANASUNANI_SUPERVISOR_AGGREGATES_DIR": str(empty),
-            "JANASUNANI_SUPERVISOR_FINDINGS_DIR": str(findings),
-        },
-        findings=["closure_finding_summary.csv"],
-    )
-    assert f"aggregates: {findings} (workload.csv, spike.csv)" in result.stdout
-    assert "FAILURES=0" in result.stdout
-
-
-def test_phase_c_workload_in_aggregates_spike_in_findings_passes(tmp_path):
-    """Each artifact falls back independently, per
-    ArtifactSupervisorProvider._load_workload() / _load_spike(): workload.csv
-    found in the aggregates dir and spike.csv found only in the findings dir
-    must still pass, because the provider would serve both panels.
-    """
-    aggregates = tmp_path / "aggregates"
-    aggregates.mkdir()
-    (aggregates / "workload.csv").write_text("a\n1\n")
-    findings = tmp_path / "findings"
-    findings.mkdir()
-    (findings / "spike.csv").write_text("a\n1\n")
-
-    result = _run_phase_c(
-        tmp_path,
-        env_extra={
-            "JANASUNANI_SUPERVISOR_AGGREGATES_DIR": str(aggregates),
-            "JANASUNANI_SUPERVISOR_FINDINGS_DIR": str(findings),
-        },
-        findings=["closure_finding_summary.csv"],
-    )
-    assert f"aggregates: workload.csv in {aggregates}, spike.csv in {findings}" in result.stdout
-    assert "FAILURES=0" in result.stdout
-
-
-def test_phase_c_fails_when_aggregates_has_only_workload_csv(tmp_path):
-    """ArtifactSupervisorProvider._load_spike() looks for spike.csv by name;
-    a directory holding only workload.csv (with no spike.csv anywhere in the
-    fallback chain) does not make the spike panel available. Counting "any
-    csv present" let this pass; the gate must check workload.csv and
-    spike.csv individually.
-
-    JANASUNANI_SUPERVISOR_FINDINGS_DIR is set (empty) so this test exercises
-    the per-file naming check under test, not the separate
-    findings-dir-must-be-set gate covered below.
-    """
-    aggregates = tmp_path / "aggregates"
-    aggregates.mkdir()
-    (aggregates / "workload.csv").write_text("a\n1\n")
-    findings = tmp_path / "findings-empty"
-    findings.mkdir()
-
-    result = _run_phase_c(
-        tmp_path,
-        env_extra={
-            "JANASUNANI_SUPERVISOR_AGGREGATES_DIR": str(aggregates),
-            "JANASUNANI_SUPERVISOR_FINDINGS_DIR": str(findings),
-        },
-        findings=["closure_finding_summary.csv"],
-    )
-    assert "missing: spike.csv" in result.stdout
-    assert "FAILURES=1" in result.stdout
-
-
-def test_phase_c_fails_on_unrelated_csv_in_aggregates_dir(tmp_path):
-    """A directory holding some unrelated csv is not the same as holding
-    workload.csv and spike.csv; the provider looks for those two names
-    specifically, so an unrelated file must not report available.
-
-    JANASUNANI_SUPERVISOR_FINDINGS_DIR is set (empty) so this test exercises
-    the per-file naming check under test, not the separate
-    findings-dir-must-be-set gate covered below.
-    """
-    aggregates = tmp_path / "aggregates"
-    aggregates.mkdir()
-    (aggregates / "unrelated.csv").write_text("a\n1\n")
-    findings = tmp_path / "findings-empty"
-    findings.mkdir()
-
-    result = _run_phase_c(
-        tmp_path,
-        env_extra={
-            "JANASUNANI_SUPERVISOR_AGGREGATES_DIR": str(aggregates),
-            "JANASUNANI_SUPERVISOR_FINDINGS_DIR": str(findings),
-        },
-        findings=["closure_finding_summary.csv"],
-    )
-    assert "missing: workload.csv, spike.csv" in result.stdout
-    assert "FAILURES=1" in result.stdout
-
-
-def test_phase_c_fails_when_findings_dir_unset_even_with_complete_aggregates(tmp_path):
-    """Codex finding on #231: supervisor_provider_from_env() gates the whole
-    aggregate seam on JANASUNANI_SUPERVISOR_FINDINGS_DIR alone -- unset it
-    and the function returns UnavailableSupervisorProvider before
-    ArtifactSupervisorProvider (and therefore workload.csv/spike.csv in
-    JANASUNANI_SUPERVISOR_AGGREGATES_DIR) is ever consulted. Previously the
-    rehearsal reported "ok" here because it searched the aggregates dir
-    directly instead of mirroring that on/off switch -- a vacuous pass: the
-    gate said available while the live provider would never come up. An
-    aggregates-only configuration, even a complete one, must fail.
-    """
-    aggregates = tmp_path / "aggregates"
-    aggregates.mkdir()
-    (aggregates / "workload.csv").write_text("a\n1\n")
-    (aggregates / "spike.csv").write_text("a\n1\n")
-
-    result = _run_phase_c(
-        tmp_path,
-        env_extra={"JANASUNANI_SUPERVISOR_AGGREGATES_DIR": str(aggregates)},
-        findings=["closure_finding_summary.csv"],
-    )
-    assert "JANASUNANI_SUPERVISOR_FINDINGS_DIR" in result.stdout
-    assert "FAILURES=1" in result.stdout
-    # The old vacuous-pass line must not appear.
-    assert "aggregates: " + str(aggregates) not in result.stdout
+    strict = _run_phase_c(tmp_path / "strict", env_extra={"REHEARSAL_STRICT": "1"})
+    assert "[FAIL] supervisor dashboard release missing: outputs/dashboard/meta.json (strict)" in strict.stdout
 
 
 def test_api_image_compiles_numpy_in_the_build_stage_only():

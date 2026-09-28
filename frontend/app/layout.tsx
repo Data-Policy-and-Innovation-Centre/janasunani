@@ -49,8 +49,9 @@ function Footer() {
             grievance responses.
           </p>
           <p>
-            Supervisor metrics come from validated aggregate artifacts. No
-            grievance text or citizen identifiers are served to this interface.
+            The monitoring dashboard reads a published snapshot of the
+            grievance record: ticket numbers and offices, never grievance text
+            or contact details.
           </p>
         </div>
       </div>

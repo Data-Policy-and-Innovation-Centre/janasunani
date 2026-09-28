@@ -33,7 +33,7 @@ The demo is scoped by five components (set 2026-07-27, full detail in
 |---|---|---|
 | a | DSI pipeline replication | None. Exercises the existing six stages end to end |
 | b | Spam & duplicate detection | Post-redaction live advisory plus the first corpus-level dependency (the dedup index) |
-| c | Intelligence layer | New `serving/intelligence.py` router and a semantic layer over the lake |
+| c | Intelligence layer | A supervisor dashboard (`serving/dashboard.py`, replacing the original `serving/intelligence.py` router) and a semantic layer over the lake |
 | d | A/B testing of AI automation | New `experiments/` package; shadow-mode execution path |
 | e | Sarvam benchmark | Provider-backed model registry, a single egress module, and a redrawn trust boundary |
 

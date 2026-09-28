@@ -6,7 +6,8 @@ Endpoints (the full surface; shapes in schemas.py are the frozen contract):
                             ``district``) -> full ``GrievanceResult``, 201
 - ``GET  /grievance/{id}``  a previously submitted result
 - ``GET  /history``         browse/search historical complaints (lake shape)
-- ``GET  /supervisor``      published aggregate findings or explicit gaps
+- ``GET  /dashboard/...``   the supervisor dashboard: open queue and disposal
+                            times, from a published release (serving/dashboard.py)
 - ``GET  /health``          liveness + which processor is mounted
 
 Skeleton wiring (swapped at Phase 8/9 wire-up, endpoints unchanged):
@@ -39,32 +40,32 @@ import functools
 import itertools
 import os
 import uuid
-from typing import Optional
+from typing import Literal, Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Path, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 from starlette.concurrency import run_in_threadpool
 
 from janasunani.inference.service import InferenceInputError
+from janasunani.serving.dashboard import (
+    DashboardProvider,
+    DashboardUnavailable,
+    dashboard_provider_from_env,
+)
 from janasunani.serving.history import HistoryProvider, LakeHistory, MockHistory
-from janasunani.serving.intelligence import (
-    SupervisorProvider,
-    supervisor_provider_from_env,
-)
-from janasunani.serving.monitoring import (
-    MonitoringArtifactError,
-    MonitoringProvider,
-    monitoring_provider_from_env,
-)
 from janasunani.serving.processor import GrievanceProcessor, MockGrievanceProcessor
 from janasunani.serving.schemas import (
+    AgeBucket,
+    DashboardMeta,
+    DisposalBreakdown,
     GrievanceResult,
     HealthResponse,
     HistoryPage,
-    MonitoringCatalog,
-    MonitoringDashboard,
-    SupervisorDashboard,
+    LiveSummary,
+    QueuePage,
+    RouteBreakdown,
+    Timeline,
 )
 from janasunani.serving.store import InMemoryResultStore, ResultStore
 
@@ -79,15 +80,13 @@ def create_app(
     processor: Optional[GrievanceProcessor] = None,
     history: Optional[HistoryProvider] = None,
     result_store: Optional[ResultStore] = None,
-    supervisor: Optional[SupervisorProvider] = None,
-    monitoring: Optional[MonitoringProvider] = None,
+    dashboard: Optional[DashboardProvider] = None,
 ) -> FastAPI:
     """App factory; tests and the wire-up inject their own processor/history."""
     processor = processor or MockGrievanceProcessor()
     history = history or MockHistory()
     result_store = result_store or InMemoryResultStore()
-    supervisor = supervisor if supervisor is not None else supervisor_provider_from_env()
-    monitoring = monitoring if monitoring is not None else monitoring_provider_from_env()
+    dashboard = dashboard if dashboard is not None else dashboard_provider_from_env()
 
     app = FastAPI(title="Janasunani 2.0 API", version="0.1.0")
     app.add_middleware(
@@ -169,30 +168,70 @@ def create_app(
             q=q, district=district, category=category, limit=limit, offset=offset
         )
 
-    @app.get("/supervisor", response_model=SupervisorDashboard)
-    def get_supervisor_dashboard() -> SupervisorDashboard:
-        """Return only validated aggregate findings, otherwise explicit gaps."""
-
-        return supervisor.dashboard()
-
-    @app.get("/supervisor/monitoring/catalog", response_model=MonitoringCatalog)
-    def get_monitoring_catalog() -> MonitoringCatalog:
+    def _served(call):
+        """Run a dashboard query, mapping its two failure modes to HTTP."""
         try:
-            return monitoring.catalog()
-        except MonitoringArtifactError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    @app.get("/supervisor/monitoring", response_model=MonitoringDashboard)
-    def get_monitoring_dashboard(
-        scope_id: str = Query(..., min_length=1, max_length=160, pattern=r"^[a-z0-9-]+$"),
-        period: str = Query(..., min_length=1, max_length=40, pattern=r"^[a-z0-9-]+$"),
-    ) -> MonitoringDashboard:
-        try:
-            return monitoring.dashboard(scope_id, period)
+            return call()
         except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except MonitoringArtifactError as exc:
+            raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
+        except DashboardUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    Office = Query(None, max_length=40, pattern=r"^[a-z0-9-]+$",
+                   description="entry office id from /dashboard/meta; omit for statewide")
+    Year = Query(None, max_length=10, pattern=r"^[0-9]{4}-[0-9]{2}$",
+                 description="July-June filing year from /dashboard/meta, e.g. 2024-25; omit for all")
+
+    @app.get("/dashboard/meta", response_model=DashboardMeta, response_model_by_alias=True)
+    def dashboard_meta() -> DashboardMeta:
+        return _served(dashboard.meta)
+
+    @app.get("/dashboard/live", response_model=LiveSummary, response_model_by_alias=True)
+    def dashboard_live(office: Optional[str] = Office, year: Optional[str] = Year) -> LiveSummary:
+        return _served(lambda: dashboard.live(office, year))
+
+    @app.get("/dashboard/live/queue", response_model=QueuePage, response_model_by_alias=True)
+    def dashboard_queue(
+        bucket: AgeBucket,
+        office: Optional[str] = Office,
+        limit: int = Query(50, ge=1, le=200),
+        offset: int = Query(0, ge=0),
+        awaiting: Literal["all", "only", "hide"] = "all",
+        category: Optional[str] = Query(None, max_length=200),
+        dept: Optional[str] = Query(None, max_length=200),
+        year: Optional[str] = Year,
+    ) -> QueuePage:
+        return _served(lambda: dashboard.queue(
+            office, bucket, limit, offset, awaiting, category, dept, year))
+
+    @app.get("/dashboard/ticket/{ticket_no}/timeline", response_model=Timeline,
+             response_model_by_alias=True)
+    def dashboard_timeline(
+        ticket_no: str = Path(..., min_length=1, max_length=64, pattern=r"^[A-Za-z0-9/_-]+$"),
+    ) -> Timeline:
+        return _served(lambda: dashboard.timeline(ticket_no))
+
+    @app.get("/dashboard/disposed", response_model=DisposalBreakdown,
+             response_model_by_alias=True)
+    def dashboard_disposed(
+        level: Literal["overall", "dept", "category"] = "overall",
+        order: Literal["volume", "slowest", "fastest"] = "slowest",
+        office: Optional[str] = Office,
+        dept: Optional[str] = Query(None, max_length=200),
+        year: Optional[str] = Year,
+    ) -> DisposalBreakdown:
+        return _served(lambda: dashboard.disposed(office, level, order, dept, year))
+
+    @app.get("/dashboard/disposed/routes", response_model=RouteBreakdown,
+             response_model_by_alias=True)
+    def dashboard_routes(
+        office: Optional[str] = Office,
+        dept: Optional[str] = Query(None, max_length=200),
+        category: Optional[str] = Query(None, max_length=200),
+        order: Literal["volume", "slowest", "fastest"] = "volume",
+        year: Optional[str] = Year,
+    ) -> RouteBreakdown:
+        return _served(lambda: dashboard.routes(office, dept, category, order, year))
 
     return app
 

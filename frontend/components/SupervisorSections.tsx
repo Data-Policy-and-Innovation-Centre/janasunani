@@ -1,32 +1,54 @@
 "use client";
 
-import { useState } from "react";
-import { MonitoringDashboard } from "./MonitoringDashboard";
-import { SupervisorDashboard } from "./SupervisorDashboard";
+import { useEffect, useState } from "react";
+import { fetchDashboardMeta } from "@/lib/api";
+import { fmtDate, type DashboardMeta } from "@/lib/dashboard";
+import { DisposedPanel } from "./dashboard/DisposedPanel";
+import { LivePanel } from "./dashboard/LivePanel";
 
-const TABS = [
-  ["monitoring", "Queue & Routing"],
-  ["intelligence", "Intelligence Briefing"],
-] as const;
-
-type TabId = (typeof TABS)[number][0];
+type TabId = "live" | "disposed";
 
 /**
- * Chapter strip: numbered cells divided by hairlines, the active one marked by
- * a maroon rule underneath. Mirrors the section nav used across the rest of
- * the interface so a supervisor reads it as the same kind of control.
+ * Two tabs, divided by a hairline, the active one marked by a maroon rule
+ * underneath. Live carries a blinking dot and the snapshot date it is live
+ * as of: the lake is a snapshot, not a feed.
  */
 export function SupervisorSections() {
-  const [tab, setTab] = useState<TabId>("monitoring");
+  const [tab, setTab] = useState<TabId>("live");
+  const [meta, setMeta] = useState<DashboardMeta | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchDashboardMeta().then(setMeta).catch((e: Error) => setError(e.message));
+  }, []);
+
+  const tabs: { id: TabId; label: React.ReactNode }[] = [
+    {
+      id: "live",
+      label: (
+        <span className="flex items-center gap-2">
+          <span className="relative flex h-3.5 w-3.5">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-500 opacity-60" />
+            <span className="relative inline-flex h-3.5 w-3.5 rounded-full bg-red-600" />
+          </span>
+          Live cases
+        </span>
+      ),
+    },
+    { id: "disposed", label: "Disposed cases" },
+  ];
 
   return (
     <div>
-      <div
-        className="grid border-y border-hair sm:grid-cols-2"
-        role="tablist"
-        aria-label="Supervisor sections"
-      >
-        {TABS.map(([id, label], index) => {
+      {/* The lake is a snapshot, not a feed, so the date every figure below is
+          counted to leads the page rather than hiding in a tab label. */}
+      {meta && (
+        <p className="mb-6 text-[17px] text-text-secondary">
+          Snapshot of <span className="font-medium text-text-dark">{fmtDate(meta.asOf)}</span>
+        </p>
+      )}
+      <div className="grid grid-cols-2 border-y border-hair" role="tablist" aria-label="Supervisor sections">
+        {tabs.map(({ id, label }) => {
           const active = tab === id;
           return (
             <button
@@ -35,24 +57,11 @@ export function SupervisorSections() {
               role="tab"
               aria-selected={active}
               onClick={() => setTab(id)}
-              className={`group relative border-hair px-5 py-4 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-maroon sm:border-l sm:first:border-l-0 ${
-                active ? "bg-surface" : "hover:bg-maroon-wash/40"
+              className={`relative border-l border-hair px-6 py-5 text-left font-display text-[26px] font-normal transition-colors first:border-l-0 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-maroon ${
+                active ? "bg-surface text-maroon" : "text-text-secondary hover:bg-maroon-wash/40"
               }`}
             >
-              <span
-                className={`block font-mono text-[9.5px] tracking-[0.14em] ${
-                  active ? "text-maroon-soft" : "text-text-secondary"
-                }`}
-              >
-                {String(index + 1).padStart(2, "0")}
-              </span>
-              <span
-                className={`mt-1 block text-[14px] font-medium ${
-                  active ? "text-maroon" : "text-text-secondary"
-                }`}
-              >
-                {label}
-              </span>
+              {label}
               <span
                 aria-hidden="true"
                 className={`absolute inset-x-0 -bottom-px h-[2px] origin-center bg-maroon transition-transform duration-300 ease-[cubic-bezier(.22,1,.36,1)] ${
@@ -64,12 +73,9 @@ export function SupervisorSections() {
         })}
       </div>
 
-      <div className="pt-10">
-        {tab === "monitoring" ? (
-          <MonitoringDashboard />
-        ) : (
-          <SupervisorDashboard />
-        )}
+      <div className="pt-10" role="tabpanel">
+        {error && <p className="text-[18px] text-negative">{error}</p>}
+        {meta && (tab === "live" ? <LivePanel meta={meta} /> : <DisposedPanel meta={meta} />)}
       </div>
     </div>
   );

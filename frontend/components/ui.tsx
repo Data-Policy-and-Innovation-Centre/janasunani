@@ -13,16 +13,18 @@ export function PageHead({
   lead,
   aside,
 }: {
-  kicker: string;
+  kicker?: string;
   title: ReactNode;
   lead?: ReactNode;
   aside?: ReactNode;
 }) {
   return (
     <header className="pt-14 pb-10">
-      <Reveal>
-        <p className="kicker">{kicker}</p>
-      </Reveal>
+      {kicker && (
+        <Reveal>
+          <p className="kicker">{kicker}</p>
+        </Reveal>
+      )}
       <Reveal delay={90}>
         <h1 className="page-title mt-4">{title}</h1>
       </Reveal>
