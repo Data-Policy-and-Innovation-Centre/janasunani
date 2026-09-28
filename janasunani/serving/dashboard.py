@@ -235,11 +235,14 @@ class DashboardProvider:
                       LEAD(action_date) OVER (ORDER BY seq) AS next_date
                FROM open_actions WHERE ticket_no = ? ORDER BY seq""",
             [ticket_no]).fetchall()
+        filed = case[0]
         steps = [
             TimelineStep(date=d, status=s, office=o,
-                         # The record's own dates can run backwards; a step
-                         # never shows negative time.
-                         days=max(((nxt or as_of) - d).days, 0),
+                         # The record's own dates can run backwards, even to
+                         # before filing. Time is counted from filing, and a
+                         # step never shows negative time, so the steps never
+                         # add up to more than days open.
+                         days=max((max(nxt or as_of, filed) - max(d, filed)).days, 0),
                          current=nxt is None)
             for d, s, o, nxt in rows
         ]

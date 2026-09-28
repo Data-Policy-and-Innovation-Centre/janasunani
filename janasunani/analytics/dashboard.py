@@ -119,7 +119,7 @@ def build(con: duckdb.DuckDBPyConnection, out: Path) -> dict:
           FROM open_actions GROUP BY ticket_no)
         SELECT b.*, COALESCE(h.offices, 0) <= 1 AS awaiting_assignment,
                h.current_office,
-               DATE '{as_of}' - COALESCE(h.last_action, b.created_on) AS days_at_current
+               DATE '{as_of}' - GREATEST(COALESCE(h.last_action, b.created_on), b.created_on) AS days_at_current
         FROM open_base b LEFT JOIN held h USING (ticket_no)
     """)
 

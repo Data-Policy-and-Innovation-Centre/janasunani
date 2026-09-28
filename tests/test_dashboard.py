@@ -221,6 +221,19 @@ def test_timeline_marks_the_current_step_and_counts_to_the_snapshot(client):
     assert steps == [(_CELL, 11, False), (_COLL, 20, True)]
 
 
+def test_timeline_never_counts_time_before_filing(tmp_path):
+    # O61 (filed 30 May) gets an action dated the day before it was filed.
+    _write_lake(tmp_path / "lake", _ACTIONS + [("O61", datetime(2025, 5, 29), "Forwarded", _COLL)])
+    con = publisher.open_lake(tmp_path / "lake")
+    try:
+        publisher.build(con, tmp_path / "release")
+    finally:
+        con.close()
+    client = TestClient(create_app(dashboard=DashboardProvider(tmp_path / "release")))
+    tl = client.get("/dashboard/ticket/O61/timeline").json()
+    assert sum(s["days"] for s in tl["steps"]) == tl["daysOpen"] == 61
+
+
 def test_timeline_counts_the_wait_before_the_first_action(client):
     # O45 was filed 15 June and first acted on 16 June.
     tl = client.get("/dashboard/ticket/O45/timeline").json()
