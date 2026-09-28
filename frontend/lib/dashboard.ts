@@ -126,14 +126,13 @@ export const ORDERS: { id: Order; label: string }[] = [
   { id: "fastest", label: "Fastest" },
 ];
 
-/** The five phases in journey order, coloured as in the bottleneck notes
- * (`RAMP` in janasunani/analytics/figures.py). */
+/** The five phases in journey order, in the stage ramp from globals.css. */
 export const PHASES: { key: PhaseKey; label: string; color: string; ink: string }[] = [
-  { key: "registration", label: "Registration", color: "#8B1524", ink: "#fff" },
-  { key: "firstAssignment", label: "First assignment", color: "#9E3A47", ink: "#fff" },
-  { key: "fieldAction", label: "Field action", color: "#B0606A", ink: "#fff" },
-  { key: "review", label: "Review", color: "#C08189", ink: "#261f1c" },
-  { key: "closure", label: "Closure", color: "#CE9DA3", ink: "#261f1c" },
+  { key: "registration", label: "Registration", color: "var(--dpic-stage-1)", ink: "var(--dpic-white)" },
+  { key: "firstAssignment", label: "First assignment", color: "var(--dpic-stage-2)", ink: "var(--dpic-white)" },
+  { key: "fieldAction", label: "Field action", color: "var(--dpic-stage-3)", ink: "var(--dpic-white)" },
+  { key: "review", label: "Review", color: "var(--dpic-stage-4)", ink: "var(--dpic-text-dark)" },
+  { key: "closure", label: "Closure", color: "var(--dpic-stage-5)", ink: "var(--dpic-text-dark)" },
 ];
 
 export interface Segment {

@@ -82,7 +82,11 @@ export function LivePanel({ office, year }: { office: string; year: string }) {
   useEffect(() => {
     let cancelled = false;
     fetchLive(office || undefined, year || undefined)
-      .then((s) => !cancelled && setSummary(s))
+      .then((s) => {
+        if (cancelled) return;
+        setSummary(s);
+        setError(null);
+      })
       .catch((e: Error) => !cancelled && setError(e.message));
     return () => {
       cancelled = true;
@@ -98,6 +102,7 @@ export function LivePanel({ office, year }: { office: string; year: string }) {
         setItems(p.items);
         setTotal(p.total);
         setFacets(p.facets);
+        setError(null);
       })
       .catch((e: Error) => !cancelled && setError(e.message));
     return () => {

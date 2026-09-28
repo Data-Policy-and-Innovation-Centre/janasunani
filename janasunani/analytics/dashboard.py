@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import tempfile
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -138,15 +139,21 @@ def build(con: duckdb.DuckDBPyConnection, out: Path) -> dict:
         FROM phases_clean p JOIN g USING (ticket_no) JOIN route r USING (ticket_no)
     """)
 
-    for table in ("status_counts", "open_cases", "open_actions", "disposed_phases"):
-        con.execute(f"COPY {table} TO '{(out / table).as_posix()}.parquet' (FORMAT parquet)")
     meta = {
         "as_of": as_of.isoformat(),
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "offices": [{"id": oid, "label": label} for oid, label in ENTRY_OFFICES.values()],
         "years": _years(con, as_of),
     }
-    (out / "meta.json").write_text(json.dumps(meta, indent=2) + "\n")
+    # Every file is written aside first and swapped in only once all of them
+    # exist, so a failed run leaves the previous release whole. meta.json goes
+    # last: the API reloads when it changes.
+    tables = ("status_counts", "open_cases", "open_actions", "disposed_phases")
+    for table in tables:
+        con.execute(f"COPY {table} TO '{(out / table).as_posix()}.parquet.tmp' (FORMAT parquet)")
+    (out / "meta.json.tmp").write_text(json.dumps(meta, indent=2) + "\n")
+    for name in [f"{t}.parquet" for t in tables] + ["meta.json"]:
+        os.replace(out / f"{name}.tmp", out / name)
     return meta
 
 

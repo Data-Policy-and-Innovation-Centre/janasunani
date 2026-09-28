@@ -44,7 +44,11 @@ export function StatusTree({ office, year, onOpen }: { office: string; year: str
   useEffect(() => {
     let cancelled = false;
     fetchStatus(office || undefined, year || undefined)
-      .then((t) => !cancelled && setTree(t))
+      .then((t) => {
+        if (cancelled) return;
+        setTree(t);
+        setError(null);
+      })
       .catch((e: Error) => !cancelled && setError(e.message));
     return () => {
       cancelled = true;

@@ -49,7 +49,8 @@ export function DisposedPanel({ office, year }: { office: string; year: string }
   const [period, setPeriod] = useState("");
   const [drill, setDrill] = useState<Drill>({ level: "overall" });
   const [order, setOrder] = useState<Order>("slowest");
-  const [overall, setOverall] = useState<DisposalRow | null>(null);
+  // Undefined while loading; null once loaded with nothing to show.
+  const [overall, setOverall] = useState<DisposalRow | null | undefined>(undefined);
   const [rows, setRows] = useState<DisposalRow[]>([]);
   const [routes, setRoutes] = useState<RouteBreakdown | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -64,6 +65,7 @@ export function DisposedPanel({ office, year }: { office: string; year: string }
         if (cancelled) return;
         setOverall(b.rows[0] ?? null);
         setPeriod(b.period);
+        setError(null);
       })
       .catch((e: Error) => !cancelled && setError(e.message));
     return () => {
@@ -76,11 +78,19 @@ export function DisposedPanel({ office, year }: { office: string; year: string }
     const fail = (e: Error) => !cancelled && setError(e.message);
     if (drill.level === "dept" || drill.level === "category") {
       fetchDisposed({ level: drill.level, order, office: officeParam, year: yearParam, dept: drill.level === "category" ? drill.dept : undefined })
-        .then((b) => !cancelled && setRows(b.rows))
+        .then((b) => {
+          if (cancelled) return;
+          setRows(b.rows);
+          setError(null);
+        })
         .catch(fail);
     } else if (drill.level === "routes") {
       fetchRoutes({ office: officeParam, year: yearParam, dept: drill.dept, category: drill.category, order })
-        .then((r) => !cancelled && setRoutes(r))
+        .then((r) => {
+          if (cancelled) return;
+          setRoutes(r);
+          setError(null);
+        })
         .catch(fail);
     }
     return () => {
@@ -103,6 +113,10 @@ export function DisposedPanel({ office, year }: { office: string; year: string }
   return (
     <div className="space-y-8">
       {error && <p className="text-[16px] text-negative">{error}</p>}
+
+      {overall === null && (
+        <p className="text-[17px] text-text-secondary">No disposed cases here.</p>
+      )}
 
       {overall && (
         <section className="space-y-4">

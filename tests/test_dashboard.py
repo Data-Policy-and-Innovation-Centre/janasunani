@@ -330,6 +330,30 @@ def test_snapshot_date_is_the_last_filing_or_action(tmp_path):
     assert meta["as_of"] == "2025-08-02"
 
 
+def test_a_failed_publish_leaves_the_previous_release_whole(release, tmp_path):
+    rel = _copy(release, tmp_path / "rel")
+    before = {f.name: f.read_bytes() for f in rel.iterdir()}
+
+    class FailsMidway:
+        # The third table's write fails, after two have been written.
+        def __init__(self, con):
+            self.con = con
+
+        def execute(self, sql, *args):
+            if "COPY open_actions" in sql:
+                raise RuntimeError("disk full")
+            return self.con.execute(sql, *args)
+
+    _write_lake(tmp_path / "lake")
+    con = publisher.open_lake(tmp_path / "lake")
+    try:
+        with pytest.raises(RuntimeError, match="disk full"):
+            publisher.build(FailsMidway(con), rel)
+    finally:
+        con.close()
+    assert {f.name: f.read_bytes() for f in rel.iterdir() if not f.name.endswith(".tmp")} == before
+
+
 def _copy(release, dest):
     shutil.copytree(release, dest)
     return dest
