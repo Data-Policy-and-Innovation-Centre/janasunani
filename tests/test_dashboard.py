@@ -80,10 +80,10 @@ _ACTIONS = [
 ]
 
 
-def _write_lake(path, actions=_ACTIONS):
+def _write_lake(path, actions=_ACTIONS, complaints=_COMPLAINTS):
     path.mkdir(parents=True, exist_ok=True)
     pl.DataFrame(
-        _COMPLAINTS,
+        complaints,
         schema=[("ticket_no", pl.Utf8), ("created_on", pl.Datetime),
                 ("resolved_on", pl.Datetime), ("status", pl.Utf8), ("office", pl.Utf8),
                 ("dept", pl.Utf8), ("category", pl.Utf8)],
@@ -328,6 +328,34 @@ def test_snapshot_date_is_the_last_filing_or_action(tmp_path):
     finally:
         con.close()
     assert meta["as_of"] == "2025-08-02"
+
+
+def test_snapshot_date_counts_a_late_resolution(tmp_path):
+    # D1 resolved after the last filing and the last action.
+    late = [c if c[0] != "D1" else (*c[:2], datetime(2025, 8, 5), *c[3:]) for c in _COMPLAINTS]
+    _write_lake(tmp_path / "lake", complaints=late)
+    con = publisher.open_lake(tmp_path / "lake")
+    try:
+        meta = publisher.build(con, tmp_path / "release")
+    finally:
+        con.close()
+    assert meta["as_of"] == "2025-08-05"
+
+
+def test_leftover_temporary_files_do_not_block_a_publish(release, tmp_path):
+    # What a failed run leaves behind; the next run writes over it.
+    rel = _copy(release, tmp_path / "rel")
+    for name in ("open_cases.parquet.tmp", "meta.json.tmp"):
+        (rel / name).write_text("left over")
+    _write_lake(tmp_path / "lake")
+    con = publisher.open_lake(tmp_path / "lake")
+    try:
+        publisher.build(con, rel)
+    finally:
+        con.close()
+    assert not list(rel.glob("*.tmp"))
+    client = TestClient(create_app(dashboard=DashboardProvider(rel)))
+    assert client.get("/dashboard/live").status_code == 200
 
 
 def test_a_failed_publish_leaves_the_previous_release_whole(release, tmp_path):

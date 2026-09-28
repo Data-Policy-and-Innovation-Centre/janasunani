@@ -64,7 +64,7 @@ export function SupervisorSections() {
             <Picker label="Entry office" allLabel="Statewide" options={meta.offices} value={office} onChange={setOffice} />
             <Picker label="Year filed" allLabel="All years" options={meta.years} value={year} onChange={setYear} />
           </div>
-          <StatusTree office={office} year={year} onOpen={openBranch} />
+          <StatusTree key={scopeKey} office={office} year={year} onOpen={openBranch} />
         </div>
       )}
       <div ref={tabsRef} className="grid scroll-mt-24 grid-cols-2 border-y border-hair" role="tablist" aria-label="Supervisor sections">
