@@ -168,7 +168,12 @@ export function DisposedPanel({ office, year }: { office: string; year: string }
                     key={o.id}
                     type="button"
                     aria-pressed={order === o.id}
-                    onClick={() => setOrder(o.id)}
+                    onClick={() => {
+                      // The old ranking would contradict the new control.
+                      setRows([]);
+                      setRoutes(null);
+                      setOrder(o.id);
+                    }}
                     className={`px-3 py-1 ${order === o.id ? "bg-maroon text-white" : "text-text-secondary hover:bg-maroon-wash"}`}
                   >
                     {o.label}

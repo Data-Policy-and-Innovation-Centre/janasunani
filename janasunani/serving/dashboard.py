@@ -225,7 +225,7 @@ class DashboardProvider:
     def timeline(self, ticket_no: str) -> Timeline:
         cur = self._cursor()
         case = cur.execute(
-            "SELECT created_on, days_open FROM open_cases WHERE ticket_no = ?",
+            "SELECT created_on, days_open, entry_office FROM open_cases WHERE ticket_no = ?",
             [ticket_no]).fetchone()
         if case is None:
             raise KeyError(f"no open case {ticket_no}")
@@ -243,6 +243,13 @@ class DashboardProvider:
                          current=nxt is None)
             for d, s, o, nxt in rows
         ]
+        # Time before the first action is time too: the case sat at its entry
+        # desk from filing, so that wait is a step of its own.
+        first = rows[0][0] if rows else None
+        if first is not None and first > case[0]:
+            desk = {o.id: o.label for o in self.meta().offices}.get(case[2])
+            steps.insert(0, TimelineStep(date=case[0], status="Filed", office=desk,
+                                         days=(first - case[0]).days, current=False))
         return Timeline(ticket_no=ticket_no, created_on=case[0], as_of=as_of,
                         days_open=case[1], steps=steps)
 

@@ -221,6 +221,14 @@ def test_timeline_marks_the_current_step_and_counts_to_the_snapshot(client):
     assert steps == [(_CELL, 11, False), (_COLL, 20, True)]
 
 
+def test_timeline_counts_the_wait_before_the_first_action(client):
+    # O45 was filed 15 June and first acted on 16 June.
+    tl = client.get("/dashboard/ticket/O45/timeline").json()
+    first = tl["steps"][0]
+    assert (first["status"], first["office"], first["days"]) == ("Filed", "Collector", 1)
+    assert sum(s["days"] for s in tl["steps"]) == tl["daysOpen"] == 45
+
+
 def test_disposed_overall_phases_add_up_to_the_mean(client):
     (row,) = client.get("/dashboard/disposed", params=FY24).json()["rows"]
     # D1 29, D2 20, D3 9, D5 9, D6 10 days; D4 is outside FY 2024-25.
