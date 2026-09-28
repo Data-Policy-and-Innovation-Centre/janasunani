@@ -120,6 +120,15 @@ def test_api_can_read_the_dashboard_release():
     assert api["environment"]["JANASUNANI_DASHBOARD_DIR"] == "/app/outputs/dashboard"
 
 
+def test_deploy_makes_the_dashboard_dir_as_ubuntu_before_compose():
+    # A bind source compose has to create is owned by root, and the
+    # publisher runs as ubuntu, so it could never write the release.
+    wf = yaml.safe_load(DEPLOY_WORKFLOW_PATH.read_text())
+    steps = [s for job in wf["jobs"].values() for s in job.get("steps", [])]
+    ship = next(s for s in steps if s.get("name") == "Ship deploy artifacts to the box")
+    assert "~/janasunani/outputs/dashboard" in ship["run"].split("mkdir -p", 1)[1].splitlines()[0]
+
+
 def test_app_images_are_pinned_to_image_tag_not_latest():
     """A deploy must always be reproducible/rollback-able — no `latest`."""
     compose = _compose()

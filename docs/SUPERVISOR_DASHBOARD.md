@@ -40,7 +40,7 @@ endpoint answers 503 and the page says so.
 
 - **Live is a snapshot.** The lake is refreshed by re-materialisation, not fed
   live, so the tab says what date it is live as of. That date is the latest
-  filing date in the extract. Days open are counted to it.
+  filing, action or resolution in the extract. Days open are counted to it.
 - **Open** means the status is neither Disposed nor Discard. This is the same
   rule as `grievance_base.outcome = 'Open'`.
 - **Office** is the entry office: the desk that first received the case
