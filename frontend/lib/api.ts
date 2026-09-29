@@ -1,16 +1,18 @@
 // Client-side fetch layer for the Janasunani serving API. No auth, no SSR — the
 // browser calls the API directly. Base URL is env-configurable.
 import type { GrievanceResult, HealthResponse, HistoryPage } from "@/lib/types";
-import {
-  parseSupervisorDashboard,
-  type SupervisorDashboard,
-} from "@/lib/supervisor";
-import {
-  parseMonitoringCatalog,
-  parseMonitoringDashboard,
-  type MonitoringCatalog,
-  type MonitoringDashboard,
-} from "@/lib/monitoring";
+import type {
+  BucketId,
+  DashboardMeta,
+  DisposalBreakdown,
+  LiveSummary,
+  Order,
+  QueueFilters,
+  QueuePage,
+  RouteBreakdown,
+  StatusSummary,
+  Timeline,
+} from "@/lib/dashboard";
 
 const API_BASE = (
   process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000"
@@ -87,24 +89,33 @@ export async function fetchHistory(params: {
   return (await res.json()) as HistoryPage;
 }
 
-/** GET /supervisor - aggregate-only briefing data or explicit unavailable states. */
-export async function fetchSupervisorDashboard(): Promise<SupervisorDashboard> {
-  const res = await fetch(`${API_BASE}/supervisor`, { cache: "no-store" });
-  if (!res.ok) {
-    throw new Error("Supervisor aggregate endpoint is unavailable.");
+/** GET a dashboard endpoint; unset params are dropped, never sent empty. */
+async function dashboardGet<T>(path: string, params: Record<string, string | number | undefined> = {}): Promise<T> {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== "") qs.set(key, String(value));
   }
-  return parseSupervisorDashboard(await res.json());
+  const query = qs.toString();
+  const res = await fetch(`${API_BASE}/dashboard${path}${query ? `?${query}` : ""}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(await errorMessage(res));
+  return (await res.json()) as T;
 }
 
-export async function fetchMonitoringCatalog(): Promise<MonitoringCatalog> {
-  const res = await fetch(`${API_BASE}/supervisor/monitoring/catalog`, { cache: "no-store" });
-  if (!res.ok) throw new Error(await errorMessage(res));
-  return parseMonitoringCatalog(await res.json());
-}
+export const fetchDashboardMeta = () => dashboardGet<DashboardMeta>("/meta");
 
-export async function fetchMonitoringDashboard(scopeId: string, period: string): Promise<MonitoringDashboard> {
-  const query = new URLSearchParams({ scope_id: scopeId, period });
-  const res = await fetch(`${API_BASE}/supervisor/monitoring?${query}`, { cache: "no-store" });
-  if (!res.ok) throw new Error(await errorMessage(res));
-  return parseMonitoringDashboard(await res.json());
-}
+export const fetchStatus = (office?: string, year?: string) =>
+  dashboardGet<StatusSummary>("/status", { office, year });
+
+export const fetchLive = (office?: string, year?: string) => dashboardGet<LiveSummary>("/live", { office, year });
+
+export const fetchQueue = (bucket: BucketId, office: string | undefined, year: string | undefined, filters: QueueFilters, offset = 0, limit = 50) =>
+  dashboardGet<QueuePage>("/live/queue", { bucket, office, year, offset, limit, ...filters });
+
+export const fetchTimeline = (ticketNo: string) =>
+  dashboardGet<Timeline>(`/ticket/${encodeURIComponent(ticketNo)}/timeline`);
+
+export const fetchDisposed = (params: { level: "overall" | "dept" | "category"; order?: Order; office?: string; year?: string; dept?: string }) =>
+  dashboardGet<DisposalBreakdown>("/disposed", params);
+
+export const fetchRoutes = (params: { office?: string; year?: string; dept?: string; category?: string; order?: Order }) =>
+  dashboardGet<RouteBreakdown>("/disposed/routes", params);

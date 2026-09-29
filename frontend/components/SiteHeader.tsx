@@ -92,7 +92,7 @@ export function SiteHeader() {
         </nav>
 
         <span className="hidden flex-none font-mono text-[8.5px] uppercase tracking-[0.16em] text-text-secondary md:block">
-          Univ. of Chicago &times; Govt. of Odisha
+          Govt. of Odisha &times; Univ. of Chicago
         </span>
       </div>
       <ScrollProgress />

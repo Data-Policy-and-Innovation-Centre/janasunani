@@ -144,17 +144,10 @@ call**, auditing `reason="SarvamGovernanceError"`. This holds with
 
 ## 7. Supervisor surface
 
-`GET /supervisor` reads published aggregate artifacts from
-`JANASUNANI_SUPERVISOR_FINDINGS_DIR`; unset, every panel is `unavailable`.
-
-Two separate reasons it currently returns no `recorded` panel:
-
-- **closure** — needs `closure_finding_summary.csv`, which §5 refuses to write.
-- **workload and spike** — `RecordedWorkloadPanel` and `RecordedSpikePanel`
-  exist in `janasunani/serving/schemas.py` but are **constructed nowhere**.
-  `_dashboard()` in `janasunani/serving/intelligence.py` always emits the
-  unavailable variants. Completing the dedup backfill will not flip these
-  panels; that needs code.
-
-The frontend builds fine (`npm run build` in `frontend/`, Turbopack, Next 16.2.10)
-and the `/supervisor` route is on `feat/supervisor-screen`, not `main`.
+`/supervisor` reads the dashboard release in `outputs/dashboard/`, mounted into
+the API as `JANASUNANI_DASHBOARD_DIR`. Publish it on the box with
+`uv run janasunani-publish-dashboard`; until then every `/dashboard/*` endpoint
+answers 503 and the page says nothing is published. Re-publish after each
+re-materialisation, or the Live tab stays on the old snapshot date; the API
+picks up a new release on its next request, no restart needed. Details in
+[SUPERVISOR_DASHBOARD.md](SUPERVISOR_DASHBOARD.md).

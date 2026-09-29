@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 import math
-from typing import Annotated, Literal, Optional, get_args
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -524,286 +524,136 @@ class HealthResponse(BaseModel):
 
 
 # The individual-grievance models above are a frozen Phase 8-11 contract and
-# retain their established field names.  The supervisor endpoint is a new,
-# aggregate-only contract, so it uses camel-case aliases matching the frontend
-# data-transfer object rather than making the client translate Python names.
-class SupervisorResponseModel(BaseModel):
-    model_config = ConfigDict(alias_generator=_camel_case, populate_by_name=True)
-
-
-class SupervisorSlice(SupervisorResponseModel):
-    district: str
-    category: str
-    period: str
-
-
-class SupervisorAggregateCount(SupervisorResponseModel):
-    label: str
-    value: int = Field(ge=0)
-    explanation: str
-
-
-class RecordedArtifactProvenance(SupervisorResponseModel):
-    """A validated aggregate artifact, not a claim about source-data freshness."""
-
-    state: Literal["recorded"] = "recorded"
-    label: str
-    artifact: str
-    artifact_written_at: datetime
-
-
-class UnavailableArtifactProvenance(SupervisorResponseModel):
-    state: Literal["unavailable"] = "unavailable"
-    label: str
-    reason: str
-
-
-class RecordedWorkloadPanel(SupervisorResponseModel):
-    kind: Literal["Capability"] = "Capability"
-    title: str
-    slice: SupervisorSlice
-    provenance: RecordedArtifactProvenance
-    total_filings: SupervisorAggregateCount
-    distinct_problems: SupervisorAggregateCount
-    duplicate_adjustment: SupervisorAggregateCount
-
-
-class UnavailableWorkloadPanel(SupervisorResponseModel):
-    kind: Literal["Capability"] = "Capability"
-    title: str
-    provenance: UnavailableArtifactProvenance
-    requirement: str
-
-
-class RecordedSpikePanel(SupervisorResponseModel):
-    kind: Literal["Capability"] = "Capability"
-    title: str
-    slice: SupervisorSlice
-    provenance: RecordedArtifactProvenance
-    interpretation: str
-    counts: tuple[
-        SupervisorAggregateCount,
-        SupervisorAggregateCount,
-        SupervisorAggregateCount,
-    ]
-
-
-class UnavailableSpikePanel(SupervisorResponseModel):
-    kind: Literal["Capability"] = "Capability"
-    title: str
-    provenance: UnavailableArtifactProvenance
-    requirement: str
-
-
-class RecordedClosurePanel(SupervisorResponseModel):
-    kind: Literal["Insight"] = "Insight"
-    title: str
-    provenance: RecordedArtifactProvenance
-    numerator_label: str
-    numerator: int = Field(ge=0)
-    primary_denominator_label: str
-    primary_denominator: int = Field(ge=0)
-    primary_share_pct: float = Field(ge=0, le=100)
-    secondary_denominator_label: str
-    secondary_denominator: int = Field(ge=0)
-    secondary_share_pct: float = Field(ge=0, le=100)
-    caveat: str
-
-
-class UnavailableClosurePanel(SupervisorResponseModel):
-    kind: Literal["Insight"] = "Insight"
-    title: str
-    provenance: UnavailableArtifactProvenance
-    numerator_label: str
-    primary_denominator_label: str
-    secondary_denominator_label: str
-    caveat: str
-
-
-class SupervisorDashboard(SupervisorResponseModel):
-    """The aggregate-only response for the supervisor briefing surface."""
-
-    generated_label: str
-    safety_note: str
-    workload: RecordedWorkloadPanel | UnavailableWorkloadPanel
-    spike: RecordedSpikePanel | UnavailableSpikePanel
-    closure: RecordedClosurePanel | UnavailableClosurePanel
-
-
-class MonitoringResponseModel(BaseModel):
-    """Strict aggregate-only contract for the monitoring dashboard."""
-
+# retain their established field names. The supervisor dashboard is a newer
+# contract, so it uses camel-case aliases matching the frontend's types rather
+# than making the client translate Python names.
+class DashboardModel(BaseModel):
     model_config = ConfigDict(
         alias_generator=_camel_case,
         populate_by_name=True,
-        extra="forbid",
         # A NaN passes every range check and then breaks serialization.
         allow_inf_nan=False,
     )
 
 
-class MonitoringPeriod(MonitoringResponseModel):
+class DashboardOffice(DashboardModel):
     id: str
     label: str
-    start: date
-    end_exclusive: date
 
 
-class MonitoringScope(MonitoringResponseModel):
+class DashboardYear(DashboardModel):
+    """A July-June filing year: id "2024-25", fy_start 2024."""
+
     id: str
     label: str
-    kind: Literal[
-        "statewide", "department", "entry_office", "handling_office",
-        "handling_office_subtype",
-        # A cut within a department rather than a viewpoint of its own, so it
-        # is parented to its department and reached through the same cascade
-        # as handling_office_subtype.
-        "subcategory",
-    ]
-    parent_id: str | None = None
-    definition: str
-    quick_view: bool
-    available_periods: list[str]
+    fy_start: int
 
 
-class MonitoringCatalog(MonitoringResponseModel):
-    schema_version: Literal[1]
-    source_freshness: dict[str, str]
-    periods: list[MonitoringPeriod]
-    scopes: list[MonitoringScope]
-
-
-class MonitoringDenominator(MonitoringResponseModel):
-    label: str
-    value: int = Field(ge=0)
-
-
-class RecordedMonitoringMetric(MonitoringResponseModel):
-    id: str
-    label: str
-    state: Literal["recorded"]
-    value: float = Field(ge=0)
-    unit: Literal["grievances", "groups", "citizens", "closures", "days", "percent"]
-    numerator: int | None = Field(default=None, ge=0)
-    denominator: int | None = Field(default=None, ge=0)
-    coverage_pct: float | None = Field(default=None, ge=0, le=100)
-    note: str | None = None
-    # Whether the value counts what the record contains or stands in for it
-    # (closure wording for closure quality, a dedup group for a problem).
-    basis: Literal["direct", "proxy"]
-
-
-class UnavailableMonitoringMetric(MonitoringResponseModel):
-    id: str
-    label: str
-    state: Literal["unavailable"]
-    reason: str
-
-
-class MonitoringBreakdownRow(MonitoringResponseModel):
-    label: str
-    value: float = Field(ge=0)
-
-
-# The governed panels, in display order. Every published dashboard carries
-# each of them exactly once, recorded or explicitly unavailable.
-MonitoringPanelId = Literal[
-    "flow", "aging", "transfers", "journey", "atr", "demand", "closure", "discards",
-    "recording", "offices",
-]
-MONITORING_PANEL_IDS: tuple[str, ...] = get_args(MonitoringPanelId)
-#: The flow panel's stages, in order: each keeps what passed the one before,
-#: and the renderer subtracts neighbours, so the sequence is the contract.
-MONITORING_FLOW_STAGE_IDS: tuple[str, ...] = (
-    "flow-filed", "flow-kept", "flow-unique", "flow-routed", "flow-atr", "flow-reviewed", "flow-closed",
-)
-
-
-#: The frontend's text(): non-empty and at most 2,000 characters.
-MonitoringText = Annotated[str, Field(min_length=1, max_length=2_000)]
-
-
-class MonitoringTableColumn(MonitoringResponseModel):
-    label: MonitoringText
-    unit: Literal["grievances", "percent"]
-
-
-class MonitoringTableRow(MonitoringResponseModel):
-    label: MonitoringText
-    #: One per column; ``None`` is a cell withheld under the minimum cell.
-    values: list[float | None]
-
-
-class MonitoringTable(MonitoringResponseModel):
-    title: MonitoringText
-    columns: list[MonitoringTableColumn] = Field(min_length=1)
-    rows: list[MonitoringTableRow]
-
-    @model_validator(mode="after")
-    def _rows_fit_columns(self) -> "MonitoringTable":
-        if any(len(row.values) != len(self.columns) for row in self.rows):
-            raise ValueError("every table row needs one value per column")
-        for row in self.rows:
-            for column, value in zip(self.columns, row.values):
-                if value is None:
-                    continue
-                if value < 0:
-                    raise ValueError("table values cannot be negative")
-                if column.unit == "percent" and value > 100:
-                    raise ValueError("a percent cell cannot exceed 100")
-                if column.unit == "grievances" and not float(value).is_integer():
-                    raise ValueError("a grievance count must be whole")
-        return self
-
-
-class MonitoringPanel(MonitoringResponseModel):
-    id: MonitoringPanelId
-    title: str
-    state: Literal["recorded"]
-    denominator: MonitoringDenominator
-    metrics: list[RecordedMonitoringMetric | UnavailableMonitoringMetric]
-    breakdown: list[MonitoringBreakdownRow] | None = None
-    breakdown_unavailable_reason: str | None = None
-    #: Drill-down tables, published only where a panel carries them.
-    tables: list[MonitoringTable] | None = None
-    caveats: list[str]
-
-    @model_validator(mode="after")
-    def _flow_stages_in_order(self) -> "MonitoringPanel":
-        if self.id != "flow":
-            return self
-        if tuple(m.id for m in self.metrics) != MONITORING_FLOW_STAGE_IDS:
-            raise ValueError("the flow panel needs every stage, in order")
-        filed = self.metrics[0]
-        if not isinstance(filed, RecordedMonitoringMetric) or filed.value != self.denominator.value:
-            raise ValueError("the flow panel's filed stage is its recorded baseline")
-        # Each stage is a subset of the one before: whole counts that never grow.
-        shown = [m for m in self.metrics if isinstance(m, RecordedMonitoringMetric)]
-        if any(m.unit != "grievances" or not float(m.value).is_integer() for m in shown):
-            raise ValueError("flow stages are whole grievance counts")
-        if any(later.value > earlier.value for earlier, later in zip(shown, shown[1:])):
-            raise ValueError("a flow stage cannot exceed the one before it")
-        return self
-
-
-class UnavailableMonitoringPanel(MonitoringResponseModel):
-    id: MonitoringPanelId
-    title: str
-    state: Literal["unavailable"]
-    reason: str
-    caveats: list[str]
-
-
-class MonitoringDashboard(MonitoringResponseModel):
-    schema_version: Literal[1]
+class DashboardMeta(DashboardModel):
+    as_of: date
     generated_at: datetime
-    source_freshness: dict[str, str]
-    artifact: str
-    scope_id: str
-    scope_label: str
-    scope_kind: str
-    scope_definition: str
-    period_id: str
-    period_label: str
-    snapshot_date: date
-    panels: list[MonitoringPanel | UnavailableMonitoringPanel]
+    offices: list[DashboardOffice]
+    years: list[DashboardYear]
+
+
+class StatusSummary(DashboardModel):
+    """Filings in scope by how they stand. Open, disposed and discarded add up
+    to the total; disposed with benefit is part of disposed."""
+
+    period: str
+    total: int = Field(ge=0)
+    open: int = Field(ge=0)
+    disposed: int = Field(ge=0)
+    disposed_with_benefit: int = Field(ge=0)
+    discarded: int = Field(ge=0)
+
+
+AgeBucket = Literal["0-30", "31-60", "61+"]
+
+
+class LiveBucket(DashboardModel):
+    id: AgeBucket
+    label: str
+    count: int = Field(ge=0)
+
+
+class LiveSummary(DashboardModel):
+    as_of: date
+    open: int = Field(ge=0)
+    buckets: list[LiveBucket]
+
+
+class QueueItem(DashboardModel):
+    ticket_no: str
+    category: Optional[str]
+    dept: Optional[str]
+    days_open: int = Field(ge=0)
+    awaiting_assignment: bool
+
+
+class FacetCount(DashboardModel):
+    label: str
+    count: int = Field(ge=0)
+
+
+class QueueFacets(DashboardModel):
+    """What each filter value would leave, given the other filters chosen."""
+
+    categories: list[FacetCount]
+    depts: list[FacetCount]
+    awaiting: int = Field(ge=0)
+    not_awaiting: int = Field(ge=0)
+
+
+class QueuePage(DashboardModel):
+    items: list[QueueItem]
+    total: int = Field(ge=0)
+    limit: int
+    offset: int
+    facets: QueueFacets
+
+
+class TimelineStep(DashboardModel):
+    date: date
+    status: Optional[str]
+    office: Optional[str]
+    days: int = Field(ge=0)
+    current: bool
+
+
+class Timeline(DashboardModel):
+    ticket_no: str
+    created_on: date
+    as_of: date
+    days_open: int = Field(ge=0)
+    steps: list[TimelineStep]
+
+
+class Phases(DashboardModel):
+    """Mean days per phase. They add up to the row's mean."""
+
+    registration: float
+    first_assignment: float
+    field_action: float
+    review: float
+    closure: float
+
+
+class DisposalRow(DashboardModel):
+    label: str
+    n: int = Field(ge=0)
+    mean_days: float
+    phases: Phases
+
+
+class DisposalBreakdown(DashboardModel):
+    period: str
+    rows: list[DisposalRow]
+
+
+class RouteBreakdown(DashboardModel):
+    period: str
+    min_route_n: int
+    total: int = Field(ge=0)
+    # The named routes in the requested order, then "Other routes" if any.
+    rows: list[DisposalRow]

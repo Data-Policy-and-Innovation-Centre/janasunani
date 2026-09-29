@@ -251,8 +251,11 @@ jobs:
           chmod 600 ~/.ssh/config
 
       - name: Ship deploy artifacts to the box
+        # outputs/dashboard is made here, as ubuntu, because compose would
+        # otherwise create the missing bind source as root, and the publisher,
+        # which runs as ubuntu, could not write the release into it.
         run: |
-          ssh ubuntu@${{ vars.BOX_HOST }} "mkdir -p ~/janasunani/deploy/proxy"
+          ssh ubuntu@${{ vars.BOX_HOST }} "mkdir -p ~/janasunani/deploy/proxy ~/janasunani/outputs/dashboard"
           scp deploy/docker-compose.yml ubuntu@${{ vars.BOX_HOST }}:~/janasunani/deploy/docker-compose.yml
           scp deploy/deploy.sh ubuntu@${{ vars.BOX_HOST }}:~/janasunani/deploy/deploy.sh
           scp deploy/proxy/Caddyfile ubuntu@${{ vars.BOX_HOST }}:~/janasunani/deploy/proxy/Caddyfile
