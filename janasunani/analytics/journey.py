@@ -14,6 +14,10 @@ these rather than each keeping a copy of the SQL.
 Every function takes ``scope``: a SQL predicate over ``g``, the caller's own
 base view (itself built on ``grievance_base``). Callers are expected to have
 created ``g`` before calling.
+
+``ns`` prefixes every table read and written (``{ns}g``, ``{ns}steps``, ...),
+so two scopes can live on one connection: ``janasunani.analytics.sample``
+gives each sample its own. The default keeps the historical names.
 """
 
 from __future__ import annotations
@@ -23,7 +27,7 @@ import duckdb
 __all__ = [
     "install_steps", "install_phase_bounds", "install_phases", "install_returns",
     "install_route", "install_office_wait", "install_transferred",
-    "PHASES", "PHASE_LABEL", "ROLE_CASE", "RUNG_NAME", "SHORT_LEVEL", "SHORT_ROLE",
+    "PHASES", "PHASE_LABEL", "STAGES_FIVE", "STAGES_THREE", "ROLE_CASE", "RUNG_NAME", "SHORT_LEVEL", "SHORT_ROLE",
     "UNNAMED_ROLE",
 ]
 
@@ -88,7 +92,8 @@ ROLE_CASE = "CASE " + " ".join(
     for k, v in SHORT_ROLE.items()) + " ELSE x END"
 
 
-def install_steps(con: duckdb.DuckDBPyConnection, scope: str = "TRUE") -> None:
+def install_steps(con: duckdb.DuckDBPyConnection, scope: str = "TRUE",
+                  ns: str = "") -> None:
     """One row per action, with the grievance's journey summarised alongside.
 
     ``prev_code`` is what makes "the first time it was routed" answerable: a
@@ -101,7 +106,7 @@ def install_steps(con: duckdb.DuckDBPyConnection, scope: str = "TRUE") -> None:
     at what level of government they sat.
     """
     con.execute(f"""
-        CREATE OR REPLACE TABLE steps AS
+        CREATE OR REPLACE TABLE {ns}steps AS
         SELECT r.ticket_no, r.id, r.action_taken_date, r.action_status, r.rung, r.code,
                r.role_name,
                ROW_NUMBER() OVER w AS step_index,
@@ -111,21 +116,21 @@ def install_steps(con: duckdb.DuckDBPyConnection, scope: str = "TRUE") -> None:
                COUNT(*)     OVER (PARTITION BY r.ticket_no) AS n_steps,
                BOOL_OR(r.rung IS NULL) OVER (PARTITION BY r.ticket_no) AS has_unranked
         FROM acting_office_named r
-        JOIN (SELECT ticket_no FROM g WHERE {scope}) y USING (ticket_no)
+        JOIN (SELECT ticket_no FROM {ns}g WHERE {scope}) y USING (ticket_no)
         WHERE r.ticket_no IS NOT NULL AND r.action_taken_date IS NOT NULL
         WINDOW w AS (PARTITION BY r.ticket_no ORDER BY r.action_taken_date, r.id)
     """)
 
 
-def install_phase_bounds(con: duckdb.DuckDBPyConnection) -> None:
+def install_phase_bounds(con: duckdb.DuckDBPyConnection, ns: str = "") -> None:
     """The five dates that bound a grievance's phases.
 
     Grievances containing an office the rung ladder does not recognise are
     excluded here rather than given a wrong deepest rung; callers count them.
     """
-    con.execute("""
-        CREATE OR REPLACE TABLE phase_bounds AS
-        WITH s AS (SELECT * FROM steps WHERE NOT has_unranked AND rung IS NOT NULL),
+    con.execute(f"""
+        CREATE OR REPLACE TABLE {ns}phase_bounds AS
+        WITH s AS (SELECT * FROM {ns}steps WHERE NOT has_unranked AND rung IS NOT NULL),
         marks AS (
           SELECT ticket_no,
             MIN(action_taken_date) AS first_action,
@@ -158,8 +163,19 @@ PHASE_LABEL = {
     "closure": "Closure",
 }
 
+# Stage groupings for the exhibits: a stage is a sum of phases, so the mean of
+# each stage still adds to the mean total. Keys of STAGES_FIVE are the phase
+# names themselves, so existing callers index by phase as before.
+STAGES_FIVE = {p: [p] for p in PHASES}
+STAGES_THREE = {
+    "Processing": ["registration", "first_assignment", "closure"],
+    "Field action": ["field_action"],
+    "Review": ["review"],
+}
 
-def install_phases(con: duckdb.DuckDBPyConnection, scope: str = "TRUE") -> dict:
+
+def install_phases(con: duckdb.DuckDBPyConnection, scope: str = "TRUE",
+                   ns: str = "") -> dict:
     """Split each disposed grievance's elapsed time into five spans that tile.
 
     First assignment ends at the **first hand-off to a different office**, not
@@ -177,7 +193,7 @@ def install_phases(con: duckdb.DuckDBPyConnection, scope: str = "TRUE") -> dict:
     rather than quietly distorting an average.
     """
     con.execute(f"""
-        CREATE OR REPLACE TABLE phases AS
+        CREATE OR REPLACE TABLE {ns}phases AS
         WITH b AS (
           SELECT g.ticket_no, g.year, g.days_to_close,
                  b.deepest_rung, b.returned_up IS NOT NULL AS went_to_review,
@@ -188,7 +204,7 @@ def install_phases(con: duckdb.DuckDBPyConnection, scope: str = "TRUE") -> dict:
                  CAST(COALESCE(b.returned_up,  b.last_action) AS DATE) AS d3,
                  CAST(b.last_action AS DATE)                           AS d4,
                  CAST(g.resolved_on AS DATE)                           AS d5
-          FROM g JOIN phase_bounds b USING (ticket_no)
+          FROM {ns}g g JOIN {ns}phase_bounds b USING (ticket_no)
           WHERE g.is_disposed AND g.days_to_close IS NOT NULL AND {scope}),
         -- Force the boundaries to run forwards. Nothing in the source
         -- guarantees an action date is later than the one before it, and a
@@ -209,39 +225,39 @@ def install_phases(con: duckdb.DuckDBPyConnection, scope: str = "TRUE") -> dict:
     """)
     total = " + ".join(PHASES)
     con.execute(f"""
-        CREATE OR REPLACE TABLE phases_clean AS
-        SELECT *, {total} AS span_total FROM phases WHERE {total} = days_to_close
+        CREATE OR REPLACE TABLE {ns}phases_clean AS
+        SELECT *, {total} AS span_total FROM {ns}phases WHERE {total} = days_to_close
     """)
     bad = con.execute(
-        "SELECT COUNT(*) FROM phases_clean WHERE span_total <> days_to_close"
+        f"SELECT COUNT(*) FROM {ns}phases_clean WHERE span_total <> days_to_close"
     ).fetchone()[0]
     if bad:
         raise AssertionError(f"{bad} phase rows do not tile their total")
-    return con.execute("""
-        SELECT (SELECT COUNT(*) FROM phases)       AS all_rows,
-               (SELECT COUNT(*) FROM phases_clean) AS tiling_rows
+    return con.execute(f"""
+        SELECT (SELECT COUNT(*) FROM {ns}phases)       AS all_rows,
+               (SELECT COUNT(*) FROM {ns}phases_clean) AS tiling_rows
     """).pl().row(0, named=True)
 
 
-def install_returns(con: duckdb.DuckDBPyConnection) -> None:
+def install_returns(con: duckdb.DuckDBPyConnection, ns: str = "") -> None:
     """How many times a grievance arrived at its deepest office.
 
     More than once is consistent with the first round of action being judged
     insufficient, but the record states no reason, so this counts the pattern
     and claims nothing about the cause.
     """
-    con.execute("""
-        CREATE OR REPLACE TABLE returns AS
+    con.execute(f"""
+        CREATE OR REPLACE TABLE {ns}returns AS
         SELECT ticket_no,
                COUNT(*) FILTER (WHERE rung = deepest_rung
                                 AND (prev_rung IS NULL OR prev_rung < deepest_rung))
                    AS arrivals
-        FROM steps WHERE NOT has_unranked AND rung IS NOT NULL
+        FROM {ns}steps WHERE NOT has_unranked AND rung IS NOT NULL
         GROUP BY ticket_no
     """)
 
 
-def install_route(con: duckdb.DuckDBPyConnection) -> None:
+def install_route(con: duckdb.DuckDBPyConnection, ns: str = "") -> None:
     """The sequence of offices a grievance actually passed through.
 
     Two sequences, collapsed independently, because they answer different
@@ -257,11 +273,11 @@ def install_route(con: duckdb.DuckDBPyConnection) -> None:
         "WHEN rung = %d THEN '%s'" % (k, v.replace("'", "''"))
         for k, v in UNNAMED_ROLE.items()) + " END"
     con.execute(f"""
-        CREATE OR REPLACE TABLE route AS
+        CREATE OR REPLACE TABLE {ns}route AS
         WITH base AS (
           SELECT ticket_no, rung, step_index,
                  COALESCE(role_name, {unnamed}) AS role
-          FROM steps WHERE NOT has_unranked AND rung IS NOT NULL),
+          FROM {ns}steps WHERE NOT has_unranked AND rung IS NOT NULL),
         by_rung AS (
           SELECT *, LAG(rung) OVER (PARTITION BY ticket_no ORDER BY step_index) AS prev
           FROM base),
