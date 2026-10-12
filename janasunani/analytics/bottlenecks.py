@@ -11,11 +11,11 @@ The parameters are the department, the subcategory it narrows to, and the
 duplicate-group file for that department. Nothing else about the note changes
 between the two.
 
-**The sample narrows and never widens.** :class:`Bottlenecks` computes each
-step's count once into ``FUNNEL`` and every exhibit takes its n from there, so
-an exhibit cannot quietly stand on a population the reader has not been shown.
-The constructor asserts the funnel is monotone and that the entry-office
-partition accounts for every row of the step it partitions.
+The population is a :class:`~janasunani.analytics.sample.Sample` and the
+exhibits both notes share live in ``janasunani.analytics.exhibits``; this class
+holds the department's steps, its prose-bearing exhibits, and one-line calls
+into those two. It should not grow logic of its own: an exhibit a second note
+needs moves to ``exhibits``.
 
 Reads ``grievance_base`` and the journey tables only: no citizen prose, no
 officer name, no internal office code reaches an output.
@@ -24,22 +24,20 @@ officer name, no internal office code reaches an output.
 from __future__ import annotations
 
 import tempfile
-import textwrap
-from pathlib import Path
 
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
-import numpy as np
 import polars as pl
 from IPython.display import Markdown, display
 
-from janasunani.analytics import journey
-from janasunani.analytics.journey import ROLE_CASE, _sql_str
+from janasunani.analytics import exhibits, journey
+from janasunani.analytics.journey import ROLE_CASE
 from janasunani.analytics.figures import (
-    BLUE, INK, MAROON, ORANGE, RAMP, Report, barh, bars, bottleneck_dumbbell,
-    density, thousands, time_stats, use_dpic_style,
+    BLUE, INK, MAROON, ORANGE, Report, barh, bars, bottleneck_dumbbell,
+    thousands, time_stats, use_dpic_style,
 )
 from janasunani.analytics.marts import install
+from janasunani.analytics.sample import Sample
 from janasunani.olap.lake import connect
 
 __all__ = ["open_lake", "check_note", "Bottlenecks", "ENTRY_OFFICES",
@@ -161,8 +159,30 @@ class Bottlenecks:
         self.first_fy, self.last_fy = first_fy, last_fy
         self.span = f"July {first_fy} to June {last_fy + 1}"
 
-        self._build_g(dedup_csv)
-        self._build_funnel()
+        sub = "is_primary AND is_sub"
+        disposed = "AND is_disposed AND days_to_close IS NOT NULL"
+        self.s = Sample(
+            con, dedup_csv=dedup_csv,
+            base=f"dept_id = {dept_id} AND fy_start BETWEEN {first_fy} AND {last_fy}",
+            flags={"is_sub": f"subcategory = '{subcategory}'"},
+            steps=[
+                ("S0", f"All {dept} filings, {self.span}", "TRUE"),
+                ("S1", "Distinct claims, repeat filings collapsed", "is_primary"),
+                ("S2", "Claims filed in 2024-25", "is_primary AND year = '2024-25'"),
+                ("S3", "Disposed, with a usable closing date",
+                 f"is_primary AND year = '2024-25' {disposed}"),
+                ("P0", f"{self.Claims}, {self.span}", sub),
+                ("P1", f"{self.Claims} filed in 2024-25", f"{sub} AND year = '2024-25'"),
+                ("P2", "Disposed, with a usable closing date",
+                 f"{sub} AND year = '2024-25' {disposed}"),
+            ],
+            # Part 2 is a subset of Part 1's claims: P0 narrows S1.
+            narrows=[("S0", "S1"), ("S1", "S2"), ("S2", "S3"),
+                     ("P0", "P1"), ("P1", "P2"), ("S1", "P0")],
+            partition=ENTRY_OFFICES, partition_steps=("S2", "P1", "P2"))
+        # The same dicts, not copies: the journey steps P3 and P4 are added to
+        # the sample and must show up here.
+        self.STEPS, self.WHERE, self.FUNNEL = self.s.STEPS, self.s.WHERE, self.s.FUNNEL
 
         self.rep_dept = Report(con, [(dept, "is_primary")], figdir, prefix=prefix)
         self.rep_sub = Report(con, [(self.Claims, "is_primary AND is_sub")],
@@ -170,91 +190,13 @@ class Bottlenecks:
         self.rep_office = Report(con, ENTRY_OFFICES, figdir, prefix=prefix)
         self.q = self.rep_dept.q
 
-    # -- setup ---------------------------------------------------------------
-
-    def _build_g(self, dedup_csv) -> None:
-        """The department's grievances, with repeat filings marked.
-
-        Repeat filings are collapsed when they are the same complaint from the
-        same person: candidate pairs share a petitioner identity key (a salted
-        hash, never the number) and must still pass text verification. Derived
-        from citizen prose, so the mapping stays out of the lake and out of git
-        (ROADMAP 3.2); regenerate with
-        ``scripts/analysis/dedup_groups_for_slice.py``.
-        """
-        self.con.register("dedup_groups", pl.read_csv(Path(dedup_csv)))
-        self.con.execute(f"""
-        CREATE OR REPLACE TABLE g AS
-        WITH base AS (
-            SELECT * FROM grievance_base
-            WHERE dept_id = {self.dept_id}
-              AND fy_start BETWEEN {self.first_fy} AND {self.last_fy}),
-        ranked AS (
-            SELECT b.*, d.duplicate_group_id, d.group_size,
-                   ROW_NUMBER() OVER (
-                       PARTITION BY COALESCE(d.duplicate_group_id, b.ticket_no)
-                       ORDER BY b.created_on, b.ticket_no) AS filing_index
-            FROM base b LEFT JOIN dedup_groups d USING (ticket_no))
-        SELECT *, (filing_index = 1) AS is_primary,
-               (subcategory = '{self.subcategory}') AS is_sub
-        FROM ranked
-        """)
-
-    def _build_funnel(self) -> None:
-        sub = "is_primary AND is_sub"
-        self.STEPS = {
-            "S0": (f"All {self.dept} filings, {self.span}", "TRUE"),
-            "S1": ("Distinct claims, repeat filings collapsed", "is_primary"),
-            "S2": ("Claims filed in 2024-25", "is_primary AND year = '2024-25'"),
-            "S3": ("Disposed, with a usable closing date",
-                   "is_primary AND year = '2024-25' AND is_disposed "
-                   "AND days_to_close IS NOT NULL"),
-            "P0": (f"{self.Claims}, {self.span}", sub),
-            "P1": (f"{self.Claims} filed in 2024-25", f"{sub} AND year = '2024-25'"),
-            "P2": ("Disposed, with a usable closing date",
-                   f"{sub} AND year = '2024-25' AND is_disposed "
-                   "AND days_to_close IS NOT NULL"),
-        }
-        self.FUNNEL = {
-            k: self.con.execute(f"SELECT COUNT(*) FROM g WHERE {w}").fetchone()[0]
-            for k, (_, w) in self.STEPS.items()}
-        self.WHERE = {k: w for k, (_, w) in self.STEPS.items()}
-
-        # A funnel that ever grows is a funnel that has lost track of its base.
-        for a, b in [("S0", "S1"), ("S1", "S2"), ("S2", "S3"),
-                     ("P0", "P1"), ("P1", "P2")]:
-            assert self.FUNNEL[a] >= self.FUNNEL[b], (
-                f"{a} ({self.FUNNEL[a]:,}) < {b} ({self.FUNNEL[b]:,})")
-        assert self.FUNNEL["P0"] <= self.FUNNEL["S1"], "Part 2 must be a subset"
-
-        # A partition must account for every row in the step it partitions, or
-        # an exhibit can drop grievances without anyone noticing.
-        for key in ("S2", "P1", "P2"):
-            parts = sum(
-                self.con.execute(
-                    f"SELECT COUNT(*) FROM g WHERE {self.WHERE[key]} AND ({p})"
-                ).fetchone()[0] for _, p in ENTRY_OFFICES)
-            assert parts == self.FUNNEL[key], (
-                f"{key}: parts {parts:,} != {self.FUNNEL[key]:,}")
-
     # -- funnel presentation -------------------------------------------------
 
     def note(self, key: str, extra: str = "") -> str:
-        """The subtitle stamp every exhibit carries: which sample, and how big."""
-        return (f"{key} · {self.FUNNEL[key]:,} — {self.STEPS[key][0]}."
-                + (f" {extra}" if extra else ""))
+        return self.s.note(key, extra)
 
     def funnel_table(self, keys) -> pl.DataFrame:
-        keys = list(keys)
-        return pl.DataFrame({
-            "Step": keys,
-            "Sample": [self.STEPS[k][0] for k in keys],
-            "Grievances": [self.FUNNEL[k] for k in keys],
-            "% of the step above": [
-                None if i == 0
-                else round(100 * self.FUNNEL[k] / self.FUNNEL[keys[i - 1]], 1)
-                for i, k in enumerate(keys)],
-        })
+        return self.s.funnel_table(keys)
 
     def part1_funnel(self) -> None:
         display(Markdown("**The Part 1 funnel**"))
@@ -443,12 +385,8 @@ class Bottlenecks:
               GROUP BY 1 ORDER BY "Claims" DESC LIMIT 12"""))
 
     def outcomes(self, step, rep, title, save, figsize=(7.4, 2.7)) -> None:
-        fig, ax = plt.subplots(figsize=figsize)
-        d = self.q(f"""SELECT outcome, COUNT(*) AS n FROM g
-                       WHERE {self.WHERE[step]} GROUP BY 1 ORDER BY n DESC""")
-        barh(ax, list(d["outcome"]), list(d["n"]), shares=True)
-        ax.set_xlabel("Claims")
-        rep.finish(ax, title, self.note(step), xgrid=True, ygrid=False, save=save)
+        exhibits.draw_outcomes_bar(rep, exhibits.outcomes(self.s, step), title,
+                                   self.note(step), save, figsize)
 
     _TIME_NAMES = {"n": "Disposed", "median_days": "Median days",
                    "mean_days": "Mean days", "slowest_tenth": "Slowest tenth"}
@@ -640,18 +578,9 @@ class Bottlenecks:
 
     def install_journey(self) -> None:
         """Materialise the per-grievance journey tables and open step P3."""
-        journey.install_steps(self.con, self.WHERE["P1"])
-        journey.install_route(self.con)
+        self.s.install_route("P1", "P2")
         journey.install_office_wait(self.con)
         journey.install_returns(self.con)
-
-        self.FUNNEL["P3"] = self.q(
-            f"""SELECT COUNT(*) AS n FROM route r JOIN g USING (ticket_no)
-                WHERE {self.WHERE['P2']}""")["n"][0]
-        self.STEPS["P3"] = ("Dated history, every office on the rung ladder", None)
-        self.WHERE["P3"] = self.WHERE["P2"]
-        assert self.FUNNEL["P3"] <= self.FUNNEL["P2"], (
-            "route coverage cannot exceed its own base")
         display(Markdown(
             f"**P3 · {self.FUNNEL['P3']:,}** of the {self.FUNNEL['P2']:,} "
             f"disposed {self.claims} "
@@ -660,23 +589,8 @@ class Bottlenecks:
             "office the ladder does not name and are excluded from sections "
             "2.7 to 2.11."))
 
-    def _route_sql(self, flag: str, limit: int, pct_label: str) -> str:
-        return f"""
-          SELECT LIST_REDUCE(LIST_TRANSFORM(r.roles, x -> {ROLE_CASE}),
-                             (a, b) -> a || ' > ' || b) AS "Route",
-            COUNT(*) AS "Claims",
-            ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 1) AS "{pct_label}",
-            CAST(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY g.days_to_close)
-                 AS BIGINT) AS "Median days",
-            ROUND(AVG(g.days_to_close), 1) AS "Mean days"
-          FROM route r JOIN g USING (ticket_no)
-          WHERE {self.WHERE['P2']} AND {flag}
-          -- Route breaks the tie, so a table with several equal-sized routes
-          -- at its cut-off is the same table on the next run.
-          GROUP BY 1 ORDER BY "Claims" DESC, "Route" LIMIT {limit}"""
-
     def routes(self) -> None:
-        routes = self.q(self._route_sql("TRUE", 8, "% of claims"))
+        routes = exhibits.route_table(self.s, "P2", "TRUE", 8, "% of claims")
         display(Markdown(
             f"**The routes {self.claims} travel most often.** "
             f"P3 · {self.FUNNEL['P3']:,} claims. The eight most common are "
@@ -720,7 +634,7 @@ class Bottlenecks:
         for label, flag in ENTRY_OFFICES:
             n = self.q(f"""SELECT COUNT(*) AS n FROM route r JOIN g USING (ticket_no)
                            WHERE {self.WHERE['P2']} AND {flag}""")["n"][0]
-            df = self.q(self._route_sql(flag, top, "% within entry point"))
+            df = exhibits.route_table(self.s, "P2", flag, top, "% within entry point")
             display(Markdown(
                 f"**{label}** · {n:,} claims, of which the {len(df)} routes "
                 f"below cover {df['Claims'].sum():,} "
@@ -757,21 +671,7 @@ class Bottlenecks:
         here, is what lets those three be read against each other.
         """
         self.install_journey()
-        journey.install_phase_bounds(self.con)
-        chk = journey.install_phases(self.con, self.WHERE["P1"])
-        # The route travels with the phases, so a decomposition can be cut by
-        # it without rebuilding the join at each call site.
-        self.con.execute(f"""
-        CREATE OR REPLACE VIEW phases_pop AS
-        SELECT p.*, g.entry_route, g.received_directly,
-               LIST_REDUCE(LIST_TRANSFORM(r.roles, x -> {ROLE_CASE}),
-                           (a, b) -> a || ' > ' || b) AS route
-        FROM phases_clean p JOIN g USING (ticket_no)
-        LEFT JOIN route r USING (ticket_no)""")
-        self.FUNNEL["P4"] = chk["tiling_rows"]
-        self.STEPS["P4"] = ("The five phase spans tile the total", None)
-        self.WHERE["P4"] = "TRUE"
-        assert self.FUNNEL["P4"] <= self.FUNNEL["P2"]
+        chk = self.s.install_phases("P1", "P2")
 
         display(Markdown(
             "**What the phase sample leaves out, and what it does to the average**"))
@@ -812,157 +712,39 @@ class Bottlenecks:
             f"to quote for how long a {self.claim} takes."))
 
     def phase_means(self) -> tuple[dict, float]:
-        """The five mean spans and their total, asserted to agree.
-
-        Returned rather than only drawn, so a written report quotes the same
-        numbers as the chart.
-        """
-        P = journey.PHASES
-        kept = self.q("SELECT ROUND(AVG(days_to_close), 1) AS m FROM phases_clean")["m"][0]
-        means = self.q(f"""SELECT {', '.join(f'AVG({p}) AS {p}' for p in P)}
-                           FROM phases_clean""").row(0, named=True)
-        total = sum(float(means[p]) for p in P)
-        assert abs(total - float(kept)) <= 0.15, (
-            f"phases sum to {total}, total is {kept}")
-        return means, total
+        """The five mean spans and their total; see `exhibits.stage_means`."""
+        return exhibits.stage_means(self.s)
 
     def phases_aggregate(self) -> None:
         """The decomposition over the whole subcategory: the first of three cuts."""
-        P, LBL = journey.PHASES, journey.PHASE_LABEL
         means, total = self.phase_means()
-
-        fig, ax = plt.subplots(figsize=(8.4, 2.3))
-        left = 0.0
-        for i, p in enumerate(P):
-            v = float(means[p])
-            ax.barh([0], [v], left=left, color=RAMP[i % len(RAMP)], height=0.5,
-                    zorder=3)
-            if v > total * 0.04:
-                ax.text(left + v / 2, 0,
-                        f"{LBL[p]}\n{v:.0f}d ({100 * v / total:.0f}%)",
-                        ha="center", va="center", fontsize=8.5,
-                        color="white" if i < 3 else INK)
-            left += v
-        ax.set_yticks([])
-        ax.set_xlabel("Mean days")
-        ax.grid(False)
-        self.rep_sub.finish(
-            ax, f"Where the time goes on a {self.claim}",
+        exhibits.draw_stage_bar(
+            self.rep_sub, means, total, f"Where the time goes on a {self.claim}",
             f"P4 · {self.FUNNEL['P4']:,} claims. Means, so the five spans add "
-            f"to the {total:.0f}-day average.", ygrid=False, save="30_phases")
+            f"to the {total:.0f}-day average.", "30_phases")
 
         display(Markdown(
             f"**Mean and median days per phase.** P4 · {self.FUNNEL['P4']:,} "
             "claims in every row — review is zero, not missing, for a claim "
             "never sent back up, so the denominator does not change."))
-        display(self.q(f"""
-          SELECT UNNEST([{', '.join(repr(LBL[p]) for p in P)}]) AS "Phase",
-            UNNEST([{', '.join(f'ROUND(AVG({p}), 1)' for p in P)}]) AS "Mean days",
-            UNNEST([{', '.join(f'ROUND(100.0 * AVG({p}) / {total}, 1)' for p in P)}])
-              AS "% of total",
-            UNNEST([{', '.join(f'CAST(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY {p}) AS BIGINT)' for p in P)}])
-              AS "Median days"
-          FROM phases_clean"""))
+        display(exhibits.stage_table(self.s, total))
 
-        fig, axes = plt.subplots(1, 5, figsize=(13.0, 2.6))
-        for c, p in enumerate(P):
-            ax = axes[c]
-            vals = self.q(f"SELECT {p} AS v FROM phases_clean")["v"].to_list()
-            arr = np.asarray([float(v) for v in vals if v is not None])
-            if arr.size and float(np.percentile(arr, 95)) < 1:
-                # A smoothed curve over a 0-1 axis is an artefact of the axis.
-                ax.text(0.5, 0.55, f"{100 * float((arr == 0).mean()):.0f}%\nsame day",
-                        transform=ax.transAxes, ha="center", va="center",
-                        fontsize=11, color=MAROON, fontweight="bold")
-                ax.set_xticks([])
-            else:
-                density(ax, vals, colour=MAROON)
-            ax.set_title(LBL[p], fontsize=9, loc="left", color=INK, pad=3)
-            ax.set_yticks([])
-            ax.grid(False)
-            for s in ("top", "right", "left"):
-                ax.spines[s].set_visible(False)
-            ax.tick_params(labelsize=7.5)
-            ax.set_xlabel("days", fontsize=8)
-        self.rep_sub.finish_panels(
-            fig, "The shape of each phase, not just its middle",
+        exhibits.draw_stage_densities(
+            self.rep_sub, self.s, "The shape of each phase, not just its middle",
             f"P4 · {self.FUNNEL['P4']:,} claims. Curves run to each phase's "
             "95th percentile; median dashed, mean dotted.",
-            save="31_phase_distributions")
-
-    def _phase_rows(self, groups, floor: int):
-        """Mean phase spans per group, dropping groups below the floor.
-
-        The assert is the point: a group whose five spans do not add to its own
-        mean has been mis-tiled, and a stacked bar would hide that by drawing
-        whatever it was given.
-        """
-        P = journey.PHASES
-        rows = []
-        for lab, pred in groups:
-            r = self.q(f"""SELECT COUNT(*) AS n, ROUND(AVG(days_to_close), 1) AS total,
-                        {', '.join(f'ROUND(AVG({p}), 1) AS {p}' for p in P)}
-                      FROM phases_pop WHERE {pred}""").row(0, named=True)
-            if r["n"] < floor:
-                continue
-            parts = sum(float(r[p]) for p in P)
-            assert abs(parts - float(r["total"])) <= 0.15, (
-                f"{lab}: phases sum to {parts}, total is {r['total']}")
-            rows.append((lab, r))
-        return rows
-
-    def _phase_stack(self, rows, label_col: str, title: str, subtitle: str,
-                     save: str) -> None:
-        P, LBL = journey.PHASES, journey.PHASE_LABEL
-        display(pl.DataFrame({
-            label_col: [lab for lab, _ in rows],
-            "Claims": [r["n"] for _, r in rows],
-            **{LBL[p]: [float(r[p]) for _, r in rows] for p in P},
-            "Total": [float(r["total"]) for _, r in rows],
-        }))
-
-        # A route name is a sentence, and unwrapped it takes half the canvas
-        # before a single bar is drawn. Wrapped, the label column is bounded
-        # and the axis gets the room.
-        labels = ["\n".join(textwrap.wrap(lab, 34)) + f"\n({r['n']:,})"
-                  for lab, r in rows]
-        deep = max(lab.count("\n") for lab in labels)
-        height = 0.42 * len(rows) * (1 + 0.42 * deep) + 1.9
-        fig, ax = plt.subplots(figsize=(10.6, height))
-        for j, (lab, r) in enumerate(rows):
-            left = 0.0
-            for i, p in enumerate(P):
-                v = float(r[p])
-                ax.barh([j], [v], left=left, color=RAMP[i % len(RAMP)],
-                        height=0.6, zorder=3, label=LBL[p] if j == 0 else None)
-                if v > float(r["total"]) * 0.07:
-                    ax.text(left + v / 2, j, f"{v:.0f}", ha="center",
-                            va="center", fontsize=8,
-                            color="white" if i < 3 else INK)
-                left += v
-            ax.text(left + 1.5, j, f"{left:.0f}d", va="center", fontsize=8.5,
-                    color=INK)
-        ax.set_yticks(range(len(rows)), labels)
-        ax.invert_yaxis()
-        ax.set_xlabel("Mean days")
-        ax.grid(False)
-        # Below the axis, not inside it: an inside legend lands on the longest
-        # bar, which is the one the reader most wants to read.
-        # The offset is in axes fractions, so a fixed one lands a hand's width
-        # below a short chart and on the axis labels of a tall one.
-        ax.legend(loc="upper center", bbox_to_anchor=(0.5, -1.05 / height),
-                  ncol=5, fontsize=8)
-        self.rep_sub.finish(ax, title, subtitle, ygrid=False, save=save)
+            "31_phase_distributions")
 
     def phases_by_entry(self, floor: int = 100) -> None:
         """The second cut: the same five spans, by where the claim entered."""
-        rows = self._phase_rows(ENTRY_OFFICES, floor)
+        rows = exhibits.stage_rows(self.s, ENTRY_OFFICES, floor=floor)
         display(Markdown(
             f"**Mean days per phase, by entry point.** P4, partitioned · "
             f"{self.FUNNEL['P4']:,} claims. Entry points with fewer than "
             f"{floor} claims are omitted; the spans sum to each group's own mean."))
-        self._phase_stack(
-            rows, "Entry point", "Where the time goes, by where the claim entered",
+        exhibits.draw_stage_stack(
+            self.rep_sub, rows, "Entry point",
+            "Where the time goes, by where the claim entered",
             f"P4, partitioned · {self.FUNNEL['P4']:,} claims. Means, so each "
             "bar adds to that group's average.", "32_phases_by_entry")
 
@@ -973,12 +755,8 @@ class Bottlenecks:
         *where along the journey* a longer route spends its extra time, rather
         than only that it takes longer.
         """
-        common = self.q(f"""SELECT route, COUNT(*) AS n FROM phases_pop
-                            WHERE route IS NOT NULL
-                            GROUP BY 1 HAVING COUNT(*) >= {floor}
-                            ORDER BY n DESC, route LIMIT {top}""")
-        groups = [(r, f"route = {_sql_str(r)}") for r in common["route"]]
-        rows = self._phase_rows(groups, floor)
+        rows = exhibits.stage_rows(
+            self.s, exhibits.top_route_groups(self.s, top, floor), floor=floor)
         covered = sum(r["n"] for _, r in rows)
         display(Markdown(
             f"**Mean days per phase, by route.** P4, partitioned · "
@@ -986,8 +764,9 @@ class Bottlenecks:
             f"below carry {covered:,} ({100 * covered / self.FUNNEL['P4']:.0f}%). "
             f"Routes with fewer than {floor} claims are omitted; the spans sum "
             "to each route's own mean."))
-        self._phase_stack(
-            rows, "Route", "Where the time goes, by the route the claim took",
+        exhibits.draw_stage_stack(
+            self.rep_sub, rows, "Route",
+            "Where the time goes, by the route the claim took",
             f"P4, partitioned · {covered:,} claims on the {len(rows)} commonest "
             "routes. Means, so each bar adds to that route's average.",
             "33_phases_by_route")

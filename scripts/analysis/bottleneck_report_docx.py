@@ -30,7 +30,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
-from janasunani.analytics import journey
+from janasunani.analytics import exhibits, journey
 from janasunani.analytics.figures import time_stats
 from janasunani.analytics.bottlenecks import (
     DEPARTMENTS, ENTRY_OFFICES, Bottlenecks, check_note, open_lake,
@@ -225,7 +225,7 @@ def build(key: str) -> Path:
     LBL = journey.PHASE_LABEL
 
     entry = b.entry_time_table()
-    by_entry = {lab: r for lab, r in b._phase_rows(ENTRY_OFFICES, 100)}
+    by_entry = dict(exhibits.stage_rows(b.s, ENTRY_OFFICES, floor=100))
     named = [k for k in by_entry if k != UNRECORDED]
     fastest = min(named, key=lambda k: float(by_entry[k]["total"]))
     slowest = max(named, key=lambda k: float(by_entry[k]["total"]))
@@ -235,7 +235,7 @@ def build(key: str) -> Path:
     strong = gap >= ENTRY_EFFECT_DAYS
     means, phase_total = b.phase_means()
     levels = b.level_table()
-    routes = b.q(b._route_sql("TRUE", 5, "% of claims"))
+    routes = exhibits.route_table(b.s, "P2", "TRUE", 5, "% of claims")
     diffs = sorted(((LBL[p], float(slow[p]) - float(fast[p]))
                     for p in journey.PHASES), key=lambda kv: -kv[1])
     heaviest = max(journey.PHASES, key=lambda p: float(means[p]))

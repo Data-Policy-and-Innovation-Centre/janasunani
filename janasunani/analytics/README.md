@@ -22,19 +22,35 @@ way that means anything, by running the mart over a fixture lake in `tests/`.
 | `handoff` | Descriptive elapsed time between recorded handling steps, with aggregate coverage and sensitivity tables. |
 | `grievance_journey` | The CA&GR note's filing-mode, outcome and timing rules, plus the office decode and its rung ladder. Shared by the grievance notebooks. |
 
-## Notebook support (`figures.py`, `bottlenecks.py`)
+## Notebook support (`sample.py`, `exhibits.py`, `figures.py`, `bottlenecks.py`)
 
-Not marts or findings. They exist so the department notebooks and the report
-scripts share one copy of what they all need.
+Not marts or findings. They exist so the notebooks and the report scripts
+share one copy of what they all need. A note has three layers, and each lives
+in one place:
+
+* **Which grievances**: `sample.py`. A `Sample` is a base filter over
+  `grievance_base` plus an ordered list of narrowing steps, with the funnel
+  asserted to only narrow. `ns` prefixes its tables, so two samples can share
+  a connection.
+* **What is computed**: `exhibits.py`. Functions of a sample and a step key.
+  Numbers functions return DataFrames; `draw_` functions take them. Stage
+  groupings (`journey.STAGES_FIVE`, `STAGES_THREE`) are a parameter.
+* **Which document**: notebooks and `scripts/analysis/*_docx.py`. They compose
+  the two above. **A new note is a notebook and a list of steps, not a new
+  class.** Move an exhibit into `exhibits.py` once a second note needs it.
+
+Supporting these:
 
 * `figures.py`: the DPIC palette, the house rcParams and the layout helpers.
   Presentation only; it computes no number. Populations are a constructor
   argument, so a one-population notebook and a two-population notebook use the
   same panel code.
-* `bottlenecks.py`: the department bottleneck note as a module (`DEPARTMENTS`
-  holds each department's configuration). The notebooks and the Word reports
-  both call it, so a report cannot quote a figure the notebook does not
-  produce. Needs the dev dependency group (it imports IPython for display).
+* `bottlenecks.py`: the department bottleneck note (`DEPARTMENTS` holds each
+  department's configuration). It builds one `Sample` and keeps the exhibits
+  only that note uses; shared ones are one-line calls into `exhibits`. The
+  notebooks and the Word reports both call it, so a report cannot quote a
+  figure the notebook does not produce. Needs the dev dependency group (it
+  imports IPython for display).
 
 ## Journey tables (`journey.py`)
 
@@ -43,7 +59,8 @@ over a grievance's whole action history (`steps`, `phase_bounds`, `phases`,
 `returns`), plus the route and office-wait tables built on them. They take a
 scope and materialise, because as views over all 6.5M action rows the window
 cannot be pushed through; one uncapped run peaked at 55 GB. The static
-definitions stay in `sql/grievance_journey.sql`.
+definitions stay in `sql/grievance_journey.sql`. Every installer takes `ns`,
+which prefixes the tables it reads and writes; the default keeps the bare names.
 
 ### `action_type`: what the officer did (#75)
 
