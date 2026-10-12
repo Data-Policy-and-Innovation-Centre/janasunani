@@ -27,13 +27,15 @@ import numpy as np
 import polars as pl
 from IPython.display import display
 
-from janasunani.analytics.figures import INK, MAROON, RAMP, barh, density
+from janasunani.analytics.figures import (
+    BLUE, INK, MAROON, ORANGE, RAMP, barh, density, time_stats,
+)
 from janasunani.analytics.journey import (
     PHASE_LABEL, ROLE_CASE, STAGES_FIVE, _sql_str,
 )
 
 __all__ = [
-    "outcomes", "draw_outcomes_bar",
+    "outcomes", "draw_outcomes_bar", "draw_outcomes_pie", "durations",
     "stage_label", "stage_means", "stage_table", "stage_rows",
     "draw_stage_bar", "draw_stage_densities", "draw_stage_stack",
     "route_table", "top_route_groups",
@@ -54,6 +56,39 @@ def draw_outcomes_bar(rep, d: pl.DataFrame, title: str, subtitle: str,
     barh(ax, list(d["outcome"]), list(d["n"]), shares=True)
     ax.set_xlabel("Claims")
     rep.finish(ax, title, subtitle, xgrid=True, ygrid=False, save=save)
+
+
+def draw_outcomes_pie(rep, d: pl.DataFrame, title: str, subtitle: str,
+                      save: str) -> None:
+    """Disposed, discarded and still open, as shares of the step.
+
+    Three slices, because the house palette clears its separation checks for
+    three hues and fails at four. "Disposed with benefit" is part of disposed,
+    so it rides in that slice's label rather than taking a fourth colour.
+    """
+    n = dict(zip(d["outcome"], d["n"]))
+    benefit = n.get("Disposed with benefit", 0)
+    parts = [("Disposed", n.get("Disposed", 0) + benefit, MAROON),
+             ("Discarded", n.get("Discarded", 0), BLUE),
+             ("Open", n.get("Open", 0), ORANGE)]
+    parts = [p for p in parts if p[1]]
+    total = sum(v for _, v, _ in parts)
+    text = [f"{lab}\n{v:,} ({100 * v / total:.1f}%)" for lab, v, _ in parts]
+    if benefit:
+        text[0] += f"\nof which with benefit: {benefit:,}"
+    # A label on a sliver collides with its neighbour's. The slice stays, so
+    # the shares are still drawn to scale; its count moves under the chart.
+    small = [i for i, (_, v, _) in enumerate(parts) if v / total < 0.03]
+    fig, ax = plt.subplots(figsize=(6.4, 4.0))
+    ax.pie([v for _, v, _ in parts],
+           labels=["" if i in small else t for i, t in enumerate(text)],
+           colors=[c for _, _, c in parts], startangle=90, counterclock=False,
+           wedgeprops={"edgecolor": "white", "linewidth": 2},
+           textprops={"color": INK, "fontsize": 9})
+    ax.set_aspect("equal")
+    note = "; ".join(text[i].replace("\n", " ") for i in small) or None
+    rep.finish(ax, title, subtitle, note=note and f"Too small to label: {note}.",
+               ygrid=False, save=save)
 
 
 # -- stages -------------------------------------------------------------------
@@ -81,6 +116,11 @@ def stage_means(s, stages=STAGES_FIVE) -> tuple[dict, float]:
     assert abs(total - float(kept)) <= 0.15, (
         f"phases sum to {total}, total is {kept}")
     return means, total
+
+
+def durations(s) -> pl.DataFrame:
+    """Count, median, mean and slowest tenth of days to close over P4."""
+    return s.q(f"SELECT {time_stats()} FROM {s.t('phases_clean')}")
 
 
 def stage_table(s, total: float, stages=STAGES_FIVE) -> pl.DataFrame:

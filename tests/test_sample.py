@@ -11,6 +11,7 @@ Runs over the journey-tables fixture lake (R1 to R5, all dept 40, 2024-25),
 never the live one.
 """
 
+import polars as pl
 import pytest
 
 from janasunani.analytics import exhibits
@@ -106,4 +107,24 @@ def test_route_table_is_capped_and_ordered(con):  # noqa: F811
 
 def test_outcomes_account_for_the_whole_step(con):  # noqa: F811
     s = Sample(con, ns="o_", base="TRUE", steps=STEPS)
+    assert exhibits.outcomes(s, "F0")["n"].sum() == s.FUNNEL["F0"]
+
+
+def test_durations_stand_on_p4(con):  # noqa: F811
+    s = _sample(con, "a_")
+    assert exhibits.durations(s)["n"][0] == s.FUNNEL["P4"]
+
+
+def test_pie_folds_benefit_into_disposed(con, tmp_path):  # noqa: F811
+    import matplotlib
+    matplotlib.use("Agg")
+    from janasunani.analytics.figures import Report
+
+    s = Sample(con, ns="o_", base="TRUE", steps=STEPS)
+    rep = Report(con, [("All", "TRUE")], tmp_path, prefix="t_")
+    d = pl.DataFrame({"outcome": ["Disposed", "Disposed with benefit", "Open"],
+                      "n": [6, 2, 2]})
+    exhibits.draw_outcomes_pie(rep, d, "Title", s.note("F0"), "pie")
+    assert (tmp_path / "t_pie.png").exists()
+    # The shares the labels quote: benefit is inside disposed, not a slice.
     assert exhibits.outcomes(s, "F0")["n"].sum() == s.FUNNEL["F0"]

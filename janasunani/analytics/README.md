@@ -38,6 +38,8 @@ in one place:
 * **Which document**: notebooks and `scripts/analysis/*_docx.py`. They compose
   the two above. **A new note is a notebook and a list of steps, not a new
   class.** Move an exhibit into `exhibits.py` once a second note needs it.
+  `notebooks/disposal_2024_25.ipynb` is the smallest worked example: two
+  samples (statewide, one subcategory), the same exhibits over each.
 
 Supporting these:
 
