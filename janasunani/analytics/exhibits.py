@@ -28,17 +28,17 @@ import polars as pl
 from IPython.display import display
 
 from janasunani.analytics.figures import (
-    BLUE, INK, MAROON, ORANGE, RAMP, barh, density, time_stats,
+    BLUE, INK, INK_SOFT, MAROON, ORANGE, RAMP, barh, density, time_stats,
 )
 from janasunani.analytics.journey import (
-    PHASE_LABEL, ROLE_CASE, STAGES_FIVE, _sql_str,
+    PHASE_LABEL, ROLE_CASE, STAGES_FIVE, UNNAMED_CASE, _sql_str,
 )
 
 __all__ = [
     "outcomes", "draw_outcomes_bar", "draw_outcomes_pie", "durations",
     "stage_label", "stage_means", "stage_table", "stage_rows",
     "draw_stage_bar", "draw_stage_densities", "draw_stage_stack",
-    "route_table", "top_route_groups",
+    "route_table", "top_route_groups", "route_stage_roles",
 ]
 
 
@@ -212,11 +212,14 @@ def draw_stage_densities(rep, s, title: str, subtitle: str, save: str,
 
 
 def draw_stage_stack(rep, rows, label_col: str, title: str, subtitle: str,
-                     save: str, stages=STAGES_FIVE, share_of=None) -> None:
+                     save: str, stages=STAGES_FIVE, share_of=None,
+                     braces=None) -> None:
     """A table and one stacked bar per group, each adding to its own mean.
 
     ``share_of`` adds a "% of sample" column against that denominator, for
     when the groups are a selection (the top routes) rather than a partition.
+    ``braces`` is one ``{stage: text}`` per row, drawn as a brace under that
+    stage's segment: which offices held the claim during it.
     """
     table = {
         label_col: [lab for lab, _ in rows],
@@ -234,12 +237,20 @@ def draw_stage_stack(rep, rows, label_col: str, title: str, subtitle: str,
     labels = ["\n".join(textwrap.wrap(lab, 34)) + f"\n({r['n']:,})"
               for lab, r in rows]
     deep = max(lab.count("\n") for lab in labels)
+    # Braces need a band under each bar, so the rows spread apart.
+    pitch = 1.9 if braces else 1
+    pos = [j * pitch for j in range(len(rows))]
     height = 0.42 * len(rows) * (1 + 0.42 * deep) + 1.9
+    if braces:
+        height += 0.62 * len(rows)
     fig, ax = plt.subplots(figsize=(10.6, height))
-    for j, (lab, r) in enumerate(rows):
+    xmax = max(float(r["total"]) for _, r in rows)
+    for j, (lab, r) in zip(pos, rows):
         left = 0.0
         for i, k in enumerate(stages):
             v = float(r[k])
+            if braces and braces[pos.index(j)].get(k):
+                _brace(ax, left, left + v, j + 0.4, braces[pos.index(j)][k], xmax)
             ax.barh([j], [v], left=left, color=RAMP[i % len(RAMP)],
                     height=0.6, zorder=3, label=stage_label(k) if j == 0 else None)
             if v > float(r["total"]) * 0.07:
@@ -249,8 +260,11 @@ def draw_stage_stack(rep, rows, label_col: str, title: str, subtitle: str,
             left += v
         ax.text(left + 1.5, j, f"{left:.0f}d", va="center", fontsize=8.5,
                 color=INK)
-    ax.set_yticks(range(len(rows)), labels)
-    ax.invert_yaxis()
+    ax.set_yticks(pos, labels)
+    if braces:
+        ax.set_ylim(pos[-1] + 1.45, -0.6)
+    else:
+        ax.invert_yaxis()
     ax.set_xlabel("Mean days")
     ax.grid(False)
     # Below the axis, not inside it: an inside legend lands on the longest
@@ -260,6 +274,19 @@ def draw_stage_stack(rep, rows, label_col: str, title: str, subtitle: str,
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -1.05 / height),
               ncol=len(stages), fontsize=8)
     rep.finish(ax, title, subtitle, ygrid=False, save=save)
+
+
+def _brace(ax, x0: float, x1: float, y: float, text: str, xmax: float) -> None:
+    """A square brace under [x0, x1] at y (axis inverted: larger y is lower)."""
+    t, notch = 0.1, 0.12
+    xm = (x0 + x1) / 2
+    ax.plot([x0, x0, x1, x1], [y - t, y, y, y - t], color=INK_SOFT, lw=0.9,
+            solid_capstyle="butt", zorder=2)
+    ax.plot([xm, xm], [y, y + notch], color=INK_SOFT, lw=0.9, zorder=2)
+    # Wrap to the segment's own width so neighbouring labels do not meet.
+    width = max(12, int(100 * (x1 - x0) / xmax))
+    ax.text(xm, y + notch + 0.05, textwrap.fill(text, width), ha="center",
+            va="top", fontsize=7.5, color=INK, linespacing=1.1)
 
 
 # -- routes -------------------------------------------------------------------
@@ -292,3 +319,71 @@ def top_route_groups(s, top: int = 6, floor: int = 100) -> list[tuple[str, str]]
                      GROUP BY 1 HAVING COUNT(*) >= {floor}
                      ORDER BY n DESC, route LIMIT {top}""")
     return [(r, f"route = {_sql_str(r)}") for r in common["route"]]
+
+
+def route_stage_roles(s, groups, stages=STAGES_FIVE) -> pl.DataFrame:
+    """Which offices held each route's claims during each stage.
+
+    The stage boundaries are the phase boundaries: the first hand-off to a
+    different office ends first assignment, and the first step back above the
+    deepest office reached starts review. Each step of each claim in P4 is
+    tagged with its stage, consecutive steps in the same role and stage are
+    collapsed, and the offices are joined per stage. Registration and closure
+    have no office, so a stage made only of them is blank.
+
+    Claims on one route can split differently (a transfer between two
+    Collectors is a hand-off but not a change of role), so this returns the
+    commonest split per route and the share of the route's claims that follow
+    it. ``groups`` is :func:`top_route_groups` output.
+    """
+    stage_of = "CASE " + " ".join(
+        f"WHEN phase IN ({', '.join(_sql_str(p) for p in cols)}) THEN {_sql_str(k)}"
+        for k, cols in stages.items()) + " END"
+    routes = ", ".join(_sql_str(r) for r, _ in groups)
+    keys = list(stages)
+    d = s.q(f"""
+      WITH st AS (
+        SELECT t.ticket_no, t.step_index, t.rung, t.deepest_rung, t.prev_code, t.code,
+               COALESCE(t.role_name, {UNNAMED_CASE}) AS x, p.route
+        FROM {s.t('steps')} t JOIN {s.t('phases_pop')} p USING (ticket_no)
+        WHERE NOT t.has_unranked AND t.rung IS NOT NULL AND p.route IN ({routes})),
+      b AS (
+        SELECT ticket_no,
+          MIN(step_index) FILTER (WHERE prev_code IS NOT NULL
+                                    AND prev_code IS DISTINCT FROM code) AS fr,
+          MIN(step_index) FILTER (WHERE rung = deepest_rung) AS rd
+        FROM st GROUP BY 1),
+      b2 AS (
+        SELECT b.*, MIN(st.step_index) FILTER (
+            WHERE st.rung < st.deepest_rung AND st.step_index > b.rd) AS ru
+        FROM b JOIN st USING (ticket_no) GROUP BY b.ticket_no, b.fr, b.rd),
+      phased AS (
+        SELECT st.ticket_no, st.route, st.step_index, {ROLE_CASE} AS role,
+          CASE WHEN fr IS NULL OR step_index < fr THEN 'first_assignment'
+               WHEN ru IS NULL OR step_index < ru THEN 'field_action'
+               ELSE 'review' END AS phase
+        FROM st JOIN b2 USING (ticket_no)),
+      tagged AS (SELECT *, {stage_of} AS stage FROM phased),
+      kept AS (
+        SELECT * FROM (
+          SELECT *, LAG(role || '|' || stage) OVER (
+                   PARTITION BY ticket_no ORDER BY step_index) AS prev
+          FROM tagged)
+        WHERE prev IS NULL OR prev <> role || '|' || stage),
+      per_ticket AS (
+        SELECT ticket_no, ANY_VALUE(route) AS route,
+          {', '.join(f"COALESCE(STRING_AGG(role, ' > ' ORDER BY step_index) FILTER (WHERE stage = {_sql_str(k)}), '') AS \"{k}\"" for k in keys)}
+        FROM kept GROUP BY 1),
+      splits AS (
+        SELECT route, {', '.join(f'"{k}"' for k in keys)}, COUNT(*) AS n,
+          SUM(COUNT(*)) OVER (PARTITION BY route) AS route_n,
+          ROW_NUMBER() OVER (PARTITION BY route ORDER BY COUNT(*) DESC,
+                             {', '.join(f'"{k}"' for k in keys)}) AS rk
+        FROM per_ticket GROUP BY route, {', '.join(f'"{k}"' for k in keys)})
+      SELECT route AS "Route", {', '.join(f'"{k}"' for k in keys)},
+        ROUND(100.0 * n / route_n, 1) AS "% of route's claims"
+      FROM splits WHERE rk = 1""")
+    order = {r: i for i, (r, _) in enumerate(groups)}
+    return (d.with_columns(pl.col("Route").replace_strict(order).alias("_o"))
+             .sort("_o").drop("_o")
+             .rename({k: stage_label(k) for k in keys}))

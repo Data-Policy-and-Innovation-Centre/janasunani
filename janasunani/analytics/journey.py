@@ -75,6 +75,14 @@ UNNAMED_ROLE = {
 }
 
 
+# SQL naming an office the ladder can place but not name, by its rung. Shared
+# by the route and by anything that splits a route, so the two cannot disagree
+# about what an unnamed office is called.
+UNNAMED_CASE = "CASE " + " ".join(
+    "WHEN rung = %d THEN '%s'" % (k, v.replace("'", "''"))
+    for k, v in UNNAMED_ROLE.items()) + " END"
+
+
 def _sql_str(x: str) -> str:
     """A SQL string literal. Doubled quotes, not raw interpolation.
 
@@ -269,14 +277,11 @@ def install_route(con: duckdb.DuckDBPyConnection, ns: str = "") -> None:
 
     Reads `steps`, so the caller's scope already applies.
     """
-    unnamed = "CASE " + " ".join(
-        "WHEN rung = %d THEN '%s'" % (k, v.replace("'", "''"))
-        for k, v in UNNAMED_ROLE.items()) + " END"
     con.execute(f"""
         CREATE OR REPLACE TABLE {ns}route AS
         WITH base AS (
           SELECT ticket_no, rung, step_index,
-                 COALESCE(role_name, {unnamed}) AS role
+                 COALESCE(role_name, {UNNAMED_CASE}) AS role
           FROM {ns}steps WHERE NOT has_unranked AND rung IS NOT NULL),
         by_rung AS (
           SELECT *, LAG(rung) OVER (PARTITION BY ticket_no ORDER BY step_index) AS prev

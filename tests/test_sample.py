@@ -128,3 +128,29 @@ def test_pie_folds_benefit_into_disposed(con, tmp_path):  # noqa: F811
     assert (tmp_path / "t_pie.png").exists()
     # The shares the labels quote: benefit is inside disposed, not a slice.
     assert exhibits.outcomes(s, "F0")["n"].sum() == s.FUNNEL["F0"]
+
+
+def test_route_splits_into_the_offices_of_each_stage(con, tmp_path):  # noqa: F811
+    """R1: CM Cell, then Collector > BDO, then back up to the Collector.
+
+    The first hand-off (CM Cell to Collector) ends processing; the first step
+    above the deepest office (back to the Collector after the BDO) starts
+    review.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    from janasunani.analytics.figures import Report
+
+    s = _sample(con, "a_", base="ticket_no = 'R1'")
+    groups = exhibits.top_route_groups(s, top=3, floor=1)
+    got = exhibits.route_stage_roles(s, groups, STAGES_THREE).row(0, named=True)
+    assert got["Route"] == "CM Cell > Collector > BDO > Collector"
+    assert (got["Processing"], got["Field action"], got["Review"]) == (
+        "CM Cell", "Collector > BDO", "Collector")
+    assert got["% of route's claims"] == 100.0
+
+    rows = exhibits.stage_rows(s, groups, STAGES_THREE, floor=1)
+    rep = Report(con, [("All", "TRUE")], tmp_path, prefix="t_")
+    exhibits.draw_stage_stack(rep, rows, "Route", "T", "S", "stack", STAGES_THREE,
+                              braces=[{k: got[k] for k in STAGES_THREE}])
+    assert (tmp_path / "t_stack.png").exists()
