@@ -31,14 +31,18 @@ from janasunani.analytics.figures import (
     BLUE, INK, INK_SOFT, MAROON, ORANGE, RAMP, barh, density, time_stats,
 )
 from janasunani.analytics.journey import (
-    PHASE_LABEL, ROLE_CASE, STAGES_FIVE, UNNAMED_CASE, _sql_str,
+    PHASE_LABEL, ROLE_CASE, RUNG_NAME, STAGES_FIVE, _sql_str,
 )
+from janasunani.analytics.variance import shapley_shares
 
 __all__ = [
     "outcomes", "draw_outcomes_bar", "draw_outcomes_pie", "durations",
     "stage_label", "stage_means", "stage_table", "stage_rows",
     "draw_stage_bar", "draw_stage_densities", "draw_stage_stack",
     "route_table", "top_route_groups", "route_stage_roles",
+    "FIELD_LAYERS", "field_frame", "field_levels", "field_roles", "draw_field_levels",
+    "field_drivers", "draw_field_drivers", "office_means", "draw_office_spread",
+    "office_vs_district", "draw_district_offices",
 ]
 
 
@@ -167,15 +171,20 @@ def stage_rows(s, groups, stages=STAGES_FIVE, floor: int = 100):
 def draw_stage_bar(rep, means: dict, total: float, title: str, subtitle: str,
                    save: str, stages=STAGES_FIVE) -> None:
     """One bar, the mean total, split into its stages and labelled in place."""
+    _one_stack(rep, [(stage_label(k), float(means[k])) for k in stages], total,
+               title, subtitle, save)
+
+
+def _one_stack(rep, parts, total: float, title: str, subtitle: str, save: str) -> None:
+    """A single bar split into ``parts`` ``[(label, value)]``, labelled in place."""
     fig, ax = plt.subplots(figsize=(8.4, 2.3))
     left = 0.0
-    for i, k in enumerate(stages):
-        v = float(means[k])
+    for i, (lab, v) in enumerate(parts):
         ax.barh([0], [v], left=left, color=RAMP[i % len(RAMP)], height=0.5,
                 zorder=3)
         if v > total * 0.04:
             ax.text(left + v / 2, 0,
-                    f"{stage_label(k)}\n{v:.0f}d ({100 * v / total:.0f}%)",
+                    f"{lab}\n{v:.0f}d ({100 * v / total:.0f}%)",
                     ha="center", va="center", fontsize=8.5,
                     color="white" if i < 3 else INK)
         left += v
@@ -324,10 +333,9 @@ def top_route_groups(s, top: int = 6, floor: int = 100) -> list[tuple[str, str]]
 def route_stage_roles(s, groups, stages=STAGES_FIVE) -> pl.DataFrame:
     """Which offices held each route's claims during each stage.
 
-    The stage boundaries are the phase boundaries: the first hand-off to a
-    different office ends first assignment, and the first step back above the
-    deepest office reached starts review. Each step of each claim in P4 is
-    tagged with its stage, consecutive steps in the same role and stage are
+    The stage boundaries are the phase boundaries (``journey.
+    install_step_stages``). Each step of each claim in P4 is tagged with its
+    stage, consecutive steps in the same role and stage are
     collapsed, and the offices are joined per stage. Registration and closure
     have no office, so a stage made only of them is blank.
 
@@ -342,27 +350,11 @@ def route_stage_roles(s, groups, stages=STAGES_FIVE) -> pl.DataFrame:
     routes = ", ".join(_sql_str(r) for r, _ in groups)
     keys = list(stages)
     d = s.q(f"""
-      WITH st AS (
-        SELECT t.ticket_no, t.step_index, t.rung, t.deepest_rung, t.prev_code, t.code,
-               COALESCE(t.role_name, {UNNAMED_CASE}) AS x, p.route
-        FROM {s.t('steps')} t JOIN {s.t('phases_pop')} p USING (ticket_no)
-        WHERE NOT t.has_unranked AND t.rung IS NOT NULL AND p.route IN ({routes})),
-      b AS (
-        SELECT ticket_no,
-          MIN(step_index) FILTER (WHERE prev_code IS NOT NULL
-                                    AND prev_code IS DISTINCT FROM code) AS fr,
-          MIN(step_index) FILTER (WHERE rung = deepest_rung) AS rd
-        FROM st GROUP BY 1),
-      b2 AS (
-        SELECT b.*, MIN(st.step_index) FILTER (
-            WHERE st.rung < st.deepest_rung AND st.step_index > b.rd) AS ru
-        FROM b JOIN st USING (ticket_no) GROUP BY b.ticket_no, b.fr, b.rd),
-      phased AS (
-        SELECT st.ticket_no, st.route, st.step_index, {ROLE_CASE} AS role,
-          CASE WHEN fr IS NULL OR step_index < fr THEN 'first_assignment'
-               WHEN ru IS NULL OR step_index < ru THEN 'field_action'
-               ELSE 'review' END AS phase
-        FROM st JOIN b2 USING (ticket_no)),
+      WITH named AS (
+        SELECT ss.ticket_no, p.route, ss.step_index, ss.phase, ss.role AS x
+        FROM {s.t('step_stages')} ss JOIN {s.t('phases_pop')} p USING (ticket_no)
+        WHERE p.route IN ({routes})),
+      phased AS (SELECT *, {ROLE_CASE} AS role FROM named),
       tagged AS (SELECT *, {stage_of} AS stage FROM phased),
       kept AS (
         SELECT * FROM (
@@ -387,3 +379,195 @@ def route_stage_roles(s, groups, stages=STAGES_FIVE) -> pl.DataFrame:
     return (d.with_columns(pl.col("Route").replace_strict(order).alias("_o"))
              .sort("_o").drop("_o")
              .rename({k: stage_label(k) for k in keys}))
+
+
+# -- the field stage ----------------------------------------------------------
+
+# The layers a field span can be explained by, in a reader's words. Values are
+# columns of :func:`field_frame`.
+FIELD_LAYERS = {
+    "Which field office handles it": "field_office",
+    "Who sends it down": "sender_office",
+    "The route it takes": "route",
+    "Type of complaint": "subcategory",
+    "District": "district",
+    "Where it entered": "entry_route",
+    "Department": "dept",
+    "Month filed": "month",
+}
+
+_OFFICE = "role || COALESCE(', ' || NULLIF(place, ''), '')"
+
+
+def field_frame(s) -> pl.DataFrame:
+    """One row per P4 claim that reached field action, with its layers.
+
+    The field office is the desk holding the claim when it first reached its
+    deepest rung; the sender is the last desk before the first hand-off. Both
+    are a role and a place, never an internal code.
+    """
+    ss = s.t("step_stages")
+    return s.q(f"""
+      WITH o AS (
+        SELECT ticket_no,
+          ARG_MIN({_OFFICE}, step_index) FILTER (WHERE rung = deepest_rung) AS field_office,
+          ARG_MIN(role, step_index) FILTER (WHERE rung = deepest_rung) AS field_role,
+          ARG_MAX({_OFFICE}, step_index) FILTER (WHERE phase = 'first_assignment')
+            AS sender_office,
+          BOOL_OR(phase = 'field_action') AS reached_field
+        FROM {ss} GROUP BY 1)
+      SELECT p.ticket_no, p.field_action, p.route, p.entry_route,
+             g.dept, g.dept || ' / ' || COALESCE(g.subcategory, '(none)') AS subcategory,
+             g.district, STRFTIME(g.created_on, '%Y-%m') AS month,
+             o.field_office, o.field_role, o.sender_office
+      FROM {s.t('phases_pop')} p JOIN {s.t('g')} g USING (ticket_no)
+      JOIN o USING (ticket_no)
+      WHERE o.reached_field""")
+
+
+def _field_days_by(s, frame: pl.DataFrame, col: str) -> pl.DataFrame:
+    s.con.register("_field_tickets", frame.select("ticket_no"))
+    return s.q(f"""
+      SELECT {col} AS k, CAST(SUM(gap) AS DOUBLE) AS days FROM {s.t('step_stages')}
+      WHERE phase = 'field_action' AND gap IS NOT NULL
+        AND ticket_no IN (SELECT ticket_no FROM _field_tickets)
+      GROUP BY 1""").with_columns(
+        (pl.col("days") / frame.height).round(1).alias("Mean days per claim"),
+        (100 * pl.col("days") / pl.col("days").sum()).round(1).alias("% of field days"))
+
+
+def field_levels(s, frame: pl.DataFrame) -> pl.DataFrame:
+    """Field days by the level of the desk holding the claim; adds to the mean."""
+    return (_field_days_by(s, frame, "rung").sort("k")
+            .with_columns(pl.col("k").replace_strict(RUNG_NAME).alias("Level"))
+            .select("Level", "Mean days per claim", "% of field days"))
+
+
+def field_roles(s, frame: pl.DataFrame, top: int = 6) -> pl.DataFrame:
+    """Field days by the role holding the claim, the ``top`` roles and the rest."""
+    d = _field_days_by(s, frame, "role").sort("days", descending=True)
+    head, rest = d.head(top), d.slice(top)
+    if rest.height:
+        head = pl.concat([head, pl.DataFrame({
+            "k": ["All other desks"], "days": [rest["days"].sum()],
+            "Mean days per claim": [round(rest["days"].sum() / frame.height, 1)],
+            "% of field days": [round(rest["% of field days"].sum(), 1)]})],
+            how="vertical_relaxed")
+    return head.rename({"k": "Desk"}).select("Desk", "Mean days per claim",
+                                             "% of field days")
+
+
+def draw_field_levels(rep, levels: pl.DataFrame, roles: pl.DataFrame,
+                      title: str, subtitle: str, save: str) -> None:
+    """Where field days sit: one bar by level, then the desks by role."""
+    parts = [(r["Level"], float(r["Mean days per claim"]))
+             for r in levels.iter_rows(named=True) if r["Mean days per claim"] > 0]
+    _one_stack(rep, parts, sum(v for _, v in parts), title, subtitle, save)
+    fig, ax = plt.subplots(figsize=(8.2, 0.36 * roles.height + 1.4))
+    barh(ax, list(roles["Desk"]), list(roles["Mean days per claim"]),
+         shares=list(roles["% of field days"]), fmt="{:,.1f}d")
+    ax.set_xlabel("Mean field days per claim spent at this desk")
+    rep.finish(ax, "The same days, by desk", None, xgrid=True, ygrid=False,
+               save=save + "_roles")
+
+
+def field_drivers(frame: pl.DataFrame, layers=FIELD_LAYERS, seed: int = 0):
+    """Each layer's share of the field-time variation the record explains."""
+    return shapley_shares(frame, "field_action", layers, seed=seed)
+
+
+def draw_field_drivers(rep, shares: pl.DataFrame, full: float, title: str,
+                       subtitle: str, save: str) -> None:
+    fig, ax = plt.subplots(figsize=(8.2, 0.36 * shares.height + 1.5))
+    vals = [max(float(v), 0.0) for v in shares["% of what the record explains"]]
+    barh(ax, list(shares["Layer"]), vals, fmt="{:,.0f}%")
+    ax.set_xlabel("Share of the explained difference in field time (%)")
+    rep.finish(ax, title, subtitle,
+               note=(f"Together these explain {100 * full:.0f}% of the difference "
+                     "between one complaint's field time and another's, measured on "
+                     "complaints the model did not see. The rest is case-by-case."),
+               xgrid=True, ygrid=False, save=save)
+
+
+def office_means(frame: pl.DataFrame, floor: int = 30, role=None,
+                 subcategory=None) -> pl.DataFrame:
+    """Mean field days per field office, offices with at least ``floor`` claims."""
+    f = frame
+    if role:
+        f = f.filter(pl.col("field_role") == role)
+    if subcategory:
+        f = f.filter(pl.col("subcategory") == subcategory)
+    return (f.group_by("field_office", "district")
+             .agg(pl.len().alias("Claims"),
+                  pl.col("field_action").mean().round(1).alias("Mean field days"))
+             .filter(pl.col("Claims") >= floor)
+             .sort("Mean field days", "field_office")
+             .rename({"field_office": "Office", "district": "District"}))
+
+
+def draw_office_spread(rep, offices: pl.DataFrame, title: str, subtitle: str,
+                       save: str) -> None:
+    """Every office as a dot, fastest to slowest, the typical office marked.
+
+    Only the two ends are named on the chart: the dots there sit too close
+    for more labels to stay legible, so the caller shows the rest as a table.
+    """
+    y = [float(v) for v in offices["Mean field days"]]
+    x = list(range(len(y)))
+    med = float(np.median(y))
+    fig, ax = plt.subplots(figsize=(9.6, 3.6))
+    ax.scatter(x, y, s=14, color=MAROON, alpha=0.75, zorder=3, linewidths=0)
+    ax.axhline(med, color=INK_SOFT, lw=1, ls="--", zorder=2)
+    ax.text(0, med, f"typical office: {med:.0f} days", va="bottom", ha="left",
+            fontsize=8.5, color=INK_SOFT, zorder=4,
+            bbox={"facecolor": "white", "edgecolor": "none", "pad": 1.5})
+    names, top = list(offices["Office"]), max(y)
+    # Fastest: up and to the right, into the empty top-left. Slowest: to the
+    # left of its dot, level with it, where the curve has not yet climbed.
+    ax.annotate(f"fastest: {names[0]}, {y[0]:.0f} days", (x[0], y[0]),
+                xytext=(x[0] + len(y) * 0.04, top * 0.55), fontsize=7.5, color=INK,
+                arrowprops={"arrowstyle": "-", "color": INK_SOFT, "lw": 0.7})
+    ax.annotate(f"slowest: {names[-1]}, {y[-1]:.0f} days", (x[-1], y[-1]),
+                xytext=(x[-1] - len(y) * 0.04, y[-1]), ha="right", va="center",
+                fontsize=7.5, color=INK,
+                arrowprops={"arrowstyle": "-", "color": INK_SOFT, "lw": 0.7})
+    ax.set_xticks([])
+    ax.set_xlabel(f"{len(y)} offices, fastest to slowest")
+    ax.set_ylabel("Mean field days")
+    ax.set_ylim(bottom=0)
+    rep.finish(ax, title, subtitle, save=save)
+
+
+def office_vs_district(offices: pl.DataFrame, districts) -> tuple[float, float]:
+    """Median spread of offices within a district, and spread of district averages.
+
+    Lets a title claim "the office matters more" only when the data says so.
+    """
+    d = (offices.filter(pl.col("District").is_in(list(districts)))
+         .group_by("District")
+         .agg((pl.col("Mean field days").max() - pl.col("Mean field days").min()).alias("within"),
+              ((pl.col("Mean field days") * pl.col("Claims")).sum()
+               / pl.col("Claims").sum()).alias("avg")))
+    return float(d["within"].median()), float(d["avg"].max() - d["avg"].min())
+
+
+def draw_district_offices(rep, offices: pl.DataFrame, districts, title: str,
+                          subtitle: str, save: str) -> None:
+    """One row per district: its offices as dots, the district average as a bar."""
+    d = offices.filter(pl.col("District").is_in(list(districts)))
+    fig, ax = plt.subplots(figsize=(9.0, 0.55 * len(districts) + 1.4))
+    for j, dist in enumerate(districts):
+        o = d.filter(pl.col("District") == dist)
+        vals = [float(v) for v in o["Mean field days"]]
+        w = [int(n) for n in o["Claims"]]
+        avg = sum(v * n for v, n in zip(vals, w)) / sum(w)
+        ax.scatter(vals, [j] * len(vals), s=22, color=MAROON, alpha=0.6,
+                   linewidths=0, zorder=3)
+        ax.plot([avg, avg], [j - 0.3, j + 0.3], color=INK, lw=2.2, zorder=4)
+        ax.text(max(vals) + 2, j, f"{min(vals):.0f} to {max(vals):.0f} days",
+                va="center", fontsize=8, color=INK_SOFT)
+    ax.set_yticks(range(len(districts)), list(districts))
+    ax.invert_yaxis()
+    ax.set_xlim(left=0)
+    ax.set_xlabel("Mean field days (dots: offices; black bar: district average)")
+    rep.finish(ax, title, subtitle, xgrid=True, ygrid=False, save=save)

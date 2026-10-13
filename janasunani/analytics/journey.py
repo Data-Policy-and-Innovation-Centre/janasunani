@@ -26,7 +26,7 @@ import duckdb
 
 __all__ = [
     "install_steps", "install_phase_bounds", "install_phases", "install_returns",
-    "install_route", "install_office_wait", "install_transferred",
+    "install_route", "install_step_stages", "install_office_wait", "install_transferred",
     "PHASES", "PHASE_LABEL", "STAGES_FIVE", "STAGES_THREE", "ROLE_CASE", "RUNG_NAME", "SHORT_LEVEL", "SHORT_ROLE",
     "UNNAMED_ROLE",
 ]
@@ -298,6 +298,54 @@ def install_route(con: duckdb.DuckDBPyConnection, ns: str = "") -> None:
                      COUNT(DISTINCT role) AS offices_touched
               FROM role_kept GROUP BY ticket_no)
         SELECT * FROM r JOIN o USING (ticket_no)
+    """)
+
+
+def install_step_stages(con: duckdb.DuckDBPyConnection, ns: str = "") -> None:
+    """Each step of each tiling claim, tagged with the phase it falls in.
+
+    The boundaries are the ones the phase spans use, in step terms: the first
+    step at a different office from the one before it starts field action, and
+    the first step above the deepest rung after reaching it starts review.
+    Everything before the first hand-off is first assignment. Registration
+    and closure hold no step, so they never appear here.
+
+    ``gap`` is the days until the next recorded step, NULL on the last one:
+    the time this office held the claim. Within field action the gaps add up
+    to the field span for all but the claims whose dates run backwards.
+
+    Reads ``{ns}steps`` and ``{ns}phases_clean`` (P4), so call it after
+    ``install_phases``. ``place`` comes from the mart, so no output carries an
+    internal office code.
+    """
+    con.execute(f"""
+        CREATE OR REPLACE TABLE {ns}step_stages AS
+        WITH st0 AS (
+          SELECT ticket_no, id, step_index, rung, deepest_rung, prev_code, code,
+                 CAST(action_taken_date AS DATE) AS d,
+                 COALESCE(role_name, {UNNAMED_CASE}) AS role
+          FROM {ns}steps
+          WHERE NOT has_unranked AND rung IS NOT NULL
+            AND ticket_no IN (SELECT ticket_no FROM {ns}phases_clean)),
+        st AS (SELECT st0.*, a.place FROM st0 JOIN acting_office_named a USING (id)),
+        b AS (
+          SELECT ticket_no,
+            MIN(step_index) FILTER (WHERE prev_code IS NOT NULL
+                                      AND prev_code IS DISTINCT FROM code) AS fr,
+            MIN(step_index) FILTER (WHERE rung = deepest_rung) AS rd
+          FROM st GROUP BY 1),
+        b2 AS (
+          SELECT b.ticket_no, b.fr, MIN(st.step_index) FILTER (
+              WHERE st.rung < st.deepest_rung AND st.step_index > b.rd) AS ru
+          FROM b JOIN st USING (ticket_no) GROUP BY b.ticket_no, b.fr, b.rd)
+        SELECT st.ticket_no, st.step_index, st.rung, st.deepest_rung, st.role,
+               st.place,
+               CASE WHEN fr IS NULL OR step_index < fr THEN 'first_assignment'
+                    WHEN ru IS NULL OR step_index < ru THEN 'field_action'
+                    ELSE 'review' END AS phase,
+               LEAD(st.d) OVER (PARTITION BY st.ticket_no ORDER BY st.step_index)
+                 - st.d AS gap
+        FROM st JOIN b2 USING (ticket_no)
     """)
 
 

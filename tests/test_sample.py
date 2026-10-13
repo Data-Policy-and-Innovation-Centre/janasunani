@@ -154,3 +154,43 @@ def test_route_splits_into_the_offices_of_each_stage(con, tmp_path):  # noqa: F8
     exhibits.draw_stage_stack(rep, rows, "Route", "T", "S", "stack", STAGES_THREE,
                               braces=[{k: got[k] for k in STAGES_THREE}])
     assert (tmp_path / "t_stack.png").exists()
+
+
+def test_step_stages_tag_each_step_with_its_phase(con):  # noqa: F811
+    """R1: CM Cell (assignment), Collector x2 > BDO (field), Collector (review)."""
+    _sample(con, "a_", base="ticket_no = 'R1'")
+    got = con.execute("SELECT role, phase, gap FROM a_step_stages "
+                      "ORDER BY step_index").pl()
+    assert got["phase"].to_list() == ["first_assignment", "field_action",
+                                      "field_action", "field_action", "review"]
+    assert got["role"][0] == "Chief Minister's Grievance Cell"
+    assert got["gap"].to_list()[:4] == [2, 2, 4, 11]   # 1, 3, 5, 9, 20 July
+
+
+def test_field_frame_names_sender_and_field_office(con):  # noqa: F811
+    s = _sample(con, "a_")
+    f = exhibits.field_frame(s)
+    r1 = f.filter(pl.col("ticket_no") == "R1").row(0, named=True)
+    assert r1["sender_office"] == "Chief Minister's Grievance Cell"
+    assert r1["field_office"] == "Block Development Officer, Sadar"
+    # R2 never leaves its first office, so it never reaches field action.
+    assert "R2" not in f["ticket_no"].to_list()
+    levels = exhibits.field_levels(s, f)
+    assert sum(levels["Mean days per claim"]) == pytest.approx(
+        f["field_action"].mean(), abs=0.15)
+
+
+def test_shapley_gives_a_determining_layer_the_whole_share():
+    import numpy as np
+
+    from janasunani.analytics.variance import shapley_shares
+    rng = np.random.default_rng(1)
+    n = 4000
+    office = rng.integers(0, 40, n)
+    df = pl.DataFrame({"office": office.astype(str),
+                       "noise": rng.integers(0, 40, n).astype(str),
+                       "y": (office * 3.0) + rng.normal(0, 0.1, n)})
+    shares, full = shapley_shares(df, "y", {"Office": "office", "Noise": "noise"})
+    got = dict(zip(shares["Layer"], shares["% of what the record explains"]))
+    assert full > 0.99
+    assert got["Office"] > 99 and abs(got["Noise"]) < 1
