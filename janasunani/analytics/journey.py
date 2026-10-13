@@ -27,7 +27,7 @@ import duckdb
 __all__ = [
     "install_steps", "install_phase_bounds", "install_phases", "install_returns",
     "install_route", "install_step_stages", "install_office_wait", "install_transferred",
-    "PHASES", "PHASE_LABEL", "STAGES_FIVE", "STAGES_THREE", "ROLE_CASE", "RUNG_NAME", "SHORT_LEVEL", "SHORT_ROLE",
+    "PHASES", "PHASE_LABEL", "STAGES_FIVE", "STAGES_THREE", "STAGE_NAMES", "ROLE_CASE", "RUNG_NAME", "SHORT_LEVEL", "SHORT_ROLE",
     "UNNAMED_ROLE",
 ]
 
@@ -171,14 +171,23 @@ PHASE_LABEL = {
     "closure": "Closure",
 }
 
-# Stage groupings for the exhibits: a stage is a sum of phases, so the mean of
-# each stage still adds to the mean total. Keys of STAGES_FIVE are the phase
-# names themselves, so existing callers index by phase as before.
+# Stage groupings for the exhibits: a stage is a sum of phases, so the means
+# of the stages add to the mean of the phases they cover. Keys of STAGES_FIVE
+# are the phase names themselves, so existing callers index by phase.
 STAGES_FIVE = {p: [p] for p in PHASES}
+# The three stages a reader is shown. Closure (last action to formal closure)
+# is left out: it averages under a tenth of a day, statewide and in every
+# subcategory checked, so it would be a sliver no one can act on.
 STAGES_THREE = {
-    "Processing": ["registration", "first_assignment", "closure"],
-    "Field action": ["field_action"],
-    "Review": ["review"],
+    "Stage 1": ["registration", "first_assignment"],
+    "Stage 2": ["field_action"],
+    "Stage 3": ["review"],
+}
+# What each of the three is, in the words the note uses.
+STAGE_NAMES = {
+    "Stage 1": ("Processing", "From receipt to route selection"),
+    "Stage 2": ("Field action", "Action taken for disposal"),
+    "Stage 3": ("Review", "Review by the assigning authority"),
 }
 
 

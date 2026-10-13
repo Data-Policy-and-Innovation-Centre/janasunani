@@ -76,15 +76,30 @@ def test_stages_add_to_the_mean_however_folded(con, stages):  # noqa: F811
     s = _sample(con, "a_")
     means, total = exhibits.stage_means(s, stages)
     mean = s.count("SELECT AVG(days_to_close) FROM a_phases_clean")
-    assert total == pytest.approx(mean, abs=0.15)
+    # STAGES_THREE leaves closure out; the stages plus closure are the mean.
+    left_out = 0.0 if stages is STAGES_FIVE else s.count(
+        "SELECT AVG(closure) FROM a_phases_clean")
+    assert total + left_out == pytest.approx(mean, abs=0.15)
     table = exhibits.stage_table(s, total, stages)
     assert table["Phase"].to_list() == [exhibits.stage_label(k) for k in stages]
     assert sum(table["Mean days"]) == pytest.approx(total, abs=0.15)
 
 
-def test_three_stages_fold_every_phase_exactly_once():
+def test_three_stages_fold_every_phase_but_closure_once():
     folded = [p for cols in STAGES_THREE.values() for p in cols]
-    assert sorted(folded) == sorted(PHASES)
+    assert sorted(folded) == sorted(p for p in PHASES if p != "closure")
+
+
+def test_entry_routes_pick_each_entrys_commonest_route(con):  # noqa: F811
+    s = _sample(con, "a_")
+    t = exhibits.entry_routes(s, top=3)
+    assert t["Claims"].sum() <= s.FUNNEL["P4"]
+    groups = exhibits.entry_route_groups(t)
+    rows = exhibits.stage_rows(s, groups, STAGES_THREE, floor=1)
+    for (_, r), claims in zip(rows, t["Route claims"]):
+        assert r["n"] == claims
+    split = exhibits.route_stage_roles(s, groups, STAGES_THREE)
+    assert split["Route"].to_list() == [lab for lab, _ in groups][:split.height]
 
 
 def test_route_groups_decompose_to_their_own_means(con):  # noqa: F811
@@ -145,7 +160,7 @@ def test_route_splits_into_the_offices_of_each_stage(con, tmp_path):  # noqa: F8
     groups = exhibits.top_route_groups(s, top=3, floor=1)
     got = exhibits.route_stage_roles(s, groups, STAGES_THREE).row(0, named=True)
     assert got["Route"] == "CM Cell > Collector > BDO > Collector"
-    assert (got["Processing"], got["Field action"], got["Review"]) == (
+    assert (got["Stage 1"], got["Stage 2"], got["Stage 3"]) == (
         "CM Cell", "Collector > BDO", "Collector")
     assert got["% of route's claims"] == 100.0
 

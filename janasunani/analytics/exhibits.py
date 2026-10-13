@@ -31,7 +31,7 @@ from janasunani.analytics.figures import (
     BLUE, INK, INK_SOFT, MAROON, ORANGE, RAMP, barh, density, time_stats,
 )
 from janasunani.analytics.journey import (
-    PHASE_LABEL, ROLE_CASE, RUNG_NAME, STAGES_FIVE, _sql_str,
+    PHASE_LABEL, PHASES, ROLE_CASE, RUNG_NAME, STAGES_FIVE, _sql_str,
 )
 from janasunani.analytics.variance import shapley_shares
 
@@ -39,7 +39,8 @@ __all__ = [
     "outcomes", "draw_outcomes_bar", "draw_outcomes_pie", "durations",
     "stage_label", "stage_means", "stage_table", "stage_rows",
     "draw_stage_bar", "draw_stage_densities", "draw_stage_stack",
-    "route_table", "top_route_groups", "route_stage_roles",
+    "route_table", "top_route_groups", "route_stage_roles", "ENTRY_SHORT",
+    "entry_routes", "entry_route_groups",
     "FIELD_LAYERS", "field_frame", "field_levels", "field_roles", "draw_field_levels",
     "field_drivers", "draw_field_drivers", "office_means", "draw_office_spread",
     "office_vs_district", "draw_district_offices",
@@ -105,19 +106,30 @@ def _expr(cols) -> str:
     return cols[0] if len(cols) == 1 else "(" + " + ".join(cols) + ")"
 
 
+def _omitted(stages) -> list[str]:
+    """Phases a stage grouping leaves out (closure, for STAGES_THREE)."""
+    covered = {p for cols in stages.values() for p in cols}
+    return [p for p in PHASES if p not in covered]
+
+
 def stage_means(s, stages=STAGES_FIVE) -> tuple[dict, float]:
     """The mean span of each stage over P4, and their total, asserted to agree.
 
-    Returned rather than only drawn, so a written report quotes the same
-    numbers as the chart.
+    The total is the sum of the stages shown. It equals the mean time to
+    close once any phase the grouping leaves out is added back, and the
+    assert checks exactly that. Returned rather than only drawn, so a written
+    report quotes the same numbers as the chart.
     """
+    left_out = _omitted(stages)
+    rest = f"AVG({_expr(left_out)})" if left_out else "0"
     kept = s.q(f"SELECT ROUND(AVG(days_to_close), 1) AS m "
                f"FROM {s.t('phases_clean')}")["m"][0]
     means = s.q(f"""SELECT {', '.join(f'AVG({_expr(c)}) AS "{k}"'
-                                      for k, c in stages.items())}
+                                      for k, c in stages.items())},
+                    {rest} AS _rest
                     FROM {s.t('phases_clean')}""").row(0, named=True)
     total = sum(float(means[k]) for k in stages)
-    assert abs(total - float(kept)) <= 0.15, (
+    assert abs(total + float(means.pop("_rest")) - float(kept)) <= 0.15, (
         f"phases sum to {total}, total is {kept}")
     return means, total
 
@@ -153,17 +165,23 @@ def stage_rows(s, groups, stages=STAGES_FIVE, floor: int = 100):
     mean has been mis-tiled, and a stacked bar would hide that by drawing
     whatever it was given.
     """
+    left_out = _omitted(stages)
+    rest = f"ROUND(AVG({_expr(left_out)}), 1)" if left_out else "0"
     rows = []
     for lab, pred in groups:
         r = s.q(f"""SELECT COUNT(*) AS n, ROUND(AVG(days_to_close), 1) AS total,
                     {', '.join(f'ROUND(AVG({_expr(c)}), 1) AS "{k}"'
-                               for k, c in stages.items())}
+                               for k, c in stages.items())}, {rest} AS _rest
                   FROM {s.t('phases_pop')} WHERE {pred}""").row(0, named=True)
         if r["n"] < floor:
             continue
         parts = sum(float(r[k]) for k in stages)
-        assert abs(parts - float(r["total"])) <= 0.15, (
+        assert abs(parts + float(r["_rest"]) - float(r["total"])) <= 0.15, (
             f"{lab}: phases sum to {parts}, total is {r['total']}")
+        # A grouping that leaves a phase out is drawn to the sum it shows.
+        if left_out:
+            r["total"] = round(parts, 1)
+        del r["_rest"]
         rows.append((lab, r))
     return rows
 
@@ -222,17 +240,18 @@ def draw_stage_densities(rep, s, title: str, subtitle: str, save: str,
 
 def draw_stage_stack(rep, rows, label_col: str, title: str, subtitle: str,
                      save: str, stages=STAGES_FIVE, share_of=None,
-                     braces=None) -> None:
+                     braces=None, count_label: str = "Claims") -> None:
     """A table and one stacked bar per group, each adding to its own mean.
 
     ``share_of`` adds a "% of sample" column against that denominator, for
     when the groups are a selection (the top routes) rather than a partition.
     ``braces`` is one ``{stage: text}`` per row, drawn as a brace under that
-    stage's segment: which offices held the claim during it.
+    stage's segment: which offices held the claim during it. ``count_label``
+    names the count column, for a note that says "complaints".
     """
     table = {
         label_col: [lab for lab, _ in rows],
-        "Claims": [r["n"] for _, r in rows],
+        count_label: [r["n"] for _, r in rows],
     }
     if share_of:
         table["% of sample"] = [round(100 * r["n"] / share_of, 1) for _, r in rows]
@@ -341,19 +360,25 @@ def route_stage_roles(s, groups, stages=STAGES_FIVE) -> pl.DataFrame:
 
     Claims on one route can split differently (a transfer between two
     Collectors is a hand-off but not a change of role), so this returns the
-    commonest split per route and the share of the route's claims that follow
-    it. ``groups`` is :func:`top_route_groups` output.
+    commonest split per group and the share of the group's claims that follow
+    it. ``groups`` is ``[(label, predicate over phases_pop)]``, as from
+    :func:`top_route_groups` or :func:`entry_route_groups`; the ``Route``
+    column carries the label. A claim matching two predicates counts in the
+    first.
     """
     stage_of = "CASE " + " ".join(
         f"WHEN phase IN ({', '.join(_sql_str(p) for p in cols)}) THEN {_sql_str(k)}"
         for k, cols in stages.items()) + " END"
-    routes = ", ".join(_sql_str(r) for r, _ in groups)
+    group_of = "CASE " + " ".join(
+        f"WHEN {pred} THEN {_sql_str(lab)}" for lab, pred in groups) + " END"
     keys = list(stages)
     d = s.q(f"""
-      WITH named AS (
-        SELECT ss.ticket_no, p.route, ss.step_index, ss.phase, ss.role AS x
-        FROM {s.t('step_stages')} ss JOIN {s.t('phases_pop')} p USING (ticket_no)
-        WHERE p.route IN ({routes})),
+      WITH grouped AS (
+        SELECT ticket_no, {group_of} AS route FROM {s.t('phases_pop')}),
+      named AS (
+        SELECT ss.ticket_no, gr.route, ss.step_index, ss.phase, ss.role AS x
+        FROM {s.t('step_stages')} ss JOIN grouped gr USING (ticket_no)
+        WHERE gr.route IS NOT NULL),
       phased AS (SELECT *, {ROLE_CASE} AS role FROM named),
       tagged AS (SELECT *, {stage_of} AS stage FROM phased),
       kept AS (
@@ -379,6 +404,52 @@ def route_stage_roles(s, groups, stages=STAGES_FIVE) -> pl.DataFrame:
     return (d.with_columns(pl.col("Route").replace_strict(order).alias("_o"))
              .sort("_o").drop("_o")
              .rename({k: stage_label(k) for k in keys}))
+
+
+# Entry points as a reader says them. The mart's wording names the forwarding
+# act ("Forwarded from a District Collector"); a sentence wants the office.
+ENTRY_SHORT = {
+    "Forwarded from a District Collector": "Collector",
+    "Forwarded from the Chief Minister's Cell": "CM Cell",
+    "Received directly by the department": "Department, directly",
+    "Forwarded from the Chief Secretary": "Chief Secretary",
+    "Forwarded from the police": "Police",
+    "Forwarded from the Governor's office": "Governor's office",
+    "Entry point not recorded": "Entry not recorded",
+}
+
+
+def entry_routes(s, top: int = 3) -> pl.DataFrame:
+    """The ``top`` entry offices in P4 by volume, and each one's commonest route.
+
+    Shares: the entry office's of all P4 claims, and the route's of that
+    entry office's claims. Ties break on the name, so a rerun is the same table.
+    """
+    pp = s.t("phases_pop")
+    return s.q(f"""
+      WITH e AS (
+        SELECT entry_route, COUNT(*) AS n FROM {pp}
+        GROUP BY 1 ORDER BY n DESC, entry_route LIMIT {top}),
+      r AS (
+        SELECT entry_route, route, COUNT(*) AS n,
+               ROW_NUMBER() OVER (PARTITION BY entry_route
+                                  ORDER BY COUNT(*) DESC, route) AS rk
+        FROM {pp} WHERE route IS NOT NULL
+          AND entry_route IN (SELECT entry_route FROM e)
+        GROUP BY 1, 2)
+      SELECT e.entry_route AS "Entry", e.n AS "Claims",
+             ROUND(100.0 * e.n / (SELECT COUNT(*) FROM {pp}), 1) AS "% of sample",
+             r.route AS "Commonest route", r.n AS "Route claims",
+             ROUND(100.0 * r.n / e.n, 1) AS "% of entry"
+      FROM e JOIN r ON r.entry_route = e.entry_route AND r.rk = 1
+      ORDER BY e.n DESC, e.entry_route""")
+
+
+def entry_route_groups(table: pl.DataFrame) -> list[tuple[str, str]]:
+    """One group per row of :func:`entry_routes`: that entry office, on its route."""
+    return [(f"{ENTRY_SHORT.get(r['Entry'], r['Entry'])}: {r['Commonest route']}",
+             f"entry_route = {_sql_str(r['Entry'])} AND route = {_sql_str(r['Commonest route'])}")
+            for r in table.iter_rows(named=True)]
 
 
 # -- the field stage ----------------------------------------------------------
@@ -458,7 +529,8 @@ def field_roles(s, frame: pl.DataFrame, top: int = 6) -> pl.DataFrame:
 
 
 def draw_field_levels(rep, levels: pl.DataFrame, roles: pl.DataFrame,
-                      title: str, subtitle: str, save: str) -> None:
+                      title: str, subtitle: str, save: str,
+                      days_label: str = "field days") -> None:
     """Where field days sit: one bar by level, then the desks by role."""
     parts = [(r["Level"], float(r["Mean days per claim"]))
              for r in levels.iter_rows(named=True) if r["Mean days per claim"] > 0]
@@ -466,7 +538,7 @@ def draw_field_levels(rep, levels: pl.DataFrame, roles: pl.DataFrame,
     fig, ax = plt.subplots(figsize=(8.2, 0.36 * roles.height + 1.4))
     barh(ax, list(roles["Desk"]), list(roles["Mean days per claim"]),
          shares=list(roles["% of field days"]), fmt="{:,.1f}d")
-    ax.set_xlabel("Mean field days per claim spent at this desk")
+    ax.set_xlabel(f"Average {days_label} spent at this office")
     rep.finish(ax, "The same days, by desk", None, xgrid=True, ygrid=False,
                save=save + "_roles")
 
@@ -477,14 +549,14 @@ def field_drivers(frame: pl.DataFrame, layers=FIELD_LAYERS, seed: int = 0):
 
 
 def draw_field_drivers(rep, shares: pl.DataFrame, full: float, title: str,
-                       subtitle: str, save: str) -> None:
+                       subtitle: str, save: str, days_label: str = "field days") -> None:
     fig, ax = plt.subplots(figsize=(8.2, 0.36 * shares.height + 1.5))
     vals = [max(float(v), 0.0) for v in shares["% of what the record explains"]]
     barh(ax, list(shares["Layer"]), vals, fmt="{:,.0f}%")
-    ax.set_xlabel("Share of the explained difference in field time (%)")
+    ax.set_xlabel(f"Share of the explained difference in {days_label} (%)")
     rep.finish(ax, title, subtitle,
                note=(f"Together these explain {100 * full:.0f}% of the difference "
-                     "between one complaint's field time and another's, measured on "
+                     f"in {days_label} between one complaint and another, measured on "
                      "complaints the model did not see. The rest is case-by-case."),
                xgrid=True, ygrid=False, save=save)
 
@@ -506,7 +578,7 @@ def office_means(frame: pl.DataFrame, floor: int = 30, role=None,
 
 
 def draw_office_spread(rep, offices: pl.DataFrame, title: str, subtitle: str,
-                       save: str) -> None:
+                       save: str, days_label: str = "field days") -> None:
     """Every office as a dot, fastest to slowest, the typical office marked.
 
     Only the two ends are named on the chart: the dots there sit too close
@@ -533,7 +605,7 @@ def draw_office_spread(rep, offices: pl.DataFrame, title: str, subtitle: str,
                 arrowprops={"arrowstyle": "-", "color": INK_SOFT, "lw": 0.7})
     ax.set_xticks([])
     ax.set_xlabel(f"{len(y)} offices, fastest to slowest")
-    ax.set_ylabel("Mean field days")
+    ax.set_ylabel(f"Average {days_label}")
     ax.set_ylim(bottom=0)
     rep.finish(ax, title, subtitle, save=save)
 
@@ -552,7 +624,7 @@ def office_vs_district(offices: pl.DataFrame, districts) -> tuple[float, float]:
 
 
 def draw_district_offices(rep, offices: pl.DataFrame, districts, title: str,
-                          subtitle: str, save: str) -> None:
+                          subtitle: str, save: str, days_label: str = "field days") -> None:
     """One row per district: its offices as dots, the district average as a bar."""
     d = offices.filter(pl.col("District").is_in(list(districts)))
     fig, ax = plt.subplots(figsize=(9.0, 0.55 * len(districts) + 1.4))
@@ -569,5 +641,5 @@ def draw_district_offices(rep, offices: pl.DataFrame, districts, title: str,
     ax.set_yticks(range(len(districts)), list(districts))
     ax.invert_yaxis()
     ax.set_xlim(left=0)
-    ax.set_xlabel("Mean field days (dots: offices; black bar: district average)")
+    ax.set_xlabel(f"Average {days_label} (dots: offices; black bar: district average)")
     rep.finish(ax, title, subtitle, xgrid=True, ygrid=False, save=save)
