@@ -38,7 +38,7 @@ from janasunani.analytics.variance import shapley_shares
 
 __all__ = [
     "outcomes", "draw_outcomes_bar", "draw_outcomes_pie", "durations",
-    "stage_label", "stage_means", "stage_table", "stage_rows",
+    "stage_label", "stage_means", "stage_table", "stage_rows", "top_types",
     "draw_stage_bar", "draw_stage_densities", "draw_stage_stack",
     "route_table", "top_route_groups", "route_stage_roles", "ENTRY_SHORT",
     "entry_routes", "entry_route_groups",
@@ -193,18 +193,29 @@ def draw_stage_bar(rep, means: dict, total: float, title: str, subtitle: str,
                title, subtitle, save)
 
 
+def _stage_shade(i: int, n: int) -> tuple[str, str]:
+    """Fill and label colour for stage ``i`` of ``n``.
+
+    With three stages the first is set apart (dark against two light ones):
+    the note's point is how small Stage 1 is, and adjacent shades of the ramp
+    are too close to read that at a glance. Five stages keep the full ramp.
+    """
+    if n == 3:
+        return (RAMP[0], "white") if i == 0 else (RAMP[2 + i], INK)
+    return RAMP[i % len(RAMP)], ("white" if i < 3 else INK)
+
+
 def _one_stack(rep, parts, total: float, title: str, subtitle: str, save: str) -> None:
     """A single bar split into ``parts`` ``[(label, value)]``, labelled in place."""
     fig, ax = plt.subplots(figsize=(8.4, 2.3))
     left = 0.0
     for i, (lab, v) in enumerate(parts):
-        ax.barh([0], [v], left=left, color=RAMP[i % len(RAMP)], height=0.5,
-                zorder=3)
+        fill, ink = _stage_shade(i, len(parts))
+        ax.barh([0], [v], left=left, color=fill, height=0.5, zorder=3)
         if v > total * 0.04:
             ax.text(left + v / 2, 0,
                     f"{lab}\n{v:.0f}d ({100 * v / total:.0f}%)",
-                    ha="center", va="center", fontsize=8.5,
-                    color="white" if i < 3 else INK)
+                    ha="center", va="center", fontsize=8.5, color=ink)
         left += v
     ax.set_yticks([])
     ax.set_xlabel("Mean days")
@@ -241,7 +252,7 @@ def draw_stage_densities(rep, s, title: str, subtitle: str, save: str,
 def draw_stage_stack(rep, rows, label_col: str, title: str, subtitle: str,
                      save: str, stages=STAGES_FIVE, share_of=None,
                      braces=None, count_label: str = "Claims",
-                     show_table: bool = True) -> None:
+                     show_table: bool = True, shares: bool = False) -> None:
     """A table and one stacked bar per group, each adding to its own mean.
 
     ``share_of`` adds a "% of sample" column against that denominator, for
@@ -250,7 +261,10 @@ def draw_stage_stack(rep, rows, label_col: str, title: str, subtitle: str,
     stage's segment: which offices held the claim during it. ``count_label``
     names the count column, for a note that says "complaints".
     ``show_table=False`` draws the chart alone, for a reader who would take a
-    table of the same numbers as a second, different finding.
+    table of the same numbers as a second, different finding. ``shares=True``
+    draws every bar to 100%, each stage as its share of that group's own
+    total, with the total in days at the end: for comparing the split across
+    groups whose totals differ.
     """
     table = {
         label_col: [lab for lab, _ in rows],
@@ -276,28 +290,32 @@ def draw_stage_stack(rep, rows, label_col: str, title: str, subtitle: str,
     if braces:
         height += 0.62 * len(rows)
     fig, ax = plt.subplots(figsize=(10.6, height))
-    xmax = max(float(r["total"]) for _, r in rows)
+    xmax = 100.0 if shares else max(float(r["total"]) for _, r in rows)
     for j, (lab, r) in zip(pos, rows):
-        left = 0.0
+        left, scale = 0.0, (100 / float(r["total"]) if shares else 1.0)
         for i, k in enumerate(stages):
-            v = float(r[k])
+            v = float(r[k]) * scale
             if braces and braces[pos.index(j)].get(k):
                 _brace(ax, left, left + v, j + 0.4, braces[pos.index(j)][k], xmax)
-            ax.barh([j], [v], left=left, color=RAMP[i % len(RAMP)],
+            fill, ink = _stage_shade(i, len(stages))
+            ax.barh([j], [v], left=left, color=fill,
                     height=0.6, zorder=3, label=stage_label(k) if j == 0 else None)
-            if v > float(r["total"]) * 0.07:
-                ax.text(left + v / 2, j, f"{v:.0f}", ha="center",
+            if v > (xmax if shares else float(r["total"])) * 0.07:
+                ax.text(left + v / 2, j, f"{v:.0f}%" if shares else f"{v:.0f}", ha="center",
                         va="center", fontsize=8,
-                        color="white" if i < 3 else INK)
+                        color=ink)
             left += v
-        ax.text(left + 1.5, j, f"{left:.0f}d", va="center", fontsize=8.5,
-                color=INK)
+        ax.text(left + 1.5, j, f"{float(r['total']):.0f} days" if shares else f"{left:.0f}d",
+                va="center", fontsize=8.5, color=INK)
     ax.set_yticks(pos, labels)
     if braces:
         ax.set_ylim(pos[-1] + 1.45, -0.6)
     else:
         ax.invert_yaxis()
-    ax.set_xlabel("Mean days")
+    ax.set_xlabel("Share of time to disposal (%)" if shares else "Mean days")
+    if shares:
+        ax.set_xlim(0, 112)
+        ax.set_xticks(range(0, 101, 20))
     ax.grid(False)
     # Below the axis, not inside it: an inside legend lands on the longest
     # bar, which is the one the reader most wants to read.
@@ -319,6 +337,24 @@ def _brace(ax, x0: float, x1: float, y: float, text: str, xmax: float) -> None:
     width = max(12, int(100 * (x1 - x0) / xmax))
     ax.text(xm, y + notch + 0.05, textwrap.fill(text, width), ha="center",
             va="top", fontsize=7.5, color=INK, linespacing=1.1)
+
+
+def top_types(s, n: int = 10):
+    """The ``n`` largest complaint types in P4, as :func:`stage_rows` groups.
+
+    A type is a department and subcategory: the same subcategory name under
+    two departments (Rural Housing) is two types, labelled by both.
+    """
+    t = s.q(f"""
+      SELECT g.dept, g.subcategory, COUNT(*) AS n
+      FROM {s.t('phases_pop')} p JOIN {s.t('g')} g USING (ticket_no)
+      WHERE g.subcategory IS NOT NULL
+      GROUP BY 1, 2 ORDER BY n DESC, 1, 2 LIMIT {n}""")
+    return [(f"{r['subcategory']} ({r['dept']})",
+             f"ticket_no IN (SELECT ticket_no FROM {s.t('g')} "
+             f"WHERE dept = {_sql_str(r['dept'])} "
+             f"AND subcategory = {_sql_str(r['subcategory'])})")
+            for r in t.iter_rows(named=True)]
 
 
 # -- routes -------------------------------------------------------------------
