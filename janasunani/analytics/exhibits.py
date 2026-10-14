@@ -464,8 +464,8 @@ def entry_route_groups(table: pl.DataFrame) -> list[tuple[str, str]]:
 FIELD_LAYER_DEFS = {
     "field_office": "The office holding the complaint when it first reached the "
                     "lowest level on its route, e.g. a BDO",
-    "sender_office": "The last office before the first hand-off: the office that "
-                     "sent the complaint on, e.g. a Collector",
+    "sender_office": "The office through which the complaint first entered, "
+                     "e.g. a Collector",
     "route": "The sequence of offices that held the complaint, by role",
     "subcategory": "The complaint type recorded on the portal",
     "district": "The district recorded on the complaint",
@@ -500,8 +500,9 @@ def field_frame(s) -> pl.DataFrame:
     """One row per P4 claim that reached field action, with its layers.
 
     The field office is the desk holding the claim when it first reached its
-    deepest rung; the sender is the last desk before the first hand-off. Both
-    are a role and a place, never an internal code. Rows come in ticket order:
+    deepest rung; the sender is the desk it first entered (every step before
+    the first hand-off is at one office). Both are a role and a place, never
+    an internal code. Rows come in ticket order:
     :func:`field_drivers` splits by row position, so an unordered frame would
     give different halves, and different shares, on each run (#422).
     """
