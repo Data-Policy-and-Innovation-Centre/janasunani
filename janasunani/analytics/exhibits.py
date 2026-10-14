@@ -539,7 +539,8 @@ def draw_field_levels(rep, levels: pl.DataFrame, roles: pl.DataFrame,
     barh(ax, list(roles["Desk"]), list(roles["Mean days per claim"]),
          shares=list(roles["% of field days"]), fmt="{:,.1f}d")
     ax.set_xlabel(f"Average {days_label} spent at this office")
-    rep.finish(ax, "The same days, by desk", None, xgrid=True, ygrid=False,
+    rep.finish(ax, f"{days_label[0].upper()}{days_label[1:]} by office", None,
+               xgrid=True, ygrid=False,
                save=save + "_roles")
 
 
@@ -613,7 +614,7 @@ def draw_office_spread(rep, offices: pl.DataFrame, title: str, subtitle: str,
 def office_vs_district(offices: pl.DataFrame, districts) -> tuple[float, float]:
     """Median spread of offices within a district, and spread of district averages.
 
-    Lets a title claim "the office matters more" only when the data says so.
+    Lets the text say which is larger from the data, not from an assumption.
     """
     d = (offices.filter(pl.col("District").is_in(list(districts)))
          .group_by("District")
