@@ -240,7 +240,8 @@ def draw_stage_densities(rep, s, title: str, subtitle: str, save: str,
 
 def draw_stage_stack(rep, rows, label_col: str, title: str, subtitle: str,
                      save: str, stages=STAGES_FIVE, share_of=None,
-                     braces=None, count_label: str = "Claims") -> None:
+                     braces=None, count_label: str = "Claims",
+                     show_table: bool = True) -> None:
     """A table and one stacked bar per group, each adding to its own mean.
 
     ``share_of`` adds a "% of sample" column against that denominator, for
@@ -248,6 +249,8 @@ def draw_stage_stack(rep, rows, label_col: str, title: str, subtitle: str,
     ``braces`` is one ``{stage: text}`` per row, drawn as a brace under that
     stage's segment: which offices held the claim during it. ``count_label``
     names the count column, for a note that says "complaints".
+    ``show_table=False`` draws the chart alone, for a reader who would take a
+    table of the same numbers as a second, different finding.
     """
     table = {
         label_col: [lab for lab, _ in rows],
@@ -257,7 +260,8 @@ def draw_stage_stack(rep, rows, label_col: str, title: str, subtitle: str,
         table["% of sample"] = [round(100 * r["n"] / share_of, 1) for _, r in rows]
     table.update({stage_label(k): [float(r[k]) for _, r in rows] for k in stages})
     table["Total"] = [float(r["total"]) for _, r in rows]
-    display(pl.DataFrame(table))
+    if show_table:
+        display(pl.DataFrame(table))
 
     # A route name is a sentence, and unwrapped it takes half the canvas
     # before a single bar is drawn. Wrapped, the label column is bounded
