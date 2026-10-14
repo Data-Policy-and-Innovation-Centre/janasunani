@@ -11,6 +11,7 @@ Runs over the journey-tables fixture lake (R1 to R5, all dept 40, 2024-25),
 never the live one.
 """
 
+import polars as pl
 import pytest
 
 from janasunani.analytics import exhibits
@@ -75,15 +76,30 @@ def test_stages_add_to_the_mean_however_folded(con, stages):  # noqa: F811
     s = _sample(con, "a_")
     means, total = exhibits.stage_means(s, stages)
     mean = s.count("SELECT AVG(days_to_close) FROM a_phases_clean")
-    assert total == pytest.approx(mean, abs=0.15)
+    # STAGES_THREE leaves closure out; the stages plus closure are the mean.
+    left_out = 0.0 if stages is STAGES_FIVE else s.count(
+        "SELECT AVG(closure) FROM a_phases_clean")
+    assert total + left_out == pytest.approx(mean, abs=0.15)
     table = exhibits.stage_table(s, total, stages)
     assert table["Phase"].to_list() == [exhibits.stage_label(k) for k in stages]
     assert sum(table["Mean days"]) == pytest.approx(total, abs=0.15)
 
 
-def test_three_stages_fold_every_phase_exactly_once():
+def test_three_stages_fold_every_phase_but_closure_once():
     folded = [p for cols in STAGES_THREE.values() for p in cols]
-    assert sorted(folded) == sorted(PHASES)
+    assert sorted(folded) == sorted(p for p in PHASES if p != "closure")
+
+
+def test_entry_routes_pick_each_entrys_commonest_route(con):  # noqa: F811
+    s = _sample(con, "a_")
+    t = exhibits.entry_routes(s, top=3)
+    assert t["Claims"].sum() <= s.FUNNEL["P4"]
+    groups = exhibits.entry_route_groups(t)
+    rows = exhibits.stage_rows(s, groups, STAGES_THREE, floor=1)
+    for (_, r), claims in zip(rows, t["Route claims"]):
+        assert r["n"] == claims
+    split = exhibits.route_stage_roles(s, groups, STAGES_THREE)
+    assert split["Route"].to_list() == [lab for lab, _ in groups][:split.height]
 
 
 def test_route_groups_decompose_to_their_own_means(con):  # noqa: F811
@@ -107,3 +123,91 @@ def test_route_table_is_capped_and_ordered(con):  # noqa: F811
 def test_outcomes_account_for_the_whole_step(con):  # noqa: F811
     s = Sample(con, ns="o_", base="TRUE", steps=STEPS)
     assert exhibits.outcomes(s, "F0")["n"].sum() == s.FUNNEL["F0"]
+
+
+def test_durations_stand_on_p4(con):  # noqa: F811
+    s = _sample(con, "a_")
+    assert exhibits.durations(s)["n"][0] == s.FUNNEL["P4"]
+
+
+def test_pie_folds_benefit_into_disposed(con, tmp_path):  # noqa: F811
+    import matplotlib
+    matplotlib.use("Agg")
+    from janasunani.analytics.figures import Report
+
+    s = Sample(con, ns="o_", base="TRUE", steps=STEPS)
+    rep = Report(con, [("All", "TRUE")], tmp_path, prefix="t_")
+    d = pl.DataFrame({"outcome": ["Disposed", "Disposed with benefit", "Open"],
+                      "n": [6, 2, 2]})
+    exhibits.draw_outcomes_pie(rep, d, "Title", s.note("F0"), "pie")
+    assert (tmp_path / "t_pie.png").exists()
+    # The shares the labels quote: benefit is inside disposed, not a slice.
+    assert exhibits.outcomes(s, "F0")["n"].sum() == s.FUNNEL["F0"]
+
+
+def test_route_splits_into_the_offices_of_each_stage(con, tmp_path):  # noqa: F811
+    """R1: CM Cell, then Collector > BDO, then back up to the Collector.
+
+    The first hand-off (CM Cell to Collector) ends processing; the first step
+    above the deepest office (back to the Collector after the BDO) starts
+    review.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    from janasunani.analytics.figures import Report
+
+    s = _sample(con, "a_", base="ticket_no = 'R1'")
+    groups = exhibits.top_route_groups(s, top=3, floor=1)
+    got = exhibits.route_stage_roles(s, groups, STAGES_THREE).row(0, named=True)
+    assert got["Route"] == "CM Cell > Collector > BDO > Collector"
+    assert (got["Stage 1"], got["Stage 2"], got["Stage 3"]) == (
+        "CM Cell", "Collector > BDO", "Collector")
+    assert got["% of route's claims"] == 100.0
+
+    rows = exhibits.stage_rows(s, groups, STAGES_THREE, floor=1)
+    rep = Report(con, [("All", "TRUE")], tmp_path, prefix="t_")
+    exhibits.draw_stage_stack(rep, rows, "Route", "T", "S", "stack", STAGES_THREE,
+                              braces=[{k: got[k] for k in STAGES_THREE}])
+    assert (tmp_path / "t_stack.png").exists()
+
+
+def test_step_stages_tag_each_step_with_its_phase(con):  # noqa: F811
+    """R1: CM Cell (assignment), Collector x2 > BDO (field), Collector (review)."""
+    _sample(con, "a_", base="ticket_no = 'R1'")
+    got = con.execute("SELECT role, phase, gap FROM a_step_stages "
+                      "ORDER BY step_index").pl()
+    assert got["phase"].to_list() == ["first_assignment", "field_action",
+                                      "field_action", "field_action", "review"]
+    assert got["role"][0] == "Chief Minister's Grievance Cell"
+    assert got["gap"].to_list()[:4] == [2, 2, 4, 11]   # 1, 3, 5, 9, 20 July
+
+
+def test_field_frame_names_sender_and_field_office(con):  # noqa: F811
+    s = _sample(con, "a_")
+    f = exhibits.field_frame(s)
+    # The Shapley split is by row position, so the order must be fixed.
+    assert f["ticket_no"].to_list() == sorted(f["ticket_no"].to_list())
+    r1 = f.filter(pl.col("ticket_no") == "R1").row(0, named=True)
+    assert r1["sender_office"] == "Chief Minister's Grievance Cell"
+    assert r1["field_office"] == "Block Development Officer, Sadar"
+    # R2 never leaves its first office, so it never reaches field action.
+    assert "R2" not in f["ticket_no"].to_list()
+    levels = exhibits.field_levels(s, f)
+    assert sum(levels["Mean days per claim"]) == pytest.approx(
+        f["field_action"].mean(), abs=0.15)
+
+
+def test_shapley_gives_a_determining_layer_the_whole_share():
+    import numpy as np
+
+    from janasunani.analytics.variance import shapley_shares
+    rng = np.random.default_rng(1)
+    n = 4000
+    office = rng.integers(0, 40, n)
+    df = pl.DataFrame({"office": office.astype(str),
+                       "noise": rng.integers(0, 40, n).astype(str),
+                       "y": (office * 3.0) + rng.normal(0, 0.1, n)})
+    shares, full = shapley_shares(df, "y", {"Office": "office", "Noise": "noise"})
+    got = dict(zip(shares["Layer"], shares["% of what the record explains"]))
+    assert full > 0.99
+    assert got["Office"] > 99 and abs(got["Noise"]) < 1

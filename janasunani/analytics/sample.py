@@ -149,7 +149,7 @@ class Sample:
             "route coverage cannot exceed its own base")
 
     def install_phases(self, scope: str, disposed: str) -> dict:
-        """The five phase spans over ``scope``; opens step P4.
+        """The five phase spans over ``scope``, and each step's phase; opens P4.
 
         P4 is the claims whose five spans tile their own time to close. Builds
         ``{ns}phases_pop``: the phases with the route and entry point beside
@@ -158,6 +158,7 @@ class Sample:
         """
         journey.install_phase_bounds(self.con, ns=self.ns)
         chk = journey.install_phases(self.con, self.WHERE[scope], ns=self.ns)
+        journey.install_step_stages(self.con, ns=self.ns)
         self.con.execute(f"""
         CREATE OR REPLACE VIEW {self.t('phases_pop')} AS
         SELECT p.*, g.entry_route, g.received_directly,

@@ -38,9 +38,15 @@ in one place:
 * **Which document**: notebooks and `scripts/analysis/*_docx.py`. They compose
   the two above. **A new note is a notebook and a list of steps, not a new
   class.** Move an exhibit into `exhibits.py` once a second note needs it.
+  `notebooks/disposal_2024_25.ipynb` is the worked example: one sample per
+  population, the same exhibits over each. Export a note to HTML, PDF and
+  Word, code hidden, with `scripts/analysis/export_note.sh <notebook>`.
 
 Supporting these:
 
+* `variance.py`: which layer explains a duration. Fixed-effects least squares
+  over one-hot layers, every R² scored out of sample (fit on half, score on
+  the other), and Shapley shares across layers. Computes; draws nothing.
 * `figures.py`: the DPIC palette, the house rcParams and the layout helpers.
   Presentation only; it computes no number. Populations are a constructor
   argument, so a one-population notebook and a two-population notebook use the
