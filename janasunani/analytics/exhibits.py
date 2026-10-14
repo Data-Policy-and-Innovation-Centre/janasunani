@@ -42,9 +42,8 @@ __all__ = [
     "draw_stage_bar", "draw_stage_densities", "draw_stage_stack",
     "route_table", "top_route_groups", "route_stage_roles", "ENTRY_SHORT",
     "entry_routes", "entry_route_groups",
-    "FIELD_LAYERS", "FIELD_LAYER_DEFS", "field_layer_table", "field_frame", "field_levels", "field_roles", "draw_field_levels",
-    "field_drivers", "draw_field_drivers", "office_means", "draw_office_spread",
-    "office_vs_district", "draw_district_offices",
+    "FIELD_LAYERS", "FIELD_LAYER_DEFS", "office_volume", "volume_fifths", "draw_office_volume", "field_layer_table", "field_frame", "field_levels", "field_roles", "draw_field_levels",
+    "field_drivers", "draw_field_drivers", "office_means",
 ]
 
 
@@ -651,69 +650,61 @@ def office_means(frame: pl.DataFrame, floor: int = 30, role=None,
              .rename({"field_office": "Office", "district": "District"}))
 
 
-def draw_office_spread(rep, offices: pl.DataFrame, title: str, subtitle: str,
-                       save: str, days_label: str = "field days") -> None:
-    """Every office as a dot, fastest to slowest, the typical office marked.
+def office_volume(s, frame: pl.DataFrame, role: str, floor: int = 30) -> pl.DataFrame:
+    """Per ``role`` office: complaints it received, and its average field days.
 
-    Only the two ends are named on the chart: the dots there sit too close
-    for more labels to stay legible, so the caller shows the rest as a table.
+    Volume counts every complaint in the sample's base (disposed or not) that
+    reached the office, so a slow office with a backlog does not look quiet.
+    Field days come from ``frame`` and need ``floor`` complaints to show.
     """
-    y = [float(v) for v in offices["Mean field days"]]
-    x = list(range(len(y)))
-    med = float(np.median(y))
-    fig, ax = plt.subplots(figsize=(9.6, 3.6))
-    ax.scatter(x, y, s=14, color=MAROON, alpha=0.75, zorder=3, linewidths=0)
-    ax.axhline(med, color=INK_SOFT, lw=1, ls="--", zorder=2)
-    ax.text(0, med, f"typical office: {med:.0f} days", va="bottom", ha="left",
-            fontsize=8.5, color=INK_SOFT, zorder=4,
-            bbox={"facecolor": "white", "edgecolor": "none", "pad": 1.5})
-    names, top = list(offices["Office"]), max(y)
-    # Fastest: up and to the right, into the empty top-left. Slowest: to the
-    # left of its dot, level with it, where the curve has not yet climbed.
-    ax.annotate(f"fastest: {names[0]}, {y[0]:.0f} days", (x[0], y[0]),
-                xytext=(x[0] + len(y) * 0.04, top * 0.55), fontsize=7.5, color=INK,
-                arrowprops={"arrowstyle": "-", "color": INK_SOFT, "lw": 0.7})
-    ax.annotate(f"slowest: {names[-1]}, {y[-1]:.0f} days", (x[-1], y[-1]),
-                xytext=(x[-1] - len(y) * 0.04, y[-1]), ha="right", va="center",
-                fontsize=7.5, color=INK,
-                arrowprops={"arrowstyle": "-", "color": INK_SOFT, "lw": 0.7})
-    ax.set_xticks([])
-    ax.set_xlabel(f"{len(y)} offices, fastest to slowest")
+    vol = s.q(f"""
+      SELECT role_name || COALESCE(', ' || NULLIF(place, ''), '') AS field_office,
+             COUNT(DISTINCT ticket_no) AS received
+      FROM acting_office_named
+      WHERE role_name = {_sql_str(role)}
+        AND ticket_no IN (SELECT ticket_no FROM {s.t('g')})
+      GROUP BY 1""")
+    return (office_means(frame, floor, role=role)
+            .join(vol.rename({"field_office": "Office"}), on="Office", how="left")
+            .rename({"received": "Complaints received"})
+            .sort("Complaints received", "Office"))
+
+
+def volume_fifths(offices: pl.DataFrame) -> pl.DataFrame:
+    """Offices in five equal groups by volume, quietest first, with average days."""
+    n = offices.height
+    return (offices.sort("Complaints received", "Office")
+            .with_columns((pl.int_range(n) * 5 // n + 1).alias("Fifth"))
+            .group_by("Fifth", maintain_order=True)
+            .agg(pl.len().alias("Offices"),
+                 pl.col("Complaints received").median().alias("Median received"),
+                 ((pl.col("Mean field days") * pl.col("Claims")).sum()
+                  / pl.col("Claims").sum()).round(1).alias("Average days"),
+                 # The spread at similar volume, without the one or two extremes.
+                 pl.col("Mean field days").quantile(0.1).alias("Fast office (10th pct)"),
+                 pl.col("Mean field days").quantile(0.9).alias("Slow office (90th pct)")))
+
+
+def draw_office_volume(rep, offices: pl.DataFrame, title: str, subtitle: str,
+                       save: str, days_label: str = "field days") -> None:
+    """Each office's volume against its average days, with each fifth's average.
+
+    The line through the fifths is the reading: flat means busier offices are
+    not slower, so volume alone does not explain the time.
+    """
+    x = offices["Complaints received"].to_numpy().astype(float)
+    y = offices["Mean field days"].to_numpy().astype(float)
+    fifths = volume_fifths(offices)
+    fig, ax = plt.subplots(figsize=(9.6, 4.0))
+    ax.scatter(x, y, s=14, color=MAROON, alpha=0.45, zorder=3, linewidths=0,
+               label="One office")
+    ax.plot(fifths["Median received"], fifths["Average days"], color=INK, lw=1.5,
+            marker="o", ms=5, zorder=4, label="Average of each fifth of offices, by volume")
+    ax.set_xlabel("Complaints received, July to December 2024")
     ax.set_ylabel(f"Average {days_label}")
+    ax.set_xlim(left=0)
     ax.set_ylim(bottom=0)
+    ax.legend(loc="upper right", frameon=False, fontsize=8)
     rep.finish(ax, title, subtitle, save=save)
 
 
-def office_vs_district(offices: pl.DataFrame, districts) -> tuple[float, float]:
-    """Median spread of offices within a district, and spread of district averages.
-
-    Lets the text say which is larger from the data, not from an assumption.
-    """
-    d = (offices.filter(pl.col("District").is_in(list(districts)))
-         .group_by("District")
-         .agg((pl.col("Mean field days").max() - pl.col("Mean field days").min()).alias("within"),
-              ((pl.col("Mean field days") * pl.col("Claims")).sum()
-               / pl.col("Claims").sum()).alias("avg")))
-    return float(d["within"].median()), float(d["avg"].max() - d["avg"].min())
-
-
-def draw_district_offices(rep, offices: pl.DataFrame, districts, title: str,
-                          subtitle: str, save: str, days_label: str = "field days") -> None:
-    """One row per district: its offices as dots, the district average as a bar."""
-    d = offices.filter(pl.col("District").is_in(list(districts)))
-    fig, ax = plt.subplots(figsize=(9.0, 0.55 * len(districts) + 1.4))
-    for j, dist in enumerate(districts):
-        o = d.filter(pl.col("District") == dist)
-        vals = [float(v) for v in o["Mean field days"]]
-        w = [int(n) for n in o["Claims"]]
-        avg = sum(v * n for v, n in zip(vals, w)) / sum(w)
-        ax.scatter(vals, [j] * len(vals), s=22, color=MAROON, alpha=0.6,
-                   linewidths=0, zorder=3)
-        ax.plot([avg, avg], [j - 0.3, j + 0.3], color=INK, lw=2.2, zorder=4)
-        ax.text(max(vals) + 2, j, f"{min(vals):.0f} to {max(vals):.0f} days",
-                va="center", fontsize=8, color=INK_SOFT)
-    ax.set_yticks(range(len(districts)), list(districts))
-    ax.invert_yaxis()
-    ax.set_xlim(left=0)
-    ax.set_xlabel(f"Average {days_label} (dots: offices; black bar: district average)")
-    rep.finish(ax, title, subtitle, xgrid=True, ygrid=False, save=save)
