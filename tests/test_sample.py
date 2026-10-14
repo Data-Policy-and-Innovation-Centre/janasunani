@@ -211,3 +211,38 @@ def test_shapley_gives_a_determining_layer_the_whole_share():
     got = dict(zip(shares["Layer"], shares["% of what the record explains"]))
     assert full > 0.99
     assert got["Office"] > 99 and abs(got["Noise"]) < 1
+
+
+def test_top_types_partition_their_complaints_and_draw_as_shares(con, tmp_path):  # noqa: F811
+    import matplotlib
+    matplotlib.use("Agg")
+    from janasunani.analytics.figures import Report
+
+    s = _sample(con, "a_")
+    # One subcategory under two departments, as Rural Housing is in the lake.
+    t = s.q(f"""SELECT g.ticket_no, g.subcategory FROM {s.t('phases_pop')}
+                JOIN {s.t('g')} g USING (ticket_no) WHERE g.subcategory IS NOT NULL
+                ORDER BY 1 LIMIT 1""").row(0)
+    con.execute(f"UPDATE {s.t('g')} SET subcategory = ? WHERE ticket_no IN "
+                f"(SELECT ticket_no FROM {s.t('phases_pop')}) AND subcategory IS NOT NULL",
+                [t[1]])
+    con.execute(f"UPDATE {s.t('g')} SET dept = 'Another department' WHERE ticket_no = ?", [t[0]])
+    groups = exhibits.top_types(s, n=50)
+    assert len(groups) == 2
+    # Each type is a department and subcategory, so the types never overlap
+    # and together cover every P4 complaint that has a subcategory.
+    rows = exhibits.stage_rows(s, groups, STAGES_THREE, floor=1)
+    with_sub = s.count(f"""SELECT COUNT(*) FROM {s.t('phases_pop')}
+                           JOIN {s.t('g')} g USING (ticket_no)
+                           WHERE g.subcategory IS NOT NULL""")
+    assert sum(r["n"] for _, r in rows) == with_sub > 0
+    assert len(exhibits.top_types(s, n=1)) == 1
+    # ``also`` adds a type outside the top, once, and never repeats one in it.
+    rare = ("Another department", t[1])
+    assert [lab for lab, _ in exhibits.top_types(s, n=1, also=[rare])][-1] == (
+        f"{t[1]} (Another department)")
+    assert len(exhibits.top_types(s, n=2, also=[rare])) == 2
+    rep = Report(con, [("All", "TRUE")], tmp_path, prefix="t_")
+    exhibits.draw_stage_stack(rep, rows, "Type", "T", "S", "types", STAGES_THREE,
+                              show_table=False, shares=True)
+    assert (tmp_path / "t_types.png").exists()
