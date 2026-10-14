@@ -211,17 +211,3 @@ def test_shapley_gives_a_determining_layer_the_whole_share():
     got = dict(zip(shares["Layer"], shares["% of what the record explains"]))
     assert full > 0.99
     assert got["Office"] > 99 and abs(got["Noise"]) < 1
-
-
-def test_volume_fifths_split_offices_evenly_and_weight_by_complaints():
-    offices = pl.DataFrame({
-        "Office": [f"o{i}" for i in range(10)],
-        "Complaints received": list(range(100, 0, -10)),   # o9 is the quietest
-        "Claims": [10, 30] * 5,
-        "Mean field days": [10.0, 20.0] * 5,
-    })
-    f = exhibits.volume_fifths(offices)
-    assert f["Offices"].to_list() == [2] * 5
-    assert f["Median received"].to_list() == [15.0, 35.0, 55.0, 75.0, 95.0]
-    # Weighted by complaints: (10*10 + 30*20) / 40, not the plain 15.
-    assert f["Average days"].to_list() == [17.5] * 5

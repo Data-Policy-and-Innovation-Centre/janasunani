@@ -51,8 +51,13 @@ mkdir -p "$OUT"
 nbc --to html --no-input "$EX" --output-dir "$OUT" --output "$NAME"
 
 # PDF: drop the filename <title> and nbconvert's heading anchors, set the page.
+# A page break is moved from the notebook's <div> to the cell holding it, and
+# cells are spaced by margin rather than padding: a page break drops margins
+# but keeps padding, so on a full page a cell's padding alone spilled over and
+# the break then left a blank page.
+BREAK='div[style*="page-break-before"]'
 sed -E -e 's#<title>[^<]*</title>##' -e 's#<a class="anchor-link"[^>]*>[^<]*</a>##g' \
-  -e 's#</head>#<style>@page { size: A4; margin: 12mm 14mm; } body { zoom: 0.82; }</style></head>#' \
+  -e "s#</head>#<style>@page { size: A4; margin: 12mm 14mm; } body { zoom: 0.82; } .jp-Cell { padding-top: 0 !important; padding-bottom: 0 !important; margin: 5px 0; } .jp-Cell:has($BREAK) { break-before: page; } $BREAK { break-before: auto !important; page-break-before: auto !important; }</style></head>#" \
   "$OUT/$NAME.html" > "$TMP/print.html"
 "$CHROME" --headless=new --disable-gpu --no-pdf-header-footer \
   --print-to-pdf="$OUT/$NAME.pdf" "file://$TMP/print.html" >/dev/null 2>&1

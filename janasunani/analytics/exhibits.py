@@ -42,7 +42,7 @@ __all__ = [
     "draw_stage_bar", "draw_stage_densities", "draw_stage_stack",
     "route_table", "top_route_groups", "route_stage_roles", "ENTRY_SHORT",
     "entry_routes", "entry_route_groups",
-    "FIELD_LAYERS", "FIELD_LAYER_DEFS", "office_volume", "volume_fifths", "draw_office_volume", "field_layer_table", "field_frame", "field_levels", "field_roles", "draw_field_levels",
+    "FIELD_LAYERS", "FIELD_LAYER_DEFS", "office_volume", "draw_office_volume", "field_layer_table", "field_frame", "field_levels", "field_roles", "draw_field_levels",
     "field_drivers", "draw_field_drivers", "office_means",
 ]
 
@@ -670,41 +670,17 @@ def office_volume(s, frame: pl.DataFrame, role: str, floor: int = 30) -> pl.Data
             .sort("Complaints received", "Office"))
 
 
-def volume_fifths(offices: pl.DataFrame) -> pl.DataFrame:
-    """Offices in five equal groups by volume, quietest first, with average days."""
-    n = offices.height
-    return (offices.sort("Complaints received", "Office")
-            .with_columns((pl.int_range(n) * 5 // n + 1).alias("Fifth"))
-            .group_by("Fifth", maintain_order=True)
-            .agg(pl.len().alias("Offices"),
-                 pl.col("Complaints received").median().alias("Median received"),
-                 ((pl.col("Mean field days") * pl.col("Claims")).sum()
-                  / pl.col("Claims").sum()).round(1).alias("Average days"),
-                 # The spread at similar volume, without the one or two extremes.
-                 pl.col("Mean field days").quantile(0.1).alias("Fast office (10th pct)"),
-                 pl.col("Mean field days").quantile(0.9).alias("Slow office (90th pct)")))
-
-
 def draw_office_volume(rep, offices: pl.DataFrame, title: str, subtitle: str,
                        save: str, days_label: str = "field days") -> None:
-    """Each office's volume against its average days, with each fifth's average.
-
-    The line through the fifths is the reading: flat means busier offices are
-    not slower, so volume alone does not explain the time.
-    """
+    """Each office's volume against its average days, one dot per office."""
     x = offices["Complaints received"].to_numpy().astype(float)
     y = offices["Mean field days"].to_numpy().astype(float)
-    fifths = volume_fifths(offices)
     fig, ax = plt.subplots(figsize=(9.6, 4.0))
-    ax.scatter(x, y, s=14, color=MAROON, alpha=0.45, zorder=3, linewidths=0,
-               label="One office")
-    ax.plot(fifths["Median received"], fifths["Average days"], color=INK, lw=1.5,
-            marker="o", ms=5, zorder=4, label="Average of each fifth of offices, by volume")
+    ax.scatter(x, y, s=14, color=MAROON, alpha=0.45, zorder=3, linewidths=0)
     ax.set_xlabel("Complaints received, July to December 2024")
     ax.set_ylabel(f"Average {days_label}")
     ax.set_xlim(left=0)
     ax.set_ylim(bottom=0)
-    ax.legend(loc="upper right", frameon=False, fontsize=8)
     rep.finish(ax, title, subtitle, save=save)
 
 
