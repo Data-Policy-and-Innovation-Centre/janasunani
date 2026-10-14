@@ -41,7 +41,7 @@ __all__ = [
     "draw_stage_bar", "draw_stage_densities", "draw_stage_stack",
     "route_table", "top_route_groups", "route_stage_roles", "ENTRY_SHORT",
     "entry_routes", "entry_route_groups",
-    "FIELD_LAYERS", "field_frame", "field_levels", "field_roles", "draw_field_levels",
+    "FIELD_LAYERS", "FIELD_LAYER_DEFS", "field_layer_table", "field_frame", "field_levels", "field_roles", "draw_field_levels",
     "field_drivers", "draw_field_drivers", "office_means", "draw_office_spread",
     "office_vs_district", "draw_district_offices",
 ]
@@ -458,18 +458,30 @@ def entry_route_groups(table: pl.DataFrame) -> list[tuple[str, str]]:
 
 # -- the field stage ----------------------------------------------------------
 
-# The layers a field span can be explained by, in a reader's words. Values are
-# columns of :func:`field_frame`.
-FIELD_LAYERS = {
-    "Which field office handles it": "field_office",
-    "Who sends it down": "sender_office",
-    "The route it takes": "route",
-    "Type of complaint": "subcategory",
-    "District": "district",
-    "Where it entered": "entry_route",
-    "Department": "dept",
-    "Month filed": "month",
+# The layers a field span can be explained by, labelled by their column in
+# :func:`field_frame` so a chart and the data use one name. FIELD_LAYER_DEFS
+# says what each one is, for the table a note shows beside the chart.
+FIELD_LAYER_DEFS = {
+    "field_office": "The office holding the complaint when it first reached the "
+                    "lowest level on its route, e.g. a BDO",
+    "sender_office": "The last office before the first hand-off: the office that "
+                     "sent the complaint on, e.g. a Collector",
+    "route": "The sequence of offices that held the complaint, by role",
+    "subcategory": "The complaint type recorded on the portal",
+    "district": "The district recorded on the complaint",
+    "entry_route": "How the complaint entered: forwarded by a Collector or the CM "
+                   "Cell, filed directly with the department, and so on",
+    "dept": "The department the complaint was assigned to",
+    "month": "The month the complaint was filed",
 }
+FIELD_LAYERS = {col: col for col in FIELD_LAYER_DEFS}
+
+
+def field_layer_table(layers=FIELD_LAYERS) -> pl.DataFrame:
+    """What each layer in :func:`draw_field_drivers` means, in chart order."""
+    return pl.DataFrame({"Factor": list(layers),
+                         "What it is": [FIELD_LAYER_DEFS[c] for c in layers.values()]})
+
 
 _OFFICE = "role || COALESCE(', ' || NULLIF(place, ''), '')"
 
@@ -554,16 +566,52 @@ def field_drivers(frame: pl.DataFrame, layers=FIELD_LAYERS, seed: int = 0):
 
 
 def draw_field_drivers(rep, shares: pl.DataFrame, full: float, title: str,
-                       subtitle: str, save: str, days_label: str = "field days") -> None:
-    fig, ax = plt.subplots(figsize=(8.2, 0.36 * shares.height + 1.5))
-    vals = [max(float(v), 0.0) for v in shares["% of what the record explains"]]
-    barh(ax, list(shares["Layer"]), vals, fmt="{:,.0f}%")
-    ax.set_xlabel(f"Share of the explained difference in {days_label} (%)")
+                       subtitle: str, save: str, days_label: str = "field days",
+                       top: int = 4) -> None:
+    """All the variation in one bar: each factor's part, then what is unexplained.
+
+    The Shapley parts add exactly to the model's out-of-sample R², so they are
+    parts of a whole and belong in one stacked bar, not side by side. The
+    ``top`` largest of at least 4% are drawn by name; the rest are netted into "Other
+    factors" (computed as the remainder, so the explained span is the model's
+    R² exactly even if a small factor's part is negative), and the grey tail
+    is what the factors do not explain. Shades run dark to light in size order.
+    """
+    # Named only if big enough to carry its own label; the rest is "Other".
+    named = [(lab, 100 * float(v)) for lab, v in
+             zip(shares["Layer"], shares["shapley_r2"]) if 100 * v >= 4][:top]
+    rest = [(lab, 100 * float(v)) for lab, v in zip(shares["Layer"], shares["shapley_r2"])
+            if lab not in dict(named)]
+    other = 100 * full - sum(v for _, v in named)
+    parts = named + ([("Other factors", other)] if other > 0.05 else [])
+    fig, ax = plt.subplots(figsize=(10.0, 2.8))
+    left, outside = 0.0, 0
+    for i, (lab, v) in enumerate(parts):
+        ax.barh([0], [v], left=left, color=RAMP[i % len(RAMP)], height=0.5,
+                edgecolor="white", linewidth=1.5, zorder=3)
+        # About 0.65% of axis width per character at this size. A label that
+        # does not fit sits just outside the bar, alternating above and below
+        # so two narrow neighbours do not collide.
+        if v >= 0.65 * len(lab) + 1:
+            ax.text(left + v / 2, 0, f"{lab}\n{v:.0f}%", ha="center", va="center",
+                    fontsize=8, color="white" if i < 3 else INK)
+        else:
+            y = 0.3 if outside % 2 == 0 else -0.3
+            ax.text(left + v / 2, y, f"{lab} {v:.0f}%", ha="center",
+                    va="bottom" if y > 0 else "top", fontsize=8, color=INK)
+            outside += 1
+        left += v
+    ax.barh([0], [100 - left], left=left, color="#E6E6E6", height=0.5, zorder=3)
+    ax.text(left + (100 - left) / 2, 0, f"Not explained\n{100 - left:.0f}%",
+            ha="center", va="center", fontsize=8, color=INK)
+    ax.set_xlim(0, 100)
+    ax.set_ylim(-0.6, 0.6)
+    ax.set_yticks([])
+    ax.set_xlabel(f"Share of all variation in {days_label} (%)")
+    small = [f"{lab} {v:.1f}%" for lab, v in rest]
     rep.finish(ax, title, subtitle,
-               note=(f"Together these explain {100 * full:.0f}% of the difference "
-                     f"in {days_label} between one complaint and another, measured on "
-                     "complaints the model did not see. The rest is case-by-case."),
-               xgrid=True, ygrid=False, save=save)
+               note=("Other factors: " + ", ".join(small) + "." if small else None),
+               ygrid=False, save=save)
 
 
 def office_means(frame: pl.DataFrame, floor: int = 30, role=None,
