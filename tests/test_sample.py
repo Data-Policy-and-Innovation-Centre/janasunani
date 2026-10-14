@@ -237,6 +237,11 @@ def test_top_types_partition_their_complaints_and_draw_as_shares(con, tmp_path):
                            WHERE g.subcategory IS NOT NULL""")
     assert sum(r["n"] for _, r in rows) == with_sub > 0
     assert len(exhibits.top_types(s, n=1)) == 1
+    # ``also`` adds a type outside the top, once, and never repeats one in it.
+    rare = ("Another department", t[1])
+    assert [lab for lab, _ in exhibits.top_types(s, n=1, also=[rare])][-1] == (
+        f"{t[1]} (Another department)")
+    assert len(exhibits.top_types(s, n=2, also=[rare])) == 2
     rep = Report(con, [("All", "TRUE")], tmp_path, prefix="t_")
     exhibits.draw_stage_stack(rep, rows, "Type", "T", "S", "types", STAGES_THREE,
                               show_table=False, shares=True)

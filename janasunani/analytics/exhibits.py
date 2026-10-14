@@ -339,22 +339,25 @@ def _brace(ax, x0: float, x1: float, y: float, text: str, xmax: float) -> None:
             va="top", fontsize=7.5, color=INK, linespacing=1.1)
 
 
-def top_types(s, n: int = 10):
+def top_types(s, n: int = 10, also=()):
     """The ``n`` largest complaint types in P4, as :func:`stage_rows` groups.
 
     A type is a department and subcategory: the same subcategory name under
-    two departments (Rural Housing) is two types, labelled by both.
+    two departments (Rural Housing) is two types, labelled by both. ``also``
+    lists ``(dept, subcategory)`` types to show whatever their rank; each is
+    added after the largest, unless it is already among them.
     """
     t = s.q(f"""
       SELECT g.dept, g.subcategory, COUNT(*) AS n
       FROM {s.t('phases_pop')} p JOIN {s.t('g')} g USING (ticket_no)
       WHERE g.subcategory IS NOT NULL
       GROUP BY 1, 2 ORDER BY n DESC, 1, 2 LIMIT {n}""")
-    return [(f"{r['subcategory']} ({r['dept']})",
+    types = [(r["dept"], r["subcategory"]) for r in t.iter_rows(named=True)]
+    types += [x for x in also if x not in types]
+    return [(f"{sub} ({dept})",
              f"ticket_no IN (SELECT ticket_no FROM {s.t('g')} "
-             f"WHERE dept = {_sql_str(r['dept'])} "
-             f"AND subcategory = {_sql_str(r['subcategory'])})")
-            for r in t.iter_rows(named=True)]
+             f"WHERE dept = {_sql_str(dept)} AND subcategory = {_sql_str(sub)})")
+            for dept, sub in types]
 
 
 # -- routes -------------------------------------------------------------------
