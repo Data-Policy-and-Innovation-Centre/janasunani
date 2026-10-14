@@ -185,6 +185,8 @@ def test_step_stages_tag_each_step_with_its_phase(con):  # noqa: F811
 def test_field_frame_names_sender_and_field_office(con):  # noqa: F811
     s = _sample(con, "a_")
     f = exhibits.field_frame(s)
+    # The Shapley split is by row position, so the order must be fixed.
+    assert f["ticket_no"].to_list() == sorted(f["ticket_no"].to_list())
     r1 = f.filter(pl.col("ticket_no") == "R1").row(0, named=True)
     assert r1["sender_office"] == "Chief Minister's Grievance Cell"
     assert r1["field_office"] == "Block Development Officer, Sadar"

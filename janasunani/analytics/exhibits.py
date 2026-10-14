@@ -26,6 +26,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
 from IPython.display import display
+from matplotlib.colors import LinearSegmentedColormap
 
 from janasunani.analytics.figures import (
     BLUE, INK, INK_SOFT, MAROON, ORANGE, RAMP, barh, density, time_stats,
@@ -501,7 +502,9 @@ def field_frame(s) -> pl.DataFrame:
 
     The field office is the desk holding the claim when it first reached its
     deepest rung; the sender is the last desk before the first hand-off. Both
-    are a role and a place, never an internal code.
+    are a role and a place, never an internal code. Rows come in ticket order:
+    :func:`field_drivers` splits by row position, so an unordered frame would
+    give different halves, and different shares, on each run (#422).
     """
     ss = s.t("step_stages")
     return s.q(f"""
@@ -519,7 +522,8 @@ def field_frame(s) -> pl.DataFrame:
              o.field_office, o.field_role, o.sender_office
       FROM {s.t('phases_pop')} p JOIN {s.t('g')} g USING (ticket_no)
       JOIN o USING (ticket_no)
-      WHERE o.reached_field""")
+      WHERE o.reached_field
+      ORDER BY p.ticket_no""")
 
 
 def _field_days_by(s, frame: pl.DataFrame, col: str) -> pl.DataFrame:
@@ -577,56 +581,58 @@ def field_drivers(frame: pl.DataFrame, layers=FIELD_LAYERS, seed: int = 0):
 
 def draw_field_drivers(rep, shares: pl.DataFrame, full: float, title: str,
                        subtitle: str, save: str, days_label: str = "field days",
-                       top: int = 4, always=("Complaint type",)) -> None:
+                       always=("Complaint type",)) -> None:
     """All the variation in one bar: each factor's part, then what is unexplained.
 
     The Shapley parts add exactly to the model's out-of-sample R², so they are
-    parts of a whole and belong in one stacked bar, not side by side. The
-    ``top`` largest of at least 4% are drawn by name; the rest are netted into "Other
-    factors" (computed as the remainder, so the explained span is the model's
-    R² exactly even if a small factor's part is negative), and the grey tail
-    is what the factors do not explain. Shades run dark to light in size order.
-    Factors in ``always`` are drawn by name whatever their size; one missing
-    from ``shares`` (a single level, so dropped) is said in the note.
+    parts of a whole and belong in one stacked bar, not side by side. Every
+    factor is drawn by name, largest first; one too narrow to hold its label
+    is labelled above or below the bar with an arrow. The grey tail is what the
+    factors do not explain. A factor in ``always`` that is missing from
+    ``shares`` (one value in this population, so dropped) is said in the note.
     """
-    # Named if big enough to carry its own label, or asked for; the rest is "Other".
-    pairs = list(zip(shares["Layer"], shares["shapley_r2"]))
-    big = [lab for lab, v in pairs if 100 * v >= 4][:top]
-    named = [(lab, 100 * float(v)) for lab, v in pairs if lab in big or lab in always]
-    rest = [(lab, 100 * float(v)) for lab, v in zip(shares["Layer"], shares["shapley_r2"])
-            if lab not in dict(named)]
-    other = 100 * full - sum(v for _, v in named)
-    parts = named + ([("Other factors", other)] if other > 0.05 else [])
-    fig, ax = plt.subplots(figsize=(10.0, 2.8))
-    left, outside = 0.0, 0
+    parts = [(lab, 100 * float(v)) for lab, v in zip(shares["Layer"], shares["shapley_r2"])]
+    # Out of sample a factor can lose fit; it has no span to draw.
+    neg = [(lab, v) for lab, v in parts if v <= 0]
+    parts = [(lab, v) for lab, v in parts if v > 0]
+    # The house ramp stretched to one shade per factor, so none repeats.
+    shades = LinearSegmentedColormap.from_list("", [RAMP[0], "#E3C4C8"])(
+        np.linspace(0, 1, max(len(parts), 2)))
+    fig, ax = plt.subplots(figsize=(10.0, 3.2))
+    left, outside = 0.0, []
     for i, (lab, v) in enumerate(parts):
-        ax.barh([0], [v], left=left, color=RAMP[i % len(RAMP)], height=0.5,
+        ax.barh([0], [v], left=left, color=shades[i], height=0.5,
                 edgecolor="white", linewidth=1.5, zorder=3)
-        # About 0.65% of axis width per character at this size. A label that
-        # does not fit sits just outside the bar, alternating above and below
-        # so two narrow neighbours do not collide.
+        # About 0.65% of axis width per character at this size.
         if v >= 0.65 * len(lab) + 1:
             ax.text(left + v / 2, 0, f"{lab}\n{v:.0f}%", ha="center", va="center",
                     fontsize=8, color="white" if i < 3 else INK)
         else:
-            y = 0.3 if outside % 2 == 0 else -0.3
-            ax.text(left + v / 2, y, f"{lab} {v:.0f}%", ha="center",
-                    va="bottom" if y > 0 else "top", fontsize=8, color=INK)
-            outside += 1
+            outside.append((left + v / 2, f"{lab} {v:.0f}%"))
         left += v
+    # Narrow ones alternate above and below; on each side a label is pushed
+    # right until it clears the one before, and an arrow points to its span.
+    for side, y in ((0, 0.52), (1, -0.52)):
+        prev_end = -1.0
+        for x, text in outside[side::2]:
+            half = 0.65 * len(text) / 2
+            tx = max(x, prev_end + half + 0.5)
+            prev_end = tx + half
+            ax.annotate(text, (x, 0.25 if y > 0 else -0.25), (tx, y), ha="center",
+                        va="bottom" if y > 0 else "top", fontsize=8, color=INK,
+                        arrowprops=dict(arrowstyle="-|>", color=INK, lw=0.6,
+                                        shrinkA=1, shrinkB=0, mutation_scale=7))
     ax.barh([0], [100 - left], left=left, color="#E6E6E6", height=0.5, zorder=3)
     ax.text(left + (100 - left) / 2, 0, f"Not explained\n{100 - left:.0f}%",
             ha="center", va="center", fontsize=8, color=INK)
     ax.set_xlim(0, 100)
-    ax.set_ylim(-0.6, 0.6)
+    ax.set_ylim(-0.8, 0.8)
     ax.set_yticks([])
     ax.set_xlabel(f"Share of all variation in {days_label} (%)")
-    small = [f"{lab} {v:.1f}%" for lab, v in rest]
     fixed = [lab for lab in always if lab not in shares["Layer"].to_list()]
-    note = " ".join(([f"Other factors: {', '.join(small)}."] if small else [])
-                    + [f"{lab}: one value here, so it explains nothing." for lab in fixed])
-    rep.finish(ax, title, subtitle, note=note or None,
-               ygrid=False, save=save)
+    note = " ".join([f"{lab}: one value here, so it explains nothing." for lab in fixed]
+                    + [f"{lab} explains nothing beyond chance ({v:.1f}%)." for lab, v in neg])
+    rep.finish(ax, title, subtitle, note=note or None, ygrid=False, save=save)
 
 
 def office_means(frame: pl.DataFrame, floor: int = 30, role=None,
