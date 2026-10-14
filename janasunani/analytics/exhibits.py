@@ -577,7 +577,7 @@ def field_drivers(frame: pl.DataFrame, layers=FIELD_LAYERS, seed: int = 0):
 
 def draw_field_drivers(rep, shares: pl.DataFrame, full: float, title: str,
                        subtitle: str, save: str, days_label: str = "field days",
-                       top: int = 4) -> None:
+                       top: int = 4, always=("Complaint type",)) -> None:
     """All the variation in one bar: each factor's part, then what is unexplained.
 
     The Shapley parts add exactly to the model's out-of-sample R², so they are
@@ -586,10 +586,13 @@ def draw_field_drivers(rep, shares: pl.DataFrame, full: float, title: str,
     factors" (computed as the remainder, so the explained span is the model's
     R² exactly even if a small factor's part is negative), and the grey tail
     is what the factors do not explain. Shades run dark to light in size order.
+    Factors in ``always`` are drawn by name whatever their size; one missing
+    from ``shares`` (a single level, so dropped) is said in the note.
     """
-    # Named only if big enough to carry its own label; the rest is "Other".
-    named = [(lab, 100 * float(v)) for lab, v in
-             zip(shares["Layer"], shares["shapley_r2"]) if 100 * v >= 4][:top]
+    # Named if big enough to carry its own label, or asked for; the rest is "Other".
+    pairs = list(zip(shares["Layer"], shares["shapley_r2"]))
+    big = [lab for lab, v in pairs if 100 * v >= 4][:top]
+    named = [(lab, 100 * float(v)) for lab, v in pairs if lab in big or lab in always]
     rest = [(lab, 100 * float(v)) for lab, v in zip(shares["Layer"], shares["shapley_r2"])
             if lab not in dict(named)]
     other = 100 * full - sum(v for _, v in named)
@@ -619,8 +622,10 @@ def draw_field_drivers(rep, shares: pl.DataFrame, full: float, title: str,
     ax.set_yticks([])
     ax.set_xlabel(f"Share of all variation in {days_label} (%)")
     small = [f"{lab} {v:.1f}%" for lab, v in rest]
-    rep.finish(ax, title, subtitle,
-               note=("Other factors: " + ", ".join(small) + "." if small else None),
+    fixed = [lab for lab in always if lab not in shares["Layer"].to_list()]
+    note = " ".join(([f"Other factors: {', '.join(small)}."] if small else [])
+                    + [f"{lab}: one value here, so it explains nothing." for lab in fixed])
+    rep.finish(ax, title, subtitle, note=note or None,
                ygrid=False, save=save)
 
 
