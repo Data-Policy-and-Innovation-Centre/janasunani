@@ -458,9 +458,9 @@ def entry_route_groups(table: pl.DataFrame) -> list[tuple[str, str]]:
 
 # -- the field stage ----------------------------------------------------------
 
-# The layers a field span can be explained by, labelled by their column in
-# :func:`field_frame` so a chart and the data use one name. FIELD_LAYER_DEFS
-# says what each one is, for the table a note shows beside the chart.
+# The layers a field span can be explained by, keyed by their column in
+# :func:`field_frame`. FIELD_LAYERS gives each the name a reader sees;
+# FIELD_LAYER_DEFS says what it is, for the table a note shows beside the chart.
 FIELD_LAYER_DEFS = {
     "field_office": "The office holding the complaint when it first reached the "
                     "lowest level on its route, e.g. a BDO",
@@ -474,7 +474,17 @@ FIELD_LAYER_DEFS = {
     "dept": "The department the complaint was assigned to",
     "month": "The month the complaint was filed",
 }
-FIELD_LAYERS = {col: col for col in FIELD_LAYER_DEFS}
+FIELD_LAYERS = {
+    "Field office": "field_office",
+    "Entry office": "sender_office",
+    "Route": "route",
+    "Complaint type": "subcategory",
+    "District": "district",
+    "Entry route": "entry_route",
+    "Department": "dept",
+    "Month filed": "month",
+}
+assert set(FIELD_LAYERS.values()) == set(FIELD_LAYER_DEFS)
 
 
 def field_layer_table(layers=FIELD_LAYERS) -> pl.DataFrame:
