@@ -246,3 +246,25 @@ def test_top_types_partition_their_complaints_and_draw_as_shares(con, tmp_path):
     exhibits.draw_stage_stack(rep, rows, "Type", "T", "S", "types", STAGES_THREE,
                               show_table=False, shares=True)
     assert (tmp_path / "t_types.png").exists()
+
+
+def test_stage_2_splits_into_its_offices_in_route_order(con, tmp_path):  # noqa: F811
+    import matplotlib
+    matplotlib.use("Agg")
+    from janasunani.analytics.figures import Report
+
+    s = _sample(con, "a_", base="ticket_no = 'R1'")
+    groups = [("R1", "TRUE")]
+    (lab, row), = exhibits.stage_rows(s, groups, STAGES_THREE, floor=1)
+    split, = exhibits.stage_office_splits(s, groups, "Stage 2")
+    offices = [o for o, _ in split["Stage 2"]]
+    # R1's Stage 2 is the Collector, then the BDO.
+    assert offices == sorted(offices, key=["District Collector",
+                                           "Block Development Officer"].index)
+    assert "Block Development Officer" in offices
+    assert sum(d for _, d in split["Stage 2"]) == pytest.approx(row["Stage 2"], abs=0.15)
+    rep = Report(con, [("All", "TRUE")], tmp_path, prefix="t_")
+    exhibits.draw_stage_stack(rep, [(lab, row)], "Route", "T", "S", "split", STAGES_THREE,
+                              show_table=False, splits=[split],
+                              highlight="Block Development Officer")
+    assert (tmp_path / "t_split.png").exists()
