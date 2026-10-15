@@ -32,13 +32,13 @@ from janasunani.analytics.figures import (
     BLUE, INK, INK_SOFT, MAROON, ORANGE, RAMP, barh, density, time_stats,
 )
 from janasunani.analytics.journey import (
-    PHASE_LABEL, PHASES, ROLE_CASE, RUNG_NAME, STAGES_FIVE, _sql_str,
+    PHASE_LABEL, PHASES, ROLE_CASE, RUNG_NAME, STAGES_FIVE, STAGES_THREE, _sql_str,
 )
 from janasunani.analytics.variance import shapley_shares
 
 __all__ = [
     "outcomes", "draw_outcomes_bar", "draw_outcomes_pie", "durations",
-    "stage_label", "stage_means", "stage_table", "stage_rows", "top_types",
+    "stage_label", "stage_means", "stage_table", "stage_rows", "top_types", "stage_office_splits", "OFFICE_SHORT",
     "draw_stage_bar", "draw_stage_densities", "draw_stage_stack",
     "route_table", "top_route_groups", "route_stage_roles", "ENTRY_SHORT",
     "entry_routes", "entry_route_groups",
@@ -252,7 +252,8 @@ def draw_stage_densities(rep, s, title: str, subtitle: str, save: str,
 def draw_stage_stack(rep, rows, label_col: str, title: str, subtitle: str,
                      save: str, stages=STAGES_FIVE, share_of=None,
                      braces=None, count_label: str = "Claims",
-                     show_table: bool = True, shares: bool = False) -> None:
+                     show_table: bool = True, shares: bool = False,
+                     splits=None) -> None:
     """A table and one stacked bar per group, each adding to its own mean.
 
     ``share_of`` adds a "% of sample" column against that denominator, for
@@ -264,7 +265,10 @@ def draw_stage_stack(rep, rows, label_col: str, title: str, subtitle: str,
     table of the same numbers as a second, different finding. ``shares=True``
     draws every bar to 100%, each stage as its share of that group's own
     total, with the total in days at the end: for comparing the split across
-    groups whose totals differ.
+    groups whose totals differ. ``splits`` is one ``{stage: [(office, days)]}``
+    per row (from :func:`stage_office_splits`): that stage's segment is cut
+    by dashed lines into its offices, each named under a brace. Colour only
+    ever marks the stage.
     """
     table = {
         label_col: [lab for lab, _ in rows],
@@ -284,10 +288,11 @@ def draw_stage_stack(rep, rows, label_col: str, title: str, subtitle: str,
               for lab, r in rows]
     deep = max(lab.count("\n") for lab in labels)
     # Braces need a band under each bar, so the rows spread apart.
-    pitch = 1.9 if braces else 1
+    spread = bool(braces or splits)
+    pitch = 1.9 if spread else 1
     pos = [j * pitch for j in range(len(rows))]
     height = 0.42 * len(rows) * (1 + 0.42 * deep) + 1.9
-    if braces:
+    if spread:
         height += 0.62 * len(rows)
     fig, ax = plt.subplots(figsize=(10.6, height))
     xmax = 100.0 if shares else max(float(r["total"]) for _, r in rows)
@@ -300,7 +305,13 @@ def draw_stage_stack(rep, rows, label_col: str, title: str, subtitle: str,
             fill, ink = _stage_shade(i, len(stages))
             ax.barh([j], [v], left=left, color=fill,
                     height=0.6, zorder=3, label=stage_label(k) if j == 0 else None)
-            if v > (xmax if shares else float(r["total"])) * 0.07:
+            cut = splits[pos.index(j)].get(k) if splits else None
+            if cut:
+                _split_segment(ax, j, left, v, cut, xmax)
+                if v > float(r["total"]) * 0.07:
+                    ax.text(left + v / 2, j, f"{v:.0f}", ha="center", va="center",
+                            fontsize=8, color=ink, zorder=5)
+            elif v > (xmax if shares else float(r["total"])) * 0.07:
                 ax.text(left + v / 2, j, f"{v:.0f}%" if shares else f"{v:.0f}", ha="center",
                         va="center", fontsize=8,
                         color=ink)
@@ -308,7 +319,7 @@ def draw_stage_stack(rep, rows, label_col: str, title: str, subtitle: str,
         ax.text(left + 1.5, j, f"{float(r['total']):.0f} days" if shares else f"{left:.0f}d",
                 va="center", fontsize=8.5, color=INK)
     ax.set_yticks(pos, labels)
-    if braces:
+    if spread:
         ax.set_ylim(pos[-1] + 1.45, -0.6)
     else:
         ax.invert_yaxis()
@@ -326,6 +337,27 @@ def draw_stage_stack(rep, rows, label_col: str, title: str, subtitle: str,
     rep.finish(ax, title, subtitle, ygrid=False, save=save)
 
 
+def _split_segment(ax, y, left, width, parts, xmax) -> None:
+    """Dashed lines between one stage's offices, and a brace naming each.
+
+    The offices' held days and the stage's span differ slightly where a
+    record's dates run backwards; the cuts are scaled to the span so the bar
+    keeps its own total, and the braces give each office's held days. An
+    office too narrow for a legible label is cut but not named.
+    """
+    total = sum(d for _, d in parts) or 1.0
+    x = left
+    for i, (office, days) in enumerate(parts):
+        w = width * days / total
+        if i:
+            ax.plot([x, x], [y - 0.3, y + 0.3], color="white", lw=1.1, ls=(0, (3, 2)),
+                    zorder=4)
+        if w >= 0.04 * xmax:
+            _brace(ax, x, x + w, y + 0.4, f"{OFFICE_SHORT.get(office, office)}, {days:.0f}d",
+                   xmax)
+        x += w
+
+
 def _brace(ax, x0: float, x1: float, y: float, text: str, xmax: float) -> None:
     """A square brace under [x0, x1] at y (axis inverted: larger y is lower)."""
     t, notch = 0.1, 0.12
@@ -337,6 +369,36 @@ def _brace(ax, x0: float, x1: float, y: float, text: str, xmax: float) -> None:
     width = max(12, int(100 * (x1 - x0) / xmax))
     ax.text(xm, y + notch + 0.05, textwrap.fill(text, width), ha="center",
             va="top", fontsize=7.5, color=INK, linespacing=1.1)
+
+
+# How an office reads inside a bar, where the full title does not fit.
+OFFICE_SHORT = {
+    "Block Development Officer": "BDO",
+    "District social security officer": "SSO",
+    "District Collector": "Collector",
+    "Department Secretary": "Secretary",
+}
+
+
+def stage_office_splits(s, groups, stage: str, stages=STAGES_THREE) -> list[dict]:
+    """Per group, the days each office held its claims during ``stage``.
+
+    ``groups`` is the :func:`stage_rows` list. Days are per claim in the
+    group, offices in the order they usually hold the claim, for
+    :func:`draw_stage_stack`'s ``splits``.
+    """
+    phases = ", ".join(_sql_str(p) for p in stages[stage])
+    out = []
+    for _, pred in groups:
+        t = s.q(f"""
+          WITH c AS (SELECT ticket_no FROM {s.t('phases_pop')} WHERE {pred})
+          SELECT role, SUM(gap) / (SELECT COUNT(*) FROM c) AS days
+          FROM {s.t('step_stages')}
+          WHERE phase IN ({phases}) AND gap IS NOT NULL
+            AND ticket_no IN (SELECT ticket_no FROM c)
+          GROUP BY role ORDER BY AVG(step_index), role""")
+        out.append({stage: [(r, float(d)) for r, d in t.iter_rows() if d > 0]})
+    return out
 
 
 def top_types(s, n: int = 10, also=()):
@@ -711,13 +773,14 @@ def office_volume(s, frame: pl.DataFrame, role: str, floor: int = 30) -> pl.Data
 
 
 def draw_office_volume(rep, offices: pl.DataFrame, title: str, subtitle: str,
-                       save: str, days_label: str = "field days") -> None:
+                       save: str, days_label: str = "field days",
+                       period: str = "2024-25") -> None:
     """Each office's volume against its average days, one dot per office."""
     x = offices["Complaints received"].to_numpy().astype(float)
     y = offices["Mean field days"].to_numpy().astype(float)
     fig, ax = plt.subplots(figsize=(9.6, 4.0))
     ax.scatter(x, y, s=14, color=MAROON, alpha=0.45, zorder=3, linewidths=0)
-    ax.set_xlabel("Complaints received, July to December 2024")
+    ax.set_xlabel(f"Complaints received, {period}")
     ax.set_ylabel(f"Average {days_label}")
     ax.set_xlim(left=0)
     ax.set_ylim(bottom=0)
