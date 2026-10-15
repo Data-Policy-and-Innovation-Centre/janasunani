@@ -253,7 +253,7 @@ def draw_stage_stack(rep, rows, label_col: str, title: str, subtitle: str,
                      save: str, stages=STAGES_FIVE, share_of=None,
                      braces=None, count_label: str = "Claims",
                      show_table: bool = True, shares: bool = False,
-                     splits=None, highlight: str | None = None) -> None:
+                     splits=None) -> None:
     """A table and one stacked bar per group, each adding to its own mean.
 
     ``share_of`` adds a "% of sample" column against that denominator, for
@@ -267,8 +267,8 @@ def draw_stage_stack(rep, rows, label_col: str, title: str, subtitle: str,
     total, with the total in days at the end: for comparing the split across
     groups whose totals differ. ``splits`` is one ``{stage: [(office, days)]}``
     per row (from :func:`stage_office_splits`): that stage's segment is cut
-    into its offices, each labelled where it fits, and the ``highlight``
-    office drawn in blue.
+    by dashed lines into its offices, each named under a brace. Colour only
+    ever marks the stage.
     """
     table = {
         label_col: [lab for lab, _ in rows],
@@ -288,10 +288,11 @@ def draw_stage_stack(rep, rows, label_col: str, title: str, subtitle: str,
               for lab, r in rows]
     deep = max(lab.count("\n") for lab in labels)
     # Braces need a band under each bar, so the rows spread apart.
-    pitch = 1.9 if braces else 1
+    spread = bool(braces or splits)
+    pitch = 1.9 if spread else 1
     pos = [j * pitch for j in range(len(rows))]
     height = 0.42 * len(rows) * (1 + 0.42 * deep) + 1.9
-    if braces:
+    if spread:
         height += 0.62 * len(rows)
     fig, ax = plt.subplots(figsize=(10.6, height))
     xmax = 100.0 if shares else max(float(r["total"]) for _, r in rows)
@@ -306,7 +307,10 @@ def draw_stage_stack(rep, rows, label_col: str, title: str, subtitle: str,
                     height=0.6, zorder=3, label=stage_label(k) if j == 0 else None)
             cut = splits[pos.index(j)].get(k) if splits else None
             if cut:
-                _split_segment(ax, j, left, v, cut, fill, ink, highlight, xmax)
+                _split_segment(ax, j, left, v, cut, xmax)
+                if v > float(r["total"]) * 0.07:
+                    ax.text(left + v / 2, j, f"{v:.0f}", ha="center", va="center",
+                            fontsize=8, color=ink, zorder=5)
             elif v > (xmax if shares else float(r["total"])) * 0.07:
                 ax.text(left + v / 2, j, f"{v:.0f}%" if shares else f"{v:.0f}", ha="center",
                         va="center", fontsize=8,
@@ -315,7 +319,7 @@ def draw_stage_stack(rep, rows, label_col: str, title: str, subtitle: str,
         ax.text(left + 1.5, j, f"{float(r['total']):.0f} days" if shares else f"{left:.0f}d",
                 va="center", fontsize=8.5, color=INK)
     ax.set_yticks(pos, labels)
-    if braces:
+    if spread:
         ax.set_ylim(pos[-1] + 1.45, -0.6)
     else:
         ax.invert_yaxis()
@@ -333,25 +337,24 @@ def draw_stage_stack(rep, rows, label_col: str, title: str, subtitle: str,
     rep.finish(ax, title, subtitle, ygrid=False, save=save)
 
 
-def _split_segment(ax, y, left, width, parts, fill, ink, highlight, xmax) -> None:
-    """Cut one stage's segment into its offices, scaled to fill it exactly.
+def _split_segment(ax, y, left, width, parts, xmax) -> None:
+    """Dashed lines between one stage's offices, and a brace naming each.
 
     The offices' held days and the stage's span differ slightly where a
-    record's dates run backwards; scaling keeps the bar's total the stage's
-    own mean, and the labels give each office's held days.
+    record's dates run backwards; the cuts are scaled to the span so the bar
+    keeps its own total, and the braces give each office's held days. An
+    office too narrow for a legible label is cut but not named.
     """
     total = sum(d for _, d in parts) or 1.0
     x = left
-    for office, days in parts:
+    for i, (office, days) in enumerate(parts):
         w = width * days / total
-        hot = office == highlight
-        ax.barh([y], [w], left=x, color=BLUE if hot else fill, height=0.6,
-                zorder=4, edgecolor="white", linewidth=1.2)
-        text = f"{OFFICE_SHORT.get(office, office)} {days:.0f}d"
-        # About 0.75% of axis width per character at this size.
-        if w >= 0.0075 * xmax * len(text) + 0.5:
-            ax.text(x + w / 2, y, text, ha="center", va="center", fontsize=7.5,
-                    color="white" if hot else ink, zorder=5)
+        if i:
+            ax.plot([x, x], [y - 0.3, y + 0.3], color="white", lw=1.1, ls=(0, (3, 2)),
+                    zorder=4)
+        if w >= 0.04 * xmax:
+            _brace(ax, x, x + w, y + 0.4, f"{OFFICE_SHORT.get(office, office)}, {days:.0f}d",
+                   xmax)
         x += w
 
 

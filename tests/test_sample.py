@@ -265,6 +265,5 @@ def test_stage_2_splits_into_its_offices_in_route_order(con, tmp_path):  # noqa:
     assert sum(d for _, d in split["Stage 2"]) == pytest.approx(row["Stage 2"], abs=0.15)
     rep = Report(con, [("All", "TRUE")], tmp_path, prefix="t_")
     exhibits.draw_stage_stack(rep, [(lab, row)], "Route", "T", "S", "split", STAGES_THREE,
-                              show_table=False, splits=[split],
-                              highlight="Block Development Officer")
+                              show_table=False, splits=[split])
     assert (tmp_path / "t_split.png").exists()
